@@ -74,13 +74,40 @@ namespace MoriaMods
     #pragma pack(pop)
     static_assert(sizeof(GetInstanceTransform_Params) == 66, "Must be 66 bytes");
 
-    // FHitResult offsets (136 bytes, probed)
-    namespace HitOff {
-        constexpr int ImpactPoint = 24;
-        constexpr int Item = 88;
-        constexpr int bBlockingHit = 93;
-        constexpr int Component = 112;   // FWeakObjectPtr (8 bytes)
-    }
+    // FHitResult — matches Engine.hpp:2742 (Size: 0x88 = 136 bytes)
+    #pragma pack(push, 1)
+    struct FHitResultLocal {
+        int32_t FaceIndex;                          // 0x00
+        float   Time;                               // 0x04
+        float   Distance;                           // 0x08
+        FVec3f  Location;                           // 0x0C
+        FVec3f  ImpactPoint;                        // 0x18
+        FVec3f  Normal;                             // 0x24
+        FVec3f  ImpactNormal;                       // 0x30
+        FVec3f  TraceStart;                         // 0x3C
+        FVec3f  TraceEnd;                           // 0x48
+        float   PenetrationDepth;                   // 0x54
+        int32_t Item;                               // 0x58
+        uint8_t ElementIndex;                       // 0x5C
+        uint8_t bBlockingHit;                       // 0x5D
+        uint8_t bStartPenetrating;                  // 0x5E
+        uint8_t _pad5F;                             // 0x5F
+        RC::Unreal::FWeakObjectPtr PhysMaterial;    // 0x60
+        RC::Unreal::FWeakObjectPtr Actor;           // 0x68
+        RC::Unreal::FWeakObjectPtr Component;       // 0x70
+        uint8_t BoneName[8];                        // 0x78 (FName)
+        uint8_t MyBoneName[8];                      // 0x80 (FName)
+    }; // 0x88
+    #pragma pack(pop)
+    static_assert(sizeof(FHitResultLocal) == 0x88, "FHitResult must be 136 bytes");
+
+    // FItemHandle — matches FGK.hpp:1715 (Size: 0x14 = 20 bytes)
+    struct FItemHandleLocal {
+        int32_t ID;                                 // 0x00
+        int32_t Payload;                            // 0x04
+        uint8_t Owner[12];                          // 0x08 (TWeakObjectPtr + padding to 0x14)
+    }; // 0x14
+    static_assert(sizeof(FItemHandleLocal) == 0x14, "FItemHandle must be 20 bytes");
 
     // LineTraceSingle param offsets (237 bytes, probed)
     namespace LTOff {
@@ -1997,9 +2024,8 @@ namespace MoriaMods
         // Resolve hit component directly from FHitResult weak pointer
         UObject* resolveHitComponent(const uint8_t* hitBuf)
         {
-            RC::Unreal::FWeakObjectPtr weakPtr{};
-            std::memcpy(&weakPtr, hitBuf + HitOff::Component, sizeof(RC::Unreal::FWeakObjectPtr));
-            return weakPtr.Get();
+            auto* hit = reinterpret_cast<const FHitResultLocal*>(hitBuf);
+            return hit->Component.Get();
         }
 
         bool isHISMComponent(UObject* comp)
@@ -2298,10 +2324,9 @@ namespace MoriaMods
                 return;
             }
 
-            FVec3f impactPoint;
-            std::memcpy(&impactPoint, hitBuf + HitOff::ImpactPoint, 12);
-            int32_t item;
-            std::memcpy(&item, hitBuf + HitOff::Item, 4);
+            auto* hit = reinterpret_cast<const FHitResultLocal*>(hitBuf);
+            FVec3f impactPoint = hit->ImpactPoint;
+            int32_t item = hit->Item;
 
             // Resolve component directly via FWeakObjectPtr (fast, accurate)
             UObject* hitComp = resolveHitComponent(hitBuf);
@@ -2365,10 +2390,9 @@ namespace MoriaMods
                 return;
             }
 
-            FVec3f impactPoint;
-            std::memcpy(&impactPoint, hitBuf + HitOff::ImpactPoint, 12);
-            int32_t item;
-            std::memcpy(&item, hitBuf + HitOff::Item, 4);
+            auto* hit = reinterpret_cast<const FHitResultLocal*>(hitBuf);
+            FVec3f impactPoint = hit->ImpactPoint;
+            int32_t item = hit->Item;
 
             // Resolve component directly
             UObject* hitComp = resolveHitComponent(hitBuf);
@@ -3484,7 +3508,7 @@ namespace MoriaMods
                             // Extract returned FItemHandle
                             std::vector<uint8_t> newHandle(aiBuf.data() + aiRet.offset,
                                                            aiBuf.data() + aiRet.offset + handleSize);
-                            int32_t newId = *reinterpret_cast<int32_t*>(newHandle.data());
+                            int32_t newId = reinterpret_cast<const FItemHandleLocal*>(newHandle.data())->ID;
                             m_bodyInvHandles.push_back(newHandle);
 
                             Output::send<LogLevel::Warning>(
@@ -3763,9 +3787,10 @@ namespace MoriaMods
                             *reinterpret_cast<int32_t*>(buf) = querySlot;
                             invComp->ProcessEvent(getItemFunc, buf);
 
-                            // FItemHandle ReturnValue @4: {ID @4, Payload @8, Owner @12}
-                            int32_t itemId   = *reinterpret_cast<int32_t*>(buf + 4);
-                            int32_t payload  = *reinterpret_cast<int32_t*>(buf + 8);
+                            // FItemHandle ReturnValue @4: {ID, Payload, Owner}
+                            auto* itemHandle = reinterpret_cast<const FItemHandleLocal*>(buf + 4);
+                            int32_t itemId   = itemHandle->ID;
+                            int32_t payload  = itemHandle->Payload;
 
                             std::wstring label = isEpic
                                 ? std::format(L"EpicSlot[{}]", querySlot)
@@ -3843,7 +3868,7 @@ namespace MoriaMods
                 return;
             }
 
-            int32_t bagId = *reinterpret_cast<int32_t*>(m_bagHandle.data());
+            int32_t bagId = reinterpret_cast<const FItemHandleLocal*>(m_bagHandle.data())->ID;
             Output::send<LogLevel::Warning>(
                 STR("[MoriaCppMod] === CLEAR HOTBAR → bag id={} ===\n"), bagId);
             m_clearingHotbar = true;
@@ -3911,7 +3936,7 @@ namespace MoriaMods
                 *reinterpret_cast<int32_t*>(slotBuf.data() + slotInput.offset) = slot;
                 invComp->ProcessEvent(getSlotFunc, slotBuf.data());
 
-                int32_t itemId = *reinterpret_cast<int32_t*>(slotBuf.data() + slotRet.offset);
+                int32_t itemId = reinterpret_cast<const FItemHandleLocal*>(slotBuf.data() + slotRet.offset)->ID;
                 if (itemId == 0) continue;
 
                 // Check if bag has room (CanMoveItem)
@@ -4191,7 +4216,7 @@ namespace MoriaMods
 
             // Log handle IDs for debugging
             for (size_t hi = 0; hi < m_bodyInvHandles.size(); hi++) {
-                int32_t hid = *reinterpret_cast<int32_t*>(m_bodyInvHandles[hi].data());
+                int32_t hid = reinterpret_cast<const FItemHandleLocal*>(m_bodyInvHandles[hi].data())->ID;
                 Output::send<LogLevel::Warning>(
                     STR("[MoriaCppMod] [Swap] Handle[{}] ID={} size={}\n"),
                     hi, hid, m_bodyInvHandles[hi].size());
@@ -4360,13 +4385,13 @@ namespace MoriaMods
                             std::vector<uint8_t> sb(std::max(getSlotFunc->GetParmsSize() + 32, 64), 0);
                             *reinterpret_cast<int32_t*>(sb.data() + slotInput.offset) = s;
                             invComp->ProcessEvent(getSlotFunc, sb.data());
-                            int32_t id = *reinterpret_cast<int32_t*>(sb.data() + slotRet.offset);
-                            if (id != 0) {
+                            auto* slotHandle = reinterpret_cast<const FItemHandleLocal*>(sb.data() + slotRet.offset);
+                            if (slotHandle->ID != 0) {
                                 int32_t ci = getNameCI(sb.data() + slotRet.offset);
                                 hotbarCIs.push_back(ci);
                                 auto nameStr = getNameStr(sb.data() + slotRet.offset);
                                 Output::send<LogLevel::Warning>(
-                                    STR("[MoriaCppMod] Resolve: hotbar[{}] id={} name={}\n"), s, id, nameStr);
+                                    STR("[MoriaCppMod] Resolve: hotbar[{}] id={} name={}\n"), s, slotHandle->ID, nameStr);
                             }
                         }
 
@@ -4385,11 +4410,11 @@ namespace MoriaMods
                                 if (vb[rivRet.offset] != 0) {
                                     int32_t ci = getNameCI(gb.data() + rgsRet.offset);
                                     cis.push_back(ci);
-                                    int32_t id = *reinterpret_cast<int32_t*>(gb.data() + rgsRet.offset);
+                                    auto* cHandle = reinterpret_cast<const FItemHandleLocal*>(gb.data() + rgsRet.offset);
                                     auto nameStr = getNameStr(gb.data() + rgsRet.offset);
                                     Output::send<LogLevel::Warning>(
                                         STR("[MoriaCppMod] Resolve: container[{}][{}] id={} name={}\n"),
-                                        cIdx, s, id, nameStr);
+                                        cIdx, s, cHandle->ID, nameStr);
                                 }
                             }
                             return cis;
@@ -4467,8 +4492,8 @@ namespace MoriaMods
                     *reinterpret_cast<int32_t*>(slotBuf.data() + slotInput.offset) = slot;
                     invComp->ProcessEvent(getSlotFunc, slotBuf.data());
 
-                    int32_t itemId = *reinterpret_cast<int32_t*>(slotBuf.data() + slotRet.offset);
-                    if (itemId == 0) {
+                    auto* stashHandle = reinterpret_cast<const FItemHandleLocal*>(slotBuf.data() + slotRet.offset);
+                    if (stashHandle->ID == 0) {
                         m_swap.slot = slot + 1;
                         continue;
                     }
@@ -4483,7 +4508,7 @@ namespace MoriaMods
 
                     Output::send<LogLevel::Warning>(
                         STR("[MoriaCppMod] Phase0: hotbar[{}] id={} -> container[{}]\n"),
-                        slot, itemId, m_swap.stashIdx);
+                        slot, stashHandle->ID, m_swap.stashIdx);
 
                     m_swap.wait = 3;
                     return;
@@ -4537,11 +4562,11 @@ namespace MoriaMods
                         continue;
                     }
 
-                    int32_t itemId = *reinterpret_cast<int32_t*>(gsBuf.data() + gsRet.offset);
+                    auto* restHandle = reinterpret_cast<const FItemHandleLocal*>(gsBuf.data() + gsRet.offset);
 
                     Output::send<LogLevel::Warning>(
                         STR("[MoriaCppMod] Phase1: container[{}][{}] id={} -> hotbar\n"),
-                        m_swap.restoreIdx, slot, itemId);
+                        m_swap.restoreIdx, slot, restHandle->ID);
 
                     std::vector<uint8_t> moveBuf(std::max(moveFunc->GetParmsSize() + 32, 128), 0);
                     std::memcpy(moveBuf.data() + mItem.offset, gsBuf.data() + gsRet.offset, handleSize);
@@ -4693,12 +4718,15 @@ namespace MoriaMods
                 if (!a) continue;
                 std::wstring cls = safeClassName(a);
                 if (cls == STR("BP_DebugMenu_CraftingAndConstruction_C")) {
-                    uint8_t* base = reinterpret_cast<uint8_t*>(a);
-                    bool freeCon   = *(base + 600) != 0;
-                    bool freeCraft = *(base + 601) != 0;
-                    bool prereqs   = *(base + 602) != 0;
-                    bool stability = *(base + 603) != 0;
-                    bool instant   = *(base + 604) != 0;
+                    auto readBool = [&](const TCHAR* name) -> bool {
+                        void* ptr = a->GetValuePtrByPropertyNameInChain(name);
+                        return ptr && *static_cast<uint8_t*>(ptr) != 0;
+                    };
+                    bool freeCon   = readBool(STR("free_construction"));
+                    bool freeCraft = readBool(STR("free_crafting"));
+                    bool prereqs   = readBool(STR("construction_prereqs"));
+                    bool stability = readBool(STR("construction_stability"));
+                    bool instant   = readBool(STR("instant_crafting"));
                     std::wstring msg = L"[Cheats] ";
                     msg += freeCon   ? L"FreeBuild:ON " : L"FreeBuild:OFF ";
                     msg += freeCraft ? L"FreeCraft:ON " : L"FreeCraft:OFF ";
@@ -4764,10 +4792,13 @@ namespace MoriaMods
                 if (!a) continue;
                 std::wstring cls = safeClassName(a);
                 if (cls == STR("BP_DebugMenu_CraftingAndConstruction_C")) {
-                    uint8_t* base = reinterpret_cast<uint8_t*>(a);
-                    s_config.freeBuild    = *(base + 600) != 0;
-                    s_config.freeCraft    = *(base + 601) != 0;
-                    s_config.instantCraft = *(base + 604) != 0;
+                    auto readBool = [&](const TCHAR* name) -> bool {
+                        void* ptr = a->GetValuePtrByPropertyNameInChain(name);
+                        return ptr && *static_cast<uint8_t*>(ptr) != 0;
+                    };
+                    s_config.freeBuild    = readBool(STR("free_construction"));
+                    s_config.freeCraft    = readBool(STR("free_crafting"));
+                    s_config.instantCraft = readBool(STR("instant_crafting"));
                     return;
                 }
             }
@@ -4814,6 +4845,24 @@ namespace MoriaMods
             return weakPtr.Get();
         }
 
+        // Write both GATA rotation properties via runtime property discovery
+        bool setGATARotation(UObject* gata, float step)
+        {
+            float* snap = gata->GetValuePtrByPropertyNameInChain<float>(STR("SnapRotateIncrement"));
+            float* free = gata->GetValuePtrByPropertyNameInChain<float>(STR("FreePlaceRotateIncrement"));
+            if (!snap || !free) return false;
+            *snap = step;
+            *free = step;
+            return true;
+        }
+
+        // Read current SnapRotateIncrement from GATA
+        float getGATARotation(UObject* gata)
+        {
+            float* snap = gata->GetValuePtrByPropertyNameInChain<float>(STR("SnapRotateIncrement"));
+            return snap ? *snap : 45.0f;
+        }
+
         void rotateBuildPlacement()
         {
             UObject* gata = resolveGATA();
@@ -4822,13 +4871,8 @@ namespace MoriaMods
                 return;
             }
 
-            uint8_t* gataBase = reinterpret_cast<uint8_t*>(gata);
-            if (!isReadableMemory(gataBase + 1616, 8)) return;
-
-            // Set rotation increments from overlay setting
             const float step = static_cast<float>(s_overlay.rotationStep);
-            *reinterpret_cast<float*>(gataBase + 1616) = step;  // SnapRotateIncrement
-            *reinterpret_cast<float*>(gataBase + 1620) = step;  // FreePlaceRotateIncrement
+            if (!setGATARotation(gata, step)) return;
 
             Output::send<LogLevel::Warning>(
                 STR("[MoriaCppMod] [Rotate] Set SnapRotateIncrement={:.0f} FreePlaceRotateIncrement={:.0f}\n"),
@@ -4845,18 +4889,14 @@ namespace MoriaMods
                 return;
             }
 
-            uint8_t* gataBase = reinterpret_cast<uint8_t*>(gata);
-            if (!isReadableMemory(gataBase + 1616, 8)) return;
-
             // Cycle: 5 → 15 → 45 → 90 → 5
-            float current = *reinterpret_cast<float*>(gataBase + 1616);
+            float current = getGATARotation(gata);
             float newStep;
             if (current < 10.0f) newStep = 15.0f;
             else if (current < 30.0f) newStep = 45.0f;
             else if (current < 60.0f) newStep = 90.0f;
             else newStep = 5.0f;
-            *reinterpret_cast<float*>(gataBase + 1616) = newStep;  // SnapRotateIncrement
-            *reinterpret_cast<float*>(gataBase + 1620) = newStep;  // FreePlaceRotateIncrement
+            setGATARotation(gata, newStep);
             s_overlay.rotationStep = static_cast<int>(newStep);
             s_overlay.needsUpdate = true;
 
@@ -7108,12 +7148,7 @@ namespace MoriaMods
                 s_overlay.rotationStep = next;
                 s_overlay.needsUpdate = true;
                 UObject* gata = resolveGATA();
-                if (gata) {
-                    uint8_t* gataBase = reinterpret_cast<uint8_t*>(gata);
-                    float step = static_cast<float>(next);
-                    *reinterpret_cast<float*>(gataBase + 1616) = step;
-                    *reinterpret_cast<float*>(gataBase + 1620) = step;
-                }
+                if (gata) setGATARotation(gata, static_cast<float>(next));
                 std::wstring msg = L"Rotation step: " + std::to_wstring(next) + L"\xB0";
                 showOnScreen(msg.c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
             });
@@ -7125,12 +7160,7 @@ namespace MoriaMods
                 s_overlay.rotationStep = next;
                 s_overlay.needsUpdate = true;
                 UObject* gata = resolveGATA();
-                if (gata) {
-                    uint8_t* gataBase = reinterpret_cast<uint8_t*>(gata);
-                    float step = static_cast<float>(next);
-                    *reinterpret_cast<float*>(gataBase + 1616) = step;
-                    *reinterpret_cast<float*>(gataBase + 1620) = step;
-                }
+                if (gata) setGATARotation(gata, static_cast<float>(next));
                 std::wstring msg = L"Rotation step: " + std::to_wstring(next) + L"\xB0";
                 showOnScreen(msg.c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
             });
@@ -7163,11 +7193,9 @@ namespace MoriaMods
                         std::wstring cls = safeClassName(context);
                         if (!cls.empty() && cls.find(STR("BuildHUD")) != std::wstring::npos) {
                             UObject* gata = s_instance->resolveGATA();
-                            if (gata && isReadableMemory(reinterpret_cast<uint8_t*>(gata) + 1616, 8)) {
-                                uint8_t* gataBase = reinterpret_cast<uint8_t*>(gata);
+                            if (gata) {
                                 const float step = static_cast<float>(s_overlay.rotationStep);
-                                *reinterpret_cast<float*>(gataBase + 1616) = step;  // SnapRotateIncrement
-                                *reinterpret_cast<float*>(gataBase + 1620) = step;  // FreePlaceRotateIncrement
+                                s_instance->setGATARotation(gata, step);
                             }
                         }
                     }
