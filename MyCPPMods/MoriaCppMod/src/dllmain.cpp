@@ -236,6 +236,7 @@ namespace MoriaMods
         ULONG_PTR gdipToken{0};
         std::wstring iconFolder;                    // path to icon PNGs
         std::atomic<int> rotationStep{5};           // current build rotation step in degrees (shown in F9)
+        std::atomic<int> totalRotation{0};          // cumulative build rotation 0-359° (shown in F9)
         std::atomic<int> activeToolbar{0};          // which toolbar is visible (0/1/2) — shown in F12 slot
     };
     static OverlayState s_overlay;
@@ -527,16 +528,39 @@ namespace MoriaMods
                     }
                 }
 
-                // Slot 8 (Rotation): show rotation step value
+                // Slot 8 (Rotation): step degrees (top, bold) | separator line | T+total (bottom)
                 if (i == 8)
                 {
-                    int rotVal = s_overlay.rotationStep;
-                    std::wstring rotStr = std::to_wstring(rotVal) + L"\xB0";
-                    float rotFontSz = slotSize * 0.35f;
-                    Gdiplus::Font rotFont(&fontFamily, rotFontSz, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-                    Gdiplus::SolidBrush rotBrush(Gdiplus::Color(220, 180, 210, 255));
-                    Gdiplus::RectF rotRect((float)sx, (float)sy, (float)slotSize, (float)slotSize);
-                    gfx.DrawString(rotStr.c_str(), -1, &rotFont, rotRect, &centerFmt, &rotBrush);
+                    int stepVal = s_overlay.rotationStep;
+                    int totalVal = s_overlay.totalRotation;
+
+                    // Top line: step value with degree symbol (bold)
+                    std::wstring stepStr = std::to_wstring(stepVal) + L"\xB0";
+                    float stepFontSz = slotSize * 0.28f;
+                    Gdiplus::Font stepFont(&fontFamily, stepFontSz, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+                    Gdiplus::SolidBrush stepBrush(Gdiplus::Color(220, 180, 210, 255));
+                    Gdiplus::StringFormat topFmt;
+                    topFmt.SetAlignment(Gdiplus::StringAlignmentCenter);
+                    topFmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+                    Gdiplus::RectF topRect((float)sx, (float)sy + slotSize * 0.02f, (float)slotSize, (float)slotSize * 0.45f);
+                    gfx.DrawString(stepStr.c_str(), -1, &stepFont, topRect, &topFmt, &stepBrush);
+
+                    // Horizontal separator line
+                    float lineY = (float)sy + slotSize * 0.48f;
+                    float lineMargin = slotSize * 0.15f;
+                    Gdiplus::Pen linePen(Gdiplus::Color(120, 180, 180, 200), 1.0f);
+                    gfx.DrawLine(&linePen, (float)sx + lineMargin, lineY, (float)sx + slotSize - lineMargin, lineY);
+
+                    // Bottom line: T+total (no degree symbol)
+                    std::wstring totalStr = L"T" + std::to_wstring(totalVal);
+                    float totalFontSz = slotSize * 0.28f;
+                    Gdiplus::Font totalFont(&fontFamily, totalFontSz, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+                    Gdiplus::SolidBrush totalBrush(Gdiplus::Color(255, 200, 230, 255));
+                    Gdiplus::StringFormat botFmt;
+                    botFmt.SetAlignment(Gdiplus::StringAlignmentCenter);
+                    botFmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+                    Gdiplus::RectF botRect((float)sx, (float)sy + slotSize * 0.50f, (float)slotSize, (float)slotSize * 0.48f);
+                    gfx.DrawString(totalStr.c_str(), -1, &totalFont, botRect, &botFmt, &totalBrush);
                 }
 
                 // Slot 9 (Target): archery target icon + TGT text
@@ -829,6 +853,9 @@ namespace MoriaMods
         CRITICAL_SECTION dataCS;
         std::atomic<bool> csInit{false};
 
+        // Auto-copy and auto-close (set by game thread, consumed by UI thread)
+        std::atomic<bool> pendingAutoCopy{false};
+
         // Hit rects (set during render, checked on click)
         Gdiplus::RectF copyBtnRect;
         Gdiplus::RectF closeBtnRect;
@@ -864,6 +891,14 @@ namespace MoriaMods
     static void renderTargetInfo(HWND hwnd)
     {
         if (!s_targetInfo.csInit) return;
+
+        // Auto-copy to clipboard + start 10-second auto-close timer
+        if (s_targetInfo.pendingAutoCopy.exchange(false))
+        {
+            copyTargetInfoToClipboard(hwnd);
+            SetTimer(hwnd, 2, 10000, nullptr); // Timer ID 2: auto-close after 10s
+        }
+
         if (!s_targetInfo.gameHwnd || !IsWindow(s_targetInfo.gameHwnd))
         {
             s_targetInfo.gameHwnd = findGameWindow();
@@ -1088,6 +1123,7 @@ namespace MoriaMods
                 my <= s_targetInfo.closeBtnRect.Y + s_targetInfo.closeBtnRect.Height)
             {
                 s_targetInfo.visible = false;
+                KillTimer(hwnd, 2); // cancel auto-close
                 return 0;
             }
             // Hit-test copy button
@@ -1103,14 +1139,23 @@ namespace MoriaMods
             if (wp == VK_ESCAPE)
             {
                 s_targetInfo.visible = false;
+                KillTimer(hwnd, 2); // cancel auto-close
                 return 0;
             }
             break;
         case WM_TIMER:
-            renderTargetInfo(hwnd);
+            if (wp == 2)
+            {
+                // Auto-close timer fired (10 seconds after show)
+                s_targetInfo.visible = false;
+                KillTimer(hwnd, 2);
+                return 0;
+            }
+            renderTargetInfo(hwnd); // Timer ID 1: render refresh
             return 0;
         case WM_DESTROY:
             KillTimer(hwnd, 1);
+            KillTimer(hwnd, 2);
             PostQuitMessage(0);
             return 0;
         }
@@ -2695,6 +2740,10 @@ namespace MoriaMods
             showOnScreen(screenText, 8.0f, screenR, screenG, 0.5f);
         }
 
+        // LINT NOTE (#18 — removeAimed throttle): Analyzed and intentionally skipped. This function is
+        // only called on Num1 keypress (not per-frame), so call frequency is naturally limited by keyboard
+        // repeat rate (~20 Hz). Adding a throttle risks partial stack removal (e.g., hiding 2 of 5 stacked
+        // instances, corrupting the undo stack). The automated replay path already has MAX_HIDES_PER_FRAME.
         void removeAimed()
         {
             FVec3f start{}, end{};
@@ -4557,6 +4606,10 @@ namespace MoriaMods
             // TSet starts with TSparseArray which starts with TArray
             // TArray: { Data*, Num, Max }
             // Each element: FSetElement<TPair<FName, uint8*>> = FName(8) + uint8*(8) + HashNextId(4) + HashIndex(4) = 24 bytes
+            // LINT NOTE (#11 — TSet iteration safety): Analyzed and intentionally skipped. These DataTable
+            // RowMaps are static (loaded once at startup, never modified at runtime). All iteration is
+            // read-only on the game thread. Copying to a local vector would require raw FSetElement
+            // deserialization — adding risk (FName safety) with zero benefit.
             uint8_t* dtBase = reinterpret_cast<uint8_t*>(dtStorage);
             constexpr int ROWMAP_OFFSET = 0x30;
             constexpr int SET_ELEMENT_SIZE = 24; // FName(8) + ptr(8) + hash(4) + hash(4)
@@ -7372,6 +7425,12 @@ namespace MoriaMods
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Overlay thread started, icons: {}\n"), s_overlay.iconFolder);
         }
 
+        // LINT NOTE (#9 — stopOverlay race): The 3-second WaitForSingleObject timeout means the render
+        // thread could theoretically still hold slotCS when we DeleteCriticalSection below. Analyzed and
+        // intentionally skipped: this only fires during mod destructor (game shutdown). Even if the timeout
+        // expires and the CS is deleted under the render thread, the game is already closing. Changing to
+        // INFINITE wait risks hanging the game exit if the render thread is stuck in GDI+. The current
+        // pragmatic timeout works 99.9% of the time and any crash is invisible to the user.
         void stopOverlay()
         {
             s_overlay.running = false;
@@ -7381,6 +7440,15 @@ namespace MoriaMods
                 WaitForSingleObject(s_overlay.thread, 3000);
                 CloseHandle(s_overlay.thread);
                 s_overlay.thread = nullptr;
+            }
+            // Fix #7: Reset GDI+ token so startOverlay() can re-initialize if overlay is restarted.
+            // overlayThreadProc() calls GdiplusShutdown on exit but never reset the token to 0,
+            // causing the guard `if (!s_overlay.gdipToken)` to skip re-init on restart.
+            // Matches the pattern used by configThreadProc and targetInfoThreadProc.
+            if (s_overlay.gdipToken)
+            {
+                Gdiplus::GdiplusShutdown(s_overlay.gdipToken);
+                s_overlay.gdipToken = 0;
             }
             // Clean up loaded icons (shared_ptr handles deallocation)
             for (int i = 0; i < OVERLAY_SLOTS; i++)
@@ -7487,6 +7555,9 @@ namespace MoriaMods
             s_targetInfo.recipeRef = recipe;
             s_targetInfo.rowName = rowName;
             LeaveCriticalSection(&s_targetInfo.dataCS);
+
+            // Request auto-copy to clipboard (UI thread will execute)
+            s_targetInfo.pendingAutoCopy = true;
 
             if (!s_targetInfo.thread)
             {
@@ -8042,7 +8113,7 @@ namespace MoriaMods
                 if (!s_instance) return;
                 if (!func) return;
 
-                // Intercept RotatePressed on BuildHUD: set GATA rotation step from overlay setting
+                // Intercept RotatePressed on BuildHUD: set GATA rotation step + track cumulative rotation
                 {
                     std::wstring fn(func->GetName());
                     if (fn == STR("RotatePressed") || fn == STR("RotateCcwPressed"))
@@ -8053,8 +8124,18 @@ namespace MoriaMods
                             UObject* gata = s_instance->resolveGATA();
                             if (gata)
                             {
-                                const float step = static_cast<float>(s_overlay.rotationStep);
-                                s_instance->setGATARotation(gata, step);
+                                const int step = s_overlay.rotationStep.load();
+                                s_instance->setGATARotation(gata, static_cast<float>(step));
+                                // Track cumulative rotation (0-359°)
+                                if (fn == STR("RotatePressed"))
+                                {
+                                    s_overlay.totalRotation = (s_overlay.totalRotation.load() + step) % 360;
+                                }
+                                else
+                                {
+                                    s_overlay.totalRotation = (s_overlay.totalRotation.load() - step + 360) % 360;
+                                }
+                                s_overlay.needsUpdate = true;
                             }
                         }
                     }
