@@ -21,10 +21,12 @@
 // Section 1: Includes & Forward Declarations
 // ════════════════════════════════════════════════════════════════════════════════
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <fstream>
 #include <format>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -38,6 +40,7 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#include <windowsx.h>
 #include <objidl.h>
 #include <gdiplus.h>
 #pragma comment(lib, "gdiplus.lib")
@@ -213,9 +216,9 @@ namespace MoriaMods
 
     struct OverlaySlot
     {
-        std::wstring displayName;      // recipe name (short)
-        std::wstring textureName;      // e.g. "T_UI_BuildIcon_AdornedDoor"
-        Gdiplus::Image* icon{nullptr}; // loaded PNG icon (or nullptr)
+        std::wstring displayName;                   // recipe name (short)
+        std::wstring textureName;                   // e.g. "T_UI_BuildIcon_AdornedDoor"
+        std::shared_ptr<Gdiplus::Image> icon;       // loaded PNG icon (ref-counted for thread safety)
         bool used{false};
     };
 
@@ -224,16 +227,16 @@ namespace MoriaMods
         HWND overlayHwnd{nullptr};
         HWND gameHwnd{nullptr};
         HANDLE thread{nullptr};
-        volatile bool running{false};
-        volatile bool needsUpdate{true};
-        volatile bool visible{true};
+        std::atomic<bool> running{false};
+        std::atomic<bool> needsUpdate{true};
+        std::atomic<bool> visible{true};
         CRITICAL_SECTION slotCS;
         OverlaySlot slots[OVERLAY_SLOTS]{};
-        bool csInit{false};
+        std::atomic<bool> csInit{false};
         ULONG_PTR gdipToken{0};
-        std::wstring iconFolder;       // path to icon PNGs
-        volatile int rotationStep{5};  // current build rotation step in degrees (shown in F9)
-        volatile int activeToolbar{0}; // which toolbar is visible (0/1/2) — shown in F12 slot
+        std::wstring iconFolder;                    // path to icon PNGs
+        std::atomic<int> rotationStep{5};           // current build rotation step in degrees (shown in F9)
+        std::atomic<int> activeToolbar{0};          // which toolbar is visible (0/1/2) — shown in F12 slot
     };
     static OverlayState s_overlay;
 
@@ -263,7 +266,7 @@ namespace MoriaMods
             {L"Configuration", L"Misc", Input::Key::F12},          // 10
             {L"Toolbar Swap", L"Misc", Input::Key::OEM_FIVE},      // 11
     };
-    static volatile int s_capturingBind = -1;
+    static std::atomic<int> s_capturingBind{-1};
 
     static std::wstring keyName(uint8_t vk)
     {
@@ -514,7 +517,7 @@ namespace MoriaMods
                     if (localSlots[i].used && localSlots[i].icon)
                     {
                         int iconPad = static_cast<int>(3 * scale);
-                        gfx.DrawImage(localSlots[i].icon, Gdiplus::Rect(sx + iconPad, sy + iconPad, slotSize - iconPad * 2, slotSize - iconPad * 2));
+                        gfx.DrawImage(localSlots[i].icon.get(), Gdiplus::Rect(sx + iconPad, sy + iconPad, slotSize - iconPad * 2, slotSize - iconPad * 2));
                     }
                     else if (localSlots[i].used && !localSlots[i].displayName.empty())
                     {
@@ -774,21 +777,21 @@ namespace MoriaMods
         HWND configHwnd{nullptr};
         HWND gameHwnd{nullptr};
         HANDLE thread{nullptr};
-        volatile bool running{false};
-        volatile bool visible{false};
-        volatile int activeTab{0};
+        std::atomic<bool> running{false};
+        std::atomic<bool> visible{false};
+        std::atomic<int> activeTab{0};
         ULONG_PTR gdipToken{0};
 
         // Cheat toggle states (read from debug menu actor on game thread)
-        volatile bool freeBuild{false};
-        volatile bool freeCraft{false};
-        volatile bool instantCraft{false};
+        std::atomic<bool> freeBuild{false};
+        std::atomic<bool> freeCraft{false};
+        std::atomic<bool> instantCraft{false};
 
         // Pending actions (set by config UI thread, consumed by game thread in on_update)
-        volatile bool pendingToggleFreeBuild{false};
-        volatile bool pendingToggleFreeCraft{false};
-        volatile bool pendingToggleInstantCraft{false};
-        volatile bool pendingUnlockAllRecipes{false};
+        std::atomic<bool> pendingToggleFreeBuild{false};
+        std::atomic<bool> pendingToggleFreeCraft{false};
+        std::atomic<bool> pendingToggleInstantCraft{false};
+        std::atomic<bool> pendingUnlockAllRecipes{false};
 
         // Scrollbar state
         int scrollY{0};
@@ -811,8 +814,8 @@ namespace MoriaMods
         HWND hwnd{nullptr};
         HWND gameHwnd{nullptr};
         HANDLE thread{nullptr};
-        volatile bool running{false};
-        volatile bool visible{false};
+        std::atomic<bool> running{false};
+        std::atomic<bool> visible{false};
         ULONG_PTR gdipToken{0};
 
         // Data fields (set by game thread, read by UI thread)
@@ -824,7 +827,7 @@ namespace MoriaMods
         std::wstring recipeRef; // BP name without _C suffix (for bLock matching)
         std::wstring rowName;   // DT_Constructions row name (e.g. "Beorn_Wall_4x3_A")
         CRITICAL_SECTION dataCS;
-        bool csInit{false};
+        std::atomic<bool> csInit{false};
 
         // Hit rects (set during render, checked on click)
         Gdiplus::RectF copyBtnRect;
@@ -834,6 +837,7 @@ namespace MoriaMods
 
     static void copyTargetInfoToClipboard(HWND hwnd)
     {
+        if (!s_targetInfo.csInit) return;
         std::wstring copyText;
         EnterCriticalSection(&s_targetInfo.dataCS);
         copyText = L"Class: " + s_targetInfo.actorClass + L"\r\n" + L"Name: " + s_targetInfo.actorName + L"\r\n" + L"Display: " + s_targetInfo.displayName +
@@ -859,6 +863,7 @@ namespace MoriaMods
 
     static void renderTargetInfo(HWND hwnd)
     {
+        if (!s_targetInfo.csInit) return;
         if (!s_targetInfo.gameHwnd || !IsWindow(s_targetInfo.gameHwnd))
         {
             s_targetInfo.gameHwnd = findGameWindow();
@@ -1076,8 +1081,8 @@ namespace MoriaMods
         switch (msg)
         {
         case WM_LBUTTONDOWN: {
-            int mx = LOWORD(lp);
-            int my = HIWORD(lp);
+            int mx = GET_X_LPARAM(lp);
+            int my = GET_Y_LPARAM(lp);
             // Hit-test close button (red X)
             if (mx >= s_targetInfo.closeBtnRect.X && mx <= s_targetInfo.closeBtnRect.X + s_targetInfo.closeBtnRect.Width && my >= s_targetInfo.closeBtnRect.Y &&
                 my <= s_targetInfo.closeBtnRect.Y + s_targetInfo.closeBtnRect.Height)
@@ -1582,8 +1587,8 @@ namespace MoriaMods
             int tabH = static_cast<int>(28 * scale);
             int tabW = static_cast<int>((configW - pad * 2) / CONFIG_TAB_COUNT);
 
-            int mx = LOWORD(lp);
-            int my = HIWORD(lp);
+            int mx = GET_X_LPARAM(lp);
+            int my = GET_Y_LPARAM(lp);
 
             // Scroll offset for hit testing — convert visual Y to logical Y
             int scrollbarW = static_cast<int>(10 * scale);
@@ -1766,7 +1771,7 @@ namespace MoriaMods
             PostQuitMessage(0);
             return 0;
         }
-        return DefWindowProc(hwnd, msg, wp, lp);
+        return DefWindowProcW(hwnd, msg, wp, lp);
     }
 
     static DWORD WINAPI configThreadProc(LPVOID)
@@ -1966,11 +1971,19 @@ namespace MoriaMods
                 std::string token;
                 if (!std::getline(ss, sr.meshName, '|')) continue;
                 if (!std::getline(ss, token, '|')) continue;
-                sr.posX = std::stof(token);
-                if (!std::getline(ss, token, '|')) continue;
-                sr.posY = std::stof(token);
-                if (!std::getline(ss, token, '|')) continue;
-                sr.posZ = std::stof(token);
+                try
+                {
+                    sr.posX = std::stof(token);
+                    if (!std::getline(ss, token, '|')) continue;
+                    sr.posY = std::stof(token);
+                    if (!std::getline(ss, token, '|')) continue;
+                    sr.posZ = std::stof(token);
+                }
+                catch (...)
+                {
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Skipping malformed save line: {}\n"), std::wstring(line.begin(), line.end()));
+                    continue;
+                }
                 m_savedRemovals.push_back(sr);
             }
 
@@ -2173,7 +2186,7 @@ namespace MoriaMods
             }
 
             FText ftext(text.c_str());
-            uint8_t buf[64]{};
+            uint8_t buf[sizeof(FText) + 16]{};
             std::memcpy(buf, &ftext, sizeof(FText));
             m_chatWidget->ProcessEvent(func, buf);
         }
@@ -2194,7 +2207,7 @@ namespace MoriaMods
                 if (f1)
                 {
                     FText t1(STR("[Mod] Test 1: AddToShortChat"));
-                    uint8_t buf[64]{};
+                    uint8_t buf[sizeof(FText) + 16]{};
                     std::memcpy(buf, &t1, sizeof(FText));
                     m_chatWidget->ProcessEvent(f1, buf);
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called AddToShortChat\n"));
@@ -2205,7 +2218,7 @@ namespace MoriaMods
                 if (f2)
                 {
                     FText t2(STR("[Mod] Test 2: SystemMessageEvent"));
-                    uint8_t buf[64]{};
+                    uint8_t buf[sizeof(FText) + 16]{};
                     std::memcpy(buf, &t2, sizeof(FText));
                     m_chatWidget->ProcessEvent(f2, buf);
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called SystemMessageEvent\n"));
@@ -2216,7 +2229,7 @@ namespace MoriaMods
                 if (f3)
                 {
                     FText t3(STR("[Mod] Test 3: AddFormattedMessage"));
-                    uint8_t buf[64]{};
+                    uint8_t buf[sizeof(FText) + 16]{};
                     std::memcpy(buf, &t3, sizeof(FText));
                     m_chatWidget->ProcessEvent(f3, buf);
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called AddFormattedMessage\n"));
@@ -2236,7 +2249,7 @@ namespace MoriaMods
                 if (f4)
                 {
                     FText t4(STR("[Mod] Test 4: AppendMessage"));
-                    uint8_t buf[64]{};
+                    uint8_t buf[sizeof(FText) + 16]{};
                     std::memcpy(buf, &t4, sizeof(FText));
                     m_sysMessages->ProcessEvent(f4, buf);
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called AppendMessage\n"));
@@ -2932,7 +2945,7 @@ namespace MoriaMods
                         funcCount++;
                         if (funcCount > 30)
                         {
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     ... ({} more, truncated)\n"), 0);
+                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     ... (truncated at 30)\n"));
                             break;
                         }
                     }
@@ -3811,7 +3824,7 @@ namespace MoriaMods
 
             // Get FItemHandle size from GetItemForHotbarSlot return
             auto* getSlotFunc = invComp->GetFunctionByNameInChain(STR("GetItemForHotbarSlot"));
-            int handleSize = findParam(getSlotFunc, L"ReturnValue").size;
+            int handleSize = getSlotFunc ? findParam(getSlotFunc, L"ReturnValue").size : 0;
             if (handleSize <= 0) handleSize = 20; // fallback
 
             // Call GetContainers() to find the EpicPack bag
@@ -5607,14 +5620,25 @@ namespace MoriaMods
         bool m_showHotbar{true}; // ON by default
 
         // Safe memory read helper (uses VirtualQuery to avoid access violations)
+        // Checks both the start and end of the requested range to handle page boundaries.
         static bool isReadableMemory(const void* ptr, size_t size = 8)
         {
             if (!ptr) return false;
-            MEMORY_BASIC_INFORMATION mbi{};
-            if (VirtualQuery(ptr, &mbi, sizeof(mbi)) == 0) return false;
-            if (mbi.State != MEM_COMMIT) return false;
-            DWORD protect = mbi.Protect & ~(PAGE_GUARD | PAGE_NOCACHE | PAGE_WRITECOMBINE);
-            return (protect == PAGE_READONLY || protect == PAGE_READWRITE || protect == PAGE_EXECUTE_READ || protect == PAGE_EXECUTE_READWRITE);
+            auto checkPage = [](const void* p) -> bool {
+                MEMORY_BASIC_INFORMATION mbi{};
+                if (VirtualQuery(p, &mbi, sizeof(mbi)) == 0) return false;
+                if (mbi.State != MEM_COMMIT) return false;
+                DWORD protect = mbi.Protect & ~(PAGE_GUARD | PAGE_NOCACHE | PAGE_WRITECOMBINE);
+                return (protect == PAGE_READONLY || protect == PAGE_READWRITE || protect == PAGE_EXECUTE_READ || protect == PAGE_EXECUTE_READWRITE);
+            };
+            if (!checkPage(ptr)) return false;
+            // Also check the last byte of the range to catch cross-page boundary reads
+            if (size > 1)
+            {
+                const void* end = static_cast<const uint8_t*>(ptr) + size - 1;
+                if (!checkPage(end)) return false;
+            }
+            return true;
         }
 
         // Safe wrapper for GetClassPrivate()->GetName() — returns empty string on null
@@ -5706,11 +5730,23 @@ namespace MoriaMods
                 // Rotation step persistence
                 if (key == "rotation")
                 {
-                    int val = std::stoi(line.substr(sep1 + 1));
-                    if (val >= 0 && val <= 90) s_overlay.rotationStep = val;
+                    try
+                    {
+                        int val = std::stoi(line.substr(sep1 + 1));
+                        if (val >= 0 && val <= 90) s_overlay.rotationStep = val;
+                    }
+                    catch (...) {}
                     continue;
                 }
-                int slot = std::stoi(key);
+                int slot;
+                try
+                {
+                    slot = std::stoi(key);
+                }
+                catch (...)
+                {
+                    continue;
+                }
                 if (slot < 0 || slot >= OVERLAY_BUILD_SLOTS) continue;
                 // Parse: displayName|textureName (textureName optional for backward compat)
                 auto sep2 = line.find('|', sep1 + 1);
@@ -5759,8 +5795,16 @@ namespace MoriaMods
                 if (line.empty() || line[0] == '#') continue;
                 auto sep = line.find('|');
                 if (sep == std::string::npos) continue;
-                int idx = std::stoi(line.substr(0, sep));
-                int vk = std::stoi(line.substr(sep + 1));
+                int idx, vk;
+                try
+                {
+                    idx = std::stoi(line.substr(0, sep));
+                    vk = std::stoi(line.substr(sep + 1));
+                }
+                catch (...)
+                {
+                    continue;
+                }
                 if (idx >= 0 && idx < BIND_COUNT && vk > 0 && vk < 256)
                 {
                     s_bindings[idx].key = static_cast<uint8_t>(vk);
@@ -5773,218 +5817,9 @@ namespace MoriaMods
             }
         }
 
-        // ── DXT5 (BC3) block decoder ──
-        // Decodes a single 4x4 block of DXT5-compressed data (16 bytes) into BGRA pixels
-        static void decodeDXT5Block(const uint8_t* block, uint8_t* outBGRA)
-        {
-            // Alpha block (8 bytes)
-            uint8_t alpha0 = block[0];
-            uint8_t alpha1 = block[1];
-            uint8_t alphaLUT[8];
-            alphaLUT[0] = alpha0;
-            alphaLUT[1] = alpha1;
-            if (alpha0 > alpha1)
-            {
-                alphaLUT[2] = (6 * alpha0 + 1 * alpha1) / 7;
-                alphaLUT[3] = (5 * alpha0 + 2 * alpha1) / 7;
-                alphaLUT[4] = (4 * alpha0 + 3 * alpha1) / 7;
-                alphaLUT[5] = (3 * alpha0 + 4 * alpha1) / 7;
-                alphaLUT[6] = (2 * alpha0 + 5 * alpha1) / 7;
-                alphaLUT[7] = (1 * alpha0 + 6 * alpha1) / 7;
-            }
-            else
-            {
-                alphaLUT[2] = (4 * alpha0 + 1 * alpha1) / 5;
-                alphaLUT[3] = (3 * alpha0 + 2 * alpha1) / 5;
-                alphaLUT[4] = (2 * alpha0 + 3 * alpha1) / 5;
-                alphaLUT[5] = (1 * alpha0 + 4 * alpha1) / 5;
-                alphaLUT[6] = 0;
-                alphaLUT[7] = 255;
-            }
-            // 48-bit alpha index block (6 bytes at block+2)
-            uint64_t alphaBits = 0;
-            for (int i = 0; i < 6; i++)
-                alphaBits |= static_cast<uint64_t>(block[2 + i]) << (8 * i);
-
-            // Color block (8 bytes at block+8)
-            uint16_t c0 = block[8] | (block[9] << 8);
-            uint16_t c1 = block[10] | (block[11] << 8);
-            uint8_t colorLUT[4][3]; // RGB
-            // Expand 5:6:5 to 8:8:8
-            colorLUT[0][0] = ((c0 >> 11) & 0x1F) * 255 / 31;
-            colorLUT[0][1] = ((c0 >> 5) & 0x3F) * 255 / 63;
-            colorLUT[0][2] = (c0 & 0x1F) * 255 / 31;
-            colorLUT[1][0] = ((c1 >> 11) & 0x1F) * 255 / 31;
-            colorLUT[1][1] = ((c1 >> 5) & 0x3F) * 255 / 63;
-            colorLUT[1][2] = (c1 & 0x1F) * 255 / 31;
-            // DXT5 always uses 4-color mode for the color block
-            colorLUT[2][0] = (2 * colorLUT[0][0] + colorLUT[1][0]) / 3;
-            colorLUT[2][1] = (2 * colorLUT[0][1] + colorLUT[1][1]) / 3;
-            colorLUT[2][2] = (2 * colorLUT[0][2] + colorLUT[1][2]) / 3;
-            colorLUT[3][0] = (colorLUT[0][0] + 2 * colorLUT[1][0]) / 3;
-            colorLUT[3][1] = (colorLUT[0][1] + 2 * colorLUT[1][1]) / 3;
-            colorLUT[3][2] = (colorLUT[0][2] + 2 * colorLUT[1][2]) / 3;
-
-            uint32_t colorBits = block[12] | (block[13] << 8) | (block[14] << 16) | (block[15] << 24);
-
-            for (int py = 0; py < 4; py++)
-            {
-                for (int px = 0; px < 4; px++)
-                {
-                    int idx = py * 4 + px;
-                    int ci = (colorBits >> (idx * 2)) & 0x3;
-                    int ai = (alphaBits >> (idx * 3)) & 0x7;
-                    uint8_t* out = outBGRA + idx * 4;
-                    out[0] = colorLUT[ci][2]; // B
-                    out[1] = colorLUT[ci][1]; // G
-                    out[2] = colorLUT[ci][0]; // R
-                    out[3] = alphaLUT[ai];    // A
-                }
-            }
-        }
-
-        // Decode a full DXT5-compressed image to BGRA pixel buffer
-        static std::vector<uint8_t> decodeDXT5Image(const uint8_t* data, int width, int height)
-        {
-            std::vector<uint8_t> pixels(width * height * 4, 0);
-            int blocksX = (width + 3) / 4;
-            int blocksY = (height + 3) / 4;
-            for (int by = 0; by < blocksY; by++)
-            {
-                for (int bx = 0; bx < blocksX; bx++)
-                {
-                    uint8_t blockPixels[64]; // 4x4 * 4 = 64 bytes BGRA
-                    decodeDXT5Block(data + (by * blocksX + bx) * 16, blockPixels);
-                    // Copy 4x4 block into output image
-                    for (int py = 0; py < 4; py++)
-                    {
-                        int destY = by * 4 + py;
-                        if (destY >= height) break;
-                        for (int px = 0; px < 4; px++)
-                        {
-                            int destX = bx * 4 + px;
-                            if (destX >= width) break;
-                            int srcIdx = (py * 4 + px) * 4;
-                            int dstIdx = (destY * width + destX) * 4;
-                            pixels[dstIdx + 0] = blockPixels[srcIdx + 0];
-                            pixels[dstIdx + 1] = blockPixels[srcIdx + 1];
-                            pixels[dstIdx + 2] = blockPixels[srcIdx + 2];
-                            pixels[dstIdx + 3] = blockPixels[srcIdx + 3];
-                        }
-                    }
-                }
-            }
-            return pixels;
-        }
-
-        // Save BGRA pixel buffer as PNG using GDI+
-        // Returns true on success
-        static bool saveBGRAAsPng(const uint8_t* bgra, int width, int height, const std::wstring& path)
-        {
-            // Need GDI+ initialized — overlay thread does this, but we may be called from game thread
-            Gdiplus::GdiplusStartupInput gdipInput;
-            ULONG_PTR token = 0;
-            Gdiplus::GdiplusStartup(&token, &gdipInput, nullptr);
-
-            bool success = false;
-            {
-                Gdiplus::Bitmap bmp(width, height, PixelFormat32bppARGB);
-                Gdiplus::BitmapData bmpData;
-                Gdiplus::Rect lockRect(0, 0, width, height);
-                if (bmp.LockBits(&lockRect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &bmpData) == Gdiplus::Ok)
-                {
-                    // Copy row by row (stride may differ)
-                    for (int y = 0; y < height; y++)
-                    {
-                        memcpy(static_cast<uint8_t*>(bmpData.Scan0) + y * bmpData.Stride, bgra + y * width * 4, width * 4);
-                    }
-                    bmp.UnlockBits(&bmpData);
-
-                    // Get PNG encoder CLSID
-                    UINT num = 0, sz = 0;
-                    Gdiplus::GetImageEncodersSize(&num, &sz);
-                    if (sz > 0)
-                    {
-                        std::vector<uint8_t> buf(sz);
-                        auto* encoders = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buf.data());
-                        Gdiplus::GetImageEncoders(num, sz, encoders);
-                        for (UINT i = 0; i < num; i++)
-                        {
-                            if (wcscmp(encoders[i].MimeType, L"image/png") == 0)
-                            {
-                                success = (bmp.Save(path.c_str(), &encoders[i].Clsid, nullptr) == Gdiplus::Ok);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            Gdiplus::GdiplusShutdown(token);
-            return success;
-        }
-
-        // Check if an entire byte range is readable (page-by-page)
-        static bool isRangeReadable(const void* ptr, size_t size)
-        {
-            if (!ptr || size == 0) return false;
-            const uint8_t* p = static_cast<const uint8_t*>(ptr);
-            // Check every 4K page boundary
-            for (size_t off = 0; off < size; off += 4096)
-            {
-                if (!isReadableMemory(p + off, 1)) return false;
-            }
-            // Check last byte too
-            if (!isReadableMemory(p + size - 1, 1)) return false;
-            return true;
-        }
-
-        // Validate that data at ptr looks like DXT5 blocks (check first few blocks)
-        // Returns true if at least some blocks have non-trivial alpha/color data
-        static bool looksLikeDXT5(const uint8_t* data, int64_t dataSize)
-        {
-            if (dataSize < 16) return false;
-            int blocksToCheck = static_cast<int>((std::min)(dataSize / 16, (int64_t)16));
-            int nonTrivialBlocks = 0;
-            for (int b = 0; b < blocksToCheck; b++)
-            {
-                const uint8_t* block = data + b * 16;
-                // A DXT5 block has: alpha0(1B), alpha1(1B), alpha_indices(6B), color0(2B), color1(2B), color_indices(4B)
-                // Check if the color endpoints are non-zero (indicates actual image data)
-                uint16_t c0 = block[8] | (block[9] << 8);
-                uint16_t c1 = block[10] | (block[11] << 8);
-                uint8_t a0 = block[0], a1 = block[1];
-                // Non-trivial: has some color or alpha variation
-                if (c0 != 0 || c1 != 0 || a0 != 0 || a1 != 0) nonTrivialBlocks++;
-            }
-            // At least 25% of checked blocks should be non-trivial
-            return nonTrivialBlocks >= blocksToCheck / 4;
-        }
-
-        // Scan the entire mip structure for a heap pointer to valid DXT5 bulk data
-        // No assumptions about FByteBulkData layout — just brute-force scan
-        static uint8_t* findBulkDataPtr(uint8_t* mipBase, int64_t expectedSize)
-        {
-            // Scan mip offsets 16 through 256 (skip SizeX/Y/Z at 0-11)
-            for (int mipOff = 16; mipOff <= 256; mipOff += 8)
-            {
-                if (!isReadableMemory(mipBase + mipOff, 8)) break;
-                uint64_t candidate = *reinterpret_cast<uint64_t*>(mipBase + mipOff);
-                // Must be a valid heap pointer (not module/vtable range, not null-ish)
-                if (candidate < 0x10000 || candidate >= 0x00007FF000000000) continue;
-                uint8_t* candidatePtr = reinterpret_cast<uint8_t*>(candidate);
-                // Check if the entire expected range is readable
-                if (!isRangeReadable(candidatePtr, static_cast<size_t>(expectedSize))) continue;
-                // Validate it looks like actual DXT5 data
-                if (!looksLikeDXT5(candidatePtr, expectedSize))
-                {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon]   mip+{}: ptr 0x{:016X} readable but NOT DXT5\n"), mipOff, candidate);
-                    continue;
-                }
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon]   mip+{}: VALID DXT5 data at 0x{:016X}\n"), mipOff, candidate);
-                return candidatePtr;
-            }
-            return nullptr;
-        }
+        // NOTE: DXT5 decoder, saveBGRAAsPng, isRangeReadable, looksLikeDXT5, findBulkDataPtr
+        // were removed in v1.11 — dead code from the CPU texture extraction attempt.
+        // The Canvas render target pipeline (extractAndSaveIcon) replaced all of these.
 
         // Helper: find a UFunction param property by name (case-insensitive)
         static FProperty* findParam(UFunction* fn, const wchar_t* name)
@@ -7103,8 +6938,13 @@ namespace MoriaMods
 
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild]   calling blockSelectedEvent with selfRef={:p}\n"), static_cast<void*>(matchedWidget));
 
-            // Suppress post-hook capture during automated selection
+            // Suppress post-hook capture during automated selection (RAII guard ensures reset on exception)
             m_isAutoSelecting = true;
+            struct AutoSelectGuard
+            {
+                bool& flag;
+                ~AutoSelectGuard() { flag = false; }
+            } guard{m_isAutoSelecting};
             buildTab->ProcessEvent(func, params);
             m_isAutoSelecting = false;
 
@@ -7439,7 +7279,13 @@ namespace MoriaMods
             *reinterpret_cast<UObject**>(params + 120) = matchedWidget;
             *reinterpret_cast<int32_t*>(params + 128) = 0;
 
+            // Suppress post-hook capture during automated selection (RAII guard ensures reset on exception)
             m_isAutoSelecting = true;
+            struct AutoSelectGuard
+            {
+                bool& flag;
+                ~AutoSelectGuard() { flag = false; }
+            } guard{m_isAutoSelecting};
             buildTab->ProcessEvent(func, params);
             m_isAutoSelecting = false;
 
@@ -7467,8 +7313,7 @@ namespace MoriaMods
                 // If texture changed, discard old icon so new one loads
                 if (s_overlay.slots[i].textureName != m_recipeSlots[i].textureName)
                 {
-                    delete s_overlay.slots[i].icon;
-                    s_overlay.slots[i].icon = nullptr;
+                    s_overlay.slots[i].icon.reset();
                 }
                 s_overlay.slots[i].textureName = m_recipeSlots[i].textureName;
                 // Try loading PNG icon if we have a texture name and no icon yet
@@ -7478,7 +7323,7 @@ namespace MoriaMods
                     Gdiplus::Image* img = Gdiplus::Image::FromFile(pngPath.c_str());
                     if (img && img->GetLastStatus() == Gdiplus::Ok)
                     {
-                        s_overlay.slots[i].icon = img;
+                        s_overlay.slots[i].icon.reset(img);
                     }
                     else
                     {
@@ -7537,11 +7382,10 @@ namespace MoriaMods
                 CloseHandle(s_overlay.thread);
                 s_overlay.thread = nullptr;
             }
-            // Clean up loaded icons
+            // Clean up loaded icons (shared_ptr handles deallocation)
             for (int i = 0; i < OVERLAY_SLOTS; i++)
             {
-                delete s_overlay.slots[i].icon;
-                s_overlay.slots[i].icon = nullptr;
+                s_overlay.slots[i].icon.reset();
             }
             if (s_overlay.csInit)
             {
@@ -7613,6 +7457,11 @@ namespace MoriaMods
                 WaitForSingleObject(s_targetInfo.thread, 3000);
                 CloseHandle(s_targetInfo.thread);
                 s_targetInfo.thread = nullptr;
+            }
+            if (s_targetInfo.csInit)
+            {
+                DeleteCriticalSection(&s_targetInfo.dataCS);
+                s_targetInfo.csInit = false;
             }
         }
 
@@ -7906,7 +7755,11 @@ namespace MoriaMods
                 int restored = 0;
                 for (auto& ri : toRestore)
                 {
-                    if (restoreInstance(ri.component, ri.instanceIndex, ri.transform)) restored++;
+                    // Validate UObject pointer before restoring (GC may have freed it)
+                    if (ri.component && isReadableMemory(ri.component, sizeof(void*)))
+                    {
+                        if (restoreInstance(ri.component, ri.instanceIndex, ri.transform)) restored++;
+                    }
                 }
 
                 // Remove the type rule
@@ -7925,6 +7778,7 @@ namespace MoriaMods
             float py = last.transform.Translation.Y;
             float pz = last.transform.Translation.Z;
 
+            bool foundInSave = false;
             for (size_t i = 0; i < m_savedRemovals.size(); i++)
             {
                 if (m_savedRemovals[i].meshName == meshId)
@@ -7935,15 +7789,24 @@ namespace MoriaMods
                     if (ddx * ddx + ddy * ddy + ddz * ddz < POS_TOLERANCE * POS_TOLERANCE)
                     {
                         m_savedRemovals.erase(m_savedRemovals.begin() + i);
-                        m_appliedRemovals.erase(m_appliedRemovals.begin() + i);
+                        if (i < m_appliedRemovals.size()) m_appliedRemovals.erase(m_appliedRemovals.begin() + i);
+                        foundInSave = true;
                         break;
                     }
                 }
             }
-            rewriteSaveFile();
+            if (foundInSave) rewriteSaveFile();
 
-            // Restore by un-hiding (set original transform back)
-            bool ok = restoreInstance(last.component, last.instanceIndex, last.transform);
+            // Validate UObject pointer before restoring (GC may have freed it)
+            bool ok = false;
+            if (last.component && isReadableMemory(last.component, sizeof(void*)))
+            {
+                ok = restoreInstance(last.component, last.instanceIndex, last.transform);
+            }
+            else
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Undo: component pointer stale, skipping restore\n"));
+            }
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Restored index {} ({}) | {} remaining\n"),
                                             last.instanceIndex,
                                             ok ? STR("ok") : STR("FAILED"),
