@@ -1,0 +1,2426 @@
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <format>
+#include <set>
+#include <sstream>
+#include <vector>
+#include <string>
+
+#include <DynamicOutput/Output.hpp>
+#include <Mod/CppUserModBase.hpp>
+#include <Unreal/UObjectGlobals.hpp>
+#include <Unreal/UObject.hpp>
+#include <Unreal/UFunction.hpp>
+#include <Unreal/UClass.hpp>
+#include <Unreal/FProperty.hpp>
+#include <Unreal/UScriptStruct.hpp>
+#include <Unreal/UStruct.hpp>
+#include <Unreal/AActor.hpp>
+#include <Unreal/FWeakObjectPtr.hpp>
+#include <Unreal/NameTypes.hpp>
+#include <Unreal/FString.hpp>
+#include <Unreal/FText.hpp>
+
+namespace MoriaMods
+{
+    using namespace RC;
+    using namespace RC::Unreal;
+
+    static constexpr float MY_PI = 3.14159265358979323846f;
+    static constexpr float DEG2RAD = MY_PI / 180.0f;
+    static constexpr float TRACE_DIST = 5000.0f;          // 50m (was 500m — way too far)
+    static constexpr float POS_TOLERANCE = 100.0f;   // 1 meter — game scale is huge (walls = 2000 units)
+    static constexpr int   STREAM_CHECK_INTERVAL = 180;
+
+    // ── Raw UE4.27 types (floats, not doubles) ──
+    struct FVec3f { float X, Y, Z; };
+    struct FQuat4f { float X, Y, Z, W; };
+    struct FRotator3f { float Pitch, Yaw, Roll; };
+
+    struct FTransformRaw {
+        FQuat4f  Rotation;
+        FVec3f   Translation;
+        float    _pad1{0};
+        FVec3f   Scale3D;
+        float    _pad2{0};
+    };
+    static_assert(sizeof(FTransformRaw) == 48, "FTransformRaw must be 48 bytes");
+
+    // ── ProcessEvent param structs (layouts confirmed by probe) ──
+    struct GetInstanceCount_Params { int32_t ReturnValue{0}; };
+
+    #pragma pack(push, 1)
+    struct GetInstanceTransform_Params {
+        int32_t InstanceIndex{0};
+        uint8_t _pad0[12]{};
+        FTransformRaw OutTransform{};
+        uint8_t bWorldSpace{1};
+        uint8_t ReturnValue{0};
+    };
+    #pragma pack(pop)
+    static_assert(sizeof(GetInstanceTransform_Params) == 66, "Must be 66 bytes");
+
+    // FHitResult offsets (136 bytes, probed)
+    namespace HitOff {
+        constexpr int ImpactPoint = 24;
+        constexpr int Item = 88;
+        constexpr int bBlockingHit = 93;
+        constexpr int Component = 112;   // FWeakObjectPtr (8 bytes)
+    }
+
+    // LineTraceSingle param offsets (237 bytes, probed)
+    namespace LTOff {
+        constexpr int WorldContextObject = 0;
+        constexpr int Start = 8;
+        constexpr int End = 20;
+        constexpr int TraceChannel = 32;
+        constexpr int bTraceComplex = 33;
+        constexpr int ActorsToIgnore = 40;
+        constexpr int DrawDebugType = 56;
+        constexpr int OutHit = 60;
+        constexpr int bIgnoreSelf = 196;
+        constexpr int TraceColor = 200;
+        constexpr int TraceHitColor = 216;
+        constexpr int DrawTime = 232;
+        constexpr int ReturnValue = 236;
+        constexpr int ParmsSize = 237;
+    }
+
+    // ── Saved removal record ──
+    struct SavedRemoval {
+        std::string meshName;
+        float posX, posY, posZ;
+    };
+
+    struct RemovedInstance {
+        UObject* component;
+        int32_t instanceIndex{-1};
+        FTransformRaw transform;
+        std::wstring componentName;
+        bool isTypeRule{false};
+        std::string typeRuleMeshId;
+    };
+
+    // PrintString param offsets (discovered at runtime via probe)
+    struct PSOffsets {
+        int worldContext{-1};
+        int inString{-1};
+        int printToScreen{-1};
+        int printToLog{-1};
+        int textColor{-1};
+        int duration{-1};
+        int parmsSize{0};
+        bool valid{false};
+    };
+
+    class MoriaCppMod : public RC::CppUserModBase {
+    private:
+        std::vector<RemovedInstance> m_undoStack;
+        std::vector<SavedRemoval> m_savedRemovals;
+        std::set<std::string> m_typeRemovals;       // mesh IDs to remove ALL of (Num6)
+        std::set<UObject*> m_processedComps;
+        int m_frameCounter{0};
+        bool m_replayActive{false};
+        bool m_characterLoaded{false};
+        int m_charLoadFrame{0};              // frame when character was first detected
+        bool m_initialReplayDone{false};
+        int m_stuckLogCount{0};              // only log stuck entries once
+        std::string m_saveFilePath;
+        PSOffsets m_ps;
+        UObject* m_chatWidget{nullptr};
+        UObject* m_sysMessages{nullptr};
+        std::vector<bool> m_appliedRemovals;    // parallel to m_savedRemovals: true = already removed
+        int m_rescanCounter{0};                 // frames since last full rescan
+
+        // Throttled replay: spread UpdateInstanceTransform across frames to avoid
+        // crashing the render thread (FStaticMeshInstanceBuffer::UpdateFromCommandBuffer_Concurrent)
+        struct ReplayState {
+            std::vector<UObject*> compQueue;
+            size_t compIdx{0};
+            int instanceIdx{0};       // resume position within current component
+            bool active{false};
+            int totalHidden{0};
+        };
+        ReplayState m_replay;
+        static constexpr int MAX_HIDES_PER_FRAME = 3;  // conservative limit
+
+        // ── Tracking helpers ──
+
+        bool hasPendingRemovals() const
+        {
+            for (size_t i = 0; i < m_appliedRemovals.size(); i++) {
+                if (!m_appliedRemovals[i]) return true;
+            }
+            return false;
+        }
+
+        int pendingCount() const
+        {
+            int n = 0;
+            for (size_t i = 0; i < m_appliedRemovals.size(); i++) {
+                if (!m_appliedRemovals[i]) n++;
+            }
+            return n;
+        }
+
+        // ── File I/O ──
+
+        static std::string componentNameToMeshId(const std::wstring& name)
+        {
+            std::string narrow;
+            narrow.reserve(name.size());
+            for (wchar_t c : name) narrow.push_back(static_cast<char>(c));
+            auto lastUnderscore = narrow.rfind('_');
+            if (lastUnderscore != std::string::npos) {
+                bool allDigits = true;
+                for (size_t i = lastUnderscore + 1; i < narrow.size(); i++) {
+                    if (!std::isdigit(narrow[i])) { allDigits = false; break; }
+                }
+                if (allDigits && lastUnderscore > 0) {
+                    return narrow.substr(0, lastUnderscore);
+                }
+            }
+            return narrow;
+        }
+
+        void loadSaveFile()
+        {
+            m_savedRemovals.clear();
+            m_typeRemovals.clear();
+            std::ifstream file(m_saveFilePath);
+            if (!file.is_open()) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No save file found (first run)\n"));
+                return;
+            }
+            std::string line;
+            while (std::getline(file, line)) {
+                if (line.empty() || line[0] == '#') continue;
+                // @meshName = type rule (remove ALL of this mesh)
+                if (line[0] == '@') {
+                    m_typeRemovals.insert(line.substr(1));
+                    continue;
+                }
+                std::istringstream ss(line);
+                SavedRemoval sr;
+                std::string token;
+                if (!std::getline(ss, sr.meshName, '|')) continue;
+                if (!std::getline(ss, token, '|')) continue; sr.posX = std::stof(token);
+                if (!std::getline(ss, token, '|')) continue; sr.posY = std::stof(token);
+                if (!std::getline(ss, token, '|')) continue; sr.posZ = std::stof(token);
+                m_savedRemovals.push_back(sr);
+            }
+
+            // Remove position entries that are redundant with type rules
+            {
+                size_t before = m_savedRemovals.size();
+                std::erase_if(m_savedRemovals, [this](const SavedRemoval& sr) {
+                    return m_typeRemovals.count(sr.meshName) > 0;
+                });
+                size_t redundant = before - m_savedRemovals.size();
+                if (redundant > 0) {
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod] Removed {} position entries redundant with type rules\n"), redundant);
+                }
+            }
+
+            // No dedup — stacked instances share the same position,
+            // and each entry matches a different stacked instance on replay
+
+            // Initialize tracking: all pending (not yet applied)
+            m_appliedRemovals.assign(m_savedRemovals.size(), false);
+
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Loaded {} position removals + {} type rules\n"),
+                m_savedRemovals.size(), m_typeRemovals.size());
+        }
+
+        void appendToSaveFile(const SavedRemoval& sr)
+        {
+            std::ofstream file(m_saveFilePath, std::ios::app);
+            if (!file.is_open()) return;
+            file << sr.meshName << "|" << sr.posX << "|" << sr.posY << "|" << sr.posZ << "\n";
+        }
+
+        void rewriteSaveFile()
+        {
+            std::ofstream file(m_saveFilePath, std::ios::trunc);
+            if (!file.is_open()) return;
+            file << "# MoriaCppMod removed instances\n";
+            file << "# meshName|posX|posY|posZ = single instance\n";
+            file << "# @meshName = remove ALL of this type\n";
+            for (auto& type : m_typeRemovals)
+                file << "@" << type << "\n";
+            for (auto& sr : m_savedRemovals)
+                file << sr.meshName << "|" << sr.posX << "|" << sr.posY << "|" << sr.posZ << "\n";
+        }
+
+        // ── Helpers ──
+
+        UObject* findPlayerController()
+        {
+            std::vector<UObject*> pcs;
+            UObjectGlobals::FindAllOf(STR("PlayerController"), pcs);
+            return pcs.empty() ? nullptr : pcs[0];
+        }
+
+        UObject* getPawn()
+        {
+            auto* pc = findPlayerController();
+            if (!pc) return nullptr;
+            auto* fn = pc->GetFunctionByNameInChain(STR("K2_GetPawn"));
+            if (!fn) return nullptr;
+            struct { UObject* Ret{nullptr}; } p{};
+            pc->ProcessEvent(fn, &p);
+            return p.Ret;
+        }
+
+        FVec3f getPawnLocation()
+        {
+            FVec3f loc{0, 0, 0};
+            auto* pawn = getPawn();
+            if (!pawn) return loc;
+            auto* fn = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation"));
+            if (!fn) return loc;
+            pawn->ProcessEvent(fn, &loc);
+            return loc;
+        }
+
+        // ── PrintString support ──
+
+        void probePrintString()
+        {
+            auto* fn = UObjectGlobals::StaticFindObject<UFunction*>(
+                nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:PrintString"));
+            if (!fn) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] PrintString NOT FOUND\n"));
+                return;
+            }
+            m_ps.parmsSize = fn->GetParmsSize();
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] PrintString ParmsSize={}\n"), m_ps.parmsSize);
+
+            for (auto* prop : fn->ForEachProperty()) {
+                auto name = prop->GetName();
+                int offset = prop->GetOffset_Internal();
+                int size = prop->GetSize();
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod]   PS: {} @{} size={}\n"), name, offset, size);
+
+                if (name == STR("WorldContextObject")) m_ps.worldContext = offset;
+                else if (name == STR("inString"))       m_ps.inString = offset;
+                else if (name == STR("bPrintToScreen")) m_ps.printToScreen = offset;
+                else if (name == STR("bPrintToLog"))    m_ps.printToLog = offset;
+                else if (name == STR("TextColor"))      m_ps.textColor = offset;
+                else if (name == STR("Duration"))       m_ps.duration = offset;
+            }
+
+            m_ps.valid = (m_ps.worldContext >= 0 && m_ps.inString >= 0 &&
+                          m_ps.printToScreen >= 0 && m_ps.duration >= 0);
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] PrintString valid={}\n"), m_ps.valid);
+        }
+
+        void showOnScreen(const std::wstring& text, float duration = 5.0f,
+                         float r = 0.0f, float g = 1.0f, float b = 0.5f)
+        {
+            if (!m_ps.valid) return;
+
+            auto* fn = UObjectGlobals::StaticFindObject<UFunction*>(
+                nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:PrintString"));
+            auto* cdo = UObjectGlobals::StaticFindObject<UObject*>(
+                nullptr, nullptr, STR("/Script/Engine.Default__KismetSystemLibrary"));
+            auto* pc = findPlayerController();
+            if (!fn || !cdo || !pc) return;
+
+            std::vector<uint8_t> buf(m_ps.parmsSize, 0);
+
+            // WorldContextObject
+            std::memcpy(buf.data() + m_ps.worldContext, &pc, 8);
+
+            // FString in param buffer: Data ptr (8) + ArrayNum (4) + ArrayMax (4)
+            const wchar_t* textPtr = text.c_str();
+            int32_t len = static_cast<int32_t>(text.size() + 1);
+            uintptr_t ptrVal = reinterpret_cast<uintptr_t>(textPtr);
+            std::memcpy(buf.data() + m_ps.inString, &ptrVal, 8);
+            std::memcpy(buf.data() + m_ps.inString + 8, &len, 4);
+            std::memcpy(buf.data() + m_ps.inString + 12, &len, 4);
+
+            // bPrintToScreen = true
+            buf[m_ps.printToScreen] = 1;
+
+            // bPrintToLog = false (don't spam log)
+            if (m_ps.printToLog >= 0) buf[m_ps.printToLog] = 0;
+
+            // TextColor (FLinearColor: R, G, B, A)
+            if (m_ps.textColor >= 0) {
+                float color[4] = {r, g, b, 1.0f};
+                std::memcpy(buf.data() + m_ps.textColor, color, 16);
+            }
+
+            // Duration
+            std::memcpy(buf.data() + m_ps.duration, &duration, 4);
+
+            cdo->ProcessEvent(fn, buf.data());
+        }
+
+        // ── Chat/Widget display ──
+
+        void findWidgets()
+        {
+            std::vector<UObject*> widgets;
+            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
+            m_chatWidget = nullptr;
+            m_sysMessages = nullptr;
+            for (auto* w : widgets) {
+                std::wstring clsName(w->GetClassPrivate()->GetName());
+                if (clsName == STR("WBP_UI_ChatWidget_C") && !m_chatWidget)
+                    m_chatWidget = w;
+                if (clsName == STR("WBP_UI_Console_SystemMessages_C") && !m_sysMessages)
+                    m_sysMessages = w;
+            }
+        }
+
+        void showGameMessage(const std::wstring& text)
+        {
+            if (!m_chatWidget) findWidgets();
+            if (!m_chatWidget) return;
+
+            // AddToShortChat(FText) — the floating chat overlay
+            auto* func = m_chatWidget->GetFunctionByNameInChain(STR("AddToShortChat"));
+            if (!func) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] AddToShortChat not found\n"));
+                return;
+            }
+
+            FText ftext(text.c_str());
+            uint8_t buf[64]{};
+            std::memcpy(buf, &ftext, sizeof(FText));
+            m_chatWidget->ProcessEvent(func, buf);
+        }
+
+        // ── Test all display methods (Num5) ──
+
+        void testAllDisplayMethods()
+        {
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === Testing display methods ===\n"));
+            findWidgets();
+
+            if (m_chatWidget) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] ChatWidget found\n"));
+
+                // Test 1: AddToShortChat
+                auto* f1 = m_chatWidget->GetFunctionByNameInChain(STR("AddToShortChat"));
+                if (f1) {
+                    FText t1(STR("[Mod] Test 1: AddToShortChat"));
+                    uint8_t buf[64]{};
+                    std::memcpy(buf, &t1, sizeof(FText));
+                    m_chatWidget->ProcessEvent(f1, buf);
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called AddToShortChat\n"));
+                }
+
+                // Test 2: SystemMessageEvent
+                auto* f2 = m_chatWidget->GetFunctionByNameInChain(STR("SystemMessageEvent"));
+                if (f2) {
+                    FText t2(STR("[Mod] Test 2: SystemMessageEvent"));
+                    uint8_t buf[64]{};
+                    std::memcpy(buf, &t2, sizeof(FText));
+                    m_chatWidget->ProcessEvent(f2, buf);
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called SystemMessageEvent\n"));
+                }
+
+                // Test 3: AddFormattedMessage
+                auto* f3 = m_chatWidget->GetFunctionByNameInChain(STR("AddFormattedMessage"));
+                if (f3) {
+                    FText t3(STR("[Mod] Test 3: AddFormattedMessage"));
+                    uint8_t buf[64]{};
+                    std::memcpy(buf, &t3, sizeof(FText));
+                    m_chatWidget->ProcessEvent(f3, buf);
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called AddFormattedMessage\n"));
+                }
+            } else {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] ChatWidget NOT found\n"));
+            }
+
+            if (m_sysMessages) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] SystemMessages found\n"));
+
+                // Test 4: AppendMessage
+                auto* f4 = m_sysMessages->GetFunctionByNameInChain(STR("AppendMessage"));
+                if (f4) {
+                    FText t4(STR("[Mod] Test 4: AppendMessage"));
+                    uint8_t buf[64]{};
+                    std::memcpy(buf, &t4, sizeof(FText));
+                    m_sysMessages->ProcessEvent(f4, buf);
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called AppendMessage\n"));
+                }
+            } else {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] SystemMessages NOT found\n"));
+            }
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === Display test done ===\n"));
+        }
+
+        // ── Camera & Trace ──
+
+        bool getCameraRay(FVec3f& outStart, FVec3f& outEnd)
+        {
+            auto* pc = findPlayerController();
+            if (!pc) return false;
+
+            // Get viewport size
+            auto* vpFunc = pc->GetFunctionByNameInChain(STR("GetViewportSize"));
+            if (!vpFunc) return false;
+            struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+            pc->ProcessEvent(vpFunc, &vpParams);
+            float centerX = vpParams.SizeX / 2.0f;
+            float centerY = vpParams.SizeY / 2.0f;
+
+            // Deproject screen center to world ray
+            auto* deprojFunc = pc->GetFunctionByNameInChain(STR("DeprojectScreenPositionToWorld"));
+            if (!deprojFunc) return false;
+            int parmsSize = deprojFunc->GetParmsSize();
+            std::vector<uint8_t> buf(parmsSize, 0);
+            std::memcpy(buf.data() + 0, &centerX, 4);
+            std::memcpy(buf.data() + 4, &centerY, 4);
+            pc->ProcessEvent(deprojFunc, buf.data());
+
+            FVec3f cameraLoc{}, worldDir{};
+            std::memcpy(&cameraLoc, buf.data() + 8, 12);
+            std::memcpy(&worldDir, buf.data() + 20, 12);
+
+            // 3rd-person fix: start trace PAST the character to avoid hitting
+            // objects between the camera and the player (the "behind me" problem)
+            FVec3f pawnLoc = getPawnLocation();
+            float dx = pawnLoc.X - cameraLoc.X;
+            float dy = pawnLoc.Y - cameraLoc.Y;
+            float dz = pawnLoc.Z - cameraLoc.Z;
+            float camToChar = std::sqrt(dx*dx + dy*dy + dz*dz);
+            float startOffset = camToChar + 50.0f; // 50 units past the character
+
+            outStart = {
+                cameraLoc.X + worldDir.X * startOffset,
+                cameraLoc.Y + worldDir.Y * startOffset,
+                cameraLoc.Z + worldDir.Z * startOffset
+            };
+            outEnd = {
+                cameraLoc.X + worldDir.X * TRACE_DIST,
+                cameraLoc.Y + worldDir.Y * TRACE_DIST,
+                cameraLoc.Z + worldDir.Z * TRACE_DIST
+            };
+            return true;
+        }
+
+        // Resolve hit component directly from FHitResult weak pointer
+        UObject* resolveHitComponent(const uint8_t* hitBuf)
+        {
+            RC::Unreal::FWeakObjectPtr weakPtr{};
+            std::memcpy(&weakPtr, hitBuf + HitOff::Component, sizeof(RC::Unreal::FWeakObjectPtr));
+            return weakPtr.Get();
+        }
+
+        bool isHISMComponent(UObject* comp)
+        {
+            if (!comp) return false;
+            auto* cls = comp->GetClassPrivate();
+            if (!cls) return false;
+            std::wstring clsName(cls->GetName());
+            return clsName.find(STR("InstancedStaticMeshComponent")) != std::wstring::npos;
+        }
+
+        // Hide instance by moving underground + tiny scale (safe — no crash unlike RemoveInstance)
+        bool hideInstance(UObject* comp, int32_t instanceIndex)
+        {
+            auto* updateFunc = comp->GetFunctionByNameInChain(STR("UpdateInstanceTransform"));
+            if (!updateFunc) return false;
+
+            // Get current transform first
+            auto* transFunc = comp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
+            if (!transFunc) return false;
+            GetInstanceTransform_Params gtp{};
+            gtp.InstanceIndex = instanceIndex;
+            gtp.bWorldSpace = 1;
+            comp->ProcessEvent(transFunc, &gtp);
+            if (!gtp.ReturnValue) return false;
+
+            // Move deep underground, scale to near-zero
+            FTransformRaw hidden = gtp.OutTransform;
+            hidden.Translation.Z -= 50000.0f;
+            hidden.Scale3D = {0.001f, 0.001f, 0.001f};
+
+            // UpdateInstanceTransform(int32 Index, FTransform NewTrans, bool bWorldSpace,
+            //                         bool bMarkRenderStateDirty, bool bTeleport) -> bool
+            // Layout matches GetInstanceTransform + 2 extra bools
+            uint8_t params[72]{};
+            int32_t idx = instanceIndex;
+            std::memcpy(params + 0, &idx, 4);          // InstanceIndex
+            std::memcpy(params + 16, &hidden, 48);      // NewInstanceTransform (aligned)
+            params[64] = 1;  // bWorldSpace
+            params[65] = 1;  // bMarkRenderStateDirty
+            params[66] = 1;  // bTeleport
+            comp->ProcessEvent(updateFunc, params);
+            return params[67] != 0;  // ReturnValue
+        }
+
+        // Restore instance to original transform (undo a hide)
+        bool restoreInstance(UObject* comp, int32_t instanceIndex, const FTransformRaw& original)
+        {
+            auto* updateFunc = comp->GetFunctionByNameInChain(STR("UpdateInstanceTransform"));
+            if (!updateFunc) return false;
+
+            uint8_t params[72]{};
+            std::memcpy(params + 0, &instanceIndex, 4);
+            std::memcpy(params + 16, &original, 48);
+            params[64] = 1;  // bWorldSpace
+            params[65] = 1;  // bMarkRenderStateDirty
+            params[66] = 1;  // bTeleport
+            comp->ProcessEvent(updateFunc, params);
+            return params[67] != 0;
+        }
+
+        bool doLineTrace(const FVec3f& start, const FVec3f& end, uint8_t* hitBuf,
+                         bool debugDraw = false)
+        {
+            auto* ltFunc = UObjectGlobals::StaticFindObject<UFunction*>(
+                nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:LineTraceSingle"));
+            auto* kslCDO = UObjectGlobals::StaticFindObject<UObject*>(
+                nullptr, nullptr, STR("/Script/Engine.Default__KismetSystemLibrary"));
+            auto* pc = findPlayerController();
+            if (!ltFunc || !kslCDO || !pc) return false;
+
+            uint8_t params[LTOff::ParmsSize]{};
+            std::memcpy(params + LTOff::WorldContextObject, &pc, 8);
+            std::memcpy(params + LTOff::Start, &start, 12);
+            std::memcpy(params + LTOff::End, &end, 12);
+            params[LTOff::TraceChannel] = 0;      // Visibility
+            params[LTOff::bTraceComplex] = 1;      // Per-triangle for accuracy
+            params[LTOff::bIgnoreSelf] = 1;
+
+            // Add player pawn to ActorsToIgnore so trace doesn't hit the character
+            auto* pawn = getPawn();
+            if (pawn) {
+                uintptr_t arrPtr = reinterpret_cast<uintptr_t>(&pawn);
+                int32_t one = 1;
+                std::memcpy(params + LTOff::ActorsToIgnore, &arrPtr, 8);
+                std::memcpy(params + LTOff::ActorsToIgnore + 8, &one, 4);
+                std::memcpy(params + LTOff::ActorsToIgnore + 12, &one, 4);
+            }
+
+            if (debugDraw) {
+                params[LTOff::DrawDebugType] = 2;  // ForDuration
+                float greenColor[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+                float redColor[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+                float drawTime = 5.0f;
+                std::memcpy(params + LTOff::TraceColor, greenColor, 16);
+                std::memcpy(params + LTOff::TraceHitColor, redColor, 16);
+                std::memcpy(params + LTOff::DrawTime, &drawTime, 4);
+            } else {
+                params[LTOff::DrawDebugType] = 0;  // None
+            }
+
+            kslCDO->ProcessEvent(ltFunc, params);
+
+            bool bHit = params[LTOff::ReturnValue] != 0;
+            if (bHit) {
+                std::memcpy(hitBuf, params + LTOff::OutHit, 136);
+            }
+            return bHit;
+        }
+
+        // ── Throttled Replay ──
+        // Spreads UpdateInstanceTransform calls across frames to avoid crashing
+        // the render thread (FStaticMeshInstanceBuffer::UpdateFromCommandBuffer_Concurrent).
+
+        void startReplay()
+        {
+            if (m_replay.active) return;  // don't interrupt active replay
+            m_replay = {};
+            if (m_savedRemovals.empty() && m_typeRemovals.empty()) return;
+
+            UObjectGlobals::FindAllOf(STR("GlobalHierarchicalInstancedStaticMeshComponent"), m_replay.compQueue);
+            if (m_replay.compQueue.empty())
+                UObjectGlobals::FindAllOf(STR("HierarchicalInstancedStaticMeshComponent"), m_replay.compQueue);
+
+            m_replay.active = !m_replay.compQueue.empty();
+            if (m_replay.active) {
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] Starting throttled replay ({} comps, max {} hides/frame)\n"),
+                    m_replay.compQueue.size(), MAX_HIDES_PER_FRAME);
+            }
+        }
+
+        // Process up to MAX_HIDES_PER_FRAME instances per frame. Returns true if more work remains.
+        bool processReplayBatch()
+        {
+            if (!m_replay.active) return false;
+
+            int hidesThisBatch = 0;
+
+            while (m_replay.compIdx < m_replay.compQueue.size()) {
+                UObject* comp = m_replay.compQueue[m_replay.compIdx];
+
+                // Validity check: can we access this component's functions?
+                auto* countFunc = comp ? comp->GetFunctionByNameInChain(STR("GetInstanceCount")) : nullptr;
+                if (!countFunc) {
+                    m_replay.compIdx++;
+                    m_replay.instanceIdx = 0;
+                    continue;
+                }
+
+                std::string meshId = componentNameToMeshId(std::wstring(comp->GetName()));
+                bool isTypeRule = m_typeRemovals.count(meshId) > 0;
+
+                // For position-based, check if this mesh has any pending matches
+                if (!isTypeRule) {
+                    bool hasPending = false;
+                    for (size_t si = 0; si < m_savedRemovals.size(); si++) {
+                        if (!m_appliedRemovals[si] && m_savedRemovals[si].meshName == meshId) {
+                            hasPending = true;
+                            break;
+                        }
+                    }
+                    if (!hasPending) {
+                        m_processedComps.insert(comp);
+                        m_replay.compIdx++;
+                        m_replay.instanceIdx = 0;
+                        continue;
+                    }
+                }
+
+                auto* transFunc = comp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
+
+                // Get current instance count
+                GetInstanceCount_Params cp{};
+                comp->ProcessEvent(countFunc, &cp);
+                int count = cp.ReturnValue;
+
+                if (count == 0 || m_replay.instanceIdx >= count) {
+                    m_processedComps.insert(comp);
+                    m_replay.compIdx++;
+                    m_replay.instanceIdx = 0;
+                    continue;
+                }
+
+                // Process instances from where we left off
+                while (m_replay.instanceIdx < count) {
+                    if (hidesThisBatch >= MAX_HIDES_PER_FRAME) {
+                        return true;  // Budget exhausted, continue next frame
+                    }
+
+                    int i = m_replay.instanceIdx++;
+
+                    if (isTypeRule) {
+                        // For type rules, skip already-hidden instances
+                        if (transFunc) {
+                            GetInstanceTransform_Params tp{};
+                            tp.InstanceIndex = i;
+                            tp.bWorldSpace = 1;
+                            comp->ProcessEvent(transFunc, &tp);
+                            if (tp.ReturnValue && tp.OutTransform.Translation.Z < -40000.0f)
+                                continue;  // already hidden
+                        }
+                        if (hideInstance(comp, i)) {
+                            hidesThisBatch++;
+                            m_replay.totalHidden++;
+                        }
+                    } else if (transFunc) {
+                        GetInstanceTransform_Params tp{};
+                        tp.InstanceIndex = i;
+                        tp.bWorldSpace = 1;
+                        comp->ProcessEvent(transFunc, &tp);
+                        if (!tp.ReturnValue) continue;
+
+                        float px = tp.OutTransform.Translation.X;
+                        float py = tp.OutTransform.Translation.Y;
+                        float pz = tp.OutTransform.Translation.Z;
+                        if (pz < -40000.0f) continue;  // already hidden
+
+                        for (size_t si = 0; si < m_savedRemovals.size(); si++) {
+                            if (m_appliedRemovals[si]) continue;
+                            if (m_savedRemovals[si].meshName != meshId) continue;
+                            float ddx = px - m_savedRemovals[si].posX;
+                            float ddy = py - m_savedRemovals[si].posY;
+                            float ddz = pz - m_savedRemovals[si].posZ;
+                            if (ddx*ddx + ddy*ddy + ddz*ddz < POS_TOLERANCE * POS_TOLERANCE) {
+                                hideInstance(comp, i);
+                                m_appliedRemovals[si] = true;
+                                hidesThisBatch++;
+                                m_replay.totalHidden++;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Finished all instances in this component
+                m_processedComps.insert(comp);
+                m_replay.compIdx++;
+                m_replay.instanceIdx = 0;
+            }
+
+            // All components processed — replay complete
+            m_replay.active = false;
+            int pending = pendingCount();
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Replay done: {} hidden, {} pending\n"),
+                m_replay.totalHidden, pending);
+            return false;
+        }
+
+        void checkForNewComponents()
+        {
+            if (m_savedRemovals.empty() && m_typeRemovals.empty()) return;
+            if (m_replay.active) return;  // don't interfere with active replay
+
+            std::vector<UObject*> comps;
+            UObjectGlobals::FindAllOf(STR("GlobalHierarchicalInstancedStaticMeshComponent"), comps);
+
+            // Collect new (unprocessed) components
+            std::vector<UObject*> newComps;
+            for (auto* comp : comps) {
+                if (!m_processedComps.count(comp))
+                    newComps.push_back(comp);
+            }
+            if (newComps.empty()) return;
+
+            // Queue them as a new replay batch
+            m_replay = {};
+            m_replay.compQueue = std::move(newComps);
+            m_replay.active = true;
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Streaming: {} new components queued for replay\n"),
+                m_replay.compQueue.size());
+        }
+
+        // ── Actions ──
+
+        void inspectAimed()
+        {
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] --- Inspect ---\n"));
+
+            FVec3f start{}, end{};
+            if (!getCameraRay(start, end)) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] getCameraRay failed\n"));
+                return;
+            }
+
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Ray: ({:.0f},{:.0f},{:.0f}) -> ({:.0f},{:.0f},{:.0f})\n"),
+                start.X, start.Y, start.Z, end.X, end.Y, end.Z);
+
+            uint8_t hitBuf[136]{};
+            if (!doLineTrace(start, end, hitBuf, true)) {  // debugDraw=true
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No hit\n"));
+                showOnScreen(L"[Inspect] No hit", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+
+            FVec3f impactPoint;
+            std::memcpy(&impactPoint, hitBuf + HitOff::ImpactPoint, 12);
+            int32_t item;
+            std::memcpy(&item, hitBuf + HitOff::Item, 4);
+
+            // Resolve component directly via FWeakObjectPtr (fast, accurate)
+            UObject* hitComp = resolveHitComponent(hitBuf);
+
+            std::wstring compName = hitComp ? std::wstring(hitComp->GetName()) : L"(null)";
+            std::wstring fullName = hitComp ? std::wstring(hitComp->GetFullName()) : L"(null)";
+            std::wstring className = L"(unknown)";
+            if (hitComp) {
+                auto* cls = hitComp->GetClassPrivate();
+                if (cls) className = std::wstring(cls->GetName());
+            }
+            bool isHISM = isHISMComponent(hitComp);
+            std::string meshId = hitComp ? componentNameToMeshId(compName) : "(null)";
+            std::wstring meshIdW(meshId.begin(), meshId.end());
+
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Component: {} | Class: {} | Item: {} | HISM: {}\n"),
+                compName, className, item, isHISM);
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] FullPath: {}\n"), fullName);
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] MeshID: {} | Impact: ({:.1f},{:.1f},{:.1f})\n"),
+                meshIdW, impactPoint.X, impactPoint.Y, impactPoint.Z);
+
+            // Show instance transform if it's an HISM
+            if (isHISM && item >= 0 && hitComp) {
+                auto* transFunc = hitComp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
+                if (transFunc) {
+                    GetInstanceTransform_Params tp{};
+                    tp.InstanceIndex = item;
+                    tp.bWorldSpace = 1;
+                    hitComp->ProcessEvent(transFunc, &tp);
+                    if (tp.ReturnValue) {
+                        Output::send<LogLevel::Warning>(
+                            STR("[MoriaCppMod] Instance #{} pos: ({:.1f},{:.1f},{:.1f})\n"),
+                            item, tp.OutTransform.Translation.X,
+                            tp.OutTransform.Translation.Y, tp.OutTransform.Translation.Z);
+                    }
+                }
+            }
+
+            // On-screen display
+            std::wstring screenText = fullName + L"\nClass: " + className;
+            if (isHISM) {
+                screenText += L"\nItem: " + std::to_wstring(item) + L" | MeshID: " + meshIdW;
+            }
+            float screenR = isHISM ? 0.0f : 1.0f;
+            float screenG = isHISM ? 1.0f : 0.5f;
+            showOnScreen(screenText, 8.0f, screenR, screenG, 0.5f);
+        }
+
+        void removeAimed()
+        {
+            FVec3f start{}, end{};
+            if (!getCameraRay(start, end)) return;
+
+            uint8_t hitBuf[136]{};
+            if (!doLineTrace(start, end, hitBuf)) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No hit\n"));
+                showOnScreen(L"No hit", 2.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+
+            FVec3f impactPoint;
+            std::memcpy(&impactPoint, hitBuf + HitOff::ImpactPoint, 12);
+            int32_t item;
+            std::memcpy(&item, hitBuf + HitOff::Item, 4);
+
+            // Resolve component directly
+            UObject* hitComp = resolveHitComponent(hitBuf);
+
+            if (!hitComp || !isHISMComponent(hitComp)) {
+                std::wstring name = hitComp ? std::wstring(hitComp->GetName()) : L"(null)";
+                std::wstring cls = L"";
+                if (hitComp) {
+                    auto* c = hitComp->GetClassPrivate();
+                    if (c) cls = std::wstring(c->GetName());
+                }
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] Not HISM: {} ({})\n"), name, cls);
+                showOnScreen(L"Not HISM: " + name, 3.0f, 1.0f, 0.5f, 0.0f);
+                return;
+            }
+
+            if (item < 0) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No instance index (Item=-1)\n"));
+                showOnScreen(L"No instance index", 2.0f, 1.0f, 0.5f, 0.0f);
+                return;
+            }
+
+            // Get transform of the aimed instance
+            auto* transFunc = hitComp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
+            auto* countFunc = hitComp->GetFunctionByNameInChain(STR("GetInstanceCount"));
+            if (!transFunc || !countFunc) return;
+            GetInstanceTransform_Params tp{};
+            tp.InstanceIndex = item;
+            tp.bWorldSpace = 1;
+            hitComp->ProcessEvent(transFunc, &tp);
+            if (!tp.ReturnValue) return;
+
+            float targetX = tp.OutTransform.Translation.X;
+            float targetY = tp.OutTransform.Translation.Y;
+            float targetZ = tp.OutTransform.Translation.Z;
+            std::wstring compName(hitComp->GetName());
+            std::string meshId = componentNameToMeshId(compName);
+
+            // Find ALL instances at the same position (stacked instances)
+            GetInstanceCount_Params cp{};
+            hitComp->ProcessEvent(countFunc, &cp);
+            int count = cp.ReturnValue;
+
+            int hiddenCount = 0;
+            for (int i = 0; i < count; i++) {
+                GetInstanceTransform_Params itp{};
+                itp.InstanceIndex = i;
+                itp.bWorldSpace = 1;
+                hitComp->ProcessEvent(transFunc, &itp);
+                if (!itp.ReturnValue) continue;
+
+                float px = itp.OutTransform.Translation.X;
+                float py = itp.OutTransform.Translation.Y;
+                float pz = itp.OutTransform.Translation.Z;
+
+                // Skip already-hidden
+                if (pz < -40000.0f) continue;
+
+                float ddx = px - targetX;
+                float ddy = py - targetY;
+                float ddz = pz - targetZ;
+                if (ddx*ddx + ddy*ddy + ddz*ddz < POS_TOLERANCE * POS_TOLERANCE) {
+                    // Save for undo
+                    m_undoStack.push_back({hitComp, i, itp.OutTransform, compName});
+
+                    // Save to persistence file
+                    SavedRemoval sr;
+                    sr.meshName = meshId;
+                    sr.posX = px;
+                    sr.posY = py;
+                    sr.posZ = pz;
+                    m_savedRemovals.push_back(sr);
+                    m_appliedRemovals.push_back(true);
+                    appendToSaveFile(sr);
+
+                    hideInstance(hitComp, i);
+                    hiddenCount++;
+                }
+            }
+
+            std::wstring meshIdW(meshId.begin(), meshId.end());
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] REMOVED {} stacked at ({:.0f},{:.0f},{:.0f}) from {} | Total: {}\n"),
+                hiddenCount, targetX, targetY, targetZ, compName, m_savedRemovals.size());
+            showOnScreen(L"REMOVED " + std::to_wstring(hiddenCount) + L"x: " + meshIdW, 3.0f, 0.0f, 1.0f, 0.0f);
+            showGameMessage(L"[Mod] Removed " + std::to_wstring(hiddenCount) + L"x: " + meshIdW);
+        }
+
+        void removeAllOfType()
+        {
+            FVec3f start{}, end{};
+            if (!getCameraRay(start, end)) return;
+
+            uint8_t hitBuf[136]{};
+            if (!doLineTrace(start, end, hitBuf)) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No hit\n"));
+                showOnScreen(L"No hit", 2.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+
+            UObject* hitComp = resolveHitComponent(hitBuf);
+            if (!hitComp || !isHISMComponent(hitComp)) {
+                std::wstring name = hitComp ? std::wstring(hitComp->GetName()) : L"(null)";
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Not HISM: {}\n"), name);
+                showOnScreen(L"Not HISM: " + name, 3.0f, 1.0f, 0.5f, 0.0f);
+                return;
+            }
+
+            auto* countFunc = hitComp->GetFunctionByNameInChain(STR("GetInstanceCount"));
+            auto* transFunc = hitComp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
+            if (!countFunc) return;
+
+            std::wstring compName(hitComp->GetName());
+            std::string meshId = componentNameToMeshId(compName);
+
+            // Save as type rule — removes ALL of this mesh on every world
+            if (!m_typeRemovals.count(meshId)) {
+                m_typeRemovals.insert(meshId);
+                std::ofstream file(m_saveFilePath, std::ios::app);
+                if (file.is_open()) file << "@" << meshId << "\n";
+            }
+
+            // Get instance count
+            GetInstanceCount_Params cp{};
+            hitComp->ProcessEvent(countFunc, &cp);
+            int count = cp.ReturnValue;
+
+            // Save all transforms for undo, then hide each instance
+            int hidden = 0;
+            for (int i = 0; i < count; i++) {
+                if (transFunc) {
+                    GetInstanceTransform_Params tp{};
+                    tp.InstanceIndex = i;
+                    tp.bWorldSpace = 1;
+                    hitComp->ProcessEvent(transFunc, &tp);
+                    if (tp.ReturnValue) {
+                        // Skip already-hidden instances
+                        if (tp.OutTransform.Translation.Z < -40000.0f) continue;
+                        m_undoStack.push_back({hitComp, i, tp.OutTransform, compName, true, meshId});
+                    }
+                }
+                if (hideInstance(hitComp, i)) hidden++;
+            }
+
+            std::wstring meshIdW(meshId.begin(), meshId.end());
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] TYPE RULE: @{} — hidden {} instances (persists across all worlds)\n"),
+                meshIdW, hidden);
+            showOnScreen(L"TYPE RULE: " + meshIdW + L" (" + std::to_wstring(hidden) + L" hidden)",
+                         5.0f, 1.0f, 0.5f, 0.0f);
+            showGameMessage(L"[Mod] Type rule: " + meshIdW + L" (" + std::to_wstring(hidden) + L" hidden)");
+        }
+
+        // ── Building / UI Exploration (Num7/Num8/Num9) ──
+
+        void dumpAllWidgets()
+        {
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === WIDGET DUMP ===\n"));
+
+            std::vector<UObject*> widgets;
+            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
+
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Found {} UserWidgets\n"), widgets.size());
+
+            int idx = 0;
+            for (auto* w : widgets) {
+                if (!w) continue;
+                auto* cls = w->GetClassPrivate();
+                if (!cls) continue;
+                std::wstring clsName(cls->GetName());
+                std::wstring objName(w->GetName());
+
+                // Check visibility via IsVisible or IsInViewport
+                bool visible = false;
+                auto* visFunc = w->GetFunctionByNameInChain(STR("IsVisible"));
+                if (visFunc) {
+                    struct { bool Ret{false}; } vp{};
+                    w->ProcessEvent(visFunc, &vp);
+                    visible = vp.Ret;
+                }
+
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod]   [{}] {} | obj={} | visible={}\n"),
+                    idx, clsName, objName, visible);
+
+                // For build/craft/recipe-related widgets, dump functions too
+                bool interesting = false;
+                std::string narrow;
+                for (wchar_t c : clsName) narrow.push_back(static_cast<char>(c));
+                for (auto& ch : narrow) ch = static_cast<char>(std::tolower(ch));
+                if (narrow.find("build") != std::string::npos ||
+                    narrow.find("craft") != std::string::npos ||
+                    narrow.find("recipe") != std::string::npos ||
+                    narrow.find("construct") != std::string::npos ||
+                    narrow.find("place") != std::string::npos ||
+                    narrow.find("inventory") != std::string::npos ||
+                    narrow.find("radial") != std::string::npos ||
+                    narrow.find("wheel") != std::string::npos ||
+                    narrow.find("menu") != std::string::npos) {
+                    interesting = true;
+                }
+
+                if (interesting || visible) {
+                    // Dump functions
+                    auto* ustruct = static_cast<UStruct*>(cls);
+                    int funcCount = 0;
+                    for (auto* func : ustruct->ForEachFunctionInChain()) {
+                        if (!func) continue;
+                        std::wstring funcName(func->GetName());
+                        int parmsSize = func->GetParmsSize();
+
+                        // Skip common inherited UE functions to reduce noise
+                        if (funcName.find(STR("Construct")) == 0 && funcName.find(STR("Construction")) == std::wstring::npos) continue;
+                        if (funcName == STR("Destruct")) continue;
+                        if (funcName.find(STR("ExecuteUbergraph")) == 0) continue;
+
+                        Output::send<LogLevel::Warning>(
+                            STR("[MoriaCppMod]     fn: {} ({}B)\n"), funcName, parmsSize);
+                        funcCount++;
+                        if (funcCount > 30) {
+                            Output::send<LogLevel::Warning>(
+                                STR("[MoriaCppMod]     ... ({} more, truncated)\n"), 0);
+                            break;
+                        }
+                    }
+                }
+
+                idx++;
+            }
+
+            showOnScreen(L"Widget dump: " + std::to_wstring(widgets.size()) + L" widgets (see log)", 5.0f);
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END WIDGET DUMP ===\n"));
+        }
+
+        void dumpAimedActor()
+        {
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === AIMED ACTOR DUMP ===\n"));
+
+            FVec3f start{}, end{};
+            if (!getCameraRay(start, end)) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] getCameraRay failed\n"));
+                return;
+            }
+
+            // Use a wider trace — we want to hit actors, not just HISM instances
+            auto* ltFunc = UObjectGlobals::StaticFindObject<UFunction*>(
+                nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:LineTraceSingle"));
+            auto* kslCDO = UObjectGlobals::StaticFindObject<UObject*>(
+                nullptr, nullptr, STR("/Script/Engine.Default__KismetSystemLibrary"));
+            auto* pc = findPlayerController();
+            if (!ltFunc || !kslCDO || !pc) return;
+
+            uint8_t params[LTOff::ParmsSize]{};
+            std::memcpy(params + LTOff::WorldContextObject, &pc, 8);
+            std::memcpy(params + LTOff::Start, &start, 12);
+            std::memcpy(params + LTOff::End, &end, 12);
+            params[LTOff::TraceChannel] = 0;      // Visibility
+            params[LTOff::bTraceComplex] = 0;      // Simple trace to hit actor bounds
+            params[LTOff::bIgnoreSelf] = 1;
+            params[LTOff::DrawDebugType] = 2;  // ForDuration
+            float greenColor[4] = {0.0f, 1.0f, 1.0f, 1.0f};
+            float redColor[4] = {1.0f, 1.0f, 0.0f, 1.0f};
+            float drawTime = 5.0f;
+            std::memcpy(params + LTOff::TraceColor, greenColor, 16);
+            std::memcpy(params + LTOff::TraceHitColor, redColor, 16);
+            std::memcpy(params + LTOff::DrawTime, &drawTime, 4);
+
+            auto* pawn = getPawn();
+            if (pawn) {
+                uintptr_t arrPtr = reinterpret_cast<uintptr_t>(&pawn);
+                int32_t one = 1;
+                std::memcpy(params + LTOff::ActorsToIgnore, &arrPtr, 8);
+                std::memcpy(params + LTOff::ActorsToIgnore + 8, &one, 4);
+                std::memcpy(params + LTOff::ActorsToIgnore + 12, &one, 4);
+            }
+
+            kslCDO->ProcessEvent(ltFunc, params);
+
+            bool bHit = params[LTOff::ReturnValue] != 0;
+            if (!bHit) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No hit\n"));
+                showOnScreen(L"[ActorDump] No hit", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+
+            uint8_t hitBuf[136]{};
+            std::memcpy(hitBuf, params + LTOff::OutHit, 136);
+
+            // Get the hit component and its owning actor
+            UObject* hitComp = resolveHitComponent(hitBuf);
+            if (!hitComp) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Hit but null component\n"));
+                return;
+            }
+
+            std::wstring compName(hitComp->GetName());
+            std::wstring compClass(hitComp->GetClassPrivate()->GetName());
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Hit component: {} ({})\n"), compName, compClass);
+
+            // Get the owning actor via GetOwner
+            auto* ownerFunc = hitComp->GetFunctionByNameInChain(STR("GetOwner"));
+            UObject* actor = nullptr;
+            if (ownerFunc) {
+                struct { UObject* Ret{nullptr}; } op{};
+                hitComp->ProcessEvent(ownerFunc, &op);
+                actor = op.Ret;
+            }
+
+            if (!actor) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No owning actor found\n"));
+                showOnScreen(L"[ActorDump] Component: " + compName + L" (" + compClass + L")\nNo owning actor", 5.0f);
+                return;
+            }
+
+            auto* actorCls = actor->GetClassPrivate();
+            std::wstring actorName(actor->GetName());
+            std::wstring actorClassName(actorCls->GetName());
+            std::wstring actorFullName(actor->GetFullName());
+
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Actor: {} | Class: {}\n"), actorName, actorClassName);
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] FullPath: {}\n"), actorFullName);
+
+            // Dump all functions on the actor's class
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] --- Actor Functions ---\n"));
+            auto* actorStruct = static_cast<UStruct*>(actorCls);
+            int funcCount = 0;
+            for (auto* func : actorStruct->ForEachFunctionInChain()) {
+                if (!func) continue;
+                std::wstring funcName(func->GetName());
+                int parmsSize = func->GetParmsSize();
+
+                // Skip boilerplate
+                if (funcName.find(STR("ExecuteUbergraph")) == 0) continue;
+
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod]   fn: {} ({}B)\n"), funcName, parmsSize);
+                funcCount++;
+            }
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Total: {} functions\n"), funcCount);
+
+            // Dump properties
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] --- Actor Properties ---\n"));
+            int propCount = 0;
+            for (auto* prop : actorStruct->ForEachPropertyInChain()) {
+                if (!prop) continue;
+                std::wstring propName(prop->GetName());
+                int offset = prop->GetOffset_Internal();
+                int size = prop->GetSize();
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod]   prop: {} @{} size={}\n"), propName, offset, size);
+                propCount++;
+            }
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Total: {} properties\n"), propCount);
+
+            showOnScreen(L"[ActorDump] " + actorClassName + L"\n" + actorName +
+                        L"\n" + std::to_wstring(funcCount) + L" functions, " +
+                        std::to_wstring(propCount) + L" properties (see log)", 8.0f, 0.0f, 1.0f, 1.0f);
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
+        }
+
+        void dumpBuildCraftClasses()
+        {
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === BUILD/CRAFT CLASS SEARCH ===\n"));
+
+            // Search patterns for build/craft related classes
+            const wchar_t* searchPatterns[] = {
+                STR("Build"),
+                STR("Craft"),
+                STR("Recipe"),
+                STR("Construct"),
+                STR("Place"),
+                STR("Structure"),
+                STR("Buildable"),
+                STR("Blueprint"),
+            };
+
+            // Dump all UObject subclasses that match our search terms
+            // Strategy: Search common game class hierarchies
+            const wchar_t* baseClasses[] = {
+                STR("Actor"),
+                STR("UserWidget"),
+                STR("DataAsset"),
+                STR("Object"),
+            };
+
+            int totalFound = 0;
+            std::set<std::wstring> seenClasses;
+
+            for (auto* baseClass : baseClasses) {
+                std::vector<UObject*> objects;
+                UObjectGlobals::FindAllOf(baseClass, objects);
+
+                for (auto* obj : objects) {
+                    if (!obj) continue;
+                    auto* cls = obj->GetClassPrivate();
+                    if (!cls) continue;
+                    std::wstring clsName(cls->GetName());
+
+                    // Skip if already seen this class
+                    if (seenClasses.count(clsName)) continue;
+
+                    // Check if class name matches any search pattern
+                    std::string narrow;
+                    for (wchar_t c : clsName) narrow.push_back(static_cast<char>(c));
+                    std::string lower = narrow;
+                    for (auto& ch : lower) ch = static_cast<char>(std::tolower(ch));
+
+                    bool matches = false;
+                    for (auto* pattern : searchPatterns) {
+                        std::string patNarrow;
+                        for (const wchar_t* p = pattern; *p; p++) patNarrow.push_back(static_cast<char>(*p));
+                        std::string patLower = patNarrow;
+                        for (auto& ch : patLower) ch = static_cast<char>(std::tolower(ch));
+                        if (lower.find(patLower) != std::string::npos) {
+                            matches = true;
+                            break;
+                        }
+                    }
+
+                    if (!matches) continue;
+                    seenClasses.insert(clsName);
+                    totalFound++;
+
+                    std::wstring objName(obj->GetName());
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod] [{}] Class: {} | Base: {} | Obj: {}\n"),
+                        totalFound, clsName, baseClass, objName);
+
+                    // Dump functions for this class
+                    auto* ustruct = static_cast<UStruct*>(cls);
+                    int fc = 0;
+                    for (auto* func : ustruct->ForEachFunction()) {
+                        if (!func) continue;
+                        std::wstring funcName(func->GetName());
+                        if (funcName.find(STR("ExecuteUbergraph")) == 0) continue;
+                        int parmsSize = func->GetParmsSize();
+                        Output::send<LogLevel::Warning>(
+                            STR("[MoriaCppMod]     fn: {} ({}B)\n"), funcName, parmsSize);
+                        fc++;
+                        if (fc > 40) {
+                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     ... truncated\n"));
+                            break;
+                        }
+                    }
+
+                    // Dump properties (own only, not inherited)
+                    int pc = 0;
+                    for (auto* prop : ustruct->ForEachProperty()) {
+                        if (!prop) continue;
+                        std::wstring propName(prop->GetName());
+                        int offset = prop->GetOffset_Internal();
+                        int size = prop->GetSize();
+                        Output::send<LogLevel::Warning>(
+                            STR("[MoriaCppMod]     prop: {} @{} size={}\n"), propName, offset, size);
+                        pc++;
+                        if (pc > 40) {
+                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     ... truncated\n"));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Found {} unique build/craft related classes\n"), totalFound);
+            showOnScreen(L"Build/Craft search: " + std::to_wstring(totalFound) + L" classes (see log)",
+                        5.0f, 1.0f, 0.8f, 0.0f);
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END BUILD/CRAFT SEARCH ===\n"));
+        }
+
+        // ── Deep Probes (Ctrl+Numpad keys) ──
+
+        void probeBuildTabRecipe()
+        {
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === PROBE: Build_Tab selectedRecipe ===\n"));
+
+            // Find the Build_Tab widget
+            std::vector<UObject*> widgets;
+            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
+            UObject* buildTab = nullptr;
+            for (auto* w : widgets) {
+                if (!w) continue;
+                std::wstring clsName(w->GetClassPrivate()->GetName());
+                if (clsName == STR("UI_WBP_Build_Tab_C")) {
+                    buildTab = w;
+                    break;
+                }
+            }
+            if (!buildTab) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Build_Tab widget NOT FOUND\n"));
+                showOnScreen(L"Build_Tab NOT FOUND", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Build_Tab found: {}\n"),
+                std::wstring(buildTab->GetName()));
+
+            // Read selectedRecipe at offset 1120, size 120
+            uint8_t* objPtr = reinterpret_cast<uint8_t*>(buildTab);
+            uint8_t* recipePtr = objPtr + 1120;
+
+            // Dump raw bytes in hex (8 bytes per line)
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] selectedRecipe @1120 (120 bytes):\n"));
+            for (int row = 0; row < 120; row += 8) {
+                std::wstring hexLine;
+                std::wstring asciiLine;
+                for (int col = 0; col < 8 && (row + col) < 120; col++) {
+                    uint8_t b = recipePtr[row + col];
+                    wchar_t hex[8]{};
+                    swprintf(hex, 8, L"%02X ", b);
+                    hexLine += hex;
+                    asciiLine += (b >= 32 && b < 127) ? static_cast<wchar_t>(b) : L'.';
+                }
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod]   +{:3d}: {} | {}\n"), row, hexLine, asciiLine);
+            }
+
+            // Also read selectedName at offset 1536 (FName, 8 bytes)
+            uint8_t* namePtr = objPtr + 1536;
+            // FName: ComparisonIndex(4) + Number(4) — try to interpret
+            int32_t nameIdx = *reinterpret_cast<int32_t*>(namePtr);
+            int32_t nameNum = *reinterpret_cast<int32_t*>(namePtr + 4);
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] selectedName @1536: index={} number={}\n"), nameIdx, nameNum);
+
+            // Try to read recipesDataTable pointer at 1544
+            UObject** dtPtr = reinterpret_cast<UObject**>(objPtr + 1544);
+            if (*dtPtr) {
+                std::wstring dtName((*dtPtr)->GetName());
+                std::wstring dtClass((*dtPtr)->GetClassPrivate()->GetName());
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] recipesDataTable @1544: {} ({})\n"), dtName, dtClass);
+            } else {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] recipesDataTable @1544: nullptr\n"));
+            }
+
+            // Interpret potential FName values within the recipe struct
+            // FName indices are typically small positive integers
+            for (int off = 0; off < 120; off += 4) {
+                int32_t val = *reinterpret_cast<int32_t*>(recipePtr + off);
+                // Check if it could be a small int (index, count, enum)
+                if (val > 0 && val < 100000) {
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod]   recipe+{}: int32={}\n"), off, val);
+                }
+            }
+
+            // Also dump the ShowThisRecipe function params layout
+            auto* showFunc = buildTab->GetFunctionByNameInChain(STR("ShowThisRecipe"));
+            if (showFunc) {
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] ShowThisRecipe params ({}B):\n"), showFunc->GetParmsSize());
+                for (auto* prop : showFunc->ForEachProperty()) {
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                        std::wstring(prop->GetName()), prop->GetOffset_Internal(), prop->GetSize());
+                }
+            }
+
+            // And blockSelectedEvent params
+            auto* blockFunc = buildTab->GetFunctionByNameInChain(STR("blockSelectedEvent"));
+            if (blockFunc) {
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] blockSelectedEvent params ({}B):\n"), blockFunc->GetParmsSize());
+                for (auto* prop : blockFunc->ForEachProperty()) {
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                        std::wstring(prop->GetName()), prop->GetOffset_Internal(), prop->GetSize());
+                }
+            }
+
+            showOnScreen(L"Build_Tab recipe probe done (see log)", 5.0f, 0.0f, 1.0f, 0.5f);
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END PROBE: Build_Tab ===\n"));
+        }
+
+        void probeBuildConstruction()
+        {
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === PROBE: BuildNewConstruction ===\n"));
+
+            // Find MorBuildingComponent
+            std::vector<UObject*> actors;
+            UObjectGlobals::FindAllOf(STR("Actor"), actors);
+
+            UObject* buildingComp = nullptr;
+            for (auto* actor : actors) {
+                if (!actor) continue;
+                std::wstring clsName(actor->GetClassPrivate()->GetName());
+                if (clsName.find(STR("MorBuildingComponent")) != std::wstring::npos) {
+                    buildingComp = actor;
+                    break;
+                }
+            }
+
+            // Also try finding via component search
+            if (!buildingComp) {
+                std::vector<UObject*> comps;
+                UObjectGlobals::FindAllOf(STR("ActorComponent"), comps);
+                for (auto* c : comps) {
+                    if (!c) continue;
+                    std::wstring clsName(c->GetClassPrivate()->GetName());
+                    if (clsName.find(STR("MorBuildingComponent")) != std::wstring::npos) {
+                        buildingComp = c;
+                        break;
+                    }
+                }
+            }
+
+            if (!buildingComp) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] MorBuildingComponent NOT FOUND\n"));
+                showOnScreen(L"MorBuildingComponent NOT FOUND", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+
+            std::wstring compName(buildingComp->GetName());
+            std::wstring compClass(buildingComp->GetClassPrivate()->GetName());
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Found: {} ({})\n"), compName, compClass);
+
+            // Probe BuildNewConstruction param layout
+            auto* buildFunc = buildingComp->GetFunctionByNameInChain(STR("BuildNewConstruction"));
+            if (buildFunc) {
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] BuildNewConstruction params ({}B):\n"), buildFunc->GetParmsSize());
+                for (auto* prop : buildFunc->ForEachProperty()) {
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                        std::wstring(prop->GetName()), prop->GetOffset_Internal(), prop->GetSize());
+                }
+            } else {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] BuildNewConstruction function NOT FOUND\n"));
+            }
+
+            // Probe CanBuild
+            auto* canBuildFunc = buildingComp->GetFunctionByNameInChain(STR("CanBuild"));
+            if (canBuildFunc) {
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] CanBuild params ({}B):\n"), canBuildFunc->GetParmsSize());
+                for (auto* prop : canBuildFunc->ForEachProperty()) {
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                        std::wstring(prop->GetName()), prop->GetOffset_Internal(), prop->GetSize());
+                }
+            }
+
+            // Probe GetBuildTargetTransform
+            auto* transformFunc = buildingComp->GetFunctionByNameInChain(STR("GetBuildTargetTransform"));
+            if (transformFunc) {
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] GetBuildTargetTransform params ({}B):\n"), transformFunc->GetParmsSize());
+                for (auto* prop : transformFunc->ForEachProperty()) {
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                        std::wstring(prop->GetName()), prop->GetOffset_Internal(), prop->GetSize());
+                }
+            }
+
+            // Probe GetActiveBuildingWidget
+            auto* widgetFunc = buildingComp->GetFunctionByNameInChain(STR("GetActiveBuildingWidget"));
+            if (widgetFunc) {
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] GetActiveBuildingWidget params ({}B):\n"), widgetFunc->GetParmsSize());
+                for (auto* prop : widgetFunc->ForEachProperty()) {
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                        std::wstring(prop->GetName()), prop->GetOffset_Internal(), prop->GetSize());
+                }
+            }
+
+            // Dump all properties on the component
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] --- MorBuildingComponent Properties ---\n"));
+            auto* ustruct = static_cast<UStruct*>(buildingComp->GetClassPrivate());
+            for (auto* prop : ustruct->ForEachPropertyInChain()) {
+                if (!prop) continue;
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod]   prop: {} @{} size={}\n"),
+                    std::wstring(prop->GetName()), prop->GetOffset_Internal(), prop->GetSize());
+            }
+
+            // Read LastSelectedRecipe raw bytes (offset 208, size 16)
+            uint8_t* objPtr = reinterpret_cast<uint8_t*>(buildingComp);
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] LastSelectedRecipe @208 (16 bytes):\n"));
+            for (int row = 0; row < 16; row += 8) {
+                std::wstring hexLine;
+                for (int col = 0; col < 8 && (row + col) < 16; col++) {
+                    uint8_t b = objPtr[208 + row + col];
+                    wchar_t hex[8]{};
+                    swprintf(hex, 8, L"%02X ", b);
+                    hexLine += hex;
+                }
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod]   +{}: {}\n"), row, hexLine);
+            }
+
+            showOnScreen(L"BuildNewConstruction probe done (see log)", 5.0f, 0.0f, 1.0f, 0.5f);
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END PROBE: BuildNewConstruction ===\n"));
+        }
+
+        void dumpDebugMenus()
+        {
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === PROBE: Debug Menus ===\n"));
+
+            const wchar_t* debugMenuClasses[] = {
+                STR("BP_DebugMenu_Recipes_C"),
+                STR("BP_DebugMenu_CraftingAndConstruction_C"),
+            };
+
+            for (auto* menuClass : debugMenuClasses) {
+                std::vector<UObject*> objects;
+                UObjectGlobals::FindAllOf(menuClass, objects);
+
+                if (objects.empty()) {
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod] {} — no instances found, trying CDO...\n"), menuClass);
+
+                    // Try to find the class itself and dump its CDO
+                    std::vector<UObject*> allActors;
+                    UObjectGlobals::FindAllOf(STR("Actor"), allActors);
+                    for (auto* a : allActors) {
+                        if (!a) continue;
+                        std::wstring clsName(a->GetClassPrivate()->GetName());
+                        if (clsName == menuClass) {
+                            objects.push_back(a);
+                            break;
+                        }
+                    }
+                }
+
+                for (auto* obj : objects) {
+                    if (!obj) continue;
+                    auto* cls = obj->GetClassPrivate();
+                    std::wstring clsName(cls->GetName());
+                    std::wstring objName(obj->GetName());
+
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod] Debug Menu: {} | Obj: {}\n"), clsName, objName);
+
+                    // Dump all functions
+                    auto* ustruct = static_cast<UStruct*>(cls);
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   Functions:\n"));
+                    for (auto* func : ustruct->ForEachFunctionInChain()) {
+                        if (!func) continue;
+                        std::wstring funcName(func->GetName());
+                        if (funcName.find(STR("ExecuteUbergraph")) == 0) continue;
+                        int parmsSize = func->GetParmsSize();
+                        Output::send<LogLevel::Warning>(
+                            STR("[MoriaCppMod]     fn: {} ({}B)\n"), funcName, parmsSize);
+                    }
+
+                    // Dump properties
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   Properties:\n"));
+                    for (auto* prop : ustruct->ForEachPropertyInChain()) {
+                        if (!prop) continue;
+                        Output::send<LogLevel::Warning>(
+                            STR("[MoriaCppMod]     prop: {} @{} size={}\n"),
+                            std::wstring(prop->GetName()), prop->GetOffset_Internal(), prop->GetSize());
+                    }
+                }
+            }
+
+            showOnScreen(L"Debug menu probe done (see log)", 5.0f, 0.0f, 1.0f, 0.5f);
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END PROBE: Debug Menus ===\n"));
+        }
+
+        void toggleBuildHUD()
+        {
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === Toggle Build HUD ===\n"));
+
+            // Find WBP_MoriaHUD_C
+            std::vector<UObject*> widgets;
+            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
+            UObject* moriaHUD = nullptr;
+            for (auto* w : widgets) {
+                if (!w) continue;
+                std::wstring clsName(w->GetClassPrivate()->GetName());
+                if (clsName == STR("WBP_MoriaHUD_C")) {
+                    // Check if visible
+                    auto* visFunc = w->GetFunctionByNameInChain(STR("IsVisible"));
+                    if (visFunc) {
+                        struct { bool Ret{false}; } vp{};
+                        w->ProcessEvent(visFunc, &vp);
+                        if (vp.Ret) {
+                            moriaHUD = w;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!moriaHUD) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] WBP_MoriaHUD_C NOT FOUND (visible)\n"));
+                showOnScreen(L"MoriaHUD NOT FOUND", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+
+            // First probe BuildHUDShow params
+            auto* showFunc = moriaHUD->GetFunctionByNameInChain(STR("BuildHUDShow"));
+            auto* hideFunc = moriaHUD->GetFunctionByNameInChain(STR("BuildHUDHide"));
+
+            if (showFunc) {
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] BuildHUDShow params ({}B):\n"), showFunc->GetParmsSize());
+                for (auto* prop : showFunc->ForEachProperty()) {
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                        std::wstring(prop->GetName()), prop->GetOffset_Internal(), prop->GetSize());
+                }
+
+                // Try calling it with zeroed params
+                int parmsSize = showFunc->GetParmsSize();
+                std::vector<uint8_t> buf(parmsSize, 0);
+                moriaHUD->ProcessEvent(showFunc, buf.data());
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called BuildHUDShow!\n"));
+                showOnScreen(L"BuildHUDShow called!", 3.0f, 0.0f, 1.0f, 0.0f);
+            } else {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] BuildHUDShow NOT FOUND\n"));
+            }
+
+            if (hideFunc) {
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] BuildHUDHide params ({}B):\n"), hideFunc->GetParmsSize());
+                for (auto* prop : hideFunc->ForEachProperty()) {
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                        std::wstring(prop->GetName()), prop->GetOffset_Internal(), prop->GetSize());
+                }
+            }
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END Toggle Build HUD ===\n"));
+        }
+
+        // ── Debug Cheat Functions ──
+        // Calls a named 0-param function on a debug menu actor
+        bool callDebugFunc(const wchar_t* actorClass, const wchar_t* funcName)
+        {
+            std::vector<UObject*> actors;
+            UObjectGlobals::FindAllOf(STR("Actor"), actors);
+            for (auto* a : actors) {
+                if (!a) continue;
+                std::wstring cls(a->GetClassPrivate()->GetName());
+                if (cls == actorClass) {
+                    auto* fn = a->GetFunctionByNameInChain(funcName);
+                    if (fn) {
+                        a->ProcessEvent(fn, nullptr);
+                        Output::send<LogLevel::Warning>(
+                            STR("[MoriaCppMod] Called {}::{}\n"), cls, std::wstring(funcName));
+                        return true;
+                    }
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod] Function {} not found on {}\n"),
+                        std::wstring(funcName), cls);
+                    return false;
+                }
+            }
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Actor {} not found\n"), std::wstring(actorClass));
+            return false;
+        }
+
+        // Read debug menu bool properties to show current state
+        void showDebugMenuState()
+        {
+            std::vector<UObject*> actors;
+            UObjectGlobals::FindAllOf(STR("Actor"), actors);
+            for (auto* a : actors) {
+                if (!a) continue;
+                std::wstring cls(a->GetClassPrivate()->GetName());
+                if (cls == STR("BP_DebugMenu_CraftingAndConstruction_C")) {
+                    uint8_t* base = reinterpret_cast<uint8_t*>(a);
+                    bool freeCon   = *(base + 600) != 0;
+                    bool freeCraft = *(base + 601) != 0;
+                    bool prereqs   = *(base + 602) != 0;
+                    bool stability = *(base + 603) != 0;
+                    bool instant   = *(base + 604) != 0;
+                    std::wstring msg = L"[Cheats] ";
+                    msg += freeCon   ? L"FreeBuild:ON " : L"FreeBuild:OFF ";
+                    msg += freeCraft ? L"FreeCraft:ON " : L"FreeCraft:OFF ";
+                    msg += instant   ? L"InstantCraft:ON " : L"InstantCraft:OFF ";
+                    msg += prereqs   ? L"Prereqs:OFF " : L"Prereqs:ON ";
+                    msg += stability ? L"Stability:OFF" : L"Stability:ON";
+                    showOnScreen(msg, 5.0f, 0.0f, 1.0f, 1.0f);
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] {}\n"), msg);
+                    return;
+                }
+            }
+            showOnScreen(L"Debug menu actor not found", 3.0f, 1.0f, 0.3f, 0.3f);
+        }
+
+        void toggleFreeConstruction()
+        {
+            callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Free Construction"));
+            showDebugMenuState();
+        }
+
+        void toggleFreeCrafting()
+        {
+            callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Free Crafting"));
+            showDebugMenuState();
+        }
+
+        void toggleInstantCrafting()
+        {
+            callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Instant Crafting"));
+            showDebugMenuState();
+        }
+
+        void toggleConstructionPrereqs()
+        {
+            callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Construction Prereqs"));
+            showDebugMenuState();
+        }
+
+        void toggleConstructionStability()
+        {
+            callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Construction Stability"));
+            showDebugMenuState();
+        }
+
+        void unlockAllRecipes()
+        {
+            if (callDebugFunc(STR("BP_DebugMenu_Recipes_C"), STR("All Recipes")))
+                showOnScreen(L"ALL RECIPES UNLOCKED!", 5.0f, 0.0f, 1.0f, 0.0f);
+        }
+
+        void restoreAllConstructions()
+        {
+            if (callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Restore All Constructions")))
+                showOnScreen(L"All constructions restored!", 5.0f, 0.0f, 1.0f, 0.0f);
+        }
+
+        // ── Rotate Aimed Building: set mobility then rotate + raw memory fallback ──
+        // Find BuildHUDv2 widget by searching all UserWidgets
+        UObject* findBuildHUD()
+        {
+            std::vector<UObject*> widgets;
+            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
+            for (auto* w : widgets) {
+                if (!w) continue;
+                std::wstring cls(w->GetClassPrivate()->GetName());
+                if (cls.find(STR("BuildHUD")) != std::wstring::npos) {
+                    // Check if visible
+                    auto* visFunc = w->GetFunctionByNameInChain(STR("IsVisible"));
+                    if (visFunc) {
+                        struct { bool Ret{false}; } vp{};
+                        w->ProcessEvent(visFunc, &vp);
+                        if (vp.Ret) return w;
+                    }
+                }
+            }
+            // Also return first match even if not visible
+            for (auto* w : widgets) {
+                if (!w) continue;
+                std::wstring cls(w->GetClassPrivate()->GetName());
+                if (cls.find(STR("BuildHUD")) != std::wstring::npos) return w;
+            }
+            return nullptr;
+        }
+
+        UObject* resolveGATA()
+        {
+            auto* hud = findBuildHUD();
+            if (!hud) return nullptr;
+            uint8_t* hudBase = reinterpret_cast<uint8_t*>(hud);
+            RC::Unreal::FWeakObjectPtr weakPtr{};
+            std::memcpy(&weakPtr, hudBase + 1000, sizeof(RC::Unreal::FWeakObjectPtr));
+            return weakPtr.Get();
+        }
+
+        void rotateBuildPlacement()
+        {
+            UObject* gata = resolveGATA();
+            if (!gata) {
+                showOnScreen(L"Not in build mode", 2.0f, 1.0f, 0.5f, 0.0f);
+                return;
+            }
+
+            uint8_t* gataBase = reinterpret_cast<uint8_t*>(gata);
+
+            // Set rotation increments to 45 degrees
+            const float step = 45.0f;
+            *reinterpret_cast<float*>(gataBase + 1616) = step;  // SnapRotateIncrement
+            *reinterpret_cast<float*>(gataBase + 1620) = step;  // FreePlaceRotateIncrement
+
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] [Rotate] Set SnapRotateIncrement={:.0f} FreePlaceRotateIncrement={:.0f}\n"),
+                step, step);
+            showOnScreen(L"Rotation step: 45\xB0 — press R!", 2.0f, 0.0f, 1.0f, 0.0f);
+        }
+
+        void rotateBuildPlacementCcw()
+        {
+            UObject* gata = resolveGATA();
+            if (!gata) {
+                showOnScreen(L"Not in build mode", 2.0f, 1.0f, 0.5f, 0.0f);
+                return;
+            }
+
+            uint8_t* gataBase = reinterpret_cast<uint8_t*>(gata);
+
+            // Toggle between 45 and 90
+            float current = *reinterpret_cast<float*>(gataBase + 1616);
+            float newStep = (current < 89.0f) ? 90.0f : 45.0f;
+            *reinterpret_cast<float*>(gataBase + 1616) = newStep;  // SnapRotateIncrement
+            *reinterpret_cast<float*>(gataBase + 1620) = newStep;  // FreePlaceRotateIncrement
+
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] [Rotate] Toggled rotation step to {:.0f}\n"), newStep);
+            std::wstring msg = L"Rotation step: " + std::to_wstring((int)newStep) + L"\xB0";
+            showOnScreen(msg.c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
+        }
+
+        // ProcessEvent spy — captures all rotation-related calls for 5 seconds
+        bool m_spyActive{false};
+        bool m_spyAll{false};
+        int m_spyFrameCount{0};
+        float m_buildRotation{0.0f};
+        static inline MoriaCppMod* s_instance{nullptr};
+
+        void startRotationSpy()
+        {
+            if (m_spyActive) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Spy] Already active\n"));
+                return;
+            }
+            m_spyActive = true;
+            m_spyFrameCount = 0;
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Spy] === ROTATION SPY ACTIVE — press R now! ===\n"));
+            showOnScreen(L"SPY ACTIVE - press R now!", 5.0f, 1.0f, 1.0f, 0.0f);
+        }
+
+        void rotateAimedBuilding_legacy()
+        {
+            FVec3f start{}, end{};
+            if (!getCameraRay(start, end)) return;
+
+            auto* ltFunc = UObjectGlobals::StaticFindObject<UFunction*>(
+                nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:LineTraceSingle"));
+            auto* kslCDO = UObjectGlobals::StaticFindObject<UObject*>(
+                nullptr, nullptr, STR("/Script/Engine.Default__KismetSystemLibrary"));
+            auto* pc = findPlayerController();
+            if (!ltFunc || !kslCDO || !pc) return;
+
+            uint8_t ltParams[LTOff::ParmsSize]{};
+            std::memcpy(ltParams + LTOff::WorldContextObject, &pc, 8);
+            std::memcpy(ltParams + LTOff::Start, &start, 12);
+            std::memcpy(ltParams + LTOff::End, &end, 12);
+            ltParams[LTOff::TraceChannel] = 0;
+            ltParams[LTOff::bTraceComplex] = 0;
+            ltParams[LTOff::bIgnoreSelf] = 1;
+
+            auto* pawn = getPawn();
+            if (pawn) {
+                uintptr_t arrPtr = reinterpret_cast<uintptr_t>(&pawn);
+                int32_t one = 1;
+                std::memcpy(ltParams + LTOff::ActorsToIgnore, &arrPtr, 8);
+                std::memcpy(ltParams + LTOff::ActorsToIgnore + 8, &one, 4);
+                std::memcpy(ltParams + LTOff::ActorsToIgnore + 12, &one, 4);
+            }
+
+            kslCDO->ProcessEvent(ltFunc, ltParams);
+
+            if (ltParams[LTOff::ReturnValue] == 0) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Rotate] No hit\n"));
+                return;
+            }
+
+            uint8_t hitBuf[136]{};
+            std::memcpy(hitBuf, ltParams + LTOff::OutHit, 136);
+            UObject* hitComp = resolveHitComponent(hitBuf);
+            if (!hitComp) return;
+
+            auto* ownerFunc = hitComp->GetFunctionByNameInChain(STR("GetOwner"));
+            UObject* actor = nullptr;
+            if (ownerFunc) {
+                struct { UObject* Ret{nullptr}; } op{};
+                hitComp->ProcessEvent(ownerFunc, &op);
+                actor = op.Ret;
+            }
+            if (!actor) return;
+
+            std::wstring actorClass(actor->GetClassPrivate()->GetName());
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] [Rotate] Actor: {} ({})\n"),
+                std::wstring(actor->GetName()), actorClass);
+
+            // Get root component
+            UObject* rootComp = nullptr;
+            auto* getRootComp = actor->GetFunctionByNameInChain(STR("K2_GetRootComponent"));
+            if (getRootComp) {
+                struct { UObject* Ret{nullptr}; } rc{};
+                actor->ProcessEvent(getRootComp, &rc);
+                rootComp = rc.Ret;
+            }
+
+            // Collect actor's scene components
+            std::vector<UObject*> actorComps;
+            {
+                std::vector<UObject*> allComps;
+                UObjectGlobals::FindAllOf(STR("SceneComponent"), allComps);
+                for (auto* c : allComps) {
+                    if (!c) continue;
+                    auto* cOwner = c->GetFunctionByNameInChain(STR("GetOwner"));
+                    if (!cOwner) continue;
+                    struct { UObject* Ret{nullptr}; } co{};
+                    c->ProcessEvent(cOwner, &co);
+                    if (co.Ret == actor) actorComps.push_back(c);
+                }
+            }
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] [Rotate] Found {} scene components on actor\n"), actorComps.size());
+
+            // ── Step 1: Read rotation before ──
+            auto* getRot = actor->GetFunctionByNameInChain(STR("K2_GetActorRotation"));
+            FRotator3f before{};
+            if (getRot) actor->ProcessEvent(getRot, &before);
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] [Rotate] BEFORE: P={:.2f} Y={:.2f} R={:.2f}\n"),
+                before.Pitch, before.Yaw, before.Roll);
+
+            // ── Step 2: HIDE actor first (purges static draw list entries) ──
+            auto* setHidden = actor->GetFunctionByNameInChain(STR("SetActorHiddenInGame"));
+            if (setHidden) {
+                uint8_t bHide = 1;
+                actor->ProcessEvent(setHidden, &bHide);
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Rotate] Hidden actor\n"));
+            }
+            // Also hide each component individually
+            for (auto* c : actorComps) {
+                auto* setVis = c->GetFunctionByNameInChain(STR("SetVisibility"));
+                if (setVis) {
+                    uint8_t visParams[2] = {0, 1}; // hide, propagate
+                    c->ProcessEvent(setVis, visParams);
+                }
+            }
+
+            // ── Step 3: Set mobility to Movable on all components ──
+            int mobilitySet = 0;
+            for (auto* c : actorComps) {
+                for (auto* prop : c->GetClassPrivate()->ForEachPropertyInChain()) {
+                    std::wstring pn(prop->GetName());
+                    if (pn == STR("Mobility")) {
+                        uint8_t* base = reinterpret_cast<uint8_t*>(c);
+                        uint8_t curMob = *(base + prop->GetOffset_Internal());
+                        if (curMob == 2) { mobilitySet++; break; }
+                        auto* setMobFunc = c->GetFunctionByNameInChain(STR("SetMobility"));
+                        if (setMobFunc) {
+                            uint8_t mobParam = 2;
+                            c->ProcessEvent(setMobFunc, &mobParam);
+                        } else {
+                            *(base + prop->GetOffset_Internal()) = 2;
+                        }
+                        mobilitySet++;
+                        break;
+                    }
+                }
+            }
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] [Rotate] Set Movable on {} components\n"), mobilitySet);
+
+            // ── Step 4: Set rotation via K2_SetActorLocationAndRotation (atomic + teleport) ──
+            auto* getLocFunc = actor->GetFunctionByNameInChain(STR("K2_GetActorLocation"));
+            auto* setLocRot = actor->GetFunctionByNameInChain(STR("K2_SetActorLocationAndRotation"));
+            if (getLocFunc && setLocRot) {
+                FVec3f curLoc{};
+                actor->ProcessEvent(getLocFunc, &curLoc);
+                // Layout: Location@0(12) Rotation@12(12) bSweep@24(1) SweepHitResult@28(136) bTeleport@164(1) ret@165(1)
+                uint8_t slrParams[166]{};
+                std::memcpy(slrParams, &curLoc, 12);
+                FRotator3f newRot = { before.Pitch, before.Yaw + 45.0f, before.Roll };
+                std::memcpy(slrParams + 12, &newRot, 12);
+                slrParams[164] = 1; // bTeleport
+                actor->ProcessEvent(setLocRot, slrParams);
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] [Rotate] K2_SetActorLocationAndRotation applied\n"));
+            }
+
+            // Also set on root component directly
+            if (rootComp) {
+                auto* compSetRot = rootComp->GetFunctionByNameInChain(STR("K2_SetWorldRotation"));
+                if (compSetRot) {
+                    uint8_t p2[153]{};
+                    FRotator3f newRot = { before.Pitch, before.Yaw + 45.0f, before.Roll };
+                    std::memcpy(p2, &newRot, 12);
+                    p2[152] = 1; // bTeleport
+                    rootComp->ProcessEvent(compSetRot, p2);
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Rotate] RootComp K2_SetWorldRotation applied\n"));
+                }
+            }
+
+            // ── Step 5: SHOW actor again (re-registers with new mobility + rotation) ──
+            if (setHidden) {
+                uint8_t bHide = 0;
+                actor->ProcessEvent(setHidden, &bHide);
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Rotate] Shown actor\n"));
+            }
+            for (auto* c : actorComps) {
+                auto* setVis = c->GetFunctionByNameInChain(STR("SetVisibility"));
+                if (setVis) {
+                    uint8_t visParams[2] = {1, 1}; // show, propagate
+                    c->ProcessEvent(setVis, visParams);
+                }
+            }
+
+            // ── Verify final rotation ──
+            FRotator3f finalRot{};
+            if (getRot) actor->ProcessEvent(getRot, &finalRot);
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] [Rotate] FINAL: P={:.2f} Y={:.2f} R={:.2f}\n"),
+                finalRot.Pitch, finalRot.Yaw, finalRot.Roll);
+
+            if (std::abs(finalRot.Yaw - before.Yaw) > 0.1f) {
+                showOnScreen(L"Rotated +45 deg", 3.0f, 0.0f, 1.0f, 0.0f);
+            } else {
+                showOnScreen(L"Rotation failed - check log", 3.0f, 1.0f, 0.3f, 0.0f);
+            }
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Rotate] === DONE ===\n"));
+        }
+
+        void undoLast()
+        {
+            if (m_undoStack.empty()) {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Nothing to undo\n"));
+                showOnScreen(L"Nothing to undo", 2.0f, 1.0f, 0.5f, 0.0f);
+                return;
+            }
+
+            auto& last = m_undoStack.back();
+
+            // Type rule undo: restore all instances and remove the @rule
+            if (last.isTypeRule) {
+                std::string meshId = last.typeRuleMeshId;
+
+                // Collect all undo entries for this type rule (they're contiguous at the back)
+                std::vector<RemovedInstance> toRestore;
+                while (!m_undoStack.empty()) {
+                    auto& entry = m_undoStack.back();
+                    if (!entry.isTypeRule || entry.typeRuleMeshId != meshId) break;
+                    toRestore.push_back(entry);
+                    m_undoStack.pop_back();
+                }
+
+                // Restore all instances (un-hide them by restoring original transform)
+                int restored = 0;
+                for (auto& ri : toRestore) {
+                    if (restoreInstance(ri.component, ri.instanceIndex, ri.transform))
+                        restored++;
+                }
+
+                // Remove the type rule
+                m_typeRemovals.erase(meshId);
+                rewriteSaveFile();
+
+                std::wstring meshIdW(meshId.begin(), meshId.end());
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] Undo type rule: {} — restored {} instances\n"),
+                    meshIdW, restored);
+                showOnScreen(L"Undo type: " + meshIdW + L" (" + std::to_wstring(restored) + L" restored)",
+                            3.0f, 0.5f, 0.5f, 1.0f);
+                return;
+            }
+
+            // Single instance undo
+            std::string meshId = componentNameToMeshId(last.componentName);
+            float px = last.transform.Translation.X;
+            float py = last.transform.Translation.Y;
+            float pz = last.transform.Translation.Z;
+
+            for (size_t i = 0; i < m_savedRemovals.size(); i++) {
+                if (m_savedRemovals[i].meshName == meshId) {
+                    float ddx = m_savedRemovals[i].posX - px;
+                    float ddy = m_savedRemovals[i].posY - py;
+                    float ddz = m_savedRemovals[i].posZ - pz;
+                    if (ddx*ddx + ddy*ddy + ddz*ddz < POS_TOLERANCE * POS_TOLERANCE) {
+                        m_savedRemovals.erase(m_savedRemovals.begin() + i);
+                        m_appliedRemovals.erase(m_appliedRemovals.begin() + i);
+                        break;
+                    }
+                }
+            }
+            rewriteSaveFile();
+
+            // Restore by un-hiding (set original transform back)
+            bool ok = restoreInstance(last.component, last.instanceIndex, last.transform);
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] Restored index {} ({}) | {} remaining\n"),
+                last.instanceIndex, ok ? STR("ok") : STR("FAILED"), m_savedRemovals.size());
+            showOnScreen(L"Restored | " + std::to_wstring(m_savedRemovals.size()) + L" saved",
+                        3.0f, 0.5f, 0.5f, 1.0f);
+
+            m_undoStack.pop_back();
+        }
+
+    public:
+        MoriaCppMod() {
+            ModVersion = STR("1.2");
+            ModName = STR("MoriaCppMod");
+            ModAuthors = STR("johnb");
+            ModDescription = STR("HISM removal + building exploration + deep probes");
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Loaded v1.3\n"));
+        }
+
+        ~MoriaCppMod() override {}
+
+        auto on_unreal_init() -> void override
+        {
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Unreal initialized.\n"));
+
+            m_saveFilePath = "Mods/MoriaCppMod/removed_instances.txt";
+            loadSaveFile();
+            probePrintString();
+
+            register_keydown_event(Input::Key::NUM_ZERO, [this]() {
+                int pending = pendingCount();
+                int applied = static_cast<int>(m_savedRemovals.size()) - pending;
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] Status: {} saved ({} applied, {} pending), {} undo, {} type rules\n"),
+                    m_savedRemovals.size(), applied, pending,
+                    m_undoStack.size(), m_typeRemovals.size());
+                showOnScreen(L"Status: " + std::to_wstring(m_savedRemovals.size()) + L" saved (" +
+                            std::to_wstring(applied) + L" applied, " +
+                            std::to_wstring(pending) + L" pending), " +
+                            std::to_wstring(m_undoStack.size()) + L" undo", 5.0f);
+                showGameMessage(L"[Mod] " + std::to_wstring(applied) + L"/" +
+                               std::to_wstring(m_savedRemovals.size()) + L" applied, " +
+                               std::to_wstring(pending) + L" pending");
+            });
+
+            register_keydown_event(Input::Key::NUM_ONE, [this]() { removeAimed(); });
+            register_keydown_event(Input::Key::NUM_TWO, [this]() { undoLast(); });
+
+            register_keydown_event(Input::Key::NUM_THREE, [this]() {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Forcing full replay (throttled)...\n"));
+                m_processedComps.clear();
+                m_appliedRemovals.assign(m_appliedRemovals.size(), false);
+                m_replay = {};  // reset any in-progress replay
+                startReplay();
+                showOnScreen(L"Replay started (throttled)", 3.0f, 0.0f, 0.8f, 1.0f);
+            });
+
+            register_keydown_event(Input::Key::NUM_FOUR, [this]() { inspectAimed(); });
+
+            register_keydown_event(Input::Key::NUM_FIVE, [this]() { testAllDisplayMethods(); });
+            register_keydown_event(Input::Key::NUM_SIX, [this]() { removeAllOfType(); });
+
+            // Building exploration keys
+            register_keydown_event(Input::Key::NUM_SEVEN, [this]() { dumpAllWidgets(); });
+            register_keydown_event(Input::Key::NUM_EIGHT, [this]() { dumpAimedActor(); });
+            register_keydown_event(Input::Key::NUM_NINE, [this]() { dumpBuildCraftClasses(); });
+
+            // Deep probes (Alt+Numpad)
+            register_keydown_event(Input::Key::NUM_FIVE, {Input::ModifierKey::ALT}, [this]() { startRotationSpy(); });
+            register_keydown_event(Input::Key::NUM_SEVEN, {Input::ModifierKey::ALT}, [this]() { probeBuildTabRecipe(); });
+            register_keydown_event(Input::Key::NUM_EIGHT, {Input::ModifierKey::ALT}, [this]() { probeBuildConstruction(); });
+            register_keydown_event(Input::Key::NUM_NINE, {Input::ModifierKey::ALT}, [this]() { dumpDebugMenus(); });
+
+            // Debug cheats (Alt+Numpad)
+            register_keydown_event(Input::Key::NUM_ZERO, {Input::ModifierKey::ALT}, [this]() { showDebugMenuState(); });
+            register_keydown_event(Input::Key::NUM_ONE, {Input::ModifierKey::ALT}, [this]() { toggleFreeConstruction(); });
+            register_keydown_event(Input::Key::NUM_TWO, {Input::ModifierKey::ALT}, [this]() { toggleFreeCrafting(); });
+            register_keydown_event(Input::Key::NUM_THREE, {Input::ModifierKey::ALT}, [this]() { toggleInstantCrafting(); });
+            register_keydown_event(Input::Key::NUM_FOUR, {Input::ModifierKey::ALT}, [this]() { rotateBuildPlacement(); });
+            register_keydown_event(Input::Key::NUM_SIX, {Input::ModifierKey::ALT}, [this]() { unlockAllRecipes(); });
+
+            // Spy mode: capture ProcessEvent calls with rotation/build in the function name
+            s_instance = this;
+            Unreal::Hook::RegisterProcessEventPreCallback([](UObject* context, UFunction* func, void* parms) {
+                if (!s_instance) return;
+                if (!func) return;
+
+                // Intercept RotatePressed on BuildHUD: set GATA rotation step to 45 degrees
+                {
+                    std::wstring fn(func->GetName());
+                    if (fn == STR("RotatePressed") || fn == STR("RotateCcwPressed")) {
+                        std::wstring cls(context->GetClassPrivate()->GetName());
+                        if (cls.find(STR("BuildHUD")) != std::wstring::npos) {
+                            UObject* gata = s_instance->resolveGATA();
+                            if (gata) {
+                                uint8_t* gataBase = reinterpret_cast<uint8_t*>(gata);
+                                const float step = 45.0f;
+                                *reinterpret_cast<float*>(gataBase + 1616) = step;  // SnapRotateIncrement
+                                *reinterpret_cast<float*>(gataBase + 1620) = step;  // FreePlaceRotateIncrement
+                            }
+                        }
+                    }
+                }
+
+                // Full spy mode: log EVERY ProcessEvent call (during RotatePressed)
+                if (s_instance->m_spyAll) {
+                    std::wstring funcName(func->GetName());
+                    std::wstring objClass = context ? std::wstring(context->GetClassPrivate()->GetName()) : STR("null");
+                    std::wstring objName = context ? std::wstring(context->GetName()) : STR("null");
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod] [SPYALL] {}.{} ({}B) on {}\n"),
+                        objClass, funcName, func->GetParmsSize(), objName);
+                    return;
+                }
+
+                if (!s_instance->m_spyActive) return;
+                std::wstring funcName(func->GetName());
+                if (funcName.find(STR("otat")) != std::wstring::npos ||
+                    funcName.find(STR("uild")) != std::wstring::npos ||
+                    funcName.find(STR("lace")) != std::wstring::npos ||
+                    funcName.find(STR("onstruct")) != std::wstring::npos) {
+                    std::wstring objName = context ? std::wstring(context->GetName()) : STR("null");
+                    std::wstring objClass = context ? std::wstring(context->GetClassPrivate()->GetName()) : STR("null");
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod] [SPY] {}.{} ({}B) on {} ({})\n"),
+                        objClass, funcName, func->GetParmsSize(), objName, objClass);
+                    if (funcName.find(STR("OnRotation")) != std::wstring::npos && parms && func->GetParmsSize() > 0) {
+                        int sz = func->GetParmsSize();
+                        uint8_t* p = reinterpret_cast<uint8_t*>(parms);
+                        int32_t ival = (sz >= 4) ? *reinterpret_cast<int32_t*>(p) : 0;
+                        float fval = (sz >= 4) ? *reinterpret_cast<float*>(p) : 0.0f;
+                        Output::send<LogLevel::Warning>(
+                            STR("[MoriaCppMod] [SPY]   param: int={} float={:.2f}\n"), ival, fval);
+                    }
+                }
+            });
+
+            m_replayActive = true;
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] v1.3: Num=removal/explore | Alt+Num=cheats/probes\n"));
+        }
+
+        auto on_update() -> void override
+        {
+            // Auto-disable spy after ~300 frames (~5s)
+            if (m_spyActive) {
+                m_spyFrameCount++;
+                if (m_spyFrameCount > 300) {
+                    m_spyActive = false;
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Spy] === SPY DISABLED (timeout) ===\n"));
+                    showOnScreen(L"Spy disabled", 2.0f, 0.5f, 0.5f, 0.5f);
+                }
+            }
+
+            if (!m_replayActive) return;
+            m_frameCounter++;
+            m_rescanCounter++;
+
+            // Detect world switch: if character was loaded but disappears, reset for new world
+            if (m_characterLoaded && m_frameCounter % 60 == 0) {
+                std::vector<UObject*> dwarves;
+                UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
+                if (dwarves.empty()) {
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod] Character lost — world unloading, resetting replay state\n"));
+                    m_characterLoaded = false;
+                    m_initialReplayDone = false;
+                    m_processedComps.clear();
+                    m_undoStack.clear();
+                    m_stuckLogCount = 0;
+                    m_rescanCounter = 0;
+                    m_chatWidget = nullptr;
+                    m_sysMessages = nullptr;
+                    m_replay = {};  // stop any active replay
+                    // Reset all applied flags so replay re-runs for new world
+                    m_appliedRemovals.assign(m_appliedRemovals.size(), false);
+                }
+            }
+
+            // Wait for player character to load before starting replay
+            if (!m_characterLoaded) {
+                if (m_frameCounter % 30 == 0) {  // check every ~0.5s
+                    std::vector<UObject*> dwarves;
+                    UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
+                    if (!dwarves.empty()) {
+                        m_characterLoaded = true;
+                        m_charLoadFrame = m_frameCounter;
+                        Output::send<LogLevel::Warning>(
+                            STR("[MoriaCppMod] Character loaded at frame {} — waiting 15s before replay\n"),
+                            m_frameCounter);
+                    }
+                }
+                return;  // don't do anything until character exists
+            }
+
+            int framesSinceChar = m_frameCounter - m_charLoadFrame;
+
+            // Initial replay 15 seconds after character load (~900 frames at 60fps)
+            // Extra delay to let streaming settle before modifying instance buffers
+            static constexpr int INITIAL_DELAY = 900;
+            if (!m_initialReplayDone && framesSinceChar == INITIAL_DELAY) {
+                m_initialReplayDone = true;
+                if (!m_savedRemovals.empty() || !m_typeRemovals.empty()) {
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Starting initial replay (15s after char load)...\n"));
+                    startReplay();
+                }
+            }
+
+            // Process throttled replay batch (max MAX_HIDES_PER_FRAME per frame)
+            if (m_replay.active) {
+                processReplayBatch();
+            }
+
+            // Check for newly-streamed components every ~3s (after initial replay, when not already replaying)
+            if (m_initialReplayDone && !m_replay.active && m_frameCounter % STREAM_CHECK_INTERVAL == 0) {
+                checkForNewComponents();
+            }
+
+            // Periodic full rescan every ~60s while there are pending removals
+            static constexpr int RESCAN_INTERVAL = 3600;  // ~60s at 60fps
+            if (m_initialReplayDone && !m_replay.active && m_rescanCounter >= RESCAN_INTERVAL && hasPendingRemovals()) {
+                m_rescanCounter = 0;
+                int pending = pendingCount();
+                Output::send<LogLevel::Warning>(
+                    STR("[MoriaCppMod] Periodic rescan ({} pending)...\n"), pending);
+                m_processedComps.clear();
+                startReplay();
+                if (m_stuckLogCount == 0 && pending > 0) {
+                    m_stuckLogCount++;
+                    Output::send<LogLevel::Warning>(
+                        STR("[MoriaCppMod] === Pending entries ({}) ===\n"), pending);
+                    for (size_t i = 0; i < m_savedRemovals.size(); i++) {
+                        if (m_appliedRemovals[i]) continue;
+                        std::wstring meshW(m_savedRemovals[i].meshName.begin(),
+                                           m_savedRemovals[i].meshName.end());
+                        Output::send<LogLevel::Warning>(
+                            STR("[MoriaCppMod]   PENDING [{}]: {} @ ({:.1f},{:.1f},{:.1f})\n"),
+                            i, meshW, m_savedRemovals[i].posX,
+                            m_savedRemovals[i].posY, m_savedRemovals[i].posZ);
+                    }
+                }
+            }
+        }
+    };
+}
+
+#define MOD_EXPORT __declspec(dllexport)
+extern "C" {
+    MOD_EXPORT RC::CppUserModBase* start_mod() { return new MoriaMods::MoriaCppMod(); }
+    MOD_EXPORT void uninstall_mod(RC::CppUserModBase* mod) { delete mod; }
+}
