@@ -193,6 +193,24 @@ namespace MoriaMods
         std::string typeRuleMeshId;
     };
 
+    // ── Display entry for removal list UI (config window tab 0) ──
+    struct RemovalEntry
+    {
+        bool isTypeRule{false};
+        std::string meshName;
+        float posX{0}, posY{0}, posZ{0};
+        std::wstring friendlyName; // first segment before '-'
+        std::wstring fullPathW;    // wide copy of meshName
+        std::wstring coordsW;      // formatted coords or "TYPE RULE (all instances)"
+    };
+
+    static std::wstring extractFriendlyName(const std::string& meshName)
+    {
+        auto dash = meshName.find('-');
+        std::string shortName = (dash != std::string::npos) ? meshName.substr(0, dash) : meshName;
+        return std::wstring(shortName.begin(), shortName.end());
+    }
+
     // PrintString param offsets (discovered at runtime via probe)
     struct PSOffsets
     {
@@ -246,7 +264,7 @@ namespace MoriaMods
     //   Rebindable F-key assignments, VK code → string conversion,
     //   findGameWindow() for overlay positioning
     // ════════════════════════════════════════════════════════════════════════════
-    static constexpr int BIND_COUNT = 12;
+    static constexpr int BIND_COUNT = 15;
     struct KeyBind
     {
         const wchar_t* label;
@@ -254,20 +272,65 @@ namespace MoriaMods
         uint8_t key; // Input::Key value (same as VK code)
     };
     static KeyBind s_bindings[BIND_COUNT] = {
-            {L"Quick Build 1", L"Quick Building", Input::Key::F1}, // 0
-            {L"Quick Build 2", L"Quick Building", Input::Key::F2}, // 1
-            {L"Quick Build 3", L"Quick Building", Input::Key::F3}, // 2
-            {L"Quick Build 4", L"Quick Building", Input::Key::F4}, // 3
-            {L"Quick Build 5", L"Quick Building", Input::Key::F5}, // 4
-            {L"Quick Build 6", L"Quick Building", Input::Key::F6}, // 5
-            {L"Quick Build 7", L"Quick Building", Input::Key::F7}, // 6
-            {L"Quick Build 8", L"Quick Building", Input::Key::F8}, // 7
-            {L"Rotation", L"Quick Building", Input::Key::F9},      // 8
-            {L"Target", L"Quick Building", Input::Key::F10},       // 9
-            {L"Configuration", L"Misc", Input::Key::F12},          // 10
-            {L"Toolbar Swap", L"Misc", Input::Key::OEM_FIVE},      // 11
+            {L"Quick Build 1", L"Quick Building", Input::Key::F1},  // 0
+            {L"Quick Build 2", L"Quick Building", Input::Key::F2},  // 1
+            {L"Quick Build 3", L"Quick Building", Input::Key::F3},  // 2
+            {L"Quick Build 4", L"Quick Building", Input::Key::F4},  // 3
+            {L"Quick Build 5", L"Quick Building", Input::Key::F5},  // 4
+            {L"Quick Build 6", L"Quick Building", Input::Key::F6},  // 5
+            {L"Quick Build 7", L"Quick Building", Input::Key::F7},  // 6
+            {L"Quick Build 8", L"Quick Building", Input::Key::F8},  // 7
+            {L"Target", L"Quick Building", Input::Key::F9},         // 8  (swapped: was Rotation)
+            {L"Rotation", L"Quick Building", Input::Key::F10},      // 9  (swapped: was Target)
+            {L"Configuration", L"Misc", Input::Key::F12},           // 10
+            {L"Toolbar Swap", L"Misc", Input::Key::OEM_FIVE},       // 11
+            {L"Remove Target", L"Environment Modification", Input::Key::NUM_ONE},   // 12
+            {L"Undo Last", L"Environment Modification", Input::Key::NUM_TWO},       // 13
+            {L"Remove All", L"Environment Modification", Input::Key::NUM_SIX},      // 14
     };
     static std::atomic<int> s_capturingBind{-1};
+
+    // Modifier key choice: VK_SHIFT (0x10), VK_CONTROL (0x11), VK_MENU (0x12 = ALT), or VK_RMENU (0xA5 = RALT)
+    static std::atomic<uint8_t> s_modifierVK{VK_SHIFT};
+
+    static bool isModifierDown()
+    {
+        return (GetAsyncKeyState(s_modifierVK.load()) & 0x8000) != 0;
+    }
+
+    static const wchar_t* modifierName(uint8_t vk)
+    {
+        switch (vk)
+        {
+        case VK_SHIFT:
+            return L"SHIFT";
+        case VK_CONTROL:
+            return L"CTRL";
+        case VK_MENU:
+            return L"ALT";
+        case VK_RMENU:
+            return L"RALT";
+        default:
+            return L"SHIFT";
+        }
+    }
+
+    static uint8_t nextModifier(uint8_t vk)
+    {
+        switch (vk)
+        {
+        case VK_SHIFT:
+            return VK_CONTROL;
+        case VK_CONTROL:
+            return VK_MENU;
+        case VK_MENU:
+            return VK_RMENU;
+        case VK_RMENU:
+            return VK_SHIFT;
+        default:
+            return VK_SHIFT;
+        }
+    }
 
     static std::wstring keyName(uint8_t vk)
     {
@@ -277,8 +340,26 @@ namespace MoriaMods
             swprintf_s(buf, L"F%d", vk - 0x70 + 1);
             return buf;
         }
+        if (vk >= 0x60 && vk <= 0x69)
+        { // Numpad 0-9
+            wchar_t buf[8];
+            swprintf_s(buf, L"Num%d", vk - 0x60);
+            return buf;
+        }
         switch (vk)
         {
+        case 0x6A:
+            return L"Num*";
+        case 0x6B:
+            return L"Num+";
+        case 0x6C:
+            return L"NumSep";
+        case 0x6D:
+            return L"Num-";
+        case 0x6E:
+            return L"Num.";
+        case 0x6F:
+            return L"Num/";
         case 0xDC:
             return L"\\";
         case 0xC0:
@@ -528,8 +609,39 @@ namespace MoriaMods
                     }
                 }
 
-                // Slot 8 (Rotation): step degrees (top, bold) | separator line | T+total (bottom)
+                // Slot 8 (Target): archery target icon + TGT text
                 if (i == 8)
+                {
+                    float bcx = (float)(sx + slotSize / 2);
+                    float bcy = (float)(sy + slotSize / 2);
+                    // Concentric rings: white, black, blue, red, gold (outside-in)
+                    float r5 = slotSize * 0.42f; // outermost white
+                    float r4 = slotSize * 0.35f; // black
+                    float r3 = slotSize * 0.28f; // blue
+                    float r2 = slotSize * 0.20f; // red
+                    float r1 = slotSize * 0.12f; // gold center
+                    Gdiplus::SolidBrush bWhite(Gdiplus::Color(160, 240, 240, 235));
+                    Gdiplus::SolidBrush bBlack(Gdiplus::Color(160, 40, 40, 40));
+                    Gdiplus::SolidBrush bBlue(Gdiplus::Color(160, 50, 120, 200));
+                    Gdiplus::SolidBrush bRed(Gdiplus::Color(160, 210, 50, 40));
+                    Gdiplus::SolidBrush bGold(Gdiplus::Color(160, 240, 200, 50));
+                    gfx.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+                    gfx.FillEllipse(&bWhite, bcx - r5, bcy - r5, r5 * 2, r5 * 2);
+                    gfx.FillEllipse(&bBlack, bcx - r4, bcy - r4, r4 * 2, r4 * 2);
+                    gfx.FillEllipse(&bBlue, bcx - r3, bcy - r3, r3 * 2, r3 * 2);
+                    gfx.FillEllipse(&bRed, bcx - r2, bcy - r2, r2 * 2, r2 * 2);
+                    gfx.FillEllipse(&bGold, bcx - r1, bcy - r1, r1 * 2, r1 * 2);
+                    gfx.SetSmoothingMode(Gdiplus::SmoothingModeDefault);
+
+                    float tgtFontSz = slotSize * 0.28f;
+                    Gdiplus::Font tgtFont(&fontFamily, tgtFontSz, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+                    Gdiplus::SolidBrush tgtBrush(Gdiplus::Color(240, 10, 15, 70));
+                    Gdiplus::RectF tgtRect((float)sx, (float)sy, (float)slotSize, (float)slotSize);
+                    gfx.DrawString(L"TGT", -1, &tgtFont, tgtRect, &centerFmt, &tgtBrush);
+                }
+
+                // Slot 9 (Rotation): step degrees (top, bold) | separator line | T+total (bottom)
+                if (i == 9)
                 {
                     int stepVal = s_overlay.rotationStep;
                     int totalVal = s_overlay.totalRotation;
@@ -561,37 +673,6 @@ namespace MoriaMods
                     botFmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
                     Gdiplus::RectF botRect((float)sx, (float)sy + slotSize * 0.50f, (float)slotSize, (float)slotSize * 0.48f);
                     gfx.DrawString(totalStr.c_str(), -1, &totalFont, botRect, &botFmt, &totalBrush);
-                }
-
-                // Slot 9 (Target): archery target icon + TGT text
-                if (i == 9)
-                {
-                    float bcx = (float)(sx + slotSize / 2);
-                    float bcy = (float)(sy + slotSize / 2);
-                    // Concentric rings: white, black, blue, red, gold (outside-in)
-                    float r5 = slotSize * 0.42f; // outermost white
-                    float r4 = slotSize * 0.35f; // black
-                    float r3 = slotSize * 0.28f; // blue
-                    float r2 = slotSize * 0.20f; // red
-                    float r1 = slotSize * 0.12f; // gold center
-                    Gdiplus::SolidBrush bWhite(Gdiplus::Color(160, 240, 240, 235));
-                    Gdiplus::SolidBrush bBlack(Gdiplus::Color(160, 40, 40, 40));
-                    Gdiplus::SolidBrush bBlue(Gdiplus::Color(160, 50, 120, 200));
-                    Gdiplus::SolidBrush bRed(Gdiplus::Color(160, 210, 50, 40));
-                    Gdiplus::SolidBrush bGold(Gdiplus::Color(160, 240, 200, 50));
-                    gfx.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-                    gfx.FillEllipse(&bWhite, bcx - r5, bcy - r5, r5 * 2, r5 * 2);
-                    gfx.FillEllipse(&bBlack, bcx - r4, bcy - r4, r4 * 2, r4 * 2);
-                    gfx.FillEllipse(&bBlue, bcx - r3, bcy - r3, r3 * 2, r3 * 2);
-                    gfx.FillEllipse(&bRed, bcx - r2, bcy - r2, r2 * 2, r2 * 2);
-                    gfx.FillEllipse(&bGold, bcx - r1, bcy - r1, r1 * 2, r1 * 2);
-                    gfx.SetSmoothingMode(Gdiplus::SmoothingModeDefault);
-
-                    float tgtFontSz = slotSize * 0.28f;
-                    Gdiplus::Font tgtFont(&fontFamily, tgtFontSz, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-                    Gdiplus::SolidBrush tgtBrush(Gdiplus::Color(240, 10, 15, 70));
-                    Gdiplus::RectF tgtRect((float)sx, (float)sy, (float)slotSize, (float)slotSize);
-                    gfx.DrawString(L"TGT", -1, &tgtFont, tgtRect, &centerFmt, &tgtBrush);
                 }
 
                 // Slot 10 (Toolbar Swap): show active toolbar number
@@ -794,7 +875,7 @@ namespace MoriaMods
     //   GDI+ rendered, independent thread, scrollbar support
     // ════════════════════════════════════════════════════════════════════════════
     static constexpr int CONFIG_TAB_COUNT = 3;
-    static const wchar_t* CONFIG_TAB_NAMES[CONFIG_TAB_COUNT] = {L"Building Options", L"Optional Mods", L"Key Mapping"};
+    static const wchar_t* CONFIG_TAB_NAMES[CONFIG_TAB_COUNT] = {L"Optional Mods", L"Key Mapping", L"Hide Environment"};
 
     struct ConfigState
     {
@@ -816,11 +897,37 @@ namespace MoriaMods
         std::atomic<bool> pendingToggleFreeCraft{false};
         std::atomic<bool> pendingToggleInstantCraft{false};
         std::atomic<bool> pendingUnlockAllRecipes{false};
+        std::atomic<bool> pendingCompleteTips{false};  // "Mark All Read" button
+        std::atomic<bool> pendingUnlockAll{false};    // "Unlock All Content" button
+        std::atomic<bool> pendingMarkTutorialsRead{false}; // "Mark Tutorials Read" button
+        std::atomic<bool> suppressTutorials{false};   // when true, block tutorial/tip/lore calls in pre-hook
+        std::atomic<bool> internalTutorialCall{false}; // bypass trigger suppression for our own calls
+        std::atomic<bool> trackTutorials{true};       // when true, log all tutorial-related ProcessEvent calls
+        std::atomic<bool> hideTutorialHUD{false};     // when true, block tutorial HUD display permanently
+        std::atomic<bool> markRecipesRead{false};     // when true, auto-mark crafting recipes as read when screen opens
+        void* savedTutorialTable{nullptr};            // saved before completeTutorials nulls TutorialTable
 
         // Scrollbar state
         int scrollY{0};
         int contentHeight{0}; // total logical content height
         int visibleHeight{0}; // visible content area height
+
+        // Removal list (Building Options tab)
+        CRITICAL_SECTION removalCS;
+        std::atomic<bool> removalCSInit{false};
+        std::vector<RemovalEntry> removalEntries; // display snapshot, protected by removalCS
+        std::atomic<int> removalCount{0};         // quick count without lock
+
+        // Delete button hit-test rects (written/read on config thread only)
+        struct DeleteRect
+        {
+            int x, y, w, h; // y includes scroll offset for logicalMy comparison
+            int entryIndex;
+        };
+        std::vector<DeleteRect> deleteRects;
+
+        // Pending removal (set by UI thread, consumed by game thread)
+        std::atomic<int> pendingRemoveIndex{-1};
     };
     static ConfigState s_config{};
 
@@ -1316,7 +1423,7 @@ namespace MoriaMods
             leftFmt.SetAlignment(Gdiplus::StringAlignmentNear);
             leftFmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
             Gdiplus::RectF titleRect((float)pad, (float)pad, (float)(configW - pad * 2), titleSz * 1.5f);
-            gfx.DrawString(L"MoriaCppMod Config", -1, &titleFont, titleRect, &leftFmt, &titleBrush);
+            gfx.DrawString(L"Building Mod Configuration Menu", -1, &titleFont, titleRect, &leftFmt, &titleBrush);
 
             // Tab bar
             int tabY = pad + static_cast<int>(titleSz * 1.8f);
@@ -1387,7 +1494,7 @@ namespace MoriaMods
             int contentStartY = contentY + static_cast<int>(10 * scale);
             int cy = contentStartY - s_config.scrollY; // apply scroll offset
 
-            if (s_config.activeTab == 2)
+            if (s_config.activeTab == 1)
             {
                 // ── Key Mapping tab ──
                 const wchar_t* lastSection = nullptr;
@@ -1442,10 +1549,10 @@ namespace MoriaMods
                 gfx.FillRectangle(&keyBoxBg, modKeyRect);
                 gfx.DrawRectangle(&keyBoxPen, modKeyRect);
                 Gdiplus::RectF modKeyTextRect((float)mkx, (float)cy, (float)keyBoxW, (float)(rowH - static_cast<int>(2 * scale)));
-                gfx.DrawString(L"SHIFT", -1, &rowFont, modKeyTextRect, &centerFmt, &keyBrush);
+                gfx.DrawString(modifierName(s_modifierVK), -1, &rowFont, modKeyTextRect, &centerFmt, &keyBrush);
                 cy += rowH;
             }
-            else if (s_config.activeTab == 1)
+            else if (s_config.activeTab == 0)
             {
                 // ── Optional Mods tab ──
                 Gdiplus::SolidBrush toggleOnBrush(Gdiplus::Color(220, 40, 180, 80));
@@ -1468,8 +1575,7 @@ namespace MoriaMods
                 };
                 ToggleItem toggles[] = {
                         {L"Free Build", L"Build without materials", s_config.freeBuild},
-                        {L"Free Crafting", L"Craft without materials", s_config.freeCraft},
-                        {L"Instant Crafting", L"Crafting completes instantly", s_config.instantCraft},
+                        // Free Crafting / Instant Crafting removed — game's debug flags are non-functional
                 };
 
                 // Section header
@@ -1481,7 +1587,7 @@ namespace MoriaMods
                 float descFontSz = 10.0f * scale;
                 Gdiplus::Font descFont(&fontFamily, descFontSz, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
 
-                for (int ti = 0; ti < 3; ti++)
+                for (int ti = 0; ti < 1; ti++)
                 {
                     Gdiplus::RectF lblRect((float)(pad + static_cast<int>(12 * scale)),
                                            (float)cy,
@@ -1547,14 +1653,133 @@ namespace MoriaMods
                 Gdiplus::RectF btnTextRect((float)btnX, (float)btnY, (float)btnW, (float)btnH);
                 gfx.DrawString(L"Unlock All Recipes", -1, &btnFont, btnTextRect, &centerFmt, &btnTextBrush);
                 cy += btnH;
+
+#if 0 // DISABLED: Mark All Read + Complete All Tutorials buttons — breadcrumb/tutorial systems don't persist reliably
+                // ── Mark All Read button ──
+                cy += static_cast<int>(8 * scale);
+                int btn3Y = cy;
+                Gdiplus::GraphicsPath btn3Path;
+                btn3Path.AddArc(btnX, btn3Y, br * 2, br * 2, 180, 90);
+                btn3Path.AddArc(btnX + btnW - br * 2, btn3Y, br * 2, br * 2, 270, 90);
+                btn3Path.AddArc(btnX + btnW - br * 2, btn3Y + btnH - br * 2, br * 2, br * 2, 0, 90);
+                btn3Path.AddArc(btnX, btn3Y + btnH - br * 2, br * 2, br * 2, 90, 90);
+                btn3Path.CloseFigure();
+                gfx.FillPath(&btnBrush, &btn3Path);
+                gfx.DrawPath(&btnBorderPen, &btn3Path);
+                Gdiplus::RectF btn3TextRect((float)btnX, (float)btn3Y, (float)btnW, (float)btnH);
+                gfx.DrawString(L"Mark All Read", -1, &btnFont, btn3TextRect, &centerFmt, &btnTextBrush);
+                cy += btnH;
+
+                // ── Mark Tutorials Read button ──
+                cy += static_cast<int>(8 * scale);
+                int btn4Y = cy;
+                Gdiplus::GraphicsPath btn4Path;
+                btn4Path.AddArc(btnX, btn4Y, br * 2, br * 2, 180, 90);
+                btn4Path.AddArc(btnX + btnW - br * 2, btn4Y, br * 2, br * 2, 270, 90);
+                btn4Path.AddArc(btnX + btnW - br * 2, btn4Y + btnH - br * 2, br * 2, br * 2, 0, 90);
+                btn4Path.AddArc(btnX, btn4Y + btnH - br * 2, br * 2, br * 2, 90, 90);
+                btn4Path.CloseFigure();
+                gfx.FillPath(&btnBrush, &btn4Path);
+                gfx.DrawPath(&btnBorderPen, &btn4Path);
+                Gdiplus::RectF btn4TextRect((float)btnX, (float)btn4Y, (float)btnW, (float)btnH);
+                gfx.DrawString(L"Complete All Tutorials", -1, &btnFont, btn4TextRect, &centerFmt, &btnTextBrush);
+                cy += btnH;
+#endif
             }
-            else
+            else if (s_config.activeTab == 2)
             {
-                // Building Options tab: placeholder
-                Gdiplus::RectF contentRect((float)pad, (float)(cy), (float)(configW - pad * 2 - scrollbarW), (float)(configH - cy - pad));
-                std::wstring placeholder = std::wstring(L"Tab: ") + CONFIG_TAB_NAMES[s_config.activeTab] + L"\n\n(Content coming soon)";
-                gfx.DrawString(placeholder.c_str(), -1, &rowFont, contentRect, &leftFmt, &dimBrush);
-                cy += static_cast<int>(60 * scale);
+                // ── Hide Environment tab: Saved Removals list ──
+                int entryCount = s_config.removalCount.load();
+                std::wstring header = L"Saved Removals (" + std::to_wstring(entryCount) + L" entries)";
+                Gdiplus::RectF secRect((float)pad, (float)cy, (float)(configW - pad * 2 - scrollbarW), (float)rowH);
+                gfx.DrawString(header.c_str(), -1, &sectionFont, secRect, &leftFmt, &sectionBrush);
+                cy += rowH;
+                gfx.DrawLine(&sepPen, pad, cy - static_cast<int>(4 * scale), configW - pad - scrollbarW, cy - static_cast<int>(4 * scale));
+
+                float descFontSz = 10.0f * scale;
+                Gdiplus::Font descFont(&fontFamily, descFontSz, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+                int smallRowH = static_cast<int>(18 * scale);
+                int deleteSize = static_cast<int>(20 * scale);
+                int indent = static_cast<int>(12 * scale);
+                int entryGap = static_cast<int>(4 * scale);
+
+                Gdiplus::SolidBrush nameBrush(Gdiplus::Color(240, 230, 230, 240));
+                Gdiplus::SolidBrush pathBrush(Gdiplus::Color(140, 150, 160, 180));
+                Gdiplus::SolidBrush coordBrush(Gdiplus::Color(180, 120, 180, 220));
+                Gdiplus::SolidBrush typeRuleBrush(Gdiplus::Color(200, 255, 140, 80));
+                Gdiplus::SolidBrush deleteBtnBrush(Gdiplus::Color(200, 180, 40, 40));
+                Gdiplus::SolidBrush deleteXBrush(Gdiplus::Color(255, 255, 255, 255));
+                Gdiplus::Pen deleteBorderPen(Gdiplus::Color(200, 220, 80, 80), 1.0f);
+                Gdiplus::Pen entrySepPen(Gdiplus::Color(60, 80, 100, 140), 0.5f);
+
+                Gdiplus::StringFormat ellipsisFmt;
+                ellipsisFmt.SetAlignment(Gdiplus::StringAlignmentNear);
+                ellipsisFmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+                ellipsisFmt.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+                ellipsisFmt.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
+
+                // Take local copy of entries under CS to minimize lock time
+                std::vector<RemovalEntry> localEntries;
+                if (s_config.removalCSInit)
+                {
+                    EnterCriticalSection(&s_config.removalCS);
+                    localEntries = s_config.removalEntries;
+                    LeaveCriticalSection(&s_config.removalCS);
+                }
+
+                s_config.deleteRects.clear();
+
+                if (localEntries.empty())
+                {
+                    Gdiplus::RectF emptyRect((float)(pad + indent), (float)cy, (float)(configW - pad * 2 - scrollbarW), (float)rowH);
+                    gfx.DrawString(L"No removed instances.", -1, &rowFont, emptyRect, &leftFmt, &dimBrush);
+                    cy += rowH;
+                }
+                else
+                {
+                    int contentRight = configW - pad - scrollbarW;
+                    for (size_t i = 0; i < localEntries.size(); i++)
+                    {
+                        auto& e = localEntries[i];
+                        int textRight = contentRight - deleteSize - static_cast<int>(8 * scale);
+
+                        // Line 1: Friendly name (bold)
+                        Gdiplus::RectF nameRect((float)(pad + indent), (float)cy, (float)(textRight - pad - indent), (float)rowH);
+                        gfx.DrawString(e.friendlyName.c_str(), -1, &sectionFont, nameRect, &ellipsisFmt, &nameBrush);
+
+                        // Delete button (vertically centered across the 3-line entry)
+                        int entryTotalH = rowH + smallRowH * 2;
+                        int delX = contentRight - deleteSize;
+                        int delY = cy + (entryTotalH - deleteSize) / 2;
+                        Gdiplus::Rect delRect(delX, delY, deleteSize, deleteSize);
+                        gfx.FillRectangle(&deleteBtnBrush, delRect);
+                        gfx.DrawRectangle(&deleteBorderPen, delRect);
+                        float xFontSz = 12.0f * scale;
+                        Gdiplus::Font xFont(&fontFamily, xFontSz, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+                        Gdiplus::RectF xRect((float)delX, (float)delY, (float)deleteSize, (float)deleteSize);
+                        gfx.DrawString(L"X", -1, &xFont, xRect, &centerFmt, &deleteXBrush);
+
+                        // Store hit rect (y with scroll offset for logicalMy comparison in click handler)
+                        s_config.deleteRects.push_back({delX, delY + s_config.scrollY, deleteSize, deleteSize, (int)i});
+
+                        cy += rowH;
+
+                        // Line 2: Full mesh path (smaller, gray, with ellipsis)
+                        Gdiplus::RectF pathRect((float)(pad + indent * 2), (float)cy, (float)(textRight - pad - indent * 2), (float)smallRowH);
+                        gfx.DrawString(e.fullPathW.c_str(), -1, &descFont, pathRect, &ellipsisFmt, &pathBrush);
+                        cy += smallRowH;
+
+                        // Line 3: Coordinates or TYPE RULE
+                        Gdiplus::RectF coordRect((float)(pad + indent * 2), (float)cy, (float)(textRight - pad - indent * 2), (float)smallRowH);
+                        gfx.DrawString(e.coordsW.c_str(), -1, &descFont, coordRect, &ellipsisFmt, e.isTypeRule ? &typeRuleBrush : &coordBrush);
+                        cy += smallRowH;
+
+                        // Separator between entries
+                        cy += entryGap;
+                        gfx.DrawLine(&entrySepPen, pad + indent, cy, contentRight, cy);
+                        cy += entryGap;
+                    }
+                }
             }
 
             // Calculate total content height for scrollbar
@@ -1654,8 +1879,8 @@ namespace MoriaMods
                 return 0;
             }
 
-            // Hit-test key boxes on Key Mapping tab (index 2)
-            if (s_config.activeTab == 2 && my > contentY)
+            // Hit-test key boxes on Key Mapping tab (index 1)
+            if (s_config.activeTab == 1 && my > contentY)
             {
                 int rowH = static_cast<int>(22 * scale);
                 int keyBoxW = static_cast<int>(80 * scale);
@@ -1679,12 +1904,32 @@ namespace MoriaMods
                     }
                     cy += rowH;
                 }
+                // Hit-test modifier key box (immediately after last binding row)
+                if (mx >= kx && mx <= kx + keyBoxW && logicalMy >= cy && logicalMy < cy + rowH)
+                {
+                    s_capturingBind = -1;
+                    s_modifierVK = nextModifier(s_modifierVK);
+                    renderConfig(hwnd);
+                    s_overlay.needsUpdate = true;
+                    // Persist to disk
+                    {
+                        std::ofstream kf("Mods/MoriaCppMod/keybindings.txt", std::ios::trunc);
+                        if (kf.is_open())
+                        {
+                            kf << "# MoriaCppMod keybindings (index|VK_code)\n";
+                            for (int bi = 0; bi < BIND_COUNT; bi++)
+                                kf << bi << "|" << (int)s_bindings[bi].key << "\n";
+                            kf << "mod|" << (int)s_modifierVK.load() << "\n";
+                        }
+                    }
+                    return 0;
+                }
                 s_capturingBind = -1;
                 renderConfig(hwnd);
             }
 
-            // Hit-test toggles and button on Optional Mods tab (index 1)
-            if (s_config.activeTab == 1 && my > contentY)
+            // Hit-test toggles and button on Optional Mods tab (index 0)
+            if (s_config.activeTab == 0 && my > contentY)
             {
                 int rowH = static_cast<int>(22 * scale);
                 int toggleW = static_cast<int>(44 * scale);
@@ -1694,17 +1939,13 @@ namespace MoriaMods
                 int cy = contentY + static_cast<int>(10 * scale);
                 cy += rowH; // section header
 
-                for (int ti = 0; ti < 3; ti++)
+                for (int ti = 0; ti < 1; ti++)
                 {
                     int toggleY = cy + (rowH - toggleH) / 2;
                     if (mx >= toggleX && mx <= toggleX + toggleW && logicalMy >= toggleY && logicalMy <= toggleY + toggleH)
                     {
                         if (ti == 0)
                             s_config.pendingToggleFreeBuild = true;
-                        else if (ti == 1)
-                            s_config.pendingToggleFreeCraft = true;
-                        else if (ti == 2)
-                            s_config.pendingToggleInstantCraft = true;
                         renderConfig(hwnd);
                         return 0;
                     }
@@ -1722,6 +1963,41 @@ namespace MoriaMods
                     s_config.pendingUnlockAllRecipes = true;
                     renderConfig(hwnd);
                     return 0;
+                }
+                cy += btnH;
+#if 0 // DISABLED: click handlers for Mark All Read + Complete All Tutorials
+                // Mark All Read button
+                cy += static_cast<int>(8 * scale);
+                if (mx >= btnX && mx <= btnX + btnW && logicalMy >= cy && logicalMy <= cy + btnH)
+                {
+                    s_config.pendingCompleteTips = true;
+                    renderConfig(hwnd);
+                    return 0;
+                }
+                cy += btnH;
+                // Mark Tutorials Read button
+                cy += static_cast<int>(8 * scale);
+                if (mx >= btnX && mx <= btnX + btnW && logicalMy >= cy && logicalMy <= cy + btnH)
+                {
+                    s_config.pendingMarkTutorialsRead = true;
+                    renderConfig(hwnd);
+                    return 0;
+                }
+#endif
+            }
+
+            // Hit-test delete buttons on Hide Environment tab (index 2)
+            if (s_config.activeTab == 2 && my > contentY)
+            {
+                for (auto& dr : s_config.deleteRects)
+                {
+                    if (mx >= dr.x && mx <= dr.x + dr.w && logicalMy >= dr.y && logicalMy <= dr.y + dr.h)
+                    {
+                        int expected = -1;
+                        s_config.pendingRemoveIndex.compare_exchange_strong(expected, dr.entryIndex);
+                        renderConfig(hwnd);
+                        return 0;
+                    }
                 }
             }
             return 0;
@@ -1774,6 +2050,7 @@ namespace MoriaMods
                         kf << "# MoriaCppMod keybindings (index|VK_code)\n";
                         for (int bi = 0; bi < BIND_COUNT; bi++)
                             kf << bi << "|" << (int)s_bindings[bi].key << "\n";
+                        kf << "mod|" << (int)s_modifierVK.load() << "\n";
                     }
                 }
             }
@@ -2074,6 +2351,62 @@ namespace MoriaMods
                 file << sr.meshName << "|" << sr.posX << "|" << sr.posY << "|" << sr.posZ << "\n";
         }
 
+        // Re-read removed_instances.txt in file order and build display entries for config UI.
+        // Called after every loadSaveFile() and rewriteSaveFile() that changes the list.
+        void buildRemovalEntries()
+        {
+            std::vector<RemovalEntry> entries;
+            std::ifstream file(m_saveFilePath);
+            if (file.is_open())
+            {
+                std::string line;
+                while (std::getline(file, line))
+                {
+                    if (line.empty() || line[0] == '#') continue;
+                    RemovalEntry entry{};
+                    if (line[0] == '@')
+                    {
+                        entry.isTypeRule = true;
+                        entry.meshName = line.substr(1);
+                        entry.friendlyName = extractFriendlyName(entry.meshName);
+                        entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
+                        entry.coordsW = L"TYPE RULE (all instances)";
+                    }
+                    else
+                    {
+                        entry.isTypeRule = false;
+                        std::istringstream ss(line);
+                        std::string token;
+                        if (!std::getline(ss, entry.meshName, '|')) continue;
+                        try
+                        {
+                            if (!std::getline(ss, token, '|')) continue;
+                            entry.posX = std::stof(token);
+                            if (!std::getline(ss, token, '|')) continue;
+                            entry.posY = std::stof(token);
+                            if (!std::getline(ss, token, '|')) continue;
+                            entry.posZ = std::stof(token);
+                        }
+                        catch (...)
+                        {
+                            continue;
+                        }
+                        entry.friendlyName = extractFriendlyName(entry.meshName);
+                        entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
+                        entry.coordsW = std::format(L"X: {:.1f}   Y: {:.1f}   Z: {:.1f}", entry.posX, entry.posY, entry.posZ);
+                    }
+                    entries.push_back(std::move(entry));
+                }
+            }
+            if (s_config.removalCSInit)
+            {
+                EnterCriticalSection(&s_config.removalCS);
+                s_config.removalEntries = std::move(entries);
+                s_config.removalCount = static_cast<int>(s_config.removalEntries.size());
+                LeaveCriticalSection(&s_config.removalCS);
+            }
+        }
+
         // ── Helpers ──
 
         // ── 7B: Player & World Helpers ─────────────────────────────────────────
@@ -2236,8 +2569,8 @@ namespace MoriaMods
             m_chatWidget->ProcessEvent(func, buf);
         }
 
-        // ── Test all display methods (Num5) ──
-
+        // ── Test all display methods (Num5) — DISABLED: keybind removed ──
+#if 0
         void testAllDisplayMethods()
         {
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === Testing display methods ===\n"));
@@ -2307,6 +2640,7 @@ namespace MoriaMods
 
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === Display test done ===\n"));
         }
+#endif
 
         // ── Camera & Trace ──
 
@@ -2839,6 +3173,7 @@ namespace MoriaMods
                     m_savedRemovals.push_back(sr);
                     m_appliedRemovals.push_back(true);
                     appendToSaveFile(sr);
+                    buildRemovalEntries();
 
                     hideInstance(hitComp, i);
                     hiddenCount++;
@@ -2892,6 +3227,7 @@ namespace MoriaMods
                 m_typeRemovals.insert(meshId);
                 std::ofstream file(m_saveFilePath, std::ios::app);
                 if (file.is_open()) file << "@" << meshId << "\n";
+                buildRemovalEntries();
             }
 
             // Get instance count
@@ -2925,8 +3261,8 @@ namespace MoriaMods
             showGameMessage(L"[Mod] Type rule: " + meshIdW + L" (" + std::to_wstring(hidden) + L" hidden)");
         }
 
-        // ── Building / UI Exploration (Num7/Num8/Num9) ──
-
+        // ── Building / UI Exploration (Num7/Num8/Num9) — DISABLED: keybinds removed ──
+#if 0
         void dumpAllWidgets()
         {
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === WIDGET DUMP ===\n"));
@@ -3006,6 +3342,7 @@ namespace MoriaMods
             showOnScreen(L"Widget dump: " + std::to_wstring(widgets.size()) + L" widgets (see log)", 5.0f);
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END WIDGET DUMP ===\n"));
         }
+#endif
 
         void dumpAimedActor()
         {
@@ -3372,12 +3709,73 @@ namespace MoriaMods
                 m_targetBuildName.clear();
             }
 
-            // Show target info popup window (now with DT_Constructions display name)
+            // Non-buildable: do a second HISM-aware trace and show component/mesh info instead
+            if (!isBuildable)
+            {
+                uint8_t inspectHitBuf[136]{};
+                if (doLineTrace(start, end, inspectHitBuf, false))
+                {
+                    auto* inspHit = reinterpret_cast<const FHitResultLocal*>(inspectHitBuf);
+                    FVec3f impactPt = inspHit->ImpactPoint;
+                    int32_t instItem = inspHit->Item;
+                    UObject* inspComp = resolveHitComponent(inspectHitBuf);
+                    if (inspComp)
+                    {
+                        std::wstring inspCompName(inspComp->GetName());
+                        std::wstring inspFullName(inspComp->GetFullName());
+                        std::wstring inspClassName = safeClassName(inspComp);
+                        bool inspIsHISM = isHISMComponent(inspComp);
+                        std::string inspMeshId = componentNameToMeshId(inspCompName);
+                        std::wstring inspMeshIdW(inspMeshId.begin(), inspMeshId.end());
+
+                        // Extract friendly name from mesh ID (first segment before '-')
+                        std::wstring friendlyName = extractFriendlyName(inspMeshId);
+
+                        // Get instance position if HISM
+                        std::wstring posInfo;
+                        if (inspIsHISM && instItem >= 0)
+                        {
+                            auto* transFunc = inspComp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
+                            if (transFunc)
+                            {
+                                GetInstanceTransform_Params tp{};
+                                tp.InstanceIndex = instItem;
+                                tp.bWorldSpace = 1;
+                                inspComp->ProcessEvent(transFunc, &tp);
+                                if (tp.ReturnValue)
+                                {
+                                    posInfo = std::format(L"Pos: ({:.0f}, {:.0f}, {:.0f}) Item #{}",
+                                                          tp.OutTransform.Translation.X,
+                                                          tp.OutTransform.Translation.Y,
+                                                          tp.OutTransform.Translation.Z,
+                                                          instItem);
+                                }
+                            }
+                        }
+                        if (posInfo.empty())
+                        {
+                            posInfo = std::format(L"Impact: ({:.0f}, {:.0f}, {:.0f})", impactPt.X, impactPt.Y, impactPt.Z);
+                        }
+
+                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [F10] Non-buildable inspect: {} | HISM={} | MeshID={}\n"),
+                                                        inspCompName, inspIsHISM, inspMeshIdW);
+
+                        // Show inspect data in target info popup instead of actor data
+                        showTargetInfo(inspCompName, friendlyName, inspMeshIdW, inspClassName, false, posInfo, L"");
+                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
+                        return;
+                    }
+                }
+            }
+
+            // Show target info popup window (buildable objects or inspect fallback failed)
             showTargetInfo(actorName, displayName, assetPath, actorClassName, isBuildable, recipeRef, dtRowName);
 
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
         }
 
+        // ── Debug probes (Num9, Alt+Num7/8/9) — DISABLED: keybinds removed ──
+#if 0
         void dumpBuildCraftClasses()
         {
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === BUILD/CRAFT CLASS SEARCH ===\n"));
@@ -3818,6 +4216,7 @@ namespace MoriaMods
             showOnScreen(L"Debug menu probe done (see log)", 5.0f, 0.0f, 1.0f, 0.5f);
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END PROBE: Debug Menus ===\n"));
         }
+#endif
 
         // Find the MorInventoryComponent on a character
         // ── 7E: Inventory & Toolbar System ────────────────────────────────────
@@ -4041,7 +4440,8 @@ namespace MoriaMods
             return true;
         }
 
-        // ── Inventory/Hotbar Probe: find items in the bottom-center action bar ──
+        // ── Inventory/Hotbar Probe + Clear Hotbar — DISABLED: keybinds removed ──
+#if 0
         void probeInventoryHotbar()
         {
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === PROBE: Inventory Hotbar ===\n"));
@@ -4560,6 +4960,7 @@ namespace MoriaMods
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] {}\n"), msg);
             m_clearingHotbar = false;
         }
+#endif
 
         // ── Patch DT_Storage: expand BodyInventory from 8x1 to 8x3 ──
         void patchBodyInventoryStorage()
@@ -5368,9 +5769,32 @@ namespace MoriaMods
         }
 
         // ── Debug Cheat Functions ──
-        // Calls a named 0-param function on a debug menu actor
+        // Calls a named 0-param function on a debug menu actor.
+        // Also tries direct class search (faster than scanning all Actor instances).
         bool callDebugFunc(const wchar_t* actorClass, const wchar_t* funcName)
         {
+            // Try direct class search first (faster and more reliable)
+            {
+                std::vector<UObject*> directObjs;
+                UObjectGlobals::FindAllOf(actorClass, directObjs);
+                if (!directObjs.empty())
+                {
+                    for (auto* a : directObjs)
+                    {
+                        if (!a) continue;
+                        auto* fn = a->GetFunctionByNameInChain(funcName);
+                        if (fn)
+                        {
+                            a->ProcessEvent(fn, nullptr);
+                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called {}::{} (direct find)\n"),
+                                                            std::wstring(actorClass), std::wstring(funcName));
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: scan all actors by class name
             std::vector<UObject*> actors;
             UObjectGlobals::FindAllOf(STR("Actor"), actors);
             for (auto* a : actors)
@@ -5383,15 +5807,811 @@ namespace MoriaMods
                     if (fn)
                     {
                         a->ProcessEvent(fn, nullptr);
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called {}::{}\n"), cls, std::wstring(funcName));
+                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called {}::{} (actor scan)\n"), cls, std::wstring(funcName));
                         return true;
                     }
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Function {} not found on {}\n"), std::wstring(funcName), cls);
                     return false;
                 }
             }
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Actor {} not found\n"), std::wstring(actorClass));
+            // Only log on first retry (not every frame)
+            static int s_debugNotFoundCount = 0;
+            if (++s_debugNotFoundCount <= 3)
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Actor {} not found (attempt {})\n"), std::wstring(actorClass), s_debugNotFoundCount);
             return false;
+        }
+
+        // ── Complete Tips & Tutorials ──
+        // Reads the PlayerUnlockedTips array on the TipComponent to check status.
+        // If any tips are missing, adds them using the correct DataTable pointer
+        // from existing entries. Safe — no calls with mismatched pointers.
+        void completeTips()
+        {
+            // TipComponent lives on AMorPlayerController at offset 0x0B00
+            UObject* controller = nullptr;
+            {
+                std::vector<UObject*> controllers;
+                UObjectGlobals::FindAllOf(STR("BP_FGKMoriaPlayerController_C"), controllers);
+                if (!controllers.empty()) controller = controllers[0];
+            }
+
+            if (!controller)
+            {
+                showOnScreen(L"Tips: PlayerController not found", 5.0f, 1.0f, 0.0f, 0.0f);
+                return;
+            }
+
+            uint8_t* ctrlBase = reinterpret_cast<uint8_t*>(controller);
+            UObject* tipComp = *reinterpret_cast<UObject**>(ctrlBase + 0x0B00);
+
+            if (!tipComp || !isReadableMemory(tipComp, 64))
+            {
+                showOnScreen(L"Tips: TipComponent not found", 5.0f, 1.0f, 0.0f, 0.0f);
+                return;
+            }
+
+            // Read PlayerUnlockedTips TArray at TipComponent+0x00C0
+            constexpr int TIPS_ARRAY_OFFSET = 0x00C0;
+            constexpr int TIP_HANDLE_SIZE = 0x18; // FMorTipRowHandle: {ptr(8)+FName(8)+bool+pad(8)}
+            uint8_t* tipCompBase = reinterpret_cast<uint8_t*>(tipComp);
+
+            struct { uint8_t* Data; int32_t Num; int32_t Max; } tipsArray{};
+            std::memcpy(&tipsArray, tipCompBase + TIPS_ARRAY_OFFSET, 16);
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] PlayerUnlockedTips: Num={}, Max={}\n"),
+                                            tipsArray.Num, tipsArray.Max);
+
+            // Get the DT_Tips row count for comparison
+            UObject* tipTableWrapper = nullptr;
+            {
+                std::vector<UObject*> tables;
+                UObjectGlobals::FindAllOf(STR("MorTipTable"), tables);
+                if (!tables.empty()) tipTableWrapper = tables[0];
+            }
+
+            int totalTipRows = 0;
+            if (tipTableWrapper)
+            {
+                uint8_t* wrapperBase = reinterpret_cast<uint8_t*>(tipTableWrapper);
+                UObject* tipTable = *reinterpret_cast<UObject**>(wrapperBase + 0x0028);
+                if (tipTable && isReadableMemory(tipTable, 64))
+                {
+                    uint8_t* dtBase = reinterpret_cast<uint8_t*>(tipTable);
+                    struct { uint8_t* Data; int32_t Num; int32_t Max; } rowMap{};
+                    if (isReadableMemory(dtBase + 0x30, 16))
+                    {
+                        std::memcpy(&rowMap, dtBase + 0x30, 16);
+                        if (rowMap.Data && rowMap.Num > 0 && rowMap.Num < 500)
+                            totalTipRows = rowMap.Num;
+                    }
+                }
+            }
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] DT_Tips has {} rows, player has {} unlocked\n"),
+                                            totalTipRows, tipsArray.Num);
+
+            if (tipsArray.Num >= totalTipRows && totalTipRows > 0)
+            {
+                // All tips already completed
+                std::wstring msg = L"All " + std::to_wstring(tipsArray.Num) + L"/" +
+                                   std::to_wstring(totalTipRows) + L" tips already completed!";
+                showOnScreen(msg.c_str(), 5.0f, 0.0f, 1.0f, 0.0f);
+                showGameMessage(L"[Mod] " + msg);
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] {}\n"), msg);
+                return;
+            }
+
+            // Some tips are missing — need to add them via UnlockTip
+            // First, get the correct DataTable pointer from an existing entry
+            void* correctDTPtr = nullptr;
+            if (tipsArray.Num > 0 && tipsArray.Data && isReadableMemory(tipsArray.Data, TIP_HANDLE_SIZE))
+            {
+                correctDTPtr = *reinterpret_cast<void**>(tipsArray.Data);
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Correct DT ptr from existing entry: {}\n"),
+                                                reinterpret_cast<uintptr_t>(correctDTPtr));
+            }
+
+            if (!correctDTPtr)
+            {
+                // No existing entries to copy pointer from — cannot safely call UnlockTip
+                showOnScreen(L"Tips: No existing entries to reference", 5.0f, 1.0f, 0.0f, 0.0f);
+                return;
+            }
+
+            auto* unlockTipFunc = tipComp->GetFunctionByNameInChain(STR("UnlockTip"));
+            if (!unlockTipFunc)
+            {
+                showOnScreen(L"Tips: UnlockTip function not found", 5.0f, 1.0f, 0.0f, 0.0f);
+                return;
+            }
+
+            // Build set of already-unlocked FNames for dedup
+            std::set<uint64_t> existingNames;
+            for (int i = 0; i < tipsArray.Num; i++)
+            {
+                uint8_t* entry = tipsArray.Data + i * TIP_HANDLE_SIZE;
+                if (!isReadableMemory(entry, TIP_HANDLE_SIZE)) continue;
+                uint64_t nameVal = 0;
+                std::memcpy(&nameVal, entry + 8, 8); // FName at offset 8
+                existingNames.insert(nameVal);
+            }
+
+            // Iterate DT_Tips RowMap and call UnlockTip for missing tips
+            uint8_t* wrapperBase = reinterpret_cast<uint8_t*>(tipTableWrapper);
+            UObject* tipTable = *reinterpret_cast<UObject**>(wrapperBase + 0x0028);
+            uint8_t* dtBase = reinterpret_cast<uint8_t*>(tipTable);
+            struct { uint8_t* Data; int32_t Num; int32_t Max; } rowMap{};
+            std::memcpy(&rowMap, dtBase + 0x30, 16);
+
+            int added = 0;
+            for (int i = 0; i < rowMap.Num; i++)
+            {
+                uint8_t* elem = rowMap.Data + i * 24;
+                if (!isReadableMemory(elem, 24)) continue;
+
+                uint64_t nameVal = 0;
+                std::memcpy(&nameVal, elem, 8); // FName from RowMap
+
+                if (existingNames.count(nameVal)) continue; // Already unlocked
+
+                // Build FMorTipRowHandle with the correct DataTable pointer
+                uint8_t tipHandle[0x18]{};
+                std::memcpy(tipHandle, &correctDTPtr, 8);    // DataTable ptr at 0x00
+                std::memcpy(tipHandle + 8, elem, 8);         // RowName FName at 0x08
+                // bWasRestoredFromSaveData = false at 0x10 (already zeroed)
+
+                tipComp->ProcessEvent(unlockTipFunc, tipHandle);
+                added++;
+            }
+
+            // Read array count after
+            struct { uint8_t* Data; int32_t Num; int32_t Max; } tipsAfter{};
+            std::memcpy(&tipsAfter, tipCompBase + TIPS_ARRAY_OFFSET, 16);
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Added {} tips (was {}, now {})\n"),
+                                            added, tipsArray.Num, tipsAfter.Num);
+
+            std::wstring msg = L"Tips: added " + std::to_wstring(added) + L" new (" +
+                               std::to_wstring(tipsAfter.Num) + L"/" +
+                               std::to_wstring(totalTipRows) + L" total)";
+            showOnScreen(msg.c_str(), 5.0f, 0.0f, 1.0f, 0.0f);
+            showGameMessage(L"[Mod] " + msg);
+        }
+
+        // ── Complete Tutorials ──
+        // Finds TutorialManager, reads ServerAllTrackedTutorials, and sets
+        // CompletedListItems=0xFFFF on every tracked tutorial entry.
+        void completeTutorials()
+        {
+            // Find TutorialManager
+            UObject* tutMgr = nullptr;
+            {
+                std::vector<UObject*> mgrs;
+                UObjectGlobals::FindAllOf(STR("MorTutorialManager"), mgrs);
+                if (!mgrs.empty()) tutMgr = mgrs[0];
+            }
+
+            if (!tutMgr)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] TutorialManager not found\n"));
+                showOnScreen(L"Tutorials: Manager not found", 5.0f, 1.0f, 0.0f, 0.0f);
+                return;
+            }
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Found TutorialManager: '{}'\n"),
+                                            std::wstring(tutMgr->GetName()));
+
+            uint8_t* tmBase = reinterpret_cast<uint8_t*>(tutMgr);
+
+            // ServerAllTrackedTutorials at TutMgr+0x0398
+            // Inside FMorTrackedTutorials (FFastArraySerializer), TArray<FMorTutorialState> at +0x0110
+            constexpr int ALL_TRACKED_OFFSET = 0x0398;
+            constexpr int TUTORIALS_ARRAY_OFFSET = 0x0110;
+            constexpr int TUTORIAL_STATE_SIZE = 0x38;
+            constexpr int COMPLETED_ITEMS_OFFSET = 0x0030; // uint16 CompletedListItems within FMorTutorialState
+            constexpr int COUNTS_OFFSET = 0x0020;          // uint8 Counts[16]
+
+            uint8_t* arrayBase = tmBase + ALL_TRACKED_OFFSET + TUTORIALS_ARRAY_OFFSET;
+
+            if (!isReadableMemory(arrayBase, 16))
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] ServerAllTrackedTutorials array unreadable\n"));
+                showOnScreen(L"Tutorials: array unreadable", 5.0f, 1.0f, 0.0f, 0.0f);
+                return;
+            }
+
+            struct { uint8_t* Data; int32_t Num; int32_t Max; } tutArray{};
+            std::memcpy(&tutArray, arrayBase, 16);
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] ServerAllTrackedTutorials: Num={}, Max={}\n"),
+                                            tutArray.Num, tutArray.Max);
+
+            if (!tutArray.Data || tutArray.Num <= 0 || tutArray.Num > 100)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Tutorial array invalid\n"));
+                showOnScreen(L"Tutorials: invalid array", 5.0f, 1.0f, 0.0f, 0.0f);
+                return;
+            }
+
+            int completed = 0;
+            int alreadyDone = 0;
+
+            for (int i = 0; i < tutArray.Num; i++)
+            {
+                uint8_t* entry = tutArray.Data + i * TUTORIAL_STATE_SIZE;
+                if (!isReadableMemory(entry, TUTORIAL_STATE_SIZE)) continue;
+
+                // Read current CompletedListItems
+                uint16_t currentBits = 0;
+                std::memcpy(&currentBits, entry + COMPLETED_ITEMS_OFFSET, 2);
+
+                if (currentBits == 0xFFFF)
+                {
+                    alreadyDone++;
+                    continue;
+                }
+
+                // Set CompletedListItems to 0xFFFF (all steps complete)
+                uint16_t allComplete = 0xFFFF;
+                std::memcpy(entry + COMPLETED_ITEMS_OFFSET, &allComplete, 2);
+
+                // Set all Counts to 0xFF (max completion count per step)
+                std::memset(entry + COUNTS_OFFSET, 0xFF, 16);
+
+                completed++;
+            }
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Tutorials: {} completed, {} already done (of {} tracked)\n"),
+                                            completed, alreadyDone, tutArray.Num);
+
+            // NULL out TutorialTable pointer so TriggerTutorial/CanTriggerTutorial
+            // can't look up any tutorial definitions — prevents ALL triggers regardless of source
+            constexpr int TUTORIAL_TABLE_OFFSET = 0x0260;
+            uint8_t* tableAddr = tmBase + TUTORIAL_TABLE_OFFSET;
+            if (isReadableMemory(tableAddr, 8))
+            {
+                void* oldTable = nullptr;
+                std::memcpy(&oldTable, tableAddr, 8);
+                s_config.savedTutorialTable = oldTable; // save for markTutorialsRead
+                std::memset(tableAddr, 0, 8);
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Nulled TutorialTable at TutMgr+0x0260 (was {})\n"),
+                                                reinterpret_cast<uintptr_t>(oldTable));
+            }
+
+            // Zero out ShowTutorialDisplay delegate invocation list
+            constexpr int SHOW_TUTORIAL_DELEGATE_OFFSET = 0x0230;
+            uint8_t* delegateAddr = tmBase + SHOW_TUTORIAL_DELEGATE_OFFSET;
+            if (isReadableMemory(delegateAddr, 0x10))
+            {
+                std::memset(delegateAddr, 0, 0x10);
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Zeroed ShowTutorialDisplay delegate at TutMgr+0x0230\n"));
+            }
+
+            // Zero out TutorialComplete delegate too
+            constexpr int TUTORIAL_COMPLETE_DELEGATE_OFFSET = 0x0250;
+            uint8_t* completeDelegateAddr = tmBase + TUTORIAL_COMPLETE_DELEGATE_OFFSET;
+            if (isReadableMemory(completeDelegateAddr, 0x10))
+            {
+                std::memset(completeDelegateAddr, 0, 0x10);
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Zeroed TutorialComplete delegate at TutMgr+0x0250\n"));
+            }
+
+            // Also mark tutorials on the PlayerController's AllTrackedTutorials (client side)
+            // AMorPlayerController + 0x0868 + 0x0110 = controller + 0x0978
+            UObject* controller = nullptr;
+            {
+                std::vector<UObject*> controllers;
+                UObjectGlobals::FindAllOf(STR("BP_FGKMoriaPlayerController_C"), controllers);
+                if (!controllers.empty()) controller = controllers[0];
+            }
+
+            int clientCompleted = 0;
+            if (controller)
+            {
+                uint8_t* ctrlBase = reinterpret_cast<uint8_t*>(controller);
+                uint8_t* ctrlArrayBase = ctrlBase + 0x0868 + TUTORIALS_ARRAY_OFFSET;
+
+                if (isReadableMemory(ctrlArrayBase, 16))
+                {
+                    struct { uint8_t* Data; int32_t Num; int32_t Max; } ctrlArray{};
+                    std::memcpy(&ctrlArray, ctrlArrayBase, 16);
+
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Controller AllTrackedTutorials: Num={}\n"),
+                                                    ctrlArray.Num);
+
+                    if (ctrlArray.Data && ctrlArray.Num > 0 && ctrlArray.Num <= 100)
+                    {
+                        for (int i = 0; i < ctrlArray.Num; i++)
+                        {
+                            uint8_t* entry = ctrlArray.Data + i * TUTORIAL_STATE_SIZE;
+                            if (!isReadableMemory(entry, TUTORIAL_STATE_SIZE)) continue;
+
+                            uint16_t currentBits = 0;
+                            std::memcpy(&currentBits, entry + COMPLETED_ITEMS_OFFSET, 2);
+
+                            if (currentBits == 0xFFFF) continue;
+
+                            uint16_t allComplete = 0xFFFF;
+                            std::memcpy(entry + COMPLETED_ITEMS_OFFSET, &allComplete, 2);
+                            std::memset(entry + COUNTS_OFFSET, 0xFF, 16);
+                            clientCompleted++;
+                        }
+                    }
+                }
+            }
+
+            std::wstring msg = L"Tutorials: " + std::to_wstring(completed) + L" completed";
+            if (alreadyDone > 0)
+                msg += L" (" + std::to_wstring(alreadyDone) + L" already done)";
+            if (clientCompleted > 0)
+                msg += L" + " + std::to_wstring(clientCompleted) + L" client";
+            showOnScreen(msg.c_str(), 5.0f, 0.0f, 1.0f, 0.0f);
+            showGameMessage(L"[Mod] " + msg);
+        }
+
+        // ── Mark All As Read ──
+        // Finds all open lore/crafting/build screen widgets and calls their
+        // MarkAllAsRead/MarkAllRead functions to clear "new" indicators.
+        bool markAllAsRead()
+        {
+            // Each screen type: { FindAllOf class name, function name }
+            struct ScreenInfo
+            {
+                const wchar_t* className;
+                const wchar_t* funcName;
+            };
+            ScreenInfo screens[] = {
+                {STR("WBP_GoalsScreen_C"), STR("MarkAllAsRead")},           // Goals/Tutorials/Tips
+                {STR("WBP_LoreScreen_v2_C"), STR("MarkAllRead")},          // Appendices/Mysteries & Lore
+                {STR("UI_WBP_Crafting_Screen_C"), STR("MarkAllAsRead")},    // Crafting recipes
+                {STR("UI_WBP_Build_Tab_C"), STR("MarkAllAsRead")},          // Build recipes
+            };
+
+            int found = 0;
+            int marked = 0;
+
+            for (const auto& si : screens)
+            {
+                std::vector<UObject*> objs;
+                UObjectGlobals::FindAllOf(si.className, objs);
+                if (objs.empty())
+                {
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] {} not found\n"), si.className);
+                    continue;
+                }
+
+                UObject* widget = objs[0];
+                found++;
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Found {}: '{}'\n"),
+                                                si.className, std::wstring(widget->GetName()));
+
+                UFunction* func = widget->GetFunctionByNameInChain(si.funcName);
+                if (!func)
+                {
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] {} not found on {}\n"),
+                                                    si.funcName, si.className);
+                    continue;
+                }
+
+                widget->ProcessEvent(func, nullptr);
+                marked++;
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called {}::{} OK\n"),
+                                                si.className, si.funcName);
+            }
+
+            if (found == 0)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No screen widgets found — open the Lore/Goals menu first\n"));
+                return false;
+            }
+
+            std::wstring msg = std::to_wstring(marked) + L" of " + std::to_wstring(4) + L" screens marked as read";
+            showOnScreen(msg.c_str(), 5.0f, 0.0f, 1.0f, 0.0f);
+            showGameMessage(L"[Mod] " + msg);
+            return marked > 0;
+        }
+
+        // ── Complete All Tutorials ──
+        // Marks existing tracked tutorials complete, nulls TutorialTable to prevent
+        // new triggers, zeros delegates, and enables pre-hook suppression of all
+        // tutorial display/query functions (hideTutorialHUD flag).
+        // Also zeros out the tracked tutorial arrays so GetClientTutorials returns empty.
+        bool completeAllTutorials()
+        {
+            constexpr int TUTORIALS_ARRAY_OFFSET = 0x0110;
+            constexpr int TUTORIAL_STATE_SIZE = 0x38;
+            constexpr int COMPLETED_ITEMS_OFFSET = 0x0030;
+            constexpr int COUNTS_OFFSET = 0x0020;
+            constexpr int FLAGS_OFFSET = 0x0036;
+
+            struct TArrayHeader { uint8_t* Data; int32_t Num; int32_t Max; };
+
+            // ── Find TutorialManager ──
+            UObject* tutMgr = nullptr;
+            {
+                std::vector<UObject*> mgrs;
+                UObjectGlobals::FindAllOf(STR("MorTutorialManager"), mgrs);
+                if (!mgrs.empty()) tutMgr = mgrs[0];
+            }
+            if (!tutMgr)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] completeAllTutorials: TutorialManager not found\n"));
+                return false;
+            }
+
+            uint8_t* tmBase = reinterpret_cast<uint8_t*>(tutMgr);
+
+            // Save TutorialTable pointer before nulling
+            UObject* tutTable = nullptr;
+            if (isReadableMemory(tmBase + 0x0260, 8))
+                tutTable = *reinterpret_cast<UObject**>(tmBase + 0x0260);
+            if (!tutTable && s_config.savedTutorialTable)
+                tutTable = reinterpret_cast<UObject*>(s_config.savedTutorialTable);
+
+            // ── Record breadcrumbs FIRST (before nulling table) ──
+            int breadcrumbs = 0;
+            if (tutTable)
+            {
+                s_config.savedTutorialTable = tutTable;
+                uint8_t* dtBase = reinterpret_cast<uint8_t*>(tutTable);
+                if (isReadableMemory(dtBase + 0x30, 16))
+                {
+                    TArrayHeader rowMap{};
+                    std::memcpy(&rowMap, dtBase + 0x30, 16);
+                    UFunction* recordFunc = tutMgr->GetFunctionByNameInChain(STR("RecordBreadcrumb"));
+                    if (recordFunc && rowMap.Data && rowMap.Num > 0 && rowMap.Num <= 100)
+                    {
+                        void* dtPtr = tutTable;
+                        for (int i = 0; i < rowMap.Num; i++)
+                        {
+                            uint8_t* elem = rowMap.Data + i * 24;
+                            if (!isReadableMemory(elem, 24)) continue;
+                            uint64_t nameVal = 0;
+                            std::memcpy(&nameVal, elem, 8);
+                            if (nameVal == 0) continue;
+                            uint8_t params[0x18]{};
+                            std::memcpy(params + 0x00, &dtPtr, 8);
+                            std::memcpy(params + 0x08, &nameVal, 8);
+                            tutMgr->ProcessEvent(recordFunc, params);
+                            breadcrumbs++;
+                        }
+                    }
+                }
+            }
+
+            // ── Mark existing tracked entries complete ──
+            auto markComplete = [&](uint8_t* arrayBase, const wchar_t* label) -> int {
+                if (!isReadableMemory(arrayBase, 16)) return 0;
+                TArrayHeader arr{};
+                std::memcpy(&arr, arrayBase, 16);
+                int completed = 0;
+                if (arr.Data && arr.Num > 0 && arr.Num <= 100)
+                {
+                    for (int i = 0; i < arr.Num; i++)
+                    {
+                        uint8_t* entry = arr.Data + i * TUTORIAL_STATE_SIZE;
+                        if (!isReadableMemory(entry, TUTORIAL_STATE_SIZE)) continue;
+                        uint16_t allDone = 0xFFFF;
+                        std::memcpy(entry + COMPLETED_ITEMS_OFFSET, &allDone, 2);
+                        std::memset(entry + COUNTS_OFFSET, 0xFF, 16);
+                        uint8_t flags = 0x07;
+                        std::memcpy(entry + FLAGS_OFFSET, &flags, 1);
+                        completed++;
+                    }
+                }
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] completeAllTutorials: {} completed {}/{}\n"),
+                                                label, completed, arr.Num);
+                return completed;
+            };
+
+            markComplete(tmBase + 0x0270 + TUTORIALS_ARRAY_OFFSET, L"ServerTracked");
+            markComplete(tmBase + 0x0398 + TUTORIALS_ARRAY_OFFSET, L"ServerAllTracked");
+            {
+                std::vector<UObject*> controllers;
+                UObjectGlobals::FindAllOf(STR("BP_FGKMoriaPlayerController_C"), controllers);
+                if (!controllers.empty())
+                {
+                    uint8_t* ctrlBase = reinterpret_cast<uint8_t*>(controllers[0]);
+                    markComplete(ctrlBase + 0x0740 + TUTORIALS_ARRAY_OFFSET, L"CtrlTracked");
+                    markComplete(ctrlBase + 0x0868 + TUTORIALS_ARRAY_OFFSET, L"CtrlAllTracked");
+                }
+            }
+
+            // ── Null TutorialTable (prevents all tutorial lookups) ──
+            if (isReadableMemory(tmBase + 0x0260, 8))
+            {
+                std::memset(tmBase + 0x0260, 0, 8);
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] completeAllTutorials: nulled TutorialTable\n"));
+            }
+
+            // ── Zero delegates ──
+            if (isReadableMemory(tmBase + 0x0230, 0x10))
+                std::memset(tmBase + 0x0230, 0, 0x10); // ShowTutorialDisplay
+            if (isReadableMemory(tmBase + 0x0250, 0x10))
+                std::memset(tmBase + 0x0250, 0, 0x10); // TutorialComplete
+
+            // ── Zero out ALL tracked tutorial arrays (Num=0) so GetClientTutorials returns empty ──
+            // This prevents GetAllTutorialRowHandles from iterating stale data
+            auto zeroArray = [&](uint8_t* arrayBase, const wchar_t* label) {
+                if (!isReadableMemory(arrayBase, 16)) return;
+                int32_t zero = 0;
+                std::memcpy(arrayBase + 8, &zero, 4); // Num = 0
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] completeAllTutorials: zeroed {} Num\n"), label);
+            };
+
+            zeroArray(tmBase + 0x0270 + TUTORIALS_ARRAY_OFFSET, L"ServerTracked");
+            zeroArray(tmBase + 0x0398 + TUTORIALS_ARRAY_OFFSET, L"ServerAllTracked");
+            {
+                std::vector<UObject*> controllers;
+                UObjectGlobals::FindAllOf(STR("BP_FGKMoriaPlayerController_C"), controllers);
+                if (!controllers.empty())
+                {
+                    uint8_t* ctrlBase = reinterpret_cast<uint8_t*>(controllers[0]);
+                    zeroArray(ctrlBase + 0x0740 + TUTORIALS_ARRAY_OFFSET, L"CtrlTracked");
+                    zeroArray(ctrlBase + 0x0868 + TUTORIALS_ARRAY_OFFSET, L"CtrlAllTracked");
+                }
+            }
+
+            // ── Enable permanent pre-hook suppression ──
+            s_config.hideTutorialHUD = true;
+
+            // ── Dismiss tutorial HUD widgets ──
+            int dismissed = 0;
+            {
+                std::vector<UObject*> tutDisplays;
+                UObjectGlobals::FindAllOf(STR("MorTutorialDisplay"), tutDisplays);
+                for (auto* disp : tutDisplays)
+                {
+                    if (!disp || safeClassName(disp) != STR("WBP_TutorialDisplay_C")) continue;
+                    UFunction* visFunc = disp->GetFunctionByNameInChain(STR("SetVisibility"));
+                    if (visFunc)
+                    {
+                        uint8_t visParms[8]{};
+                        visParms[0] = 1; // Collapsed
+                        disp->ProcessEvent(visFunc, visParms);
+                        dismissed++;
+                    }
+                }
+                std::vector<UObject*> overlays;
+                UObjectGlobals::FindAllOf(STR("MoriaHUDWidget"), overlays);
+                for (auto* ov : overlays)
+                {
+                    if (!ov || safeClassName(ov) != STR("UI_WBP_TutorialOverlay_C")) continue;
+                    UFunction* visFunc = ov->GetFunctionByNameInChain(STR("SetVisibility"));
+                    if (visFunc)
+                    {
+                        uint8_t visParms[8]{};
+                        visParms[0] = 1; // Collapsed
+                        ov->ProcessEvent(visFunc, visParms);
+                        dismissed++;
+                    }
+                }
+            }
+
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] completeAllTutorials: breadcrumbs={}, dismissed={}\n"),
+                breadcrumbs, dismissed);
+            showOnScreen(L"TUTORIALS DISABLED", 5.0f, 0.0f, 1.0f, 0.0f);
+            return true;
+        }
+
+        // Dump breadcrumb subsystem contents and record recipe breadcrumbs
+        void dumpAndRecordBreadcrumbs()
+        {
+            // ── Find the BreadcrumbsSubsystem ──
+            UObject* bcSub = nullptr;
+            {
+                std::vector<UObject*> subs;
+                UObjectGlobals::FindAllOf(STR("MorBreadcrumbsSubsystem"), subs);
+                if (subs.empty())
+                    UObjectGlobals::FindAllOf(STR("MorBreadcrumbsSubsystemBase"), subs);
+                if (!subs.empty()) bcSub = subs[0];
+            }
+            if (!bcSub)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] dumpBreadcrumbs: subsystem not found\n"));
+                showOnScreen(L"BreadcrumbsSubsystem not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] dumpBreadcrumbs: found subsystem {}\n"),
+                                            safeClassName(bcSub));
+
+            // Breadcrumbs TArray at offset 0x0030 (FMorBreadcrumb = 0x18 each: FGameplayTag + FName + FName)
+            uint8_t* subBase = reinterpret_cast<uint8_t*>(bcSub);
+            struct TArrayHeader { uint8_t* Data; int32_t Num; int32_t Max; };
+            TArrayHeader bcArr{};
+            if (!isReadableMemory(subBase + 0x30, 16))
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] dumpBreadcrumbs: array unreadable\n"));
+                return;
+            }
+            std::memcpy(&bcArr, subBase + 0x30, 16);
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] dumpBreadcrumbs: {} breadcrumbs (max={})\n"),
+                                            bcArr.Num, bcArr.Max);
+
+            // Dump first 200 entries to log
+            int dumpCount = std::min(bcArr.Num, 200);
+            for (int i = 0; i < dumpCount; i++)
+            {
+                uint8_t* entry = bcArr.Data + i * 0x18;
+                if (!isReadableMemory(entry, 0x18)) continue;
+                try
+                {
+                    auto* tag = reinterpret_cast<FName*>(entry + 0x00);
+                    auto* catName = reinterpret_cast<FName*>(entry + 0x08);
+                    auto* uniqName = reinterpret_cast<FName*>(entry + 0x10);
+                    std::wstring tagStr = tag->ToString();
+                    std::wstring catStr = catName->ToString();
+                    std::wstring uniqStr = uniqName->ToString();
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] BC[{}]: tag={}, cat={}, unique={}\n"),
+                                                    i, tagStr, catStr, uniqStr);
+                }
+                catch (...) { Output::send<LogLevel::Warning>(STR("[MoriaCppMod] BC[{}]: read error\n"), i); }
+            }
+
+            // ── Record breadcrumbs for crafting recipes ──
+            // Call RecordBreadcrumb(CategoryTag, None, UniqueName) directly on the subsystem.
+            // UI_WBP_Craft_List_Item_C widgets have:
+            //   CategoryTag at 0x049C (FGameplayTag = FName, 8B)
+            //   RecipeRef.ResultItemHandle.RowName at 0x0348+0xD8+0x08 = 0x0428 (FName, 8B)
+            // Breadcrumb pattern: tag=UI.*, cat=None, unique=Consumable.*
+            int recipesBc = 0;
+            {
+                UFunction* recordFunc = bcSub->GetFunctionByNameInChain(STR("RecordBreadcrumb"));
+                if (recordFunc)
+                {
+                    // Find all craft list item widgets (crafting screen must be open)
+                    std::vector<UObject*> widgets;
+                    UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
+                    for (auto* w : widgets)
+                    {
+                        if (!w) continue;
+                        if (safeClassName(w) != L"UI_WBP_Craft_List_Item_C") continue;
+                        uint8_t* wBase = reinterpret_cast<uint8_t*>(w);
+
+                        // Read CategoryTag (FGameplayTag = FName at 0x049C)
+                        if (!isReadableMemory(wBase + 0x049C, 8)) continue;
+                        uint64_t catTag = 0;
+                        std::memcpy(&catTag, wBase + 0x049C, 8);
+                        if (catTag == 0) continue; // skip items with no tag
+
+                        // Read ResultItemHandle.RowName (FName at 0x0428)
+                        if (!isReadableMemory(wBase + 0x0428, 8)) continue;
+                        uint64_t uniqueName = 0;
+                        std::memcpy(&uniqueName, wBase + 0x0428, 8);
+                        if (uniqueName == 0) continue; // skip items with no name
+
+                        // RecordBreadcrumb(FGameplayTag CategoryTag, FName CategoryName, FName UniqueName)
+                        // ParmsSize: FGameplayTag(8) + FName(8) + FName(8) + bool return(1) = ~25, round to 32
+                        uint8_t params[32]{};
+                        std::memcpy(params + 0x00, &catTag, 8);     // CategoryTag (FGameplayTag = FName)
+                        // params+0x08 = CategoryName = None = 0 (already zeroed)
+                        std::memcpy(params + 0x10, &uniqueName, 8); // UniqueName
+                        bcSub->ProcessEvent(recordFunc, params);
+                        recipesBc++;
+                    }
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] dumpBreadcrumbs: recorded {} recipe breadcrumbs via RecordBreadcrumb\n"), recipesBc);
+                }
+                else
+                {
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] dumpBreadcrumbs: RecordBreadcrumb not found on subsystem\n"));
+                }
+            }
+
+            std::wstring msg = L"Breadcrumbs: " + std::to_wstring(bcArr.Num) + L" total, " +
+                               std::to_wstring(recipesBc) + L" recipes recorded";
+            showOnScreen(msg.c_str(), 5.0f, 0.0f, 1.0f, 0.0f);
+            showGameMessage(L"[Mod] " + msg);
+        }
+
+        // ── Mark All Crafting Recipes as Read ──
+        // Finds the open crafting screen, calls MarkAllAsRead for immediate UI update,
+        // then iterates AllRecipes and calls SetRecipeViewed for each recipe to record
+        // persistent breadcrumbs. Returns count of recipes marked, or -1 if screen not found.
+        int markAllCraftingRecipesRead()
+        {
+            // Find the crafting screen widget
+            UObject* craftScreen = nullptr;
+            {
+                std::vector<UObject*> screens;
+                UObjectGlobals::FindAllOf(STR("MorCraftingScreen"), screens);
+                for (auto* s : screens)
+                {
+                    if (!s) continue;
+                    std::wstring cls = safeClassName(s);
+                    if (cls.find(L"UI_WBP_Crafting_Screen") != std::wstring::npos)
+                    {
+                        craftScreen = s;
+                        break;
+                    }
+                }
+            }
+            if (!craftScreen)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] markAllCraftingRecipesRead: crafting screen not open\n"));
+                return -1;
+            }
+
+            // Call MarkAllAsRead for immediate UI update
+            UFunction* markAllFunc = craftScreen->GetFunctionByNameInChain(STR("MarkAllAsRead"));
+            if (markAllFunc)
+            {
+                craftScreen->ProcessEvent(markAllFunc, nullptr);
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] markAllCraftingRecipesRead: called MarkAllAsRead OK\n"));
+            }
+
+            // Read AllRecipes TArray at offset 0x03F0 on UMorCraftingScreen
+            uint8_t* screenBase = reinterpret_cast<uint8_t*>(craftScreen);
+            struct TArrayHeader { uint8_t* Data; int32_t Num; int32_t Max; };
+            TArrayHeader recipes{};
+            if (!isReadableMemory(screenBase + 0x03F0, 16))
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] markAllCraftingRecipesRead: AllRecipes unreadable\n"));
+                return 0;
+            }
+            std::memcpy(&recipes, screenBase + 0x03F0, 16);
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] markAllCraftingRecipesRead: AllRecipes Num={}, Max={}\n"),
+                                            recipes.Num, recipes.Max);
+
+            if (!recipes.Data || recipes.Num <= 0 || recipes.Num > 500)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] markAllCraftingRecipesRead: AllRecipes invalid (Num={})\n"),
+                                                recipes.Num);
+                return 0;
+            }
+
+            // Call SetRecipeViewed for each recipe (records breadcrumbs for persistence)
+            UFunction* setViewedFunc = craftScreen->GetFunctionByNameInChain(STR("SetRecipeViewed"));
+            if (!setViewedFunc)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] markAllCraftingRecipesRead: SetRecipeViewed not found\n"));
+                return 0;
+            }
+
+            int viewed = 0;
+            constexpr int RECIPE_SIZE = 0x138; // FMorItemRecipeDefinition size
+            for (int i = 0; i < recipes.Num; i++)
+            {
+                uint8_t* recipeData = recipes.Data + i * RECIPE_SIZE;
+                if (!isReadableMemory(recipeData, RECIPE_SIZE)) continue;
+
+                // SetRecipeViewed(const FMorItemRecipeDefinition& Recipe)
+                // In ProcessEvent, const-ref struct params are copied inline
+                uint8_t params[RECIPE_SIZE]{};
+                std::memcpy(params, recipeData, RECIPE_SIZE);
+                craftScreen->ProcessEvent(setViewedFunc, params);
+                viewed++;
+            }
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] markAllCraftingRecipesRead: viewed {}/{} recipes\n"),
+                                            viewed, recipes.Num);
+
+            // Also clear "new" indicators on individual recipe widgets
+            // SetBreadcrumb(false) hides the breadcrumb dot on each craft list item
+            int cleared = 0;
+            {
+                std::vector<UObject*> widgets;
+                UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
+                for (auto* w : widgets)
+                {
+                    if (!w) continue;
+                    if (safeClassName(w) != L"UI_WBP_Craft_List_Item_C") continue;
+
+                    UFunction* setBcFunc = w->GetFunctionByNameInChain(STR("SetBreadcrumb"));
+                    if (setBcFunc)
+                    {
+                        uint8_t bcParams[8]{};
+                        bcParams[0] = 0; // On = false → hide breadcrumb
+                        w->ProcessEvent(setBcFunc, bcParams);
+                        cleared++;
+                    }
+                }
+            }
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] markAllCraftingRecipesRead: cleared {} widget breadcrumbs\n"),
+                                            cleared);
+
+            return viewed;
         }
 
         // Read debug menu bool properties to show current state
@@ -5433,6 +6653,51 @@ namespace MoriaMods
             showOnScreen(L"Debug menu actor not found", 3.0f, 1.0f, 0.3f, 0.3f);
         }
 
+        // Reads the actual debug menu toggle state and syncs s_config flags.
+        // Called on character load so the UI toggles match the game's real state.
+        bool syncDebugToggleState()
+        {
+            // Try direct class search first
+            std::vector<UObject*> objs;
+            UObjectGlobals::FindAllOf(STR("BP_DebugMenu_CraftingAndConstruction_C"), objs);
+            if (objs.empty())
+            {
+                // Fallback: scan all actors
+                std::vector<UObject*> actors;
+                UObjectGlobals::FindAllOf(STR("Actor"), actors);
+                for (auto* a : actors)
+                {
+                    if (a && safeClassName(a) == STR("BP_DebugMenu_CraftingAndConstruction_C"))
+                    {
+                        objs.push_back(a);
+                        break;
+                    }
+                }
+            }
+            if (objs.empty())
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] syncDebugToggleState: debug actor not found\n"));
+                return false;
+            }
+
+            UObject* debugActor = objs[0];
+            auto readBool = [&](const TCHAR* name) -> bool {
+                void* ptr = debugActor->GetValuePtrByPropertyNameInChain(name);
+                return ptr && *static_cast<uint8_t*>(ptr) != 0;
+            };
+
+            s_config.freeBuild = readBool(STR("free_construction"));
+            s_config.freeCraft = readBool(STR("free_crafting"));
+            s_config.instantCraft = readBool(STR("instant_crafting"));
+
+            Output::send<LogLevel::Warning>(
+                STR("[MoriaCppMod] syncDebugToggleState: freeBuild={}, freeCraft={}, instantCraft={}\n"),
+                s_config.freeBuild ? 1 : 0, s_config.freeCraft ? 1 : 0, s_config.instantCraft ? 1 : 0);
+            return true;
+        }
+
+        // ── Toggle/cheat wrapper functions — DISABLED: keybinds removed, config window calls callDebugFunc directly ──
+#if 0
         void toggleFreeConstruction()
         {
             callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Free Construction"));
@@ -5472,6 +6737,123 @@ namespace MoriaMods
         {
             if (callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Restore All Constructions")))
                 showOnScreen(L"All constructions restored!", 5.0f, 0.0f, 1.0f, 0.0f);
+        }
+#endif
+
+        // Unlock only construction/building recipes (B menu), not weapons/armor
+        // Uses DiscoverRecipe(FName) on DiscoveryManager for each row in ConstructionRecipesTable
+        void unlockAllBuildingRecipes()
+        {
+            struct TArrayHeader { uint8_t* Data; int32_t Num; int32_t Max; };
+
+            // ── Discover all construction recipes ──
+            UObject* discMgr = nullptr;
+            {
+                std::vector<UObject*> mgrs;
+                UObjectGlobals::FindAllOf(STR("MorDiscoveryManager"), mgrs);
+                if (!mgrs.empty()) discMgr = mgrs[0];
+            }
+            if (!discMgr)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] unlockBuilding: DiscoveryManager not found\n"));
+                showOnScreen(L"DiscoveryManager not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+
+            UFunction* discoverFunc = discMgr->GetFunctionByNameInChain(STR("DiscoverRecipe"));
+            if (!discoverFunc)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] unlockBuilding: DiscoverRecipe function not found\n"));
+                showOnScreen(L"DiscoverRecipe not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+
+            // Find ConstructionRecipesTable (UMorConstructionRecipesTable extends UFGKDataTableBase)
+            UObject* constTable = nullptr;
+            {
+                std::vector<UObject*> tables;
+                UObjectGlobals::FindAllOf(STR("MorConstructionRecipesTable"), tables);
+                if (!tables.empty()) constTable = tables[0];
+            }
+            // Fallback: search DataTable objects by name
+            if (!constTable)
+            {
+                std::vector<UObject*> tables;
+                UObjectGlobals::FindAllOf(STR("DataTable"), tables);
+                for (auto* t : tables)
+                {
+                    if (!t) continue;
+                    std::wstring name(t->GetName());
+                    if (name.find(STR("Construction")) != std::wstring::npos &&
+                        name.find(STR("Recipe")) != std::wstring::npos)
+                    {
+                        constTable = t;
+                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] unlockBuilding: found table via name: {}\n"), name);
+                        break;
+                    }
+                }
+            }
+            if (!constTable)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] unlockBuilding: ConstructionRecipesTable not found\n"));
+                showOnScreen(L"Construction recipes table not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] unlockBuilding: found wrapper table: {}\n"),
+                                            std::wstring(constTable->GetName()));
+
+            // UFGKDataTableBase wraps a UDataTable* at offset 0x28 (TableAsset)
+            uint8_t* wrapperBase = reinterpret_cast<uint8_t*>(constTable);
+            UObject* actualDT = nullptr;
+            if (isReadableMemory(wrapperBase + 0x28, 8))
+                actualDT = *reinterpret_cast<UObject**>(wrapperBase + 0x28);
+            if (!actualDT)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] unlockBuilding: TableAsset at 0x28 is null\n"));
+                showOnScreen(L"TableAsset is null", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] unlockBuilding: actual DataTable: {}\n"),
+                                            std::wstring(actualDT->GetName()));
+
+            // Iterate RowMap (offset 0x30 from actual UDataTable)
+            uint8_t* dtBase = reinterpret_cast<uint8_t*>(actualDT);
+            TArrayHeader rowMap{};
+            if (!isReadableMemory(dtBase + 0x30, 16))
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] unlockBuilding: RowMap unreadable\n"));
+                showOnScreen(L"RowMap unreadable", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+            std::memcpy(&rowMap, dtBase + 0x30, 16);
+            if (!rowMap.Data || rowMap.Num <= 0 || rowMap.Num > 2000)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] unlockBuilding: RowMap invalid Num={}\n"), rowMap.Num);
+                showOnScreen(L"RowMap invalid", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] unlockBuilding: DataTable has {} rows\n"), rowMap.Num);
+
+            // Call DiscoverRecipe(FName) for each construction recipe
+            int discovered = 0;
+            for (int i = 0; i < rowMap.Num; i++)
+            {
+                uint8_t* elem = rowMap.Data + i * 24; // TSet element: FName(8B) + ptr(8B) + hash(8B)
+                if (!isReadableMemory(elem, 24)) continue;
+                uint64_t nameVal = 0;
+                std::memcpy(&nameVal, elem, 8); // FName from RowMap key
+                if (nameVal == 0) continue;
+
+                // DiscoverRecipe param: const FName& (8 bytes in ProcessEvent buffer)
+                uint8_t params[16]{};
+                std::memcpy(params, &nameVal, 8);
+                discMgr->ProcessEvent(discoverFunc, params);
+                discovered++;
+            }
+
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] unlockBuilding: discovered {} construction recipes\n"), discovered);
+            std::wstring msg = L"BUILDING RECIPES UNLOCKED: " + std::to_wstring(discovered) + L" recipes";
+            showOnScreen(msg.c_str(), 5.0f, 0.0f, 1.0f, 0.0f);
         }
 
         // Read debug menu actor memory to sync config window toggle states
@@ -5564,6 +6946,8 @@ namespace MoriaMods
             return snap ? *snap : 45.0f;
         }
 
+        // ── Manual rotation keybind wrappers — DISABLED: keybinds removed ──
+#if 0
         void rotateBuildPlacement()
         {
             UObject* gata = resolveGATA();
@@ -5609,6 +6993,7 @@ namespace MoriaMods
             std::wstring msg = L"Rotation step: " + std::to_wstring((int)newStep) + L"\xB0";
             showOnScreen(msg.c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
         }
+#endif
 
         // ProcessEvent spy — captures all rotation-related calls for 5 seconds
         bool m_spyActive{false};
@@ -5834,7 +7219,8 @@ namespace MoriaMods
             {
                 file << i << "|" << (int)s_bindings[i].key << "\n";
             }
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Saved {} keybindings to disk\n"), BIND_COUNT);
+            file << "mod|" << (int)s_modifierVK.load() << "\n";
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Saved {} keybindings + modifier to disk\n"), BIND_COUNT);
         }
 
         void loadKeybindings()
@@ -5846,6 +7232,20 @@ namespace MoriaMods
             while (std::getline(file, line))
             {
                 if (line.empty() || line[0] == '#') continue;
+                // Check for modifier line: "mod|VK_code"
+                if (line.size() > 4 && line.substr(0, 4) == "mod|")
+                {
+                    try
+                    {
+                        int mvk = std::stoi(line.substr(4));
+                        if (mvk == VK_SHIFT || mvk == VK_CONTROL || mvk == VK_MENU || mvk == VK_RMENU)
+                            s_modifierVK = static_cast<uint8_t>(mvk);
+                    }
+                    catch (...)
+                    {
+                    }
+                    continue;
+                }
                 auto sep = line.find('|');
                 if (sep == std::string::npos) continue;
                 int idx, vk;
@@ -6358,7 +7758,7 @@ namespace MoriaMods
         }
 
         // ── Deep probe: dump Icon image data from selected Build_Item_Medium widget ──
-
+#if 0 // Disabled: debug probe functions (dumpObjectProperties, probeImageWidget, probeSelectedRecipe)
         void dumpObjectProperties(UObject* obj, const std::wstring& label, int maxProps = 200)
         {
             if (!obj) return;
@@ -6881,6 +8281,7 @@ namespace MoriaMods
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END ICON PROBE ===\n"));
             showOnScreen(L"Icon probe done (see UE4SS log)", 5.0f, 0.0f, 1.0f, 0.5f);
         }
+#endif // Disabled: debug probe functions
 
         // Read display name from a Build_Item_Medium widget's blockName TextBlock
         std::wstring readWidgetDisplayName(UObject* widget)
@@ -7012,7 +8413,7 @@ namespace MoriaMods
 
             if (!m_recipeSlots[slot].used)
             {
-                std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" empty \x2014 select recipe in B menu, then Shift+F" + std::to_wstring(slot + 1);
+                std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" empty \x2014 select recipe in B menu, then " + modifierName(s_modifierVK) + L"+F" + std::to_wstring(slot + 1);
                 showOnScreen(msg.c_str(), 3.0f, 1.0f, 0.5f, 0.0f);
                 return;
             }
@@ -7569,6 +8970,8 @@ namespace MoriaMods
             }
         }
 
+        // ── startRotationSpy — DISABLED: keybind removed ──
+#if 0
         void startRotationSpy()
         {
             if (m_spyActive)
@@ -7581,6 +8984,7 @@ namespace MoriaMods
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Spy] === ROTATION SPY ACTIVE — press R now! ===\n"));
             showOnScreen(L"SPY ACTIVE - press R now!", 5.0f, 1.0f, 1.0f, 0.0f);
         }
+#endif
 
         void rotateAimedBuilding_legacy()
         {
@@ -7836,6 +9240,7 @@ namespace MoriaMods
                 // Remove the type rule
                 m_typeRemovals.erase(meshId);
                 rewriteSaveFile();
+                buildRemovalEntries();
 
                 std::wstring meshIdW(meshId.begin(), meshId.end());
                 Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Undo type rule: {} — restored {} instances\n"), meshIdW, restored);
@@ -7866,7 +9271,11 @@ namespace MoriaMods
                     }
                 }
             }
-            if (foundInSave) rewriteSaveFile();
+            if (foundInSave)
+            {
+                rewriteSaveFile();
+                buildRemovalEntries();
+            }
 
             // Validate UObject pointer before restoring (GC may have freed it)
             bool ok = false;
@@ -7897,15 +9306,29 @@ namespace MoriaMods
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("HISM removal + 45-deg rotation + quick-build hotbar");
+            // Init removal list CS before loadSaveFile can be called
+            InitializeCriticalSection(&s_config.removalCS);
+            s_config.removalCSInit = true;
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Loaded v1.3\n"));
         }
 
         ~MoriaCppMod() override
         {
+            // Disable ProcessEvent hooks FIRST — before any blocking waits.
+            // The pre/post hooks check s_instance and early-return when null.
+            // Without this, hooks fire during the stopOverlay 3s wait, calling
+            // GetName()/GetClassPrivate() on UObjects mid-destruction, which can
+            // corrupt the UObject hash table and cause RemoveFromHash crashes.
+            s_instance = nullptr;
+
             stopOverlay();
             stopConfig();
             stopTargetInfo();
-            s_instance = nullptr;
+            if (s_config.removalCSInit)
+            {
+                DeleteCriticalSection(&s_config.removalCS);
+                s_config.removalCSInit = false;
+            }
         }
 
         // Called once when UE4SS has finished initializing Unreal Engine hooks.
@@ -7920,25 +9343,10 @@ namespace MoriaMods
 
             m_saveFilePath = "Mods/MoriaCppMod/removed_instances.txt";
             loadSaveFile();
+            buildRemovalEntries();
             probePrintString();
             loadQuickBuildSlots();
             loadKeybindings();
-
-            register_keydown_event(Input::Key::NUM_ZERO, [this]() {
-                int pending = pendingCount();
-                int applied = static_cast<int>(m_savedRemovals.size()) - pending;
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Status: {} saved ({} applied, {} pending), {} undo, {} type rules\n"),
-                                                m_savedRemovals.size(),
-                                                applied,
-                                                pending,
-                                                m_undoStack.size(),
-                                                m_typeRemovals.size());
-                showOnScreen(L"Status: " + std::to_wstring(m_savedRemovals.size()) + L" saved (" + std::to_wstring(applied) + L" applied, " +
-                                     std::to_wstring(pending) + L" pending), " + std::to_wstring(m_undoStack.size()) + L" undo",
-                             5.0f);
-                showGameMessage(L"[Mod] " + std::to_wstring(applied) + L"/" + std::to_wstring(m_savedRemovals.size()) + L" applied, " +
-                                std::to_wstring(pending) + L" pending");
-            });
 
             register_keydown_event(Input::Key::NUM_ONE, [this]() {
                 removeAimed();
@@ -7947,102 +9355,17 @@ namespace MoriaMods
                 undoLast();
             });
 
-            register_keydown_event(Input::Key::NUM_THREE, [this]() {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Forcing full replay (throttled)...\n"));
-                m_processedComps.clear();
-                m_appliedRemovals.assign(m_appliedRemovals.size(), false);
-                m_replay = {}; // reset any in-progress replay
-                startReplay();
-                showOnScreen(L"Replay started (throttled)", 3.0f, 0.0f, 0.8f, 1.0f);
-            });
-
             register_keydown_event(Input::Key::NUM_FOUR, [this]() {
-                inspectAimed();
+                dumpAimedActor();
             });
 
-            register_keydown_event(Input::Key::NUM_FIVE, [this]() {
-                testAllDisplayMethods();
-            });
             register_keydown_event(Input::Key::NUM_SIX, [this]() {
                 removeAllOfType();
             });
 
-            // Building exploration keys
-            register_keydown_event(Input::Key::NUM_SEVEN, [this]() {
-                dumpAllWidgets();
-            });
-            register_keydown_event(Input::Key::NUM_EIGHT, [this]() {
-                dumpAimedActor();
-            });
-            register_keydown_event(Input::Key::NUM_NINE, [this]() {
-                dumpBuildCraftClasses();
-            });
-
-            // Inventory probe (Num.)
-            register_keydown_event(Input::Key::DECIMAL, [this]() {
-                probeInventoryHotbar();
-            });
-
-            // Clear hotbar (Alt+Num.) — move hotbar items to inventory or drop
-            register_keydown_event(Input::Key::DECIMAL, {Input::ModifierKey::ALT}, [this]() {
-                clearHotbar();
-            });
-
-            // Deep probes (Alt+Numpad)
-            register_keydown_event(Input::Key::NUM_FIVE, {Input::ModifierKey::ALT}, [this]() {
-                startRotationSpy();
-            });
-            register_keydown_event(Input::Key::NUM_SEVEN, {Input::ModifierKey::ALT}, [this]() {
-                probeBuildTabRecipe();
-            });
-            register_keydown_event(Input::Key::NUM_EIGHT, {Input::ModifierKey::ALT}, [this]() {
-                probeBuildConstruction();
-            });
-            register_keydown_event(Input::Key::NUM_NINE, {Input::ModifierKey::ALT}, [this]() {
-                dumpDebugMenus();
-            });
-
-            // SPY ALL: Insert key — captures ALL ProcessEvent calls for 3 seconds
-            // Use this to discover what function the B key triggers to open build menu
-            register_keydown_event(Input::Key::INS, [this]() {
-                if (m_spyAll)
-                {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [SpyAll] Already active\n"));
-                    return;
-                }
-                m_spyAll = true;
-                m_spyAllFrameCount = 0;
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [SpyAll] === ALL ProcessEvent logging for 3s — press B NOW! ===\n"));
-                showOnScreen(L"SPY ALL ACTIVE (3s) \x2014 press B now!", 3.0f, 1.0f, 1.0f, 0.0f);
-            });
-
-            // Deep probe: dump all data on selected build recipe
-            register_keydown_event(Input::Key::DIVIDE, [this]() {
-                probeSelectedRecipe();
-            });
-
-            // Debug cheats (Alt+Numpad)
-            register_keydown_event(Input::Key::NUM_ZERO, {Input::ModifierKey::ALT}, [this]() {
-                showDebugMenuState();
-            });
-            register_keydown_event(Input::Key::NUM_ONE, {Input::ModifierKey::ALT}, [this]() {
-                toggleFreeConstruction();
-            });
-            register_keydown_event(Input::Key::NUM_TWO, {Input::ModifierKey::ALT}, [this]() {
-                toggleFreeCrafting();
-            });
-            register_keydown_event(Input::Key::NUM_THREE, {Input::ModifierKey::ALT}, [this]() {
-                toggleInstantCrafting();
-            });
-            register_keydown_event(Input::Key::NUM_FOUR, {Input::ModifierKey::ALT}, [this]() {
-                rotateBuildPlacement();
-            });
-            register_keydown_event(Input::Key::NUM_SIX, {Input::ModifierKey::ALT}, [this]() {
-                unlockAllRecipes();
-            });
-
-            // Quick-build hotbar: F1-F12 = build, Shift+F1-F12 = assign slot
-            // Slots persist to disk via display names (stable across sessions)
+            // Quick-build hotbar: F1-F8 = build, Modifier+F1-F8 = assign slot
+            // Modifier key is configurable (SHIFT/CTRL/ALT) via F12 Key Mapping tab
+            // All 3 modifier variants registered; isModifierDown() gates the callback at runtime
 
             const Input::Key fkeys[] = {Input::Key::F1, Input::Key::F2, Input::Key::F3, Input::Key::F4, Input::Key::F5, Input::Key::F6, Input::Key::F7, Input::Key::F8};
             for (int i = 0; i < 8; i++)
@@ -8051,7 +9374,13 @@ namespace MoriaMods
                     quickBuildSlot(i);
                 });
                 register_keydown_event(fkeys[i], {Input::ModifierKey::SHIFT}, [this, i]() {
-                    assignRecipeSlot(i);
+                    if (isModifierDown()) assignRecipeSlot(i);
+                });
+                register_keydown_event(fkeys[i], {Input::ModifierKey::CONTROL}, [this, i]() {
+                    if (isModifierDown()) assignRecipeSlot(i);
+                });
+                register_keydown_event(fkeys[i], {Input::ModifierKey::ALT}, [this, i]() {
+                    if (isModifierDown()) assignRecipeSlot(i);
                 });
             }
 
@@ -8065,8 +9394,22 @@ namespace MoriaMods
                 toggleConfig();
             });
 
-            // F9: increase rotation step by 5 (wraps 90 → 5)
+            // F9: Target (dump aimed actor — deep inspect)
             register_keydown_event(Input::Key::F9, [this]() {
+                dumpAimedActor();
+            });
+
+            // Modifier+F9: Build the last targeted buildable object
+            auto f9ModCallback = [this]() {
+                if (!isModifierDown()) return;
+                buildFromTarget();
+            };
+            register_keydown_event(Input::Key::F9, {Input::ModifierKey::SHIFT}, f9ModCallback);
+            register_keydown_event(Input::Key::F9, {Input::ModifierKey::CONTROL}, f9ModCallback);
+            register_keydown_event(Input::Key::F9, {Input::ModifierKey::ALT}, f9ModCallback);
+
+            // F10: increase rotation step by 5 (wraps 90 → 5)
+            register_keydown_event(Input::Key::F10, [this]() {
                 int cur = s_overlay.rotationStep;
                 int next = (cur >= 90) ? 5 : cur + 5;
                 s_overlay.rotationStep = next;
@@ -8077,8 +9420,9 @@ namespace MoriaMods
                 showOnScreen(msg.c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
             });
 
-            // Shift+F9: decrease rotation step by 5 (wraps 5 → 90)
-            register_keydown_event(Input::Key::F9, {Input::ModifierKey::SHIFT}, [this]() {
+            // Modifier+F10: decrease rotation step by 5 (wraps 5 → 90)
+            auto f10ModCallback = [this]() {
+                if (!isModifierDown()) return;
                 int cur = s_overlay.rotationStep;
                 int next = (cur <= 5) ? 90 : cur - 5;
                 s_overlay.rotationStep = next;
@@ -8087,17 +9431,10 @@ namespace MoriaMods
                 if (gata) setGATARotation(gata, static_cast<float>(next));
                 std::wstring msg = L"Rotation step: " + std::to_wstring(next) + L"\xB0";
                 showOnScreen(msg.c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
-            });
-
-            // F10: Target (dump aimed actor — deep inspect)
-            register_keydown_event(Input::Key::F10, [this]() {
-                dumpAimedActor();
-            });
-
-            // Shift+F10: Build the last targeted buildable object
-            register_keydown_event(Input::Key::F10, {Input::ModifierKey::SHIFT}, [this]() {
-                buildFromTarget();
-            });
+            };
+            register_keydown_event(Input::Key::F10, {Input::ModifierKey::SHIFT}, f10ModCallback);
+            register_keydown_event(Input::Key::F10, {Input::ModifierKey::CONTROL}, f10ModCallback);
+            register_keydown_event(Input::Key::F10, {Input::ModifierKey::ALT}, f10ModCallback);
 
             // Hotbar overlay toggle: Numpad * (Multiply)
             register_keydown_event(Input::Key::MULTIPLY, [this]() {
@@ -8112,6 +9449,187 @@ namespace MoriaMods
             Unreal::Hook::RegisterProcessEventPreCallback([](UObject* context, UFunction* func, void* parms) {
                 if (!s_instance) return;
                 if (!func) return;
+
+#if 0 // DISABLED: Tutorial/breadcrumb tracking + suppression — features removed
+                // ── Tutorial Tracking: log all tutorial-related ProcessEvent calls ──
+                if (s_config.trackTutorials.load() && parms)
+                {
+                    std::wstring fn(func->GetName());
+                    bool isTutorialFunc =
+                        fn == STR("TriggerTutorial") || fn == STR("TriggerTutorialUponCompletion") ||
+                        fn == STR("CanTriggerTutorial") || fn == STR("RecordBreadcrumb") ||
+                        fn == STR("ReportTutorialAction") || fn == STR("ReportTutorialItemAction") ||
+                        fn == STR("ReportTutorialRepairAction") || fn == STR("ShowTutorialDisplay") ||
+                        fn == STR("OnTutorialUnlock") || fn == STR("OnTutorialComplete") ||
+                        fn == STR("BP_ShowTutorialDisplay") || fn == STR("Show Next Tutorial") ||
+                        fn == STR("ShowNextIncompleteTutorial") || fn == STR("ManualShowTutorialDisplay") ||
+                        fn == STR("HandleUpdateHUDTutorial") || fn == STR("SetTutorialEntrySelected") ||
+                        fn == STR("SetTutorialEntryViewed") || fn == STR("IsTutorialCompleted") ||
+                        fn == STR("IsTutorialListItemCompleted") || fn == STR("UnlockTip") ||
+                        fn == STR("SetBreadcrumb") || fn == STR("OnPinnedRecipeChanged") ||
+                        fn == STR("SetRecipeUnlockState") || fn == STR("RefreshButton") ||
+                        fn == STR("NativeRecordItemRecipeBreadcrumbs") || fn == STR("NativeClearItemRecipeBreadcrumbs") ||
+                        fn == STR("NativeForgetItemRecipeBreadcrumbs") || fn == STR("UpdateBreadcrumbCounts") ||
+                        fn == STR("HasBreadcrumb") || fn == STR("ClearBreadcrumb") ||
+                        fn == STR("SetRecipeViewed") || fn == STR("IsRecipeViewed") ||
+                        fn == STR("MarkAllAsRead") || fn == STR("MarkAllRead") ||
+                        fn == STR("ChangeRecipeViewerNew") || fn == STR("CheckShouldBreadcrumb") ||
+                        fn == STR("NativeRecordConstructionRecipeBreadcrumbs");
+                    if (isTutorialFunc)
+                    {
+                        std::wstring cls = safeClassName(context);
+                        Output::send<LogLevel::Warning>(STR("[TutTrack] {}::{} ({}B)\n"), cls, fn, func->GetParmsSize());
+                        try
+                        {
+                            uint8_t* p = static_cast<uint8_t*>(parms);
+                            if (fn == STR("TriggerTutorial") || fn == STR("TriggerTutorialUponCompletion"))
+                            {
+                                // Params: ACharacter*(8B) + FMorTutorialRowHandle(DataTable* 8B + FName 8B)
+                                if (isReadableMemory(p + 16, 8))
+                                {
+                                    auto* rowName = reinterpret_cast<FName*>(p + 16);
+                                    Output::send<LogLevel::Warning>(STR("[TutTrack]   RowName={}\n"), rowName->ToString());
+                                }
+                            }
+                            else if (fn == STR("RecordBreadcrumb"))
+                            {
+                                if (cls.find(STR("TutorialManager")) != std::wstring::npos)
+                                {
+                                    // BP_TutorialManager::RecordBreadcrumb(FMorTutorialRowHandle, bool IsNew)
+                                    if (isReadableMemory(p + 8, 8))
+                                    {
+                                        auto* rowName = reinterpret_cast<FName*>(p + 8);
+                                        bool isNew = *reinterpret_cast<bool*>(p + 16);
+                                        Output::send<LogLevel::Warning>(STR("[TutTrack]   TutRowName={}, IsNew={}\n"), rowName->ToString(), isNew ? 1 : 0);
+                                    }
+                                }
+                                else
+                                {
+                                    // Subsystem::RecordBreadcrumb(FGameplayTag, FName CategoryName, FName UniqueName)
+                                    if (isReadableMemory(p, 24))
+                                    {
+                                        auto* tag = reinterpret_cast<FName*>(p + 0);
+                                        auto* catName = reinterpret_cast<FName*>(p + 8);
+                                        auto* uniqName = reinterpret_cast<FName*>(p + 16);
+                                        Output::send<LogLevel::Warning>(STR("[TutTrack]   tag={}, cat={}, unique={}\n"),
+                                                                        tag->ToString(), catName->ToString(), uniqName->ToString());
+                                    }
+                                }
+                            }
+                            else if (fn == STR("IsTutorialCompleted") || fn == STR("IsTutorialListItemCompleted"))
+                            {
+                                // Params: ACharacter*(8B) + FMorTutorialRowHandle(DataTable* 8B + FName 8B)
+                                if (isReadableMemory(p + 16, 8))
+                                {
+                                    auto* rowName = reinterpret_cast<FName*>(p + 16);
+                                    Output::send<LogLevel::Warning>(STR("[TutTrack]   RowName={}\n"), rowName->ToString());
+                                }
+                            }
+                            else if (fn == STR("SetBreadcrumb"))
+                            {
+                                // UI_WBP_Craft_List_Item_C::SetBreadcrumb(bool On)
+                                bool on = *reinterpret_cast<bool*>(p);
+                                Output::send<LogLevel::Warning>(STR("[TutTrack]   On={}\n"), on ? 1 : 0);
+                            }
+                            else if (fn == STR("SetRecipeUnlockState"))
+                            {
+                                // SetRecipeUnlockState(EMorRecipeDiscoveryState, int32 curMat, int32 totalMat, int32 curFrag, int32 totalFrag)
+                                uint8_t state = *reinterpret_cast<uint8_t*>(p);
+                                int32_t curMat = *reinterpret_cast<int32_t*>(p + 4);
+                                int32_t totalMat = *reinterpret_cast<int32_t*>(p + 8);
+                                Output::send<LogLevel::Warning>(STR("[TutTrack]   state={}, mat={}/{}\n"), static_cast<int>(state), curMat, totalMat);
+                            }
+                            else if (fn == STR("ShowTutorialDisplay") || fn == STR("BP_ShowTutorialDisplay") ||
+                                     fn == STR("ManualShowTutorialDisplay"))
+                            {
+                                if (context)
+                                    Output::send<LogLevel::Warning>(STR("[TutTrack]   context={}\n"), std::wstring(context->GetName()));
+                            }
+                            else if (fn == STR("HasBreadcrumb") || fn == STR("ClearBreadcrumb"))
+                            {
+                                // (FGameplayTag, FName CategoryName, FName UniqueName)
+                                if (isReadableMemory(p, 24))
+                                {
+                                    auto* tag = reinterpret_cast<FName*>(p + 0);
+                                    auto* catName = reinterpret_cast<FName*>(p + 8);
+                                    auto* uniqName = reinterpret_cast<FName*>(p + 16);
+                                    Output::send<LogLevel::Warning>(STR("[TutTrack]   tag={}, cat={}, unique={}\n"),
+                                                                    tag->ToString(), catName->ToString(), uniqName->ToString());
+                                }
+                            }
+                            else if (fn == STR("ChangeRecipeViewerNew"))
+                            {
+                                // (int32 OldCount, int32 NewCount)
+                                int32_t oldC = *reinterpret_cast<int32_t*>(p);
+                                int32_t newC = *reinterpret_cast<int32_t*>(p + 4);
+                                Output::send<LogLevel::Warning>(STR("[TutTrack]   old={}, new={}\n"), oldC, newC);
+                            }
+                            else if (fn == STR("CheckShouldBreadcrumb"))
+                            {
+                                // (bool& IsNew) — output param
+                                Output::send<LogLevel::Warning>(STR("[TutTrack]   (output param)\n"));
+                            }
+                        }
+                        catch (...) { /* safe — skip param extraction on error */ }
+                    }
+                }
+
+                // ── Permanent tutorial HUD suppression (set by "Complete All Tutorials" button) ──
+                // Blocks all tutorial display functions so "Learning the game" never appears
+                if (s_config.hideTutorialHUD.load() && parms)
+                {
+                    std::wstring fn(func->GetName());
+                    if (fn == STR("ShowTutorialDisplay") || fn == STR("BP_ShowTutorialDisplay") ||
+                        fn == STR("ShowNextIncompleteTutorial") || fn == STR("Show Next Tutorial") ||
+                        fn == STR("ManualShowTutorialDisplay") || fn == STR("HandleUpdateHUDTutorial") ||
+                        fn == STR("OnTutorialUnlock") || fn == STR("OnTutorialComplete"))
+                    {
+                        int sz = func->GetParmsSize();
+                        if (sz > 0 && sz <= 128) std::memset(parms, 0, sz);
+                        return;
+                    }
+                }
+
+                // Suppress tutorial/tip/lore notification ProcessEvent calls when enabled
+                if (s_config.suppressTutorials.load() && parms)
+                {
+                    std::wstring fn(func->GetName());
+                    // Block tutorial triggers by nulling the Player (first 8B) param
+                    // Bypass when internalTutorialCall is set (our own TriggerTutorial calls)
+                    if (!s_config.internalTutorialCall.load() &&
+                        (fn == STR("TriggerTutorial") || fn == STR("TriggerTutorialUponCompletion") || fn == STR("CanTriggerTutorial") ||
+                         fn == STR("ReportTutorialAction") || fn == STR("ReportTutorialItemAction") || fn == STR("ReportTutorialRepairAction")))
+                    {
+                        std::memset(parms, 0, 8); // null out ACharacter* Player (first param)
+                        return;
+                    }
+                    // Block tutorial display/notification (zero entire small param buffers)
+                    if (fn == STR("ShowTutorialDisplay") || fn == STR("OnTutorialUnlock") || fn == STR("OnTutorialComplete") ||
+                        fn == STR("BP_ShowTutorialDisplay") || fn == STR("Show Next Tutorial") || fn == STR("ShowNextIncompleteTutorial") ||
+                        fn == STR("ManualShowTutorialDisplay") || fn == STR("HandleUpdateHUDTutorial") ||
+                        fn == STR("GetClientTutorials") || fn == STR("IsTutorialCompleted") ||
+                        fn == STR("CanTriggerTutorial") || fn == STR("TriggerTutorial"))
+                    {
+                        int sz = func->GetParmsSize();
+                        if (sz > 0 && sz <= 128) std::memset(parms, 0, sz);
+                        return;
+                    }
+                    // Block tip unlock (already all unlocked, but just in case)
+                    if (fn == STR("UnlockTip"))
+                    {
+                        int sz = func->GetParmsSize();
+                        if (sz > 0 && sz <= 64) std::memset(parms, 0, sz);
+                        return;
+                    }
+                    // Block lore unlock notifications
+                    if (fn == STR("OnLoreUnlock") || fn == STR("GoalComplete"))
+                    {
+                        int sz = func->GetParmsSize();
+                        if (sz > 0 && sz <= 128) std::memset(parms, 0, sz);
+                        return;
+                    }
+                }
+#endif // DISABLED tutorial/breadcrumb tracking + suppression
 
                 // Intercept RotatePressed on BuildHUD: set GATA rotation step + track cumulative rotation
                 {
@@ -8179,6 +9697,31 @@ namespace MoriaMods
 
                 // Skip capture during automated quickbuild activation
                 if (s_instance->m_isAutoSelecting) return;
+
+                // Tutorial tracking: log return values from completion checks (post-call)
+                if (s_config.trackTutorials.load() && parms)
+                {
+                    std::wstring tfn(func->GetName());
+                    if (tfn == STR("IsTutorialCompleted") || tfn == STR("IsTutorialListItemCompleted") ||
+                        tfn == STR("CanTriggerTutorial"))
+                    {
+                        try
+                        {
+                            uint8_t* p = static_cast<uint8_t*>(parms);
+                            int sz = func->GetParmsSize();
+                            // FName RowName at offset 16 (after ACharacter* 8B + DataTable* 8B)
+                            std::wstring rowName;
+                            if (isReadableMemory(p + 16, 8))
+                                rowName = reinterpret_cast<FName*>(p + 16)->ToString();
+                            // Return bool at end of param buffer (after 24B of input params)
+                            bool result = false;
+                            if (sz > 24) result = *reinterpret_cast<bool*>(p + 24);
+                            Output::send<LogLevel::Warning>(STR("[TutTrack:Post] {} RowName={} => {}\n"),
+                                                            tfn, rowName, result ? STR("TRUE") : STR("FALSE"));
+                        }
+                        catch (...) { /* safe */ }
+                    }
+                }
 
                 std::wstring fn(func->GetName());
                 if (fn != STR("blockSelectedEvent")) return;
@@ -8297,41 +9840,166 @@ namespace MoriaMods
             }
 
             // ── Config window: consume pending cheat toggle requests ──
-            // Only flip UI state if callDebugFunc succeeds. If actor not found,
-            // keep the pending flag set so it retries next frame automatically.
-            if (s_config.pendingToggleFreeBuild)
+            // Retry up to 120 frames (~2s) then give up with error message.
             {
-                if (callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Free Construction")))
+                static int s_freeBuildRetries = 0;
+                static int s_freeCraftRetries = 0;
+                static int s_instantCraftRetries = 0;
+                constexpr int MAX_RETRIES = 120;
+
+                if (s_config.pendingToggleFreeBuild)
                 {
-                    s_config.pendingToggleFreeBuild = false;
-                    s_config.freeBuild = !s_config.freeBuild;
-                    showDebugMenuState();
+                    if (callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Free Construction")))
+                    {
+                        s_config.pendingToggleFreeBuild = false;
+                        syncDebugToggleState(); // read actual state instead of blind flip
+                        showDebugMenuState();
+                        s_freeBuildRetries = 0;
+                    }
+                    else if (++s_freeBuildRetries > MAX_RETRIES)
+                    {
+                        s_config.pendingToggleFreeBuild = false;
+                        s_freeBuildRetries = 0;
+                        showOnScreen(L"Free Build toggle failed - debug actor not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Toggle Free Construction FAILED after {} retries\n"), MAX_RETRIES);
+                    }
                 }
-            }
-            if (s_config.pendingToggleFreeCraft)
-            {
-                if (callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Free Crafting")))
-                {
-                    s_config.pendingToggleFreeCraft = false;
-                    s_config.freeCraft = !s_config.freeCraft;
-                    showDebugMenuState();
-                }
-            }
-            if (s_config.pendingToggleInstantCraft)
-            {
-                if (callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Instant Crafting")))
-                {
-                    s_config.pendingToggleInstantCraft = false;
-                    s_config.instantCraft = !s_config.instantCraft;
-                    showDebugMenuState();
-                }
+                // Free Crafting / Instant Crafting handlers removed — game's debug flags are non-functional
             }
             if (s_config.pendingUnlockAllRecipes)
             {
                 if (callDebugFunc(STR("BP_DebugMenu_Recipes_C"), STR("All Recipes")))
-                {
-                    s_config.pendingUnlockAllRecipes = false;
                     showOnScreen(L"ALL RECIPES UNLOCKED!", 5.0f, 0.0f, 1.0f, 0.0f);
+                else
+                    showOnScreen(L"Recipe debug actor not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                s_config.pendingUnlockAllRecipes = false;
+            }
+
+#if 0 // DISABLED: Unlock All Content, Mark All Read, Complete Tutorials, Auto-mark recipes
+            // — breadcrumb/tutorial systems don't persist reliably across reloads
+            if (s_config.pendingUnlockAll)
+            {
+                s_config.suppressTutorials = true;
+                callDebugFunc(STR("BP_DebugMenu_Lore_C"), STR("All Lore"));
+                completeTips();
+                completeTutorials();
+                s_config.pendingUnlockAll = false;
+                showOnScreen(L"ALL CONTENT UNLOCKED!", 5.0f, 0.0f, 1.0f, 0.0f);
+            }
+            if (s_config.pendingCompleteTips)
+            {
+                bool anyMarked = markAllAsRead();
+                int recipesMarked = markAllCraftingRecipesRead();
+                s_config.markRecipesRead = true;
+                if (!anyMarked && recipesMarked < 0)
+                    showOnScreen(L"Recipes will auto-mark as read when crafting screen opens", 5.0f, 0.0f, 1.0f, 1.0f);
+                else if (recipesMarked > 0)
+                    showOnScreen((L"Marked " + std::to_wstring(recipesMarked) + L" crafting recipes as read").c_str(),
+                                 5.0f, 0.0f, 1.0f, 0.0f);
+                s_config.pendingCompleteTips = false;
+            }
+            if (s_config.pendingMarkTutorialsRead)
+            {
+                completeAllTutorials();
+                s_config.hideTutorialHUD = true;
+                {
+                    std::vector<UObject*> tutDisplays;
+                    UObjectGlobals::FindAllOf(STR("MorTutorialDisplay"), tutDisplays);
+                    for (auto* disp : tutDisplays)
+                    {
+                        if (!disp || safeClassName(disp) != STR("WBP_TutorialDisplay_C")) continue;
+                        UFunction* visFunc = disp->GetFunctionByNameInChain(STR("SetVisibility"));
+                        if (visFunc) { uint8_t visParms[8]{}; visParms[0] = 1; disp->ProcessEvent(visFunc, visParms); }
+                    }
+                    std::vector<UObject*> overlays;
+                    UObjectGlobals::FindAllOf(STR("MoriaHUDWidget"), overlays);
+                    for (auto* ov : overlays)
+                    {
+                        if (!ov || safeClassName(ov) != STR("UI_WBP_TutorialOverlay_C")) continue;
+                        UFunction* visFunc = ov->GetFunctionByNameInChain(STR("SetVisibility"));
+                        if (visFunc) { uint8_t visParms[8]{}; visParms[0] = 1; ov->ProcessEvent(visFunc, visParms); }
+                    }
+                }
+                showOnScreen(L"TUTORIALS COMPLETED & HUD HIDDEN", 5.0f, 0.0f, 1.0f, 0.0f);
+                s_config.pendingMarkTutorialsRead = false;
+            }
+            if (s_config.markRecipesRead.load())
+            {
+                static bool s_lastCraftScreenOpen = false;
+                static int s_craftScreenDelayFrames = 0;
+                bool craftScreenOpen = false;
+                {
+                    std::vector<UObject*> screens;
+                    UObjectGlobals::FindAllOf(STR("MorCraftingScreen"), screens);
+                    for (auto* s : screens)
+                    {
+                        if (s && safeClassName(s).find(L"UI_WBP_Crafting_Screen") != std::wstring::npos)
+                        { craftScreenOpen = true; break; }
+                    }
+                }
+                if (craftScreenOpen && !s_lastCraftScreenOpen) s_craftScreenDelayFrames = 30;
+                else if (craftScreenOpen && s_craftScreenDelayFrames > 0)
+                {
+                    if (--s_craftScreenDelayFrames == 0)
+                    {
+                        int result = markAllCraftingRecipesRead();
+                        if (result > 0)
+                            showOnScreen((L"Auto-marked " + std::to_wstring(result) + L" recipes as read").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
+                    }
+                }
+                s_lastCraftScreenOpen = craftScreenOpen;
+            }
+#endif
+
+            // Config UI: consume pending removal deletion from Building Options tab
+            {
+                int removeIdx = s_config.pendingRemoveIndex.load();
+                if (removeIdx >= 0)
+                {
+                    RemovalEntry toRemove;
+                    bool valid = false;
+                    if (s_config.removalCSInit)
+                    {
+                        EnterCriticalSection(&s_config.removalCS);
+                        if (removeIdx < static_cast<int>(s_config.removalEntries.size()))
+                        {
+                            toRemove = s_config.removalEntries[removeIdx];
+                            valid = true;
+                        }
+                        LeaveCriticalSection(&s_config.removalCS);
+                    }
+                    if (valid)
+                    {
+                        if (toRemove.isTypeRule)
+                        {
+                            m_typeRemovals.erase(toRemove.meshName);
+                        }
+                        else
+                        {
+                            for (size_t i = 0; i < m_savedRemovals.size(); i++)
+                            {
+                                if (m_savedRemovals[i].meshName == toRemove.meshName)
+                                {
+                                    float dx = m_savedRemovals[i].posX - toRemove.posX;
+                                    float dy = m_savedRemovals[i].posY - toRemove.posY;
+                                    float dz = m_savedRemovals[i].posZ - toRemove.posZ;
+                                    if (dx * dx + dy * dy + dz * dz < POS_TOLERANCE * POS_TOLERANCE)
+                                    {
+                                        m_savedRemovals.erase(m_savedRemovals.begin() + i);
+                                        if (i < m_appliedRemovals.size())
+                                            m_appliedRemovals.erase(m_appliedRemovals.begin() + i);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        rewriteSaveFile();
+                        buildRemovalEntries();
+                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Config UI: removed entry {} ({})\n"),
+                                                        removeIdx,
+                                                        std::wstring(toRemove.friendlyName));
+                    }
+                    s_config.pendingRemoveIndex = -1;
                 }
             }
 
@@ -8392,9 +10060,6 @@ namespace MoriaMods
                     }
                 }
             }
-
-            // Clear-hotbar state machine: one item per tick
-            clearHotbarTick();
 
             // Toolbar swap state machine: one item per tick
             swapToolbarTick();
@@ -8496,6 +10161,12 @@ namespace MoriaMods
                     s_config.pendingToggleFreeCraft = false;
                     s_config.pendingToggleInstantCraft = false;
                     s_config.pendingUnlockAllRecipes = false;
+                    s_config.pendingCompleteTips = false;
+                    s_config.pendingUnlockAll = false;
+                    s_config.pendingMarkTutorialsRead = false;
+                    s_config.suppressTutorials = false;
+                    s_config.internalTutorialCall = false;
+                    s_config.savedTutorialTable = nullptr;
                     // Hide target info popup
                     s_targetInfo.visible = false;
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] Cleared all container handles, swap state, and cheat toggles\n"));
@@ -8578,6 +10249,9 @@ namespace MoriaMods
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Starting initial replay (15s after char load)...\n"));
                     startReplay();
                 }
+
+                // Sync debug toggle state from the actual debug menu actor
+                syncDebugToggleState();
             }
 
             // Process throttled replay batch (max MAX_HIDES_PER_FRAME per frame)
