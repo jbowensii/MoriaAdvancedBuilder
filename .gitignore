@@ -33,3 +33,21 @@
 
 BuildFiles/
 Output/
+
+# CMake build output
+build/
+
+# UE4SS dev distribution (bundled separately)
+zDEV/
+zDEV-*.zip
+
+# Installer build artifacts
+installer/staging/
+installer/output/
+
+# Code signing secrets — NEVER commit
+installer/signing-config.ps1
+signing-config.ps1
+
+# Test build artifacts
+MyCPPMods/MoriaCppMod/tests/build/

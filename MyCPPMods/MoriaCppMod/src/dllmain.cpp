@@ -59,6 +59,8 @@
 #include <Unreal/FString.hpp>
 #include <Unreal/FText.hpp>
 
+#include "moria_testable.h"
+
 namespace MoriaMods
 {
     using namespace RC;
@@ -175,12 +177,7 @@ namespace MoriaMods
         constexpr int ParmsSize = 237;
     } // namespace LTOff
 
-    // ── Saved removal record ──
-    struct SavedRemoval
-    {
-        std::string meshName;
-        float posX, posY, posZ;
-    };
+    // SavedRemoval, RemovalEntry, extractFriendlyName — defined in moria_testable.h
 
     struct RemovedInstance
     {
@@ -191,24 +188,6 @@ namespace MoriaMods
         bool isTypeRule{false};
         std::string typeRuleMeshId;
     };
-
-    // ── Display entry for removal list UI (config window tab 0) ──
-    struct RemovalEntry
-    {
-        bool isTypeRule{false};
-        std::string meshName;
-        float posX{0}, posY{0}, posZ{0};
-        std::wstring friendlyName; // first segment before '-'
-        std::wstring fullPathW;    // wide copy of meshName
-        std::wstring coordsW;      // formatted coords or "TYPE RULE (all instances)"
-    };
-
-    static std::wstring extractFriendlyName(const std::string& meshName)
-    {
-        auto dash = meshName.find('-');
-        std::string shortName = (dash != std::string::npos) ? meshName.substr(0, dash) : meshName;
-        return std::wstring(shortName.begin(), shortName.end());
-    }
 
     // PrintString param offsets (discovered at runtime via probe)
     struct PSOffsets
@@ -228,7 +207,7 @@ namespace MoriaMods
     // Uses GDI+ with per-pixel alpha (UpdateLayeredWindow)
     // ══════════════════════════════════════════════════════════════
 
-    static constexpr int OVERLAY_BUILD_SLOTS = 8; // F1-F8: programmable build recipe slots
+    // OVERLAY_BUILD_SLOTS (8) defined in moria_testable.h
     static constexpr int OVERLAY_SLOTS = 12;      // F1-F12 total displayed in overlay
 
     struct OverlaySlot
@@ -258,12 +237,35 @@ namespace MoriaMods
     };
     static OverlayState s_overlay;
 
+    // Loc namespace core (s_table, utf8ToWide, parseJsonFile, initDefaults, get) — defined in moria_testable.h
+    // Loc::load() remains here because it uses UE4SS Output::send for logging.
+    namespace Loc
+    {
+        // Load string table: init defaults, then override from JSON file if available
+        static void load(const std::string& locDir)
+        {
+            initDefaults();
+            std::string jsonPath = locDir + "en.json";
+            if (parseJsonFile(jsonPath))
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Loaded localization from {}\n"),
+                                                utf8ToWide(jsonPath));
+            }
+            else
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Using compiled English defaults (no localization file)\n"));
+            }
+        }
+    } // namespace Loc
+
+    // modifierName, nextModifier, keyName — defined in moria_testable.h
+
     // ════════════════════════════════════════════════════════════════════════════
     // Section 3: Keybinding System & Window Discovery
     //   Rebindable F-key assignments, VK code → string conversion,
     //   findGameWindow() for overlay positioning
     // ════════════════════════════════════════════════════════════════════════════
-    static constexpr int BIND_COUNT = 17;
+    // BIND_COUNT defined in moria_testable.h
     static constexpr int MC_BIND_BASE = 8;     // s_bindings[8..15] = MC slots 0..7
     static constexpr int BIND_ROTATION = 8;    // "Rotation" — MC slot 0
     static constexpr int BIND_TARGET   = 9;    // "Target" — MC slot 1
@@ -288,7 +290,7 @@ namespace MoriaMods
             {L"Rotation", L"Mod Controller", Input::Key::F10},                         // 8  (BIND_ROTATION, MC slot 0)
             {L"Target", L"Mod Controller", Input::Key::F9},                            // 9  (BIND_TARGET, MC slot 1)
             {L"Toolbar Swap", L"Mod Controller", Input::Key::PAGE_DOWN},               // 10 (BIND_SWAP, MC slot 2)
-            {L"ModMenu 4", L"Mod Controller", Input::Key::NUM_FOUR},                   // 11 (MC slot 3)
+            {L"Super Dwarf", L"Mod Controller", Input::Key::NUM_FOUR},                  // 11 (MC slot 3)
             {L"Remove Target", L"Mod Controller", Input::Key::NUM_ONE},                // 12 (MC slot 4)
             {L"Undo Last", L"Mod Controller", Input::Key::NUM_TWO},                    // 13 (MC slot 5)
             {L"Remove All", L"Mod Controller", Input::Key::NUM_THREE},                 // 14 (MC slot 6)
@@ -305,125 +307,28 @@ namespace MoriaMods
         return (GetAsyncKeyState(s_modifierVK.load()) & 0x8000) != 0;
     }
 
-    static const wchar_t* modifierName(uint8_t vk)
+    // When SHIFT is held with NumLock on, Windows reverses numpad keys:
+    // VK_NUMPAD0-9 become their navigation equivalents (Insert, End, Down, etc.)
+    // Returns the alternate VK code for a numpad key, or 0 if not a numpad key.
+    static uint8_t numpadShiftAlternate(uint8_t vk)
     {
         switch (vk)
         {
-        case VK_SHIFT:
-            return L"SHIFT";
-        case VK_CONTROL:
-            return L"CTRL";
-        case VK_MENU:
-            return L"ALT";
-        case VK_RMENU:
-            return L"RALT";
-        default:
-            return L"SHIFT";
+        case VK_NUMPAD0: return VK_INSERT;
+        case VK_NUMPAD1: return VK_END;
+        case VK_NUMPAD2: return VK_DOWN;
+        case VK_NUMPAD3: return VK_NEXT;
+        case VK_NUMPAD4: return VK_LEFT;
+        case VK_NUMPAD5: return VK_CLEAR;
+        case VK_NUMPAD6: return VK_RIGHT;
+        case VK_NUMPAD7: return VK_HOME;
+        case VK_NUMPAD8: return VK_UP;
+        case VK_NUMPAD9: return VK_PRIOR;
+        default: return 0;
         }
     }
 
-    static uint8_t nextModifier(uint8_t vk)
-    {
-        switch (vk)
-        {
-        case VK_SHIFT:
-            return VK_CONTROL;
-        case VK_CONTROL:
-            return VK_MENU;
-        case VK_MENU:
-            return VK_RMENU;
-        case VK_RMENU:
-            return VK_SHIFT;
-        default:
-            return VK_SHIFT;
-        }
-    }
-
-    static std::wstring keyName(uint8_t vk)
-    {
-        if (vk >= 0x70 && vk <= 0x7B)
-        { // F1-F12
-            wchar_t buf[8];
-            swprintf_s(buf, L"F%d", vk - 0x70 + 1);
-            return buf;
-        }
-        if (vk >= 0x60 && vk <= 0x69)
-        { // Numpad 0-9
-            wchar_t buf[8];
-            swprintf_s(buf, L"Num%d", vk - 0x60);
-            return buf;
-        }
-        switch (vk)
-        {
-        case 0x6A:
-            return L"Num*";
-        case 0x6B:
-            return L"Num+";
-        case 0x6C:
-            return L"NumSep";
-        case 0x6D:
-            return L"Num-";
-        case 0x6E:
-            return L"Num.";
-        case 0x6F:
-            return L"Num/";
-        case 0xDC:
-            return L"\\";
-        case 0xC0:
-            return L"`";
-        case 0xBA:
-            return L";";
-        case 0xBB:
-            return L"=";
-        case 0xBC:
-            return L",";
-        case 0xBD:
-            return L"-";
-        case 0xBE:
-            return L".";
-        case 0xBF:
-            return L"/";
-        case 0xDB:
-            return L"[";
-        case 0xDD:
-            return L"]";
-        case 0xDE:
-            return L"'";
-        case 0x20:
-            return L"Space";
-        case 0x09:
-            return L"Tab";
-        case 0x0D:
-            return L"Enter";
-        case 0x2D:
-            return L"Ins";
-        case 0x2E:
-            return L"Del";
-        case 0x24:
-            return L"Home";
-        case 0x23:
-            return L"End";
-        case 0x21:
-            return L"PgUp";
-        case 0x22:
-            return L"PgDn";
-        default: {
-            wchar_t buf[16];
-            if (vk >= 0x30 && vk <= 0x39)
-            {
-                swprintf_s(buf, L"%c", (wchar_t)vk);
-                return buf;
-            }
-            if (vk >= 0x41 && vk <= 0x5A)
-            {
-                swprintf_s(buf, L"%c", (wchar_t)vk);
-                return buf;
-            }
-            swprintf_s(buf, L"0x%02X", vk);
-            return buf;
-        }
-        }
-    }
+    // modifierName, nextModifier, keyName — defined in moria_testable.h
 
     static HWND findGameWindow()
     {
@@ -644,7 +549,7 @@ namespace MoriaMods
                     Gdiplus::Font tgtFont(&fontFamily, tgtFontSz, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
                     Gdiplus::SolidBrush tgtBrush(Gdiplus::Color(240, 10, 15, 70));
                     Gdiplus::RectF tgtRect((float)sx, (float)sy, (float)slotSize, (float)slotSize);
-                    gfx.DrawString(L"TGT", -1, &tgtFont, tgtRect, &centerFmt, &tgtBrush);
+                    gfx.DrawString(Loc::get("ovr.target").c_str(), -1, &tgtFont, tgtRect, &centerFmt, &tgtBrush);
                 }
 
                 // Slot 9 (Rotation): step degrees (top, bold) | separator line | T+total (bottom)
@@ -654,7 +559,7 @@ namespace MoriaMods
                     int totalVal = s_overlay.totalRotation;
 
                     // Top line: step value with degree symbol (bold)
-                    std::wstring stepStr = std::to_wstring(stepVal) + L"\xB0";
+                    std::wstring stepStr = std::to_wstring(stepVal) + Loc::get("ovr.degree");
                     float stepFontSz = slotSize * 0.28f;
                     Gdiplus::Font stepFont(&fontFamily, stepFontSz, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
                     Gdiplus::SolidBrush stepBrush(Gdiplus::Color(220, 180, 210, 255));
@@ -742,7 +647,7 @@ namespace MoriaMods
                     Gdiplus::Font cfgFont(&fontFamily, cfgFontSz, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
                     Gdiplus::SolidBrush cfgBrush(Gdiplus::Color(240, 10, 15, 70));
                     Gdiplus::RectF cfgRect((float)sx, (float)sy, (float)slotSize, (float)slotSize);
-                    gfx.DrawString(L"CFG", -1, &cfgFont, cfgRect, &centerFmt, &cfgBrush);
+                    gfx.DrawString(Loc::get("ovr.config").c_str(), -1, &cfgFont, cfgRect, &centerFmt, &cfgBrush);
                 }
 
                 // Key label below slot — pulled from s_bindings via named constants
@@ -980,33 +885,7 @@ namespace MoriaMods
         // Save/load quick-build slots (quickbuild_slots.txt)
         // Format: meshName|posX|posY|posZ (single instance) or @meshName (type rule)
 
-        // Strips numeric suffix from UE4 component name to get stable mesh ID.
-        // e.g. "PWM_Quarry_2x2x2_A-..._2147476295" → "PWM_Quarry_2x2x2_A-..."
-        static std::string componentNameToMeshId(const std::wstring& name)
-        {
-            std::string narrow;
-            narrow.reserve(name.size());
-            for (wchar_t c : name)
-                narrow.push_back(static_cast<char>(c));
-            auto lastUnderscore = narrow.rfind('_');
-            if (lastUnderscore != std::string::npos)
-            {
-                bool allDigits = true;
-                for (size_t i = lastUnderscore + 1; i < narrow.size(); i++)
-                {
-                    if (!std::isdigit(narrow[i]))
-                    {
-                        allDigits = false;
-                        break;
-                    }
-                }
-                if (allDigits && lastUnderscore > 0)
-                {
-                    return narrow.substr(0, lastUnderscore);
-                }
-            }
-            return narrow;
-        }
+        // componentNameToMeshId — defined in moria_testable.h
 
         void loadSaveFile()
         {
@@ -1021,32 +900,15 @@ namespace MoriaMods
             std::string line;
             while (std::getline(file, line))
             {
-                if (line.empty() || line[0] == '#') continue;
-                // @meshName = type rule (remove ALL of this mesh)
-                if (line[0] == '@')
+                auto parsed = parseRemovalLine(line);
+                if (auto* pos = std::get_if<ParsedRemovalPosition>(&parsed))
                 {
-                    m_typeRemovals.insert(line.substr(1));
-                    continue;
+                    m_savedRemovals.push_back({pos->meshName, pos->posX, pos->posY, pos->posZ});
                 }
-                std::istringstream ss(line);
-                SavedRemoval sr;
-                std::string token;
-                if (!std::getline(ss, sr.meshName, '|')) continue;
-                if (!std::getline(ss, token, '|')) continue;
-                try
+                else if (auto* tr = std::get_if<ParsedRemovalTypeRule>(&parsed))
                 {
-                    sr.posX = std::stof(token);
-                    if (!std::getline(ss, token, '|')) continue;
-                    sr.posY = std::stof(token);
-                    if (!std::getline(ss, token, '|')) continue;
-                    sr.posZ = std::stof(token);
+                    m_typeRemovals.insert(tr->meshName);
                 }
-                catch (...)
-                {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Skipping malformed save line: {}\n"), std::wstring(line.begin(), line.end()));
-                    continue;
-                }
-                m_savedRemovals.push_back(sr);
             }
 
             // Remove position entries that are redundant with type rules
@@ -1110,7 +972,7 @@ namespace MoriaMods
                         entry.meshName = line.substr(1);
                         entry.friendlyName = extractFriendlyName(entry.meshName);
                         entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
-                        entry.coordsW = L"TYPE RULE (all instances)";
+                        entry.coordsW = Loc::get("ui.type_rule") + L" (all instances)";
                     }
                     else
                     {
@@ -1752,7 +1614,7 @@ namespace MoriaMods
             if (!doLineTrace(start, end, hitBuf, true))
             { // debugDraw=true
                 Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No hit\n"));
-                showOnScreen(L"[Inspect] No hit", 3.0f, 1.0f, 0.3f, 0.3f);
+                showOnScreen(Loc::get("msg.no_hit").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
@@ -2076,6 +1938,81 @@ namespace MoriaMods
         }
 #endif
 
+        void toggleHideCharacter()
+        {
+            std::vector<UObject*> dwarves;
+            UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
+            if (dwarves.empty()) return;
+
+            m_characterHidden = !m_characterHidden;
+            for (auto* dwarf : dwarves)
+            {
+                auto* fn = dwarf->GetFunctionByNameInChain(STR("SetActorHiddenInGame"));
+                if (fn)
+                {
+                    uint8_t params[1] = {m_characterHidden ? uint8_t(1) : uint8_t(0)};
+                    dwarf->ProcessEvent(fn, params);
+                }
+            }
+            if (m_characterHidden)
+                showOnScreen(Loc::get("msg.char_hidden").c_str(), 2.0f, 0.3f, 0.8f, 1.0f);
+            else
+                showOnScreen(Loc::get("msg.char_visible").c_str(), 2.0f, 0.3f, 1.0f, 0.3f);
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Character hidden = {}\n"), m_characterHidden ? 1 : 0);
+        }
+
+        void toggleFlyMode()
+        {
+            std::vector<UObject*> dwarves;
+            UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
+            if (dwarves.empty()) return;
+
+            m_flyMode = !m_flyMode;
+            // EMovementMode: MOVE_Walking=1, MOVE_Flying=5
+            constexpr uint8_t MOVE_Walking = 1;
+            constexpr uint8_t MOVE_Flying  = 5;
+
+            for (auto* dwarf : dwarves)
+            {
+                // ACharacter::CharacterMovement at offset 0x0288
+                auto* movComp = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(dwarf) + 0x0288);
+                if (!movComp)
+                {
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] CharacterMovement is null!\n"));
+                    continue;
+                }
+
+                // Approach 1: SetMovementMode(NewMovementMode, NewCustomMode) via ProcessEvent
+                auto* fn = movComp->GetFunctionByNameInChain(STR("SetMovementMode"));
+                if (fn)
+                {
+                    uint8_t params[2] = {m_flyMode ? MOVE_Flying : MOVE_Walking, 0};
+                    movComp->ProcessEvent(fn, params);
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] SetMovementMode({}) called\n"),
+                                                    m_flyMode ? 5 : 1);
+                }
+                else
+                {
+                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] SetMovementMode not found!\n"));
+                }
+
+                // Approach 3 (backup): Set bCheatFlying flag directly
+                // Bitfield at movComp + 0x0388, bit 3 (0x08)
+                uint8_t* flags = reinterpret_cast<uint8_t*>(movComp) + 0x0388;
+                if (m_flyMode)
+                    *flags |= 0x08; // set bCheatFlying
+                else
+                    *flags &= ~0x08; // clear bCheatFlying
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] bCheatFlying = {}, flags byte = 0x{:02X}\n"),
+                                                m_flyMode ? 1 : 0, *flags);
+            }
+            if (m_flyMode)
+                showOnScreen(Loc::get("msg.fly_on").c_str(), 2.0f, 0.3f, 0.8f, 1.0f);
+            else
+                showOnScreen(Loc::get("msg.fly_off").c_str(), 2.0f, 0.3f, 1.0f, 0.3f);
+            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Fly mode = {}\n"), m_flyMode ? 1 : 0);
+        }
+
         void dumpAimedActor()
         {
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === AIMED ACTOR DUMP ===\n"));
@@ -2124,7 +2061,7 @@ namespace MoriaMods
             if (!bHit)
             {
                 Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No hit\n"));
-                showOnScreen(L"[ActorDump] No hit", 3.0f, 1.0f, 0.3f, 0.3f);
+                showOnScreen(Loc::get("msg.actor_dump_no_hit").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
@@ -3166,7 +3103,7 @@ namespace MoriaMods
             }
             if (m_bodyInvHandle.empty())
             {
-                showOnScreen(L"BodyInventory not found!", 3.0f, 1.0f, 0.3f, 0.3f);
+                showOnScreen(Loc::get("msg.body_inv_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return false;
             }
             return true;
@@ -3506,12 +3443,12 @@ namespace MoriaMods
         {
             if (m_clearingHotbar)
             {
-                showOnScreen(L"Already clearing hotbar...", 2.0f, 1.0f, 1.0f, 0.0f);
+                showOnScreen(Loc::get("msg.already_clearing").c_str(), 2.0f, 1.0f, 1.0f, 0.0f);
                 return;
             }
             if (m_swap.active)
             {
-                showOnScreen(L"Wait for toolbar swap to finish", 2.0f, 1.0f, 1.0f, 0.0f);
+                showOnScreen(Loc::get("msg.wait_swap").c_str(), 2.0f, 1.0f, 1.0f, 0.0f);
                 return;
             }
 
@@ -3532,20 +3469,20 @@ namespace MoriaMods
             }
             if (!playerChar)
             {
-                showOnScreen(L"Player not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                showOnScreen(Loc::get("msg.player_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
             auto* invComp = findPlayerInventoryComponent(playerChar);
             if (!invComp)
             {
-                showOnScreen(L"Inventory not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                showOnScreen(Loc::get("msg.inventory_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
             if (!discoverBagHandle(invComp)) return;
             if (m_bagHandle.empty())
             {
-                showOnScreen(L"Equip a bag first!", 3.0f, 1.0f, 0.3f, 0.3f);
+                showOnScreen(Loc::get("msg.equip_bag").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
@@ -3555,7 +3492,7 @@ namespace MoriaMods
             m_clearHotbarCount = 0;
             m_clearHotbarDropped = 0;
             m_clearHotbarWait = 0;
-            showOnScreen(L"Clearing hotbar...", 3.0f, 0.0f, 1.0f, 0.5f);
+            showOnScreen(Loc::get("msg.clearing_hotbar").c_str(), 3.0f, 0.0f, 1.0f, 0.5f);
         }
 
         // Called from on_update() — moves one hotbar item per tick to the EpicPack bag
@@ -3742,13 +3679,13 @@ namespace MoriaMods
 
                 if (m_swap.active)
                 {
-                    showOnScreen(L"Swap already in progress...", 2.0f, 1.0f, 1.0f, 0.0f);
+                    showOnScreen(Loc::get("msg.swap_in_progress").c_str(), 2.0f, 1.0f, 1.0f, 0.0f);
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] BLOCKED: swap already active\n"));
                     return;
                 }
                 if (m_clearingHotbar)
                 {
-                    showOnScreen(L"Wait for hotbar clear to finish", 2.0f, 1.0f, 1.0f, 0.0f);
+                    showOnScreen(Loc::get("msg.wait_clear").c_str(), 2.0f, 1.0f, 1.0f, 0.0f);
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] BLOCKED: hotbar clear in progress\n"));
                     return;
                 }
@@ -3790,7 +3727,7 @@ namespace MoriaMods
                 }
                 if (m_bodyInvHandle.empty())
                 {
-                    showOnScreen(L"BodyInventory not found!", 3.0f, 1.0f, 0.3f, 0.3f);
+                    showOnScreen(Loc::get("msg.body_inv_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] FAIL: m_bodyInvHandle still empty after discovery\n"));
                     return;
                 }
@@ -4300,7 +4237,7 @@ namespace MoriaMods
             if (!moriaHUD)
             {
                 Output::send<LogLevel::Warning>(STR("[MoriaCppMod] WBP_MoriaHUD_C NOT FOUND (visible)\n"));
-                showOnScreen(L"MoriaHUD NOT FOUND", 3.0f, 1.0f, 0.3f, 0.3f);
+                showOnScreen(Loc::get("msg.hud_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
@@ -4436,7 +4373,7 @@ namespace MoriaMods
                     return;
                 }
             }
-            showOnScreen(L"Debug menu actor not found", 3.0f, 1.0f, 0.3f, 0.3f);
+            showOnScreen(Loc::get("msg.debug_actor_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
         }
 
         // Reads the actual debug menu toggle state and syncs s_config flags.
@@ -4550,7 +4487,7 @@ namespace MoriaMods
             UObject* gata = resolveGATA();
             if (!gata)
             {
-                showOnScreen(L"Not in build mode", 2.0f, 1.0f, 0.5f, 0.0f);
+                showOnScreen(Loc::get("msg.not_in_build_mode").c_str(), 2.0f, 1.0f, 0.5f, 0.0f);
                 return;
             }
 
@@ -4567,7 +4504,7 @@ namespace MoriaMods
             UObject* gata = resolveGATA();
             if (!gata)
             {
-                showOnScreen(L"Not in build mode", 2.0f, 1.0f, 0.5f, 0.0f);
+                showOnScreen(Loc::get("msg.not_in_build_mode").c_str(), 2.0f, 1.0f, 0.5f, 0.0f);
                 return;
             }
 
@@ -4679,6 +4616,8 @@ namespace MoriaMods
         UObject* m_abBarWidget{nullptr};           // root UUserWidget for Advanced Builder toggle
         UObject* m_abKeyLabel{nullptr};            // UTextBlock showing key name on AB toolbar
         bool m_toolbarsVisible{false};             // toggle state: are builders bar + MC bar visible?
+        bool m_characterHidden{false};             // toggle state: is player character hidden?
+        bool m_flyMode{false};                     // toggle state: is fly mode active?
         // UMG Target Info popup
         UObject* m_targetInfoWidget{nullptr};      // root UUserWidget
         UObject* m_tiTitleLabel{nullptr};           // "Target Info" title
@@ -4718,27 +4657,7 @@ namespace MoriaMods
         UObject* m_cfgRemovalHeader{nullptr};
         UObject* m_cfgRemovalVBox{nullptr};            // VBox holding removal entry rows
         int m_cfgLastRemovalCount{-1};
-        // Safe memory read helper (uses VirtualQuery to avoid access violations)
-        // Checks both the start and end of the requested range to handle page boundaries.
-        static bool isReadableMemory(const void* ptr, size_t size = 8)
-        {
-            if (!ptr) return false;
-            auto checkPage = [](const void* p) -> bool {
-                MEMORY_BASIC_INFORMATION mbi{};
-                if (VirtualQuery(p, &mbi, sizeof(mbi)) == 0) return false;
-                if (mbi.State != MEM_COMMIT) return false;
-                DWORD protect = mbi.Protect & ~(PAGE_GUARD | PAGE_NOCACHE | PAGE_WRITECOMBINE);
-                return (protect == PAGE_READONLY || protect == PAGE_READWRITE || protect == PAGE_EXECUTE_READ || protect == PAGE_EXECUTE_READWRITE);
-            };
-            if (!checkPage(ptr)) return false;
-            // Also check the last byte of the range to catch cross-page boundary reads
-            if (size > 1)
-            {
-                const void* end = static_cast<const uint8_t*>(ptr) + size - 1;
-                if (!checkPage(end)) return false;
-            }
-            return true;
-        }
+        // isReadableMemory — defined in moria_testable.h
 
         // Safe wrapper for GetClassPrivate()->GetName() — returns empty string on null
         static std::wstring safeClassName(UObject* obj)
@@ -4822,47 +4741,18 @@ namespace MoriaMods
             int loaded = 0;
             while (std::getline(file, line))
             {
-                if (line.empty() || line[0] == '#') continue;
-                auto sep1 = line.find('|');
-                if (sep1 == std::string::npos) continue;
-                std::string key = line.substr(0, sep1);
-                // Rotation step persistence
-                if (key == "rotation")
+                auto parsed = parseSlotLine(line);
+                if (auto* slot = std::get_if<ParsedSlot>(&parsed))
                 {
-                    try
-                    {
-                        int val = std::stoi(line.substr(sep1 + 1));
-                        if (val >= 0 && val <= 90) s_overlay.rotationStep = val;
-                    }
-                    catch (...) {}
-                    continue;
+                    m_recipeSlots[slot->slotIndex].displayName = std::wstring(slot->displayName.begin(), slot->displayName.end());
+                    m_recipeSlots[slot->slotIndex].textureName = std::wstring(slot->textureName.begin(), slot->textureName.end());
+                    m_recipeSlots[slot->slotIndex].used = true;
+                    loaded++;
                 }
-                int slot;
-                try
+                else if (auto* rot = std::get_if<ParsedRotation>(&parsed))
                 {
-                    slot = std::stoi(key);
+                    s_overlay.rotationStep = rot->step;
                 }
-                catch (...)
-                {
-                    continue;
-                }
-                if (slot < 0 || slot >= OVERLAY_BUILD_SLOTS) continue;
-                // Parse: displayName|textureName (textureName optional for backward compat)
-                auto sep2 = line.find('|', sep1 + 1);
-                std::string name, tex;
-                if (sep2 != std::string::npos)
-                {
-                    name = line.substr(sep1 + 1, sep2 - sep1 - 1);
-                    tex = line.substr(sep2 + 1);
-                }
-                else
-                {
-                    name = line.substr(sep1 + 1);
-                }
-                m_recipeSlots[slot].displayName = std::wstring(name.begin(), name.end());
-                m_recipeSlots[slot].textureName = std::wstring(tex.begin(), tex.end());
-                m_recipeSlots[slot].used = true;
-                loaded++;
             }
             if (loaded > 0)
             {
@@ -4893,37 +4783,15 @@ namespace MoriaMods
             int loaded = 0;
             while (std::getline(file, line))
             {
-                if (line.empty() || line[0] == '#') continue;
-                // Check for modifier line: "mod|VK_code"
-                if (line.size() > 4 && line.substr(0, 4) == "mod|")
+                auto parsed = parseKeybindLine(line);
+                if (auto* kb = std::get_if<ParsedKeybind>(&parsed))
                 {
-                    try
-                    {
-                        int mvk = std::stoi(line.substr(4));
-                        if (mvk == VK_SHIFT || mvk == VK_CONTROL || mvk == VK_MENU || mvk == VK_RMENU)
-                            s_modifierVK = static_cast<uint8_t>(mvk);
-                    }
-                    catch (...)
-                    {
-                    }
-                    continue;
-                }
-                auto sep = line.find('|');
-                if (sep == std::string::npos) continue;
-                int idx, vk;
-                try
-                {
-                    idx = std::stoi(line.substr(0, sep));
-                    vk = std::stoi(line.substr(sep + 1));
-                }
-                catch (...)
-                {
-                    continue;
-                }
-                if (idx >= 0 && idx < BIND_COUNT && vk > 0 && vk < 256)
-                {
-                    s_bindings[idx].key = static_cast<uint8_t>(vk);
+                    s_bindings[kb->bindIndex].key = kb->vkCode;
                     loaded++;
+                }
+                else if (auto* mod = std::get_if<ParsedModifier>(&parsed))
+                {
+                    s_modifierVK = mod->vkCode;
                 }
             }
             if (loaded > 0)
@@ -5582,7 +5450,7 @@ namespace MoriaMods
 
             if (!m_hasLastCapture)
             {
-                showOnScreen(L"No recipe selected! Click one in Build menu first.", 3.0f, 1.0f, 0.3f, 0.3f);
+                showOnScreen(Loc::get("msg.no_recipe_selected").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
@@ -5628,7 +5496,7 @@ namespace MoriaMods
             if (!widget)
             {
                 Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No Build_Item_Medium widget found!\n"));
-                showOnScreen(L"Build menu not open or no widget found", 3.0f, 1.0f, 0.3f, 0.3f);
+                showOnScreen(Loc::get("msg.build_menu_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
@@ -5954,7 +5822,7 @@ namespace MoriaMods
             }
 
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END ICON PROBE ===\n"));
-            showOnScreen(L"Icon probe done (see UE4SS log)", 5.0f, 0.0f, 1.0f, 0.5f);
+            showOnScreen(Loc::get("msg.icon_probe_done").c_str(), 5.0f, 0.0f, 1.0f, 0.5f);
         }
 #endif // Disabled: debug probe functions
 
@@ -6156,7 +6024,7 @@ namespace MoriaMods
 
             if (!m_lastTargetBuildable || (m_targetBuildName.empty() && m_targetBuildRecipeRef.empty()))
             {
-                showOnScreen(L"No buildable target \x2014 aim at a building and press F10 first", 3.0f, 1.0f, 0.5f, 0.0f);
+                showOnScreen(Loc::get("msg.no_buildable_target").c_str(), 3.0f, 1.0f, 0.5f, 0.0f);
                 return;
             }
 
@@ -6815,7 +6683,7 @@ namespace MoriaMods
             if (m_umgBarWidget)
             {
                 destroyExperimentalBar();
-                showOnScreen(L"UMG bar removed", 2.0f, 1.0f, 1.0f, 0.0f);
+                showOnScreen(Loc::get("msg.umg_bar_removed").c_str(), 2.0f, 1.0f, 1.0f, 0.0f);
                 return;
             }
 
@@ -7342,7 +7210,7 @@ namespace MoriaMods
             }
 
             m_umgBarWidget = userWidget;
-            showOnScreen(L"Builders bar created!", 3.0f, 0.0f, 1.0f, 0.0f);
+            showOnScreen(Loc::get("msg.builders_bar_created").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] === Builders bar creation complete ===\n"));
 
             // Sync quick-build slot states to the builders bar
@@ -7804,8 +7672,8 @@ namespace MoriaMods
                     int sz = setPosFn->GetParmsSize();
                     std::vector<uint8_t> pb(sz, 0);
                     auto* v2 = reinterpret_cast<float*>(pb.data() + pPos->GetOffset_Internal());
-                    v2[0] = static_cast<float>(viewW) - 710.0f;   // 710px from right edge
-                    v2[1] = static_cast<float>(viewH) - 45.0f;   // 20px up from previous
+                    v2[0] = static_cast<float>(viewW) - 770.0f;   // 770px from right edge
+                    v2[1] = static_cast<float>(viewH) - 65.0f;   // 65px from bottom edge
                     userWidget->ProcessEvent(setPosFn, pb.data());
                 }
             }
@@ -7980,16 +7848,16 @@ namespace MoriaMods
             };
 
             // Title
-            m_tiTitleLabel = makeTextBlock(L"Target Info", 0.78f, 0.86f, 1.0f, 1.0f);
+            m_tiTitleLabel = makeTextBlock(Loc::get("ui.target_info_title"), 0.78f, 0.86f, 1.0f, 1.0f);
             // Separator (thin text line)
             makeTextBlock(L"────────────────────────────────", 0.31f, 0.51f, 0.78f, 0.5f);
             // Data rows
-            m_tiClassLabel   = makeTextBlock(L"Class:", 0.86f, 0.90f, 0.96f, 0.9f);
-            m_tiNameLabel    = makeTextBlock(L"Name:", 0.86f, 0.90f, 0.96f, 0.9f);
-            m_tiDisplayLabel = makeTextBlock(L"Display:", 0.86f, 0.90f, 0.96f, 0.9f);
-            m_tiPathLabel    = makeTextBlock(L"Path:", 0.86f, 0.90f, 0.96f, 0.9f);
-            m_tiBuildLabel   = makeTextBlock(L"Build:", 0.86f, 0.90f, 0.96f, 0.9f);
-            m_tiRecipeLabel  = makeTextBlock(L"Recipe:", 0.86f, 0.90f, 0.96f, 0.9f);
+            m_tiClassLabel   = makeTextBlock(Loc::get("ui.label_class"), 0.86f, 0.90f, 0.96f, 0.9f);
+            m_tiNameLabel    = makeTextBlock(Loc::get("ui.label_name"), 0.86f, 0.90f, 0.96f, 0.9f);
+            m_tiDisplayLabel = makeTextBlock(Loc::get("ui.label_display"), 0.86f, 0.90f, 0.96f, 0.9f);
+            m_tiPathLabel    = makeTextBlock(Loc::get("ui.label_path"), 0.86f, 0.90f, 0.96f, 0.9f);
+            m_tiBuildLabel   = makeTextBlock(Loc::get("ui.label_build"), 0.86f, 0.90f, 0.96f, 0.9f);
+            m_tiRecipeLabel  = makeTextBlock(Loc::get("ui.label_recipe"), 0.86f, 0.90f, 0.96f, 0.9f);
 
             // Add to viewport (hidden)
             auto* addToViewportFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
@@ -8057,7 +7925,7 @@ namespace MoriaMods
                     int sz = setPosFn->GetParmsSize();
                     std::vector<uint8_t> pb(sz, 0);
                     auto* v2 = reinterpret_cast<float*>(pb.data() + pPos->GetOffset_Internal());
-                    v2[0] = static_cast<float>(viewW) - 675.0f;   // 100px further left
+                    v2[0] = static_cast<float>(viewW) - 575.0f;   // right side
                     v2[1] = static_cast<float>(viewH) / 2.0f - 250.0f; // 100px further up
                     userWidget->ProcessEvent(setPosFn, pb.data());
                 }
@@ -8090,19 +7958,19 @@ namespace MoriaMods
             if (!m_targetInfoWidget) createTargetInfoWidget();
             if (!m_targetInfoWidget) return;
 
-            // Update text labels
-            umgSetText(m_tiClassLabel, L"Class:    " + cls);
-            umgSetText(m_tiNameLabel, L"Name:     " + name);
-            umgSetText(m_tiDisplayLabel, L"Display:  " + display);
-            umgSetText(m_tiPathLabel, L"Path:     " + path);
-            std::wstring buildStr = buildable ? L"Yes" : L"No";
-            umgSetText(m_tiBuildLabel, L"Build:    " + buildStr);
+            // Update text labels (wrapText inserts newlines for lines > 70 chars)
+            umgSetText(m_tiClassLabel, wrapText(Loc::get("ui.value_class_prefix"), cls));
+            umgSetText(m_tiNameLabel, wrapText(Loc::get("ui.value_name_prefix"), name));
+            umgSetText(m_tiDisplayLabel, wrapText(Loc::get("ui.value_display_prefix"), display));
+            umgSetText(m_tiPathLabel, wrapText(Loc::get("ui.value_path_prefix"), path));
+            std::wstring buildStr = buildable ? Loc::get("ui.yes") : Loc::get("ui.no");
+            umgSetText(m_tiBuildLabel, Loc::get("ui.value_build_prefix") + buildStr);
             if (buildable)
                 umgSetTextColor(m_tiBuildLabel, 0.31f, 0.86f, 0.31f, 1.0f);
             else
                 umgSetTextColor(m_tiBuildLabel, 0.7f, 0.55f, 0.39f, 0.8f);
             std::wstring recipeDisplay = !rowName.empty() ? rowName : recipe;
-            umgSetText(m_tiRecipeLabel, recipeDisplay.empty() ? L"" : (L"Recipe:   " + recipeDisplay));
+            umgSetText(m_tiRecipeLabel, recipeDisplay.empty() ? L"" : wrapText(Loc::get("ui.value_recipe_prefix"), recipeDisplay));
 
             // Show widget
             auto* fn = m_targetInfoWidget->GetFunctionByNameInChain(STR("SetVisibility"));
@@ -8245,7 +8113,7 @@ namespace MoriaMods
                 return tb;
             };
 
-            m_ibTitleLabel   = makeTextBlock(L"Info", 0.78f, 0.86f, 1.0f, 1.0f);
+            m_ibTitleLabel   = makeTextBlock(Loc::get("ui.info_title"), 0.78f, 0.86f, 1.0f, 1.0f);
             m_ibMessageLabel = makeTextBlock(L"", 0.86f, 0.90f, 0.96f, 0.9f);
 
             // Add to viewport
@@ -8429,7 +8297,7 @@ namespace MoriaMods
                 // Update old-style labels (kept for compat)
                 if (m_cfgKeyValueLabels[i])
                 {
-                    std::wstring row = std::wstring(s_bindings[i].label) + L":  " + keyName(s_bindings[i].key);
+                    std::wstring row = std::wstring(s_bindings[i].label) + Loc::get("ui.key_separator") + keyName(s_bindings[i].key);
                     umgSetText(m_cfgKeyValueLabels[i], row);
                 }
                 // Update new key box labels
@@ -8437,7 +8305,7 @@ namespace MoriaMods
                 {
                     if (capturing == i)
                     {
-                        umgSetText(m_cfgKeyBoxLabels[i], L"Press key...");
+                        umgSetText(m_cfgKeyBoxLabels[i], Loc::get("ui.press_key"));
                         umgSetTextColor(m_cfgKeyBoxLabels[i], 1.0f, 0.9f, 0.0f, 1.0f); // yellow
                     }
                     else
@@ -8449,7 +8317,7 @@ namespace MoriaMods
             }
             if (m_cfgModifierLabel)
             {
-                std::wstring modText = L"Set Modifier Key:  " + std::wstring(modifierName(s_modifierVK));
+                std::wstring modText = Loc::get("ui.set_modifier_key") + std::wstring(modifierName(s_modifierVK));
                 umgSetText(m_cfgModifierLabel, modText);
             }
             // Update modifier key box label
@@ -8464,7 +8332,7 @@ namespace MoriaMods
             bool on = s_config.freeBuild;
             if (m_cfgFreeBuildLabel)
             {
-                umgSetText(m_cfgFreeBuildLabel, on ? L"  Free Build  (ON)" : L"  Free Build");
+                umgSetText(m_cfgFreeBuildLabel, on ? Loc::get("ui.free_build_on") : Loc::get("ui.free_build"));
                 umgSetTextColor(m_cfgFreeBuildLabel, on ? 0.31f : 0.55f, on ? 0.86f : 0.55f, on ? 0.47f : 0.55f, 1.0f);
             }
             // Show/hide check mark image
@@ -8480,7 +8348,7 @@ namespace MoriaMods
             if (m_cfgRemovalHeader)
             {
                 int count = s_config.removalCount.load();
-                umgSetText(m_cfgRemovalHeader, L"Saved Removals (" + std::to_wstring(count) + L" entries)");
+                umgSetText(m_cfgRemovalHeader, Loc::get("ui.saved_removals_prefix") + std::to_wstring(count) + Loc::get("ui.saved_removals_suffix"));
             }
         }
 
@@ -8519,7 +8387,7 @@ namespace MoriaMods
             int count = s_config.removalCount.load();
             if (m_cfgRemovalHeader)
             {
-                umgSetText(m_cfgRemovalHeader, L"Saved Removals (" + std::to_wstring(count) + L" entries)");
+                umgSetText(m_cfgRemovalHeader, Loc::get("ui.saved_removals_prefix") + std::to_wstring(count) + Loc::get("ui.saved_removals_suffix"));
                 addToVBox(m_cfgRemovalVBox, m_cfgRemovalHeader);
             }
 
@@ -8578,7 +8446,7 @@ namespace MoriaMods
                         UObject* coordsTB = UObjectGlobals::StaticConstructObject(tbP2);
                         if (coordsTB)
                         {
-                            std::wstring coordText = entry.isTypeRule ? L"TYPE RULE" : entry.coordsW;
+                            std::wstring coordText = entry.isTypeRule ? Loc::get("ui.type_rule") : entry.coordsW;
                             umgSetText(coordsTB, coordText);
                             umgSetTextColor(coordsTB, 0.85f, 0.25f, 0.25f, 1.0f); // medium red
                             umgSetFontSize(coordsTB, 18);
@@ -8807,7 +8675,7 @@ namespace MoriaMods
             };
 
             // Title
-            addTB(mainVBox, L"Building Mod Configuration Menu", 0.78f, 0.86f, 1.0f, 1.0f, 36);
+            addTB(mainVBox, Loc::get("ui.config_title"), 0.78f, 0.86f, 1.0f, 1.0f, 36);
             addTB(mainVBox, L"────────────────────────────────────────────", 0.31f, 0.51f, 0.78f, 0.4f, 20);
 
             // Tab bar: HBox with texture-backed tabs
@@ -8825,7 +8693,7 @@ namespace MoriaMods
                 {
                     addToVBox(mainVBox, tabHBox);
                     auto* addToHBoxFn = tabHBox->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
-                    const wchar_t* tabNames[3] = {L"Optional Mods", L"Key Mapping", L"Hide Environment"};
+                    const wchar_t* tabNames[3] = {CONFIG_TAB_NAMES[0], CONFIG_TAB_NAMES[1], CONFIG_TAB_NAMES[2]};
 
                     for (int t = 0; t < 3; t++)
                     {
@@ -8921,7 +8789,7 @@ namespace MoriaMods
                     addToScrollBox(scrollBox, tab0VBox);
                     { UObject* slot = addToVBox(mainVBox, scrollBox); if (slot) umgSetSlotSize(slot, 1.0f, 1); /* Fill */ }
 
-                    addTB(tab0VBox, L"Cheat Toggles", 0.78f, 0.86f, 1.0f, 1.0f, 32);
+                    addTB(tab0VBox, Loc::get("ui.cheat_toggles"), 0.78f, 0.86f, 1.0f, 1.0f, 32);
 
                     // Free Build checkbox row: HBox { Overlay{checkbox+check} + TextBlock }
                     {
@@ -8986,7 +8854,7 @@ namespace MoriaMods
                             }
 
                             // Label: "Free Build" text next to checkbox
-                            UObject* fbLabel = makeTB(L"  Free Build", 0.55f, 0.55f, 0.55f, 1.0f, 26);
+                            UObject* fbLabel = makeTB(Loc::get("ui.free_build"), 0.55f, 0.55f, 0.55f, 1.0f, 26);
                             m_cfgFreeBuildLabel = fbLabel;
                             if (fbLabel && addToHFn)
                             {
@@ -8999,7 +8867,7 @@ namespace MoriaMods
                         }
                     }
 
-                    addTB(tab0VBox, L"  Build without materials", 0.47f, 0.55f, 0.71f, 0.6f, 24);
+                    addTB(tab0VBox, Loc::get("ui.free_build_desc"), 0.47f, 0.55f, 0.71f, 0.6f, 24);
                     addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 12);
 
                     // "Unlock All Recipes" button with T_UI_Btn_P2_Active texture
@@ -9030,7 +8898,7 @@ namespace MoriaMods
                             if (addToOlFn)
                             {
                                 // Layer 1: "Unlock All Recipes" label
-                                UObject* btnLabel = makeTB(L"Unlock All Recipes", 0.86f, 0.90f, 1.0f, 0.95f, 26);
+                                UObject* btnLabel = makeTB(Loc::get("ui.unlock_all_recipes"), 0.86f, 0.90f, 1.0f, 0.95f, 26);
                                 if (btnLabel)
                                 {
                                     auto* pCC = findParam(addToOlFn, STR("Content"));
@@ -9263,7 +9131,7 @@ namespace MoriaMods
                             auto* rowR = findParam(addToRowFn, STR("ReturnValue"));
 
                             // Left: "Set Modifier Key" label
-                            UObject* modLabel = makeTB(L"Set Modifier Key", 0.86f, 0.90f, 0.96f, 0.85f, 26);
+                            UObject* modLabel = makeTB(Loc::get("ui.set_modifier_key_short"), 0.86f, 0.90f, 0.96f, 0.85f, 26);
                             if (modLabel && addToRowFn)
                             {
                                 int sz = addToRowFn->GetParmsSize();
@@ -9359,7 +9227,7 @@ namespace MoriaMods
                     m_cfgRemovalVBox = tab2VBox;
 
                     int count = s_config.removalCount.load();
-                    m_cfgRemovalHeader = addTB(tab2VBox, L"Saved Removals (" + std::to_wstring(count) + L" entries)",
+                    m_cfgRemovalHeader = addTB(tab2VBox, Loc::get("ui.saved_removals_prefix") + std::to_wstring(count) + Loc::get("ui.saved_removals_suffix"),
                                                0.78f, 0.86f, 1.0f, 1.0f, 32);
                     m_cfgLastRemovalCount = count;
 
@@ -9478,7 +9346,7 @@ namespace MoriaMods
             if (m_mcBarWidget)
             {
                 destroyModControllerBar();
-                showOnScreen(L"Mod Controller removed", 2.0f, 1.0f, 1.0f, 0.0f);
+                showOnScreen(Loc::get("msg.mc_removed").c_str(), 2.0f, 1.0f, 1.0f, 0.0f);
                 return;
             }
 
@@ -9497,6 +9365,7 @@ namespace MoriaMods
             UObject* texUndoLast = nullptr;     // T_UI_Alert_BakedIcon — MC slot 5 (Undo Last)
             UObject* texRemoveAll = nullptr;    // T_UI_Icon_Filled_GoodPlace2 — MC slot 6 (Remove All)
             UObject* texSettings = nullptr;     // T_UI_Icon_Settings — MC slot 7 (Configuration)
+            UObject* texHideChar = nullptr;     // T_UI_Eye_Open — MC slot 3 (Hide Character)
             {
                 std::vector<UObject*> textures;
                 UObjectGlobals::FindAllOf(STR("Texture2D"), textures);
@@ -9516,6 +9385,7 @@ namespace MoriaMods
                     else if (name == STR("T_UI_Alert_BakedIcon")) texUndoLast = t;
                     else if (name == STR("T_UI_Icon_Filled_GoodPlace2")) texRemoveAll = t;
                     else if (name == STR("T_UI_Icon_Settings")) texSettings = t;
+                    else if (name == STR("T_UI_Eye_Open")) texHideChar = t;
                 }
             }
             if (!texFrame || !texEmpty)
@@ -9536,6 +9406,7 @@ namespace MoriaMods
                 {texSettings, STR("/Game/UI/textures/_Shared/Icons/T_UI_Icon_Settings.T_UI_Icon_Settings"), L"T_UI_Icon_Settings"},
                 {texRotation, STR("/Game/UI/textures/_Shared/Icons/T_UI_Refresh.T_UI_Refresh"), L"T_UI_Refresh"},
                 {texTarget, STR("/Game/UI/textures/_Icons/Menus/T_UI_Search.T_UI_Search"), L"T_UI_Search"},
+                {texHideChar, STR("/Game/UI/textures/_Icons/Waypoints/T_UI_Eye_Open.T_UI_Eye_Open"), L"T_UI_Eye_Open"},
             };
             for (auto& fb : fallbacks)
             {
@@ -9930,16 +9801,16 @@ namespace MoriaMods
             // --- Set custom icons for all 8 MC slots ---
             {
                 UObject* mcSlotTextures[MC_SLOTS] = {
-                    texRotation, texTarget, texToolbarSwap, nullptr,
+                    texRotation, texTarget, texToolbarSwap, texHideChar,
                     texRemoveTarget, texUndoLast, texRemoveAll, texSettings
                 };
                 const wchar_t* mcSlotNames[MC_SLOTS] = {
-                    L"T_UI_Refresh", L"T_UI_Search", L"Swap-Bag_Icon", nullptr,
+                    L"T_UI_Refresh", L"T_UI_Search", L"Swap-Bag_Icon", L"T_UI_Eye_Open",
                     L"T_UI_Icon_GoodPlace2", L"T_UI_Alert_BakedIcon", L"T_UI_Icon_Filled_GoodPlace2", L"T_UI_Icon_Settings"
                 };
                 for (int i = 0; i < MC_SLOTS; i++)
                 {
-                    if (!mcSlotTextures[i]) continue; // slot 3 has no icon yet
+                    if (!mcSlotTextures[i]) continue; // skip slots with no icon
                     if (m_mcIconImages[i] && setBrushFn)
                     {
                         umgSetBrush(m_mcIconImages[i], mcSlotTextures[i], setBrushFn);
@@ -10168,7 +10039,7 @@ namespace MoriaMods
             }
 
             m_mcBarWidget = userWidget;
-            showOnScreen(L"Mod Controller created!", 3.0f, 0.0f, 1.0f, 0.0f);
+            showOnScreen(Loc::get("msg.mod_controller_created").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] === Mod Controller bar creation complete ({}x{}) ===\n"),
                                             mcTotalW, mcTotalH);
         }
@@ -10529,6 +10400,47 @@ namespace MoriaMods
         {
             Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Unreal initialized.\n"));
 
+            // Load localization string table (compiled English defaults + optional JSON override)
+            Loc::load("Mods/MoriaCppMod/localization/");
+            // Patch static keybind labels from string table
+            s_bindings[0].label = Loc::get("bind.quick_build_1").c_str();
+            s_bindings[0].section = Loc::get("bind.section_quick_building").c_str();
+            s_bindings[1].label = Loc::get("bind.quick_build_2").c_str();
+            s_bindings[1].section = Loc::get("bind.section_quick_building").c_str();
+            s_bindings[2].label = Loc::get("bind.quick_build_3").c_str();
+            s_bindings[2].section = Loc::get("bind.section_quick_building").c_str();
+            s_bindings[3].label = Loc::get("bind.quick_build_4").c_str();
+            s_bindings[3].section = Loc::get("bind.section_quick_building").c_str();
+            s_bindings[4].label = Loc::get("bind.quick_build_5").c_str();
+            s_bindings[4].section = Loc::get("bind.section_quick_building").c_str();
+            s_bindings[5].label = Loc::get("bind.quick_build_6").c_str();
+            s_bindings[5].section = Loc::get("bind.section_quick_building").c_str();
+            s_bindings[6].label = Loc::get("bind.quick_build_7").c_str();
+            s_bindings[6].section = Loc::get("bind.section_quick_building").c_str();
+            s_bindings[7].label = Loc::get("bind.quick_build_8").c_str();
+            s_bindings[7].section = Loc::get("bind.section_quick_building").c_str();
+            s_bindings[8].label = Loc::get("bind.rotation").c_str();
+            s_bindings[8].section = Loc::get("bind.section_mod_controller").c_str();
+            s_bindings[9].label = Loc::get("bind.target").c_str();
+            s_bindings[9].section = Loc::get("bind.section_mod_controller").c_str();
+            s_bindings[10].label = Loc::get("bind.toolbar_swap").c_str();
+            s_bindings[10].section = Loc::get("bind.section_mod_controller").c_str();
+            s_bindings[11].label = Loc::get("bind.mod_menu_4").c_str();
+            s_bindings[11].section = Loc::get("bind.section_mod_controller").c_str();
+            s_bindings[12].label = Loc::get("bind.remove_target").c_str();
+            s_bindings[12].section = Loc::get("bind.section_mod_controller").c_str();
+            s_bindings[13].label = Loc::get("bind.undo_last").c_str();
+            s_bindings[13].section = Loc::get("bind.section_mod_controller").c_str();
+            s_bindings[14].label = Loc::get("bind.remove_all").c_str();
+            s_bindings[14].section = Loc::get("bind.section_mod_controller").c_str();
+            s_bindings[15].label = Loc::get("bind.configuration").c_str();
+            s_bindings[15].section = Loc::get("bind.section_mod_controller").c_str();
+            s_bindings[16].label = Loc::get("bind.ab_open").c_str();
+            s_bindings[16].section = Loc::get("bind.section_advanced_builder").c_str();
+            // Patch config tab names
+            CONFIG_TAB_NAMES[0] = Loc::get("tab.optional_mods").c_str();
+            CONFIG_TAB_NAMES[1] = Loc::get("tab.key_mapping").c_str();
+            CONFIG_TAB_NAMES[2] = Loc::get("tab.hide_environment").c_str();
 
             m_saveFilePath = "Mods/MoriaCppMod/removed_instances.txt";
             loadSaveFile();
@@ -10572,7 +10484,7 @@ namespace MoriaMods
                 m_showHotbar = !m_showHotbar;
                 s_overlay.visible = m_showHotbar;
                 s_overlay.needsUpdate = true;
-                showOnScreen(m_showHotbar ? L"Hotbar overlay ON" : L"Hotbar overlay OFF", 2.0f, 0.2f, 0.8f, 1.0f);
+                showOnScreen(m_showHotbar ? Loc::get("msg.hotbar_overlay_on").c_str() : Loc::get("msg.hotbar_overlay_off").c_str(), 2.0f, 0.2f, 0.8f, 1.0f);
             });
 
             // Builders bar toggle: now handled by AB toolbar key polling (s_bindings[BIND_AB_OPEN])
@@ -10794,6 +10706,13 @@ namespace MoriaMods
                     uint8_t vk = s_bindings[MC_BIND_BASE + i].key;
                     if (vk == 0) { s_lastMcKey[i] = false; continue; }
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
+                    // SHIFT reverses numpad keys (e.g. Num9 → PageUp) — also check alternate VK.
+                    // Only when SHIFT is physically held, to avoid false positives from nav keys.
+                    if (!nowDown && (GetAsyncKeyState(VK_SHIFT) & 0x8000))
+                    {
+                        uint8_t alt = numpadShiftAlternate(vk);
+                        if (alt) nowDown = (GetAsyncKeyState(alt) & 0x8000) != 0;
+                    }
                     if (nowDown && !s_lastMcKey[i] && !m_cfgVisible)
                     {
                         Output::send<LogLevel::Warning>(
@@ -10829,8 +10748,11 @@ namespace MoriaMods
                         case 2: // Toolbar Swap — same as OEM_FIVE handler
                             swapToolbar();
                             break;
-                        case 3: // ModMenu 4: dump aimed actor info
-                            dumpAimedActor();
+                        case 3: // Super Dwarf: modifier+key = fly, key alone = hide character
+                            if (isModifierDown())
+                                toggleFlyMode();
+                            else
+                                toggleHideCharacter();
                             break;
                         case 4: // Remove Target — same as Num1 handler
                             removeAimed();
@@ -11190,7 +11112,7 @@ namespace MoriaMods
                     {
                         s_config.pendingToggleFreeBuild = false;
                         s_freeBuildRetries = 0;
-                        showOnScreen(L"Free Build toggle failed - debug actor not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                        showOnScreen(Loc::get("msg.free_build_failed").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                         Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Toggle Free Construction FAILED after {} retries\n"), MAX_RETRIES);
                     }
                 }
@@ -11198,9 +11120,9 @@ namespace MoriaMods
             if (s_config.pendingUnlockAllRecipes)
             {
                 if (callDebugFunc(STR("BP_DebugMenu_Recipes_C"), STR("All Recipes")))
-                    showOnScreen(L"ALL RECIPES UNLOCKED!", 5.0f, 0.0f, 1.0f, 0.0f);
+                    showOnScreen(Loc::get("msg.all_recipes_unlocked").c_str(), 5.0f, 0.0f, 1.0f, 0.0f);
                 else
-                    showOnScreen(L"Recipe debug actor not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                    showOnScreen(Loc::get("msg.recipe_actor_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 s_config.pendingUnlockAllRecipes = false;
             }
 
@@ -11299,7 +11221,7 @@ namespace MoriaMods
                 {
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] SM: TIMEOUT at frame {} — build tab never became visible\n"),
                                                     m_pendingBuildFrames);
-                    showOnScreen(L"Build menu didn't open (timeout)", 3.0f, 1.0f, 0.3f, 0.0f);
+                    showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
                     m_pendingQuickBuildSlot = -1;
                 }
                 else if (m_pendingBuildFrames >= 15)
@@ -11349,7 +11271,7 @@ namespace MoriaMods
                 {
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] SM: TIMEOUT at frame {} — build tab never became visible\n"),
                                                     m_pendingTargetBuildFrames);
-                    showOnScreen(L"Build menu didn't open (timeout)", 3.0f, 1.0f, 0.3f, 0.0f);
+                    showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
                     m_pendingTargetBuild = false;
                 }
                 else if (m_pendingTargetBuildFrames >= 15)
@@ -11382,6 +11304,8 @@ namespace MoriaMods
                 {
                     Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Character lost — world unloading, resetting replay state\n"));
                     m_characterLoaded = false;
+                    m_characterHidden = false; // reset hide toggle for new world
+                    m_flyMode = false;         // reset fly toggle for new world
                     s_overlay.visible = false; // hide overlay until character reloads
                     m_initialReplayDone = false;
                     m_processedComps.clear();
@@ -11529,7 +11453,7 @@ namespace MoriaMods
                         discoverBagHandle(invComp);
                         if (!m_bodyInvHandle.empty())
                         {
-                            showOnScreen(L"Containers discovered!", 3.0f, 0.0f, 1.0f, 0.0f);
+                            showOnScreen(Loc::get("msg.containers_discovered").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
                         }
                     }
                 }
@@ -11539,7 +11463,7 @@ namespace MoriaMods
             if (m_bodyInvHandle.empty() && framesSinceChar == 3900)
             {
                 Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] Container discovery FAILED after 60s — toolbar swap unavailable this session\n"));
-                showOnScreen(L"Container discovery failed - swap unavailable", 5.0f, 1.0f, 0.3f, 0.0f);
+                showOnScreen(Loc::get("msg.container_discovery_failed").c_str(), 5.0f, 1.0f, 0.3f, 0.0f);
             }
 
             // Initial replay 15 seconds after character load (~900 frames at 60fps)
