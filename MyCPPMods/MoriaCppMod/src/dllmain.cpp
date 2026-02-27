@@ -4640,22 +4640,24 @@ namespace MoriaMods
 
         // Toolbar repositioning mode
         bool m_repositionMode{false};              // are we in drag-to-reposition mode?
-        int  m_dragToolbar{-1};                    // -1=none, 0=builders, 1=AB, 2=MC
+        int  m_dragToolbar{-1};                    // -1=none, 0=builders, 1=AB, 2=MC, 3=infobox
         float m_dragOffsetX{0}, m_dragOffsetY{0};  // cursor-to-position offset at grab start
         UObject* m_repositionMsgWidget{nullptr};   // centered instruction message
+        UObject* m_repositionInfoBoxWidget{nullptr}; // placeholder info box during reposition
         // Toolbar positions as viewport coordinates (0.0-1.0); -1 = use default
-        static constexpr int TB_COUNT = 3;
-        float m_toolbarPosX[TB_COUNT]{-1, -1, -1};
-        float m_toolbarPosY[TB_COUNT]{-1, -1, -1};
+        // Index: 0=BuildersBar, 1=AdvancedBuilder, 2=ModController, 3=InfoBox
+        static constexpr int TB_COUNT = 4;
+        float m_toolbarPosX[TB_COUNT]{-1, -1, -1, -1};
+        float m_toolbarPosY[TB_COUNT]{-1, -1, -1, -1};
         // Cached sizes in viewport pixels (set during creation, used for drag hit-test)
-        float m_toolbarSizeW[TB_COUNT]{0, 0, 0};
-        float m_toolbarSizeH[TB_COUNT]{0, 0, 0};
+        float m_toolbarSizeW[TB_COUNT]{0, 0, 0, 0};
+        float m_toolbarSizeH[TB_COUNT]{0, 0, 0, 0};
         // Alignment pivots — all center-based for intuitive dragging
-        float m_toolbarAlignX[TB_COUNT]{0.5f, 0.5f, 0.5f};
-        float m_toolbarAlignY[TB_COUNT]{0.5f, 0.5f, 0.5f};
-        // Default positions (from 4K tuning): BB=top-center, AB=lower-right, MC=right-mid
-        static constexpr float TB_DEF_X[TB_COUNT]{0.4992f, 0.7505f, 0.8492f};
-        static constexpr float TB_DEF_Y[TB_COUNT]{0.0287f, 0.9111f, 0.6148f};
+        float m_toolbarAlignX[TB_COUNT]{0.5f, 0.5f, 0.5f, 0.5f};
+        float m_toolbarAlignY[TB_COUNT]{0.5f, 0.5f, 0.5f, 0.5f};
+        // Default positions (from 4K tuning): BB=top-center, AB=lower-right, MC=right-mid, IB=right-center
+        static constexpr float TB_DEF_X[TB_COUNT]{0.4992f, 0.7505f, 0.8492f, 0.9414f};
+        static constexpr float TB_DEF_Y[TB_COUNT]{0.0287f, 0.9111f, 0.6148f, 0.5463f};
         // UMG Target Info popup
         UObject* m_targetInfoWidget{nullptr};      // root UUserWidget
         UObject* m_tiTitleLabel{nullptr};           // "Target Info" title
@@ -4836,7 +4838,7 @@ namespace MoriaMods
                 file << "\n[Positions]\n";
                 file << "; Toolbar positions as viewport fractions (0.0-1.0)\n";
                 file << "; Delete this section to reset to defaults\n";
-                const char* tbNames[TB_COUNT] = {"BuildersBar", "AdvancedBuilder", "ModController"};
+                const char* tbNames[TB_COUNT] = {"BuildersBar", "AdvancedBuilder", "ModController", "InfoBox"};
                 for (int i = 0; i < TB_COUNT; i++)
                 {
                     float fx = (m_toolbarPosX[i] >= 0) ? m_toolbarPosX[i] : TB_DEF_X[i];
@@ -4914,7 +4916,7 @@ namespace MoriaMods
                         }
                         else if (strEqualCI(section, "Positions"))
                         {
-                            const char* tbNames[TB_COUNT] = {"BuildersBar", "AdvancedBuilder", "ModController"};
+                            const char* tbNames[TB_COUNT] = {"BuildersBar", "AdvancedBuilder", "ModController", "InfoBox"};
                             for (int i = 0; i < TB_COUNT; i++)
                             {
                                 try
@@ -8373,17 +8375,22 @@ namespace MoriaMods
                     int sz = setAlignFn->GetParmsSize();
                     std::vector<uint8_t> al(sz, 0);
                     auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
-                    v[0] = 1.0f; v[1] = 0.5f;
+                    v[0] = 0.5f; v[1] = 0.5f;
                     userWidget->ProcessEvent(setAlignFn, al.data());
                 }
             }
 
-            // Position: right side, scaled offsets
+            // Position: fraction-based (user-customizable, resolution-independent)
             {
-                float posX = static_cast<float>(viewW) - 25.0f * uiScale;
-                float posY = static_cast<float>(viewH) / 2.0f + 100.0f * uiScale;
-                setWidgetPosition(userWidget, posX, posY);
+                float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
+                float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
+                setWidgetPosition(userWidget, fracX * static_cast<float>(viewW),
+                                              fracY * static_cast<float>(viewH));
             }
+
+            // Cache size for repositioning hit-test
+            m_toolbarSizeW[3] = 400.0f * uiScale;
+            m_toolbarSizeH[3] = 80.0f * uiScale;
 
             // Start hidden
             auto* setVisFn = userWidget->GetFunctionByNameInChain(STR("SetVisibility"));
@@ -10546,6 +10553,171 @@ namespace MoriaMods
             m_repositionMsgWidget = nullptr;
         }
 
+        // Create a placeholder Info Box widget for repositioning (same size as real info box)
+        void createPlaceholderInfoBox()
+        {
+            if (m_repositionInfoBoxWidget) return;
+
+            auto* uwClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
+            auto* borderClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Border"));
+            auto* textBlockClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+            if (!uwClass || !borderClass || !textBlockClass) return;
+            auto* pc = findPlayerController();
+            if (!pc) return;
+
+            auto* createFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
+            auto* wblClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
+            if (!createFn || !wblClass) return;
+            UObject* wblCDO = wblClass->GetClassDefaultObject();
+            if (!wblCDO) return;
+
+            int csz = createFn->GetParmsSize();
+            std::vector<uint8_t> cp(csz, 0);
+            auto* pWC = findParam(createFn, STR("WorldContextObject"));
+            auto* pWT = findParam(createFn, STR("WidgetType"));
+            auto* pOP = findParam(createFn, STR("OwningPlayer"));
+            auto* pRV = findParam(createFn, STR("ReturnValue"));
+            if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
+            if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = uwClass;
+            if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
+            wblCDO->ProcessEvent(createFn, cp.data());
+            UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
+            if (!userWidget) return;
+
+            UObject* widgetTree = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + 0x01D8);
+            UObject* outer = widgetTree ? widgetTree : userWidget;
+
+            // Root border (dark blue bg — same as real info box)
+            FStaticConstructObjectParameters borderP(borderClass, outer);
+            UObject* rootBorder = UObjectGlobals::StaticConstructObject(borderP);
+            if (!rootBorder) return;
+            if (widgetTree)
+                *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + 0x0028) = rootBorder;
+
+            auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
+            if (setBrushColorFn)
+            {
+                auto* pColor = findParam(setBrushColorFn, STR("InBrushColor"));
+                if (pColor)
+                {
+                    int sz = setBrushColorFn->GetParmsSize();
+                    std::vector<uint8_t> cb(sz, 0);
+                    auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
+                    c[0] = 0.098f; c[1] = 0.118f; c[2] = 0.176f; c[3] = 0.86f;
+                    rootBorder->ProcessEvent(setBrushColorFn, cb.data());
+                }
+            }
+            auto* setBorderPadFn = rootBorder->GetFunctionByNameInChain(STR("SetPadding"));
+            if (setBorderPadFn)
+            {
+                auto* pPad = findParam(setBorderPadFn, STR("InPadding"));
+                if (pPad)
+                {
+                    int sz = setBorderPadFn->GetParmsSize();
+                    std::vector<uint8_t> pp(sz, 0);
+                    auto* m = reinterpret_cast<float*>(pp.data() + pPad->GetOffset_Internal());
+                    m[0] = 12.0f; m[1] = 8.0f; m[2] = 12.0f; m[3] = 8.0f;
+                    rootBorder->ProcessEvent(setBorderPadFn, pp.data());
+                }
+            }
+
+            // Text label — just says "Info Box"
+            auto* setContentFn = rootBorder->GetFunctionByNameInChain(STR("SetContent"));
+            FStaticConstructObjectParameters tbP(textBlockClass, outer);
+            UObject* textBlock = UObjectGlobals::StaticConstructObject(tbP);
+            if (textBlock && setContentFn)
+            {
+                umgSetText(textBlock, L"Info Box");
+                umgSetTextColor(textBlock, 0.78f, 0.86f, 1.0f, 1.0f);
+                auto* pContent = findParam(setContentFn, STR("Content"));
+                int sz = setContentFn->GetParmsSize();
+                std::vector<uint8_t> sc(sz, 0);
+                if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = textBlock;
+                rootBorder->ProcessEvent(setContentFn, sc.data());
+            }
+
+            // Add to viewport at high Z-order
+            auto* addFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
+            if (addFn)
+            {
+                auto* pZ = findParam(addFn, STR("ZOrder"));
+                int sz = addFn->GetParmsSize();
+                std::vector<uint8_t> vp(sz, 0);
+                if (pZ) *reinterpret_cast<int32_t*>(vp.data() + pZ->GetOffset_Internal()) = 249;
+                userWidget->ProcessEvent(addFn, vp.data());
+            }
+
+            // Get viewport size for uiScale + positioning
+            int32_t viewW = 1920, viewH = 1080;
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+
+            // Render scale
+            if (rootBorder) umgSetRenderScale(rootBorder, uiScale, uiScale);
+
+            // Desired size — same as real info box (400x80 at 4K)
+            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
+            if (setDesiredSizeFn)
+            {
+                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
+                if (pSize)
+                {
+                    int sz = setDesiredSizeFn->GetParmsSize();
+                    std::vector<uint8_t> sb(sz, 0);
+                    auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
+                    v[0] = 400.0f * uiScale; v[1] = 80.0f * uiScale;
+                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
+                }
+            }
+
+            // Center alignment
+            auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
+            if (setAlignFn)
+            {
+                auto* pAlign = findParam(setAlignFn, STR("Alignment"));
+                if (pAlign)
+                {
+                    int sz = setAlignFn->GetParmsSize();
+                    std::vector<uint8_t> al(sz, 0);
+                    auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
+                    v[0] = 0.5f; v[1] = 0.5f;
+                    userWidget->ProcessEvent(setAlignFn, al.data());
+                }
+            }
+
+            // Position from saved or default
+            float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
+            float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
+            setWidgetPosition(userWidget, fracX * static_cast<float>(viewW),
+                                          fracY * static_cast<float>(viewH));
+
+            // Cache size for hit-test
+            m_toolbarSizeW[3] = 400.0f * uiScale;
+            m_toolbarSizeH[3] = 80.0f * uiScale;
+
+            m_repositionInfoBoxWidget = userWidget;
+            VLOG(STR("[MoriaCppMod] Created placeholder Info Box for repositioning\n"));
+        }
+
+        void destroyPlaceholderInfoBox()
+        {
+            if (!m_repositionInfoBoxWidget) return;
+            auto* removeFn = m_repositionInfoBoxWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
+            if (removeFn) m_repositionInfoBoxWidget->ProcessEvent(removeFn, nullptr);
+            m_repositionInfoBoxWidget = nullptr;
+        }
+
         void toggleRepositionMode()
         {
             // Guard: need at least one toolbar created before entering reposition mode
@@ -10557,7 +10729,7 @@ namespace MoriaMods
 
             if (m_repositionMode)
             {
-                // Ensure toolbars are visible
+                // Ensure toolbars are visible (don't move them — let user adjust from current positions)
                 if (!m_toolbarsVisible)
                 {
                     m_toolbarsVisible = true;
@@ -10570,6 +10742,7 @@ namespace MoriaMods
                     setWidgetVis(m_mcBarWidget);
                 }
                 createRepositionMessage();
+                createPlaceholderInfoBox();
                 // Use the message widget for focus, or fall back to any toolbar
                 UObject* focusW = m_repositionMsgWidget ? m_repositionMsgWidget
                                 : m_umgBarWidget ? m_umgBarWidget
@@ -10581,6 +10754,7 @@ namespace MoriaMods
             {
                 setInputModeGame();
                 destroyRepositionMessage();
+                destroyPlaceholderInfoBox();
                 saveConfig();
                 VLOG(STR("[MoriaCppMod] Exited toolbar repositioning mode, positions saved\n"));
             }
@@ -11148,8 +11322,8 @@ namespace MoriaMods
 
                     if (lmb && m_dragToolbar < 0)
                     {
-                        // Start drag: check which toolbar was clicked
-                        UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget};
+                        // Start drag: check which toolbar/widget was clicked
+                        UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget, m_repositionInfoBoxWidget};
                         for (int i = 0; i < TB_COUNT; i++)
                         {
                             if (!widgets[i]) continue;
@@ -11180,7 +11354,7 @@ namespace MoriaMods
                         float fy = std::clamp(newY / vh, 0.01f, 0.99f);
                         m_toolbarPosX[m_dragToolbar] = fx;
                         m_toolbarPosY[m_dragToolbar] = fy;
-                        UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget};
+                        UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget, m_repositionInfoBoxWidget};
                         setWidgetPosition(widgets[m_dragToolbar], fx * vw, fy * vh);
                     }
                     else if (!lmb && m_dragToolbar >= 0)
@@ -11807,6 +11981,7 @@ namespace MoriaMods
                     m_repositionMode = false;
                     m_dragToolbar = -1;
                     m_repositionMsgWidget = nullptr;
+                    m_repositionInfoBoxWidget = nullptr;
                     // Target Info + Info Box destroyed with world
                     m_targetInfoWidget = nullptr;
                     m_tiTitleLabel = nullptr;
