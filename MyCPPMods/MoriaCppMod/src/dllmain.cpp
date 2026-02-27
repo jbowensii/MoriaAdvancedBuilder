@@ -26,6 +26,7 @@
 #include <cstring>
 #include <fstream>
 #include <format>
+#include <iomanip>
 #include <memory>
 #include <set>
 #include <sstream>
@@ -4586,6 +4587,7 @@ namespace MoriaMods
         bool m_lastTargetBuildable{false};   // was the last target buildable?
         bool m_pendingTargetBuild{false};    // pending build-from-target state machine
         bool m_buildMenuWasOpen{false};      // tracks build menu open/close for ActionBar refresh
+        bool m_buildPlacementActive{false};  // true after quickbuild recipe selected (player placing piece)
         int m_pendingTargetBuildFrames{0};   // frame counter for state machine
 
         // Clear-hotbar state machine: move one item per frame
@@ -4635,6 +4637,25 @@ namespace MoriaMods
         bool m_toolbarsVisible{false};             // toggle state: are builders bar + MC bar visible?
         bool m_characterHidden{false};             // toggle state: is player character hidden?
         bool m_flyMode{false};                     // toggle state: is fly mode active?
+
+        // Toolbar repositioning mode
+        bool m_repositionMode{false};              // are we in drag-to-reposition mode?
+        int  m_dragToolbar{-1};                    // -1=none, 0=builders, 1=AB, 2=MC
+        float m_dragOffsetX{0}, m_dragOffsetY{0};  // cursor-to-position offset at grab start
+        UObject* m_repositionMsgWidget{nullptr};   // centered instruction message
+        // Toolbar positions as viewport coordinates (0.0-1.0); -1 = use default
+        static constexpr int TB_COUNT = 3;
+        float m_toolbarPosX[TB_COUNT]{-1, -1, -1};
+        float m_toolbarPosY[TB_COUNT]{-1, -1, -1};
+        // Cached sizes in viewport pixels (set during creation, used for drag hit-test)
+        float m_toolbarSizeW[TB_COUNT]{0, 0, 0};
+        float m_toolbarSizeH[TB_COUNT]{0, 0, 0};
+        // Alignment pivots — all center-based for intuitive dragging
+        float m_toolbarAlignX[TB_COUNT]{0.5f, 0.5f, 0.5f};
+        float m_toolbarAlignY[TB_COUNT]{0.5f, 0.5f, 0.5f};
+        // Default positions (from 4K tuning): BB=top-center, AB=lower-right, MC=right-mid
+        static constexpr float TB_DEF_X[TB_COUNT]{0.4992f, 0.7505f, 0.8492f};
+        static constexpr float TB_DEF_Y[TB_COUNT]{0.0287f, 0.9111f, 0.6148f};
         // UMG Target Info popup
         UObject* m_targetInfoWidget{nullptr};      // root UUserWidget
         UObject* m_tiTitleLabel{nullptr};           // "Target Info" title
@@ -4806,6 +4827,25 @@ namespace MoriaMods
             file << "Verbose = " << (s_verbose ? "true" : "false") << "\n";
             file << "RotationStep = " << s_overlay.rotationStep.load() << "\n";
 
+            // Only write [Positions] if user has customized at least one toolbar
+            bool hasCustomPos = false;
+            for (int i = 0; i < TB_COUNT; i++)
+                if (m_toolbarPosX[i] >= 0) hasCustomPos = true;
+            if (hasCustomPos)
+            {
+                file << "\n[Positions]\n";
+                file << "; Toolbar positions as viewport fractions (0.0-1.0)\n";
+                file << "; Delete this section to reset to defaults\n";
+                const char* tbNames[TB_COUNT] = {"BuildersBar", "AdvancedBuilder", "ModController"};
+                for (int i = 0; i < TB_COUNT; i++)
+                {
+                    float fx = (m_toolbarPosX[i] >= 0) ? m_toolbarPosX[i] : TB_DEF_X[i];
+                    float fy = (m_toolbarPosY[i] >= 0) ? m_toolbarPosY[i] : TB_DEF_Y[i];
+                    file << tbNames[i] << "X = " << std::fixed << std::setprecision(4) << fx << "\n";
+                    file << tbNames[i] << "Y = " << std::fixed << std::setprecision(4) << fy << "\n";
+                }
+            }
+
             VLOG(STR("[MoriaCppMod] Saved config to MoriaCppMod.ini\n"));
         }
 
@@ -4868,6 +4908,27 @@ namespace MoriaMods
                                 {
                                     int val = std::stoi(kv->value);
                                     if (val >= 0 && val <= 90) s_overlay.rotationStep = val;
+                                }
+                                catch (...) {}
+                            }
+                        }
+                        else if (strEqualCI(section, "Positions"))
+                        {
+                            const char* tbNames[TB_COUNT] = {"BuildersBar", "AdvancedBuilder", "ModController"};
+                            for (int i = 0; i < TB_COUNT; i++)
+                            {
+                                try
+                                {
+                                    if (strEqualCI(kv->key, std::string(tbNames[i]) + "X"))
+                                    {
+                                        float val = std::stof(kv->value);
+                                        if (val >= 0.0f && val <= 1.0f) m_toolbarPosX[i] = val;
+                                    }
+                                    else if (strEqualCI(kv->key, std::string(tbNames[i]) + "Y"))
+                                    {
+                                        float val = std::stof(kv->value);
+                                        if (val >= 0.0f && val <= 1.0f) m_toolbarPosY[i] = val;
+                                    }
                                 }
                                 catch (...) {}
                             }
@@ -6059,8 +6120,9 @@ namespace MoriaMods
             m_isAutoSelecting = false;
 
             showOnScreen((L"Build: " + targetName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
-            m_buildMenuWasOpen = true; // track menu so we refresh ActionBar when it closes
-            refreshActionBar();        // also refresh immediately after recipe selection
+            m_buildMenuWasOpen = true;       // track menu so we refresh ActionBar when it closes
+            m_buildPlacementActive = true;   // player is now holding a ghost piece
+            refreshActionBar();              // also refresh immediately after recipe selection
 
             // Set this slot as Active on the builders bar, all others become Inactive/Empty
             m_activeBuilderSlot = slot;
@@ -6093,6 +6155,20 @@ namespace MoriaMods
                                             m_recipeSlots[slot].displayName,
                                             m_characterLoaded,
                                             m_frameCounter);
+
+            // If player is currently placing a build piece, cancel it first with ESC
+            // Back-to-back F-key presses (e.g. F2 then F3) would otherwise crash the
+            // UMG animation system by opening the build menu during active placement.
+            if (m_buildPlacementActive)
+            {
+                VLOG(STR("[MoriaCppMod] [QuickBuild] Placement active — sending ESC to cancel first\n"));
+                keybd_event(VK_ESCAPE, 0, 0, 0);
+                keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
+                m_buildPlacementActive = false;
+                m_pendingQuickBuildSlot = slot;
+                m_pendingBuildFrames = -20; // wait 20 frames for ESC to process, then open menu
+                return;
+            }
 
             // Always close the build menu first if it's open, then reopen fresh.
             // Reusing a stale menu session causes widget recycling issues.
@@ -6138,6 +6214,18 @@ namespace MoriaMods
             if (!m_lastTargetBuildable || (m_targetBuildName.empty() && m_targetBuildRecipeRef.empty()))
             {
                 showOnScreen(Loc::get("msg.no_buildable_target").c_str(), 3.0f, 1.0f, 0.5f, 0.0f);
+                return;
+            }
+
+            // If player is currently placing a build piece, cancel it first with ESC
+            if (m_buildPlacementActive)
+            {
+                VLOG(STR("[MoriaCppMod] [TargetBuild] Placement active — sending ESC to cancel first\n"));
+                keybd_event(VK_ESCAPE, 0, 0, 0);
+                keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
+                m_buildPlacementActive = false;
+                m_pendingTargetBuild = true;
+                m_pendingTargetBuildFrames = -20; // wait for ESC to process
                 return;
             }
 
@@ -6404,8 +6492,9 @@ namespace MoriaMods
             m_isAutoSelecting = false;
 
             showOnScreen((L"Build: " + matchedName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
-            m_buildMenuWasOpen = true; // track menu so we refresh ActionBar when it closes
-            refreshActionBar();        // also refresh immediately after recipe selection
+            m_buildMenuWasOpen = true;       // track menu so we refresh ActionBar when it closes
+            m_buildPlacementActive = true;   // player is now holding a ghost piece
+            refreshActionBar();              // also refresh immediately after recipe selection
         }
 
         // ── 6I: UMG Widget System ────────────────────────────────────────────
@@ -6508,6 +6597,21 @@ namespace MoriaMods
             std::vector<uint8_t> buf(sz, 0);
             auto* v = reinterpret_cast<float*>(buf.data() + p->GetOffset_Internal());
             v[0] = sx; v[1] = sy;
+            widget->ProcessEvent(fn, buf.data());
+        }
+
+        // Helper: set position of a UUserWidget via SetPositionInViewport(FVector2D)
+        void setWidgetPosition(UObject* widget, float x, float y)
+        {
+            if (!widget) return;
+            auto* fn = widget->GetFunctionByNameInChain(STR("SetPositionInViewport"));
+            if (!fn) return;
+            auto* p = findParam(fn, STR("Position"));
+            if (!p) return;
+            int sz = fn->GetParmsSize();
+            std::vector<uint8_t> buf(sz, 0);
+            auto* v = reinterpret_cast<float*>(buf.data() + p->GetOffset_Internal());
+            v[0] = x; v[1] = y;
             widget->ProcessEvent(fn, buf.data());
         }
 
@@ -7230,9 +7334,26 @@ namespace MoriaMods
             }
 
             // --- Phase D: Size frame from icon dimensions and center on screen ---
-            // SetRenderScale: horizontal 0.825, vertical 0.75
-            float umgScaleX = 0.825f;
-            float umgScaleY = 0.75f;
+            // Get viewport size early for uiScale computation
+            int32_t viewW = 1920, viewH = 1080; // fallback
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            VLOG(STR("[MoriaCppMod] [UMG] Viewport: {}x{}\n"), viewW, viewH);
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+
+            // SetRenderScale: horizontal 0.825, vertical 0.75 — scaled by uiScale
+            float umgScaleX = 0.825f * uiScale;
+            float umgScaleY = 0.75f * uiScale;
             umgSetRenderScale(outerBorder, umgScaleX, umgScaleY);
 
             // Use the larger of frame/state width for column width
@@ -7275,22 +7396,6 @@ namespace MoriaMods
                 userWidget->ProcessEvent(addToViewportFn, vp.data());
             }
 
-            // Get viewport size for absolute positioning
-            int32_t viewW = 1920, viewH = 1080; // fallback
-            auto* pcVp = findPlayerController();
-            if (pcVp)
-            {
-                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
-                if (vpFunc)
-                {
-                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
-                    pcVp->ProcessEvent(vpFunc, &vpParams);
-                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
-                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
-                }
-            }
-            VLOG(STR("[MoriaCppMod] [UMG] Viewport: {}x{}\n"), viewW, viewH);
-
             // Alignment: center-center pivot (widget center placed at position)
             auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
             if (setAlignFn)
@@ -7306,22 +7411,17 @@ namespace MoriaMods
                 }
             }
 
-            // Position: center of widget at (screenW/2, 25) — absolute coordinates
-            auto* setPosFn = userWidget->GetFunctionByNameInChain(STR("SetPositionInViewport"));
-            if (setPosFn)
+            // Position: fraction-based (user-customizable, resolution-independent)
             {
-                auto* pPos = findParam(setPosFn, STR("Position"));
-                if (pPos)
-                {
-                    int sz = setPosFn->GetParmsSize();
-                    std::vector<uint8_t> pb(sz, 0);
-                    auto* v2 = reinterpret_cast<float*>(pb.data() + pPos->GetOffset_Internal());
-                    v2[0] = static_cast<float>(viewW) / 2.0f;  // X: screen center
-                    v2[1] = 100.0f;                              // Y: 100px from top
-                    userWidget->ProcessEvent(setPosFn, pb.data());
-                }
+                float fracX = (m_toolbarPosX[0] >= 0) ? m_toolbarPosX[0] : TB_DEF_X[0];
+                float fracY = (m_toolbarPosY[0] >= 0) ? m_toolbarPosY[0] : TB_DEF_Y[0];
+                setWidgetPosition(userWidget, fracX * static_cast<float>(viewW),
+                                              fracY * static_cast<float>(viewH));
             }
 
+            // Cache size and alignment for repositioning hit-test
+            m_toolbarSizeW[0] = totalW;
+            m_toolbarSizeH[0] = totalH;
             m_umgBarWidget = userWidget;
             showOnScreen(Loc::get("msg.builders_bar_created").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [UMG] === Builders bar creation complete ===\n"));
@@ -7708,7 +7808,24 @@ namespace MoriaMods
             }
 
             // --- Phase D: Size and position (lower-right, 25px from edges) ---
-            umgSetRenderScale(outerBorder, 0.81f, 0.81f);
+            // Get viewport size for uiScale
+            int32_t viewW = 1920, viewH = 1080;
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+
+            float abScale = 0.81f * uiScale;
+            umgSetRenderScale(outerBorder, abScale, abScale);
 
             float iconW = (frameW > stateW) ? frameW : stateW;
             if (iconW < 1.0f) iconW = 64.0f;
@@ -7716,7 +7833,6 @@ namespace MoriaMods
             if (stateH < 1.0f) stateH = 64.0f;
 
             float vOverlap = stateH * 0.15f;
-            float abScale = 0.81f;
             float abTotalW = iconW * abScale;
             float abTotalH = (frameH + stateH - vOverlap) * abScale;
 
@@ -7745,22 +7861,7 @@ namespace MoriaMods
                 userWidget->ProcessEvent(addToViewportFn, vp.data());
             }
 
-            // Get viewport size
-            int32_t viewW = 1920, viewH = 1080;
-            auto* pcVp = findPlayerController();
-            if (pcVp)
-            {
-                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
-                if (vpFunc)
-                {
-                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
-                    pcVp->ProcessEvent(vpFunc, &vpParams);
-                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
-                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
-                }
-            }
-
-            // Alignment: bottom-right pivot
+            // Alignment: center pivot (0.5, 0.5) — consistent for drag repositioning
             auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
             if (setAlignFn)
             {
@@ -7770,27 +7871,22 @@ namespace MoriaMods
                     int sz = setAlignFn->GetParmsSize();
                     std::vector<uint8_t> al(sz, 0);
                     auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
-                    v[0] = 1.0f; v[1] = 1.0f;
+                    v[0] = 0.5f; v[1] = 0.5f;
                     userWidget->ProcessEvent(setAlignFn, al.data());
                 }
             }
 
-            // Position: 25px from lower-right corner
-            auto* setPosFn = userWidget->GetFunctionByNameInChain(STR("SetPositionInViewport"));
-            if (setPosFn)
+            // Position: fraction-based (user-customizable, resolution-independent)
             {
-                auto* pPos = findParam(setPosFn, STR("Position"));
-                if (pPos)
-                {
-                    int sz = setPosFn->GetParmsSize();
-                    std::vector<uint8_t> pb(sz, 0);
-                    auto* v2 = reinterpret_cast<float*>(pb.data() + pPos->GetOffset_Internal());
-                    v2[0] = static_cast<float>(viewW) - 770.0f;   // 770px from right edge
-                    v2[1] = static_cast<float>(viewH) - 65.0f;   // 65px from bottom edge
-                    userWidget->ProcessEvent(setPosFn, pb.data());
-                }
+                float fracX = (m_toolbarPosX[1] >= 0) ? m_toolbarPosX[1] : TB_DEF_X[1];
+                float fracY = (m_toolbarPosY[1] >= 0) ? m_toolbarPosY[1] : TB_DEF_Y[1];
+                setWidgetPosition(userWidget, fracX * static_cast<float>(viewW),
+                                              fracY * static_cast<float>(viewH));
             }
 
+            // Cache size for repositioning hit-test
+            m_toolbarSizeW[1] = abTotalW;
+            m_toolbarSizeH[1] = abTotalH;
             m_abBarWidget = userWidget;
             showOnScreen(L"Advanced Builder toolbar created!", 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [AB] === Advanced Builder toolbar created ({}x{}) ===\n"),
@@ -7983,22 +8079,7 @@ namespace MoriaMods
                 userWidget->ProcessEvent(addToViewportFn, vp.data());
             }
 
-            // Set desired size
-            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
-            if (setDesiredSizeFn)
-            {
-                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
-                if (pSize)
-                {
-                    int sz = setDesiredSizeFn->GetParmsSize();
-                    std::vector<uint8_t> sb(sz, 0);
-                    auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
-                    v[0] = 1100.0f; v[1] = 320.0f;
-                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
-                }
-            }
-
-            // Get viewport size
+            // Get viewport size for uiScale
             int32_t viewW = 1920, viewH = 1080;
             auto* pcVp = findPlayerController();
             if (pcVp)
@@ -8010,6 +8091,25 @@ namespace MoriaMods
                     pcVp->ProcessEvent(vpFunc, &vpParams);
                     if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
                     if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+
+            // Apply render scale for resolution independence
+            if (rootSizeBox) umgSetRenderScale(rootSizeBox, uiScale, uiScale);
+
+            // Set desired size (scaled)
+            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
+            if (setDesiredSizeFn)
+            {
+                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
+                if (pSize)
+                {
+                    int sz = setDesiredSizeFn->GetParmsSize();
+                    std::vector<uint8_t> sb(sz, 0);
+                    auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
+                    v[0] = 1100.0f * uiScale; v[1] = 320.0f * uiScale;
+                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
                 }
             }
 
@@ -8028,20 +8128,11 @@ namespace MoriaMods
                 }
             }
 
-            // Position: right side, 50px above vertical center
-            auto* setPosFn = userWidget->GetFunctionByNameInChain(STR("SetPositionInViewport"));
-            if (setPosFn)
+            // Position: right side, scaled offsets
             {
-                auto* pPos = findParam(setPosFn, STR("Position"));
-                if (pPos)
-                {
-                    int sz = setPosFn->GetParmsSize();
-                    std::vector<uint8_t> pb(sz, 0);
-                    auto* v2 = reinterpret_cast<float*>(pb.data() + pPos->GetOffset_Internal());
-                    v2[0] = static_cast<float>(viewW) - 575.0f;   // right side
-                    v2[1] = static_cast<float>(viewH) / 2.0f - 250.0f; // 100px further up
-                    userWidget->ProcessEvent(setPosFn, pb.data());
-                }
+                float posX = static_cast<float>(viewW) - 575.0f * uiScale;
+                float posY = static_cast<float>(viewH) / 2.0f - 250.0f * uiScale;
+                setWidgetPosition(userWidget, posX, posY);
             }
 
             // Start hidden
@@ -8240,20 +8331,7 @@ namespace MoriaMods
                 userWidget->ProcessEvent(addToViewportFn, vp.data());
             }
 
-            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
-            if (setDesiredSizeFn)
-            {
-                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
-                if (pSize)
-                {
-                    int sz = setDesiredSizeFn->GetParmsSize();
-                    std::vector<uint8_t> sb(sz, 0);
-                    auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
-                    v[0] = 400.0f; v[1] = 80.0f;
-                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
-                }
-            }
-
+            // Get viewport size for uiScale
             int32_t viewW = 1920, viewH = 1080;
             auto* pcVp = findPlayerController();
             if (pcVp)
@@ -8265,6 +8343,24 @@ namespace MoriaMods
                     pcVp->ProcessEvent(vpFunc, &vpParams);
                     if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
                     if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+
+            // Apply render scale for resolution independence
+            if (vbox) umgSetRenderScale(vbox, uiScale, uiScale);
+
+            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
+            if (setDesiredSizeFn)
+            {
+                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
+                if (pSize)
+                {
+                    int sz = setDesiredSizeFn->GetParmsSize();
+                    std::vector<uint8_t> sb(sz, 0);
+                    auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
+                    v[0] = 400.0f * uiScale; v[1] = 80.0f * uiScale;
+                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
                 }
             }
 
@@ -8282,19 +8378,11 @@ namespace MoriaMods
                 }
             }
 
-            auto* setPosFn = userWidget->GetFunctionByNameInChain(STR("SetPositionInViewport"));
-            if (setPosFn)
+            // Position: right side, scaled offsets
             {
-                auto* pPos = findParam(setPosFn, STR("Position"));
-                if (pPos)
-                {
-                    int sz = setPosFn->GetParmsSize();
-                    std::vector<uint8_t> pb(sz, 0);
-                    auto* v2 = reinterpret_cast<float*>(pb.data() + pPos->GetOffset_Internal());
-                    v2[0] = static_cast<float>(viewW) - 25.0f;
-                    v2[1] = static_cast<float>(viewH) / 2.0f + 100.0f; // below Target Info
-                    userWidget->ProcessEvent(setPosFn, pb.data());
-                }
+                float posX = static_cast<float>(viewW) - 25.0f * uiScale;
+                float posY = static_cast<float>(viewH) / 2.0f + 100.0f * uiScale;
+                setWidgetPosition(userWidget, posX, posY);
             }
 
             // Start hidden
@@ -9364,20 +9452,7 @@ namespace MoriaMods
                 userWidget->ProcessEvent(addToViewportFn, vp.data());
             }
 
-            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
-            if (setDesiredSizeFn)
-            {
-                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
-                if (pSize)
-                {
-                    int sz = setDesiredSizeFn->GetParmsSize();
-                    std::vector<uint8_t> sb(sz, 0);
-                    auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
-                    v[0] = 1400.0f; v[1] = 900.0f;
-                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
-                }
-            }
-
+            // Get viewport size for uiScale
             int32_t viewW = 1920, viewH = 1080;
             auto* pcVp = findPlayerController();
             if (pcVp)
@@ -9389,6 +9464,24 @@ namespace MoriaMods
                     pcVp->ProcessEvent(vpFunc, &vpParams);
                     if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
                     if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+
+            // Apply render scale for resolution independence (scales entire widget tree)
+            if (rootSizeBox) umgSetRenderScale(rootSizeBox, uiScale, uiScale);
+
+            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
+            if (setDesiredSizeFn)
+            {
+                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
+                if (pSize)
+                {
+                    int sz = setDesiredSizeFn->GetParmsSize();
+                    std::vector<uint8_t> sb(sz, 0);
+                    auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
+                    v[0] = 1400.0f * uiScale; v[1] = 900.0f * uiScale;
+                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
                 }
             }
 
@@ -9406,19 +9499,11 @@ namespace MoriaMods
                 }
             }
 
-            auto* setPosFn = userWidget->GetFunctionByNameInChain(STR("SetPositionInViewport"));
-            if (setPosFn)
+            // Position: centered, scaled Y offset
             {
-                auto* pPos = findParam(setPosFn, STR("Position"));
-                if (pPos)
-                {
-                    int sz = setPosFn->GetParmsSize();
-                    std::vector<uint8_t> pb(sz, 0);
-                    auto* v2 = reinterpret_cast<float*>(pb.data() + pPos->GetOffset_Internal());
-                    v2[0] = static_cast<float>(viewW) / 2.0f;
-                    v2[1] = static_cast<float>(viewH) / 2.0f - 100.0f;
-                    userWidget->ProcessEvent(setPosFn, pb.data());
-                }
+                float posX = static_cast<float>(viewW) / 2.0f;
+                float posY = static_cast<float>(viewH) / 2.0f - 100.0f * uiScale;
+                setWidgetPosition(userWidget, posX, posY);
             }
 
             // Start hidden
@@ -10065,8 +10150,25 @@ namespace MoriaMods
             }
 
             // --- Size and position: lower-right of screen ---
-            // SetRenderScale 0.81, 0.81 (shrunk 10% from 0.9)
-            umgSetRenderScale(outerBorder, 0.81f, 0.81f);
+            // Get viewport size for uiScale
+            int32_t viewW = 1920, viewH = 1080;
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+
+            // SetRenderScale 0.81 * uiScale
+            float mcScale = 0.81f * uiScale;
+            umgSetRenderScale(outerBorder, mcScale, mcScale);
 
             float mcIconW = (frameW > stateW) ? frameW : stateW;
             if (mcIconW < 1.0f) mcIconW = 64.0f;
@@ -10075,7 +10177,6 @@ namespace MoriaMods
 
             float mcVOverlap = stateH * 0.25f;                     // 25% vertical overlap (matches slot padding)
             float mcHOverlapPerSlot = mcIconW * 0.20f;             // 20% horizontal overlap (10% each side, reduced from 40%)
-            float mcScale = 0.81f;                                  // match render scale for viewport size
             float mcTotalW = (4.0f * mcIconW - 3.0f * mcHOverlapPerSlot) * mcScale * 1.2f;  // 4 cols, 3 gaps, +20% wider for spacing
             float mcSlotH = (frameH + stateH - mcVOverlap);
             float mcTotalH = (2.0f * mcSlotH) * mcScale;           // 2 rows
@@ -10105,22 +10206,7 @@ namespace MoriaMods
                 userWidget->ProcessEvent(addToViewportFn, vp.data());
             }
 
-            // Get viewport size for positioning
-            int32_t viewW = 1920, viewH = 1080;
-            auto* pcVp = findPlayerController();
-            if (pcVp)
-            {
-                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
-                if (vpFunc)
-                {
-                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
-                    pcVp->ProcessEvent(vpFunc, &vpParams);
-                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
-                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
-                }
-            }
-
-            // Alignment: bottom-right pivot (1.0, 1.0) so position is from bottom-right corner
+            // Alignment: center pivot (0.5, 0.5) — consistent for drag repositioning
             auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
             if (setAlignFn)
             {
@@ -10130,27 +10216,22 @@ namespace MoriaMods
                     int sz = setAlignFn->GetParmsSize();
                     std::vector<uint8_t> al(sz, 0);
                     auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
-                    v[0] = 1.0f; v[1] = 1.0f; // bottom-right pivot
+                    v[0] = 0.5f; v[1] = 0.5f;
                     userWidget->ProcessEvent(setAlignFn, al.data());
                 }
             }
 
-            // Position: lower-right with 20px margin from edges
-            auto* setPosFn = userWidget->GetFunctionByNameInChain(STR("SetPositionInViewport"));
-            if (setPosFn)
+            // Position: fraction-based (user-customizable, resolution-independent)
             {
-                auto* pPos = findParam(setPosFn, STR("Position"));
-                if (pPos)
-                {
-                    int sz = setPosFn->GetParmsSize();
-                    std::vector<uint8_t> pb(sz, 0);
-                    auto* v2 = reinterpret_cast<float*>(pb.data() + pPos->GetOffset_Internal());
-                    v2[0] = static_cast<float>(viewW) - 135.0f;  // 50px left from previous
-                    v2[1] = static_cast<float>(viewH) - 595.0f; // 5px up from previous
-                    userWidget->ProcessEvent(setPosFn, pb.data());
-                }
+                float fracX = (m_toolbarPosX[2] >= 0) ? m_toolbarPosX[2] : TB_DEF_X[2];
+                float fracY = (m_toolbarPosY[2] >= 0) ? m_toolbarPosY[2] : TB_DEF_Y[2];
+                setWidgetPosition(userWidget, fracX * static_cast<float>(viewW),
+                                              fracY * static_cast<float>(viewH));
             }
 
+            // Cache size for repositioning hit-test
+            m_toolbarSizeW[2] = mcTotalW;
+            m_toolbarSizeH[2] = mcTotalH;
             m_mcBarWidget = userWidget;
             showOnScreen(Loc::get("msg.mod_controller_created").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [MC] === Mod Controller bar creation complete ({}x{}) ===\n"),
@@ -10271,12 +10352,14 @@ namespace MoriaMods
         }
 
 
-        // ── Input Mode Helpers (for modal Config Menu) ──────────────────────────
+        // ── Input Mode Helpers (for modal UI: Config Menu, Reposition Mode) ─────
         // Switch to UI-only input so the mouse cursor appears and game input is blocked.
-        void setInputModeUI()
+        void setInputModeUI(UObject* focusWidget = nullptr)
         {
             auto* pc = findPlayerController();
-            if (!pc || !m_configWidget) return;
+            if (!pc) return;
+            if (!focusWidget) focusWidget = m_configWidget;
+            if (!focusWidget) return;
 
             // Find SetInputMode_UIOnlyEx on WidgetBlueprintLibrary CDO
             auto* uiFunc = UObjectGlobals::StaticFindObject<UFunction*>(
@@ -10291,8 +10374,7 @@ namespace MoriaMods
             // Params: PlayerController@0, InWidgetToFocus@8, InMouseLockMode@16 (byte)
             uint8_t params[24]{};
             std::memcpy(params + 0, &pc, 8);
-            UObject* widget = m_configWidget;
-            std::memcpy(params + 8, &widget, 8);
+            std::memcpy(params + 8, &focusWidget, 8);
             params[16] = 0; // EMouseLockMode::DoNotLock
             wblCDO->ProcessEvent(uiFunc, params);
 
@@ -10351,6 +10433,158 @@ namespace MoriaMods
             VLOG(STR("[MoriaCppMod] Config {} (UMG)\n"), m_cfgVisible ? STR("shown") : STR("hidden"));
         }
 
+
+        // ── Toolbar Repositioning Mode ──────────────────────────────────────────
+        void createRepositionMessage()
+        {
+            if (m_repositionMsgWidget) return;
+            // Use showOnScreen for simplicity — centered UMG message
+            // Create a simple UUserWidget with a TextBlock
+            auto* uwClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
+            if (!uwClass) return;
+            auto* pc = findPlayerController();
+            if (!pc) return;
+
+            // CreateWidget<UUserWidget>
+            auto* createFn = uwClass->GetFunctionByNameInChain(STR("CreateWidgetOfClass"));
+            if (!createFn) return;
+            FStaticConstructObjectParameters uwP(uwClass, reinterpret_cast<UObject*>(pc));
+            auto* userWidget = UObjectGlobals::StaticConstructObject(uwP);
+            if (!userWidget) return;
+
+            // Create WidgetTree
+            auto* wtClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetTree"));
+            if (wtClass)
+            {
+                FStaticConstructObjectParameters wtP(wtClass, userWidget);
+                auto* widgetTree = UObjectGlobals::StaticConstructObject(wtP);
+                if (widgetTree)
+                {
+                    *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + 0x0058) = widgetTree;
+
+                    // Create a TextBlock as root
+                    auto* tbClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+                    if (tbClass)
+                    {
+                        FStaticConstructObjectParameters tbP(tbClass, widgetTree);
+                        auto* textBlock = UObjectGlobals::StaticConstructObject(tbP);
+                        if (textBlock)
+                        {
+                            *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + 0x0028) = textBlock;
+                            umgSetText(textBlock, L"Using the mouse move the toolbar(s) into your desired positions, hit ESC to exit.");
+                            // Yellow text for visibility
+                            umgSetTextColor(textBlock, 1.0f, 0.95f, 0.2f, 1.0f);
+                        }
+                    }
+                }
+            }
+
+            // Add to viewport at high Z-order
+            auto* addFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
+            if (addFn)
+            {
+                auto* pZ = findParam(addFn, STR("ZOrder"));
+                int sz = addFn->GetParmsSize();
+                std::vector<uint8_t> vp(sz, 0);
+                if (pZ) *reinterpret_cast<int32_t*>(vp.data() + pZ->GetOffset_Internal()) = 250;
+                userWidget->ProcessEvent(addFn, vp.data());
+            }
+
+            // Get viewport and position centered
+            int32_t viewW = 1920, viewH = 1080;
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+
+            // Set desired size and alignment
+            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
+            if (setDesiredSizeFn)
+            {
+                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
+                if (pSize)
+                {
+                    int sz = setDesiredSizeFn->GetParmsSize();
+                    std::vector<uint8_t> sb(sz, 0);
+                    auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
+                    v[0] = 1200.0f * uiScale; v[1] = 60.0f * uiScale;
+                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
+                }
+            }
+            auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
+            if (setAlignFn)
+            {
+                auto* pAlign = findParam(setAlignFn, STR("Alignment"));
+                if (pAlign)
+                {
+                    int sz = setAlignFn->GetParmsSize();
+                    std::vector<uint8_t> al(sz, 0);
+                    auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
+                    v[0] = 0.5f; v[1] = 0.5f;
+                    userWidget->ProcessEvent(setAlignFn, al.data());
+                }
+            }
+            setWidgetPosition(userWidget, static_cast<float>(viewW) / 2.0f, static_cast<float>(viewH) / 2.0f);
+
+            m_repositionMsgWidget = userWidget;
+        }
+
+        void destroyRepositionMessage()
+        {
+            if (!m_repositionMsgWidget) return;
+            auto* removeFn = m_repositionMsgWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
+            if (removeFn) m_repositionMsgWidget->ProcessEvent(removeFn, nullptr);
+            m_repositionMsgWidget = nullptr;
+        }
+
+        void toggleRepositionMode()
+        {
+            // Guard: need at least one toolbar created before entering reposition mode
+            if (!m_repositionMode && !m_umgBarWidget && !m_abBarWidget && !m_mcBarWidget)
+                return;
+
+            m_repositionMode = !m_repositionMode;
+            m_dragToolbar = -1;
+
+            if (m_repositionMode)
+            {
+                // Ensure toolbars are visible
+                if (!m_toolbarsVisible)
+                {
+                    m_toolbarsVisible = true;
+                    auto setWidgetVis = [](UObject* widget) {
+                        if (!widget) return;
+                        auto* fn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
+                        if (fn) { uint8_t parms[8]{}; parms[0] = 0; widget->ProcessEvent(fn, parms); }
+                    };
+                    setWidgetVis(m_umgBarWidget);
+                    setWidgetVis(m_mcBarWidget);
+                }
+                createRepositionMessage();
+                // Use the message widget for focus, or fall back to any toolbar
+                UObject* focusW = m_repositionMsgWidget ? m_repositionMsgWidget
+                                : m_umgBarWidget ? m_umgBarWidget
+                                : m_abBarWidget;
+                setInputModeUI(focusW);
+                VLOG(STR("[MoriaCppMod] Entered toolbar repositioning mode\n"));
+            }
+            else
+            {
+                setInputModeGame();
+                destroyRepositionMessage();
+                saveConfig();
+                VLOG(STR("[MoriaCppMod] Exited toolbar repositioning mode, positions saved\n"));
+            }
+        }
 
         void showTargetInfo(const std::wstring& name,
                             const std::wstring& display,
@@ -10828,7 +11062,7 @@ namespace MoriaMods
                         uint8_t alt = numpadShiftAlternate(vk);
                         if (alt) nowDown = (GetAsyncKeyState(alt) & 0x8000) != 0;
                     }
-                    if (nowDown && !s_lastMcKey[i] && !m_cfgVisible)
+                    if (nowDown && !s_lastMcKey[i] && !m_cfgVisible && !m_repositionMode)
                     {
                         VLOG(
                             STR("[MoriaCppMod] [MC] Slot {} pressed (VK=0x{:02X})\n"), i, vk);
@@ -10889,7 +11123,76 @@ namespace MoriaMods
                 }
             }
 
+            // Repositioning mode — handle ESC exit + mouse drag (runs every frame)
+            if (m_repositionMode)
+            {
+                // ESC to exit repositioning mode
+                static bool s_lastReposEsc = false;
+                bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+                if (escDown && !s_lastReposEsc)
+                    toggleRepositionMode();
+                s_lastReposEsc = escDown;
+
+                // Mouse drag logic
+                bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+                HWND gw = findGameWindow();
+                if (gw)
+                {
+                    POINT cursor;
+                    GetCursorPos(&cursor);
+                    ScreenToClient(gw, &cursor);
+                    RECT cr;
+                    GetClientRect(gw, &cr);
+                    float vw = static_cast<float>(cr.right);
+                    float vh = static_cast<float>(cr.bottom);
+
+                    if (lmb && m_dragToolbar < 0)
+                    {
+                        // Start drag: check which toolbar was clicked
+                        UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget};
+                        for (int i = 0; i < TB_COUNT; i++)
+                        {
+                            if (!widgets[i]) continue;
+                            float fx = (m_toolbarPosX[i] >= 0) ? m_toolbarPosX[i] : TB_DEF_X[i];
+                            float fy = (m_toolbarPosY[i] >= 0) ? m_toolbarPosY[i] : TB_DEF_Y[i];
+                            float posX = fx * vw;
+                            float posY = fy * vh;
+                            float w = m_toolbarSizeW[i], h = m_toolbarSizeH[i];
+                            float left = posX - w * m_toolbarAlignX[i];
+                            float top = posY - h * m_toolbarAlignY[i];
+                            if (cursor.x >= left && cursor.x <= left + w &&
+                                cursor.y >= top && cursor.y <= top + h)
+                            {
+                                m_dragToolbar = i;
+                                m_dragOffsetX = cursor.x - posX;
+                                m_dragOffsetY = cursor.y - posY;
+                                break;
+                            }
+                        }
+                    }
+                    else if (lmb && m_dragToolbar >= 0)
+                    {
+                        // Continue drag: update position in real-time
+                        float newX = cursor.x - m_dragOffsetX;
+                        float newY = cursor.y - m_dragOffsetY;
+                        // Clamp to viewport bounds
+                        float fx = std::clamp(newX / vw, 0.01f, 0.99f);
+                        float fy = std::clamp(newY / vh, 0.01f, 0.99f);
+                        m_toolbarPosX[m_dragToolbar] = fx;
+                        m_toolbarPosY[m_dragToolbar] = fy;
+                        UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget};
+                        setWidgetPosition(widgets[m_dragToolbar], fx * vw, fy * vh);
+                    }
+                    else if (!lmb && m_dragToolbar >= 0)
+                    {
+                        // Release: end drag
+                        m_dragToolbar = -1;
+                    }
+                }
+            }
+
             // AB toolbar keybind polling — toggle builders bar + MC bar visibility
+            // MODIFIER + AB_OPEN = toggle repositioning mode; AB_OPEN alone = toggle visibility
             // Always track key state; only skip action when config is visible
             {
                 static bool s_lastAbKey = false;
@@ -10899,25 +11202,34 @@ namespace MoriaMods
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
                     if (nowDown && !s_lastAbKey && !m_cfgVisible)
                     {
-                        m_toolbarsVisible = !m_toolbarsVisible;
-                        VLOG(STR("[MoriaCppMod] [AB] Toggle pressed — toolbars {}\n"),
-                                                        m_toolbarsVisible ? STR("VISIBLE") : STR("HIDDEN"));
+                        if (isModifierDown())
+                        {
+                            // MODIFIER + AB_OPEN → toggle repositioning mode
+                            toggleRepositionMode();
+                        }
+                        else if (!m_repositionMode)
+                        {
+                            // AB_OPEN alone → toggle toolbar visibility (existing behavior)
+                            m_toolbarsVisible = !m_toolbarsVisible;
+                            VLOG(STR("[MoriaCppMod] [AB] Toggle pressed — toolbars {}\n"),
+                                                            m_toolbarsVisible ? STR("VISIBLE") : STR("HIDDEN"));
 
-                        // Toggle visibility on both toolbars via SetVisibility
-                        // ESlateVisibility: 0=Visible, 1=Collapsed
-                        uint8_t vis = m_toolbarsVisible ? 0 : 1;
-                        auto setWidgetVis = [vis](UObject* widget) {
-                            if (!widget) return;
-                            auto* fn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
-                            if (fn)
-                            {
-                                uint8_t parms[8]{};
-                                parms[0] = vis;
-                                widget->ProcessEvent(fn, parms);
-                            }
-                        };
-                        setWidgetVis(m_umgBarWidget);
-                        setWidgetVis(m_mcBarWidget);
+                            // Toggle visibility on both toolbars via SetVisibility
+                            // ESlateVisibility: 0=Visible, 1=Collapsed
+                            uint8_t vis = m_toolbarsVisible ? 0 : 1;
+                            auto setWidgetVis = [vis](UObject* widget) {
+                                if (!widget) return;
+                                auto* fn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
+                                if (fn)
+                                {
+                                    uint8_t parms[8]{};
+                                    parms[0] = vis;
+                                    widget->ProcessEvent(fn, parms);
+                                }
+                            };
+                            setWidgetVis(m_umgBarWidget);
+                            setWidgetVis(m_mcBarWidget);
+                        }
                     }
                     s_lastAbKey = nowDown; // always update — prevents stale edge after config closes
                 }
@@ -10951,37 +11263,38 @@ namespace MoriaMods
                         RECT cr;
                         GetClientRect(gw, &cr);
                         int viewW = cr.right; int viewH = cr.bottom;
-                        // Config widget: pos (viewW/2, viewH/2 - 100), size 1400x900, alignment (0.5,0.5)
-                        int wLeft = viewW / 2 - 700;
-                        int wTop  = viewH / 2 - 100 - 450;
-                        // Tab bar: ~98px from top (padding 28 + title 44 + sep 26), each tab 420x66, 40px left padding
-                        int tabY0 = wTop + 98, tabY1 = tabY0 + 66;
+                        float uis = static_cast<float>(viewH) / 2160.0f; // uiScale for hit-test
+                        // Config widget: pos (viewW/2, viewH/2 - 100*uis), size 1400*uis x 900*uis, alignment (0.5,0.5)
+                        int wLeft = static_cast<int>(viewW / 2 - 700 * uis);
+                        int wTop  = static_cast<int>(viewH / 2 - 100 * uis - 450 * uis);
+                        // Tab bar: ~98px from top, each tab 420x66, 40px left padding (all scaled)
+                        int tabY0 = static_cast<int>(wTop + 98 * uis), tabY1 = static_cast<int>(tabY0 + 66 * uis);
                         if (cursor.y >= tabY0 && cursor.y <= tabY1)
                         {
-                            int tabX0 = wLeft + 40;
+                            int tabX0 = static_cast<int>(wLeft + 40 * uis);
+                            int tabW = static_cast<int>(420 * uis);
                             for (int t = 0; t < 3; t++)
                             {
-                                if (cursor.x >= tabX0 + t * 420 && cursor.x < tabX0 + (t + 1) * 420)
+                                if (cursor.x >= tabX0 + t * tabW && cursor.x < tabX0 + (t + 1) * tabW)
                                 {
                                     switchConfigTab(t);
                                     break;
                                 }
                             }
                         }
-                        // Tab 0: Free Build checkbox click — entire row (checkbox + "Free Build" + "(ON)" text)
-                        // Content starts at ~190px (pad28+title44+sep26+tabs66+sep26), then secHdr ~40px
+                        // Tab 0: Free Build checkbox click — entire row
                         if (m_cfgActiveTab == 0)
                         {
-                            int cbY0 = wTop + 230, cbY1 = cbY0 + 52;
-                            int cbX0 = wLeft + 40, cbX1 = wLeft + 1400 - 40; // full width of content area
+                            int cbY0 = static_cast<int>(wTop + 230 * uis), cbY1 = static_cast<int>(cbY0 + 52 * uis);
+                            int cbX0 = static_cast<int>(wLeft + 40 * uis), cbX1 = static_cast<int>(wLeft + (1400 - 40) * uis);
                             if (cursor.x >= cbX0 && cursor.x <= cbX1 && cursor.y >= cbY0 && cursor.y <= cbY1)
                             {
                                 s_config.pendingToggleFreeBuild = true;
                                 VLOG(STR("[MoriaCppMod] [CFG] Free Build toggle via mouse click\n"));
                             }
                             // Unlock All Recipes button: centered, 420px wide, ~340px from top
-                            int ubY0 = wTop + 330, ubY1 = ubY0 + 68;
-                            int ubX0 = wLeft + (1400 - 420) / 2, ubX1 = ubX0 + 420;
+                            int ubY0 = static_cast<int>(wTop + 330 * uis), ubY1 = static_cast<int>(ubY0 + 68 * uis);
+                            int ubX0 = static_cast<int>(wLeft + (1400 - 420) / 2 * uis), ubX1 = static_cast<int>(ubX0 + 420 * uis);
                             if (cursor.x >= ubX0 && cursor.x <= ubX1 && cursor.y >= ubY0 && cursor.y <= ubY1)
                             {
                                 s_config.pendingUnlockAllRecipes = true;
@@ -10992,14 +11305,12 @@ namespace MoriaMods
                         if (m_cfgActiveTab == 1)
                         {
                             // Key boxes are right-aligned, ~220px wide, in the right portion of the widget
-                            // Wider click zone to account for scrollbar and layout variance
-                            int kbX0 = wLeft + 1400 - 40 - 280; // generous hit zone
-                            int kbX1 = wLeft + 1400 - 10;
+                            int kbX0 = static_cast<int>(wLeft + (1400 - 40 - 280) * uis);
+                            int kbX1 = static_cast<int>(wLeft + (1400 - 10) * uis);
                             // First key row starts after tabs+seps (~190px from top)
-                            // Section headers take ~48px, key rows ~44px
-                            int contentY = wTop + 190; // start of first section header
-                            int rowHeight = 44;
-                            int sectionHeight = 48;
+                            int contentY = static_cast<int>(wTop + 190 * uis);
+                            int rowHeight = static_cast<int>(44 * uis);
+                            int sectionHeight = static_cast<int>(48 * uis);
                             // Get ScrollBox scroll offset to account for scrolled content
                             float scrollOff = 0.0f;
                             if (m_cfgScrollBoxes[1])
@@ -11064,9 +11375,9 @@ namespace MoriaMods
                         if (m_cfgActiveTab == 2)
                         {
                             // Danger icons are in the left 60px of the content area
-                            int iconX0 = wLeft + 40, iconX1 = iconX0 + 70;
-                            int entryStart = wTop + 230; // after header
-                            int entryHeight = 70; // each entry row height (icon 56px + padding)
+                            int iconX0 = static_cast<int>(wLeft + 40 * uis), iconX1 = static_cast<int>(iconX0 + 70 * uis);
+                            int entryStart = static_cast<int>(wTop + 230 * uis);
+                            int entryHeight = static_cast<int>(70 * uis);
                             if (cursor.x >= iconX0 && cursor.x <= iconX1 && cursor.y >= entryStart)
                             {
                                 int entryIdx = (cursor.y - entryStart) / entryHeight;
@@ -11319,6 +11630,10 @@ namespace MoriaMods
                 }
             }
 
+            // Clear build-placement flag when user presses ESC manually (exits placement mode)
+            if (m_buildPlacementActive && (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0)
+                m_buildPlacementActive = false;
+
             // Handle pending quick-build: state machine with B-key retry
             // Phase 1 (frames < 0): waiting for menu to close after B key toggle
             // Phase 2 (frame 0): send B key to open menu
@@ -11432,8 +11747,9 @@ namespace MoriaMods
                 {
                     VLOG(STR("[MoriaCppMod] Character lost — world unloading, resetting replay state\n"));
                     m_characterLoaded = false;
-                    m_characterHidden = false; // reset hide toggle for new world
-                    m_flyMode = false;         // reset fly toggle for new world
+                    m_characterHidden = false;       // reset hide toggle for new world
+                    m_flyMode = false;               // reset fly toggle for new world
+                    m_buildPlacementActive = false;  // no active placement in new world
                     s_overlay.visible = false; // hide overlay until character reloads
                     m_initialReplayDone = false;
                     m_processedComps.clear();
@@ -11487,6 +11803,10 @@ namespace MoriaMods
                     m_abBarWidget = nullptr;
                     m_abKeyLabel = nullptr;
                     m_toolbarsVisible = false;
+                    // Repositioning mode destroyed with world
+                    m_repositionMode = false;
+                    m_dragToolbar = -1;
+                    m_repositionMsgWidget = nullptr;
                     // Target Info + Info Box destroyed with world
                     m_targetInfoWidget = nullptr;
                     m_tiTitleLabel = nullptr;
