@@ -66,6 +66,12 @@ namespace MoriaMods
     using namespace RC;
     using namespace RC::Unreal;
 
+    // Verbose logging gate — when false (default), all VLOG() calls are short-circuited
+    // to avoid format-string overhead.  Set to true via config or code for debugging.
+    static bool s_verbose = false;
+    // NOLINTNEXTLINE(cppcoreguidelines-macro-usage) — macro needed to short-circuit variadic template
+    #define VLOG(...) do { if (s_verbose) Output::send<LogLevel::Warning>(__VA_ARGS__); } while (0)
+
     // ════════════════════════════════════════════════════════════════════════════
     // Section 2: Geometry Structs, Data Types & Constants
     //   FVec3f, FQuat4f, FRotator3f, FTransformRaw — raw UE4.27 float types
@@ -248,12 +254,12 @@ namespace MoriaMods
             std::string jsonPath = locDir + "en.json";
             if (parseJsonFile(jsonPath))
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Loaded localization from {}\n"),
+                VLOG(STR("[MoriaCppMod] Loaded localization from {}\n"),
                                                 utf8ToWide(jsonPath));
             }
             else
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Using compiled English defaults (no localization file)\n"));
+                VLOG(STR("[MoriaCppMod] Using compiled English defaults (no localization file)\n"));
             }
         }
     } // namespace Loc
@@ -894,7 +900,7 @@ namespace MoriaMods
             std::ifstream file(m_saveFilePath);
             if (!file.is_open())
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No save file found (first run)\n"));
+                VLOG(STR("[MoriaCppMod] No save file found (first run)\n"));
                 return;
             }
             std::string line;
@@ -920,7 +926,7 @@ namespace MoriaMods
                 size_t redundant = before - m_savedRemovals.size();
                 if (redundant > 0)
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Removed {} position entries redundant with type rules\n"), redundant);
+                    VLOG(STR("[MoriaCppMod] Removed {} position entries redundant with type rules\n"), redundant);
                 }
             }
 
@@ -930,7 +936,7 @@ namespace MoriaMods
             // Initialize tracking: all pending (not yet applied)
             m_appliedRemovals.assign(m_savedRemovals.size(), false);
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Loaded {} position removals + {} type rules\n"), m_savedRemovals.size(), m_typeRemovals.size());
+            VLOG(STR("[MoriaCppMod] Loaded {} position removals + {} type rules\n"), m_savedRemovals.size(), m_typeRemovals.size());
         }
 
         void appendToSaveFile(const SavedRemoval& sr)
@@ -1059,18 +1065,18 @@ namespace MoriaMods
             auto* fn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:PrintString"));
             if (!fn)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] PrintString NOT FOUND\n"));
+                VLOG(STR("[MoriaCppMod] PrintString NOT FOUND\n"));
                 return;
             }
             m_ps.parmsSize = fn->GetParmsSize();
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] PrintString ParmsSize={}\n"), m_ps.parmsSize);
+            VLOG(STR("[MoriaCppMod] PrintString ParmsSize={}\n"), m_ps.parmsSize);
 
             for (auto* prop : fn->ForEachProperty())
             {
                 auto name = prop->GetName();
                 int offset = prop->GetOffset_Internal();
                 int size = prop->GetSize();
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   PS: {} @{} size={}\n"), name, offset, size);
+                VLOG(STR("[MoriaCppMod]   PS: {} @{} size={}\n"), name, offset, size);
 
                 if (name == STR("WorldContextObject"))
                     m_ps.worldContext = offset;
@@ -1087,7 +1093,7 @@ namespace MoriaMods
             }
 
             m_ps.valid = (m_ps.worldContext >= 0 && m_ps.inString >= 0 && m_ps.printToScreen >= 0 && m_ps.duration >= 0);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] PrintString valid={}\n"), m_ps.valid);
+            VLOG(STR("[MoriaCppMod] PrintString valid={}\n"), m_ps.valid);
         }
 
         // Displays text on screen via KismetSystemLibrary::PrintString.
@@ -1161,7 +1167,7 @@ namespace MoriaMods
             auto* func = m_chatWidget->GetFunctionByNameInChain(STR("AddToShortChat"));
             if (!func)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] AddToShortChat not found\n"));
+                VLOG(STR("[MoriaCppMod] AddToShortChat not found\n"));
                 return;
             }
 
@@ -1175,12 +1181,12 @@ namespace MoriaMods
 #if 0
         void testAllDisplayMethods()
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === Testing display methods ===\n"));
+            VLOG(STR("[MoriaCppMod] === Testing display methods ===\n"));
             findWidgets();
 
             if (m_chatWidget)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] ChatWidget found\n"));
+                VLOG(STR("[MoriaCppMod] ChatWidget found\n"));
 
                 // Test 1: AddToShortChat
                 auto* f1 = m_chatWidget->GetFunctionByNameInChain(STR("AddToShortChat"));
@@ -1190,7 +1196,7 @@ namespace MoriaMods
                     uint8_t buf[sizeof(FText) + 16]{};
                     std::memcpy(buf, &t1, sizeof(FText));
                     m_chatWidget->ProcessEvent(f1, buf);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called AddToShortChat\n"));
+                    VLOG(STR("[MoriaCppMod] Called AddToShortChat\n"));
                 }
 
                 // Test 2: SystemMessageEvent
@@ -1201,7 +1207,7 @@ namespace MoriaMods
                     uint8_t buf[sizeof(FText) + 16]{};
                     std::memcpy(buf, &t2, sizeof(FText));
                     m_chatWidget->ProcessEvent(f2, buf);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called SystemMessageEvent\n"));
+                    VLOG(STR("[MoriaCppMod] Called SystemMessageEvent\n"));
                 }
 
                 // Test 3: AddFormattedMessage
@@ -1212,17 +1218,17 @@ namespace MoriaMods
                     uint8_t buf[sizeof(FText) + 16]{};
                     std::memcpy(buf, &t3, sizeof(FText));
                     m_chatWidget->ProcessEvent(f3, buf);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called AddFormattedMessage\n"));
+                    VLOG(STR("[MoriaCppMod] Called AddFormattedMessage\n"));
                 }
             }
             else
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] ChatWidget NOT found\n"));
+                VLOG(STR("[MoriaCppMod] ChatWidget NOT found\n"));
             }
 
             if (m_sysMessages)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] SystemMessages found\n"));
+                VLOG(STR("[MoriaCppMod] SystemMessages found\n"));
 
                 // Test 4: AppendMessage
                 auto* f4 = m_sysMessages->GetFunctionByNameInChain(STR("AppendMessage"));
@@ -1232,15 +1238,15 @@ namespace MoriaMods
                     uint8_t buf[sizeof(FText) + 16]{};
                     std::memcpy(buf, &t4, sizeof(FText));
                     m_sysMessages->ProcessEvent(f4, buf);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called AppendMessage\n"));
+                    VLOG(STR("[MoriaCppMod] Called AppendMessage\n"));
                 }
             }
             else
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] SystemMessages NOT found\n"));
+                VLOG(STR("[MoriaCppMod] SystemMessages NOT found\n"));
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === Display test done ===\n"));
+            VLOG(STR("[MoriaCppMod] === Display test done ===\n"));
         }
 #endif
 
@@ -1435,7 +1441,7 @@ namespace MoriaMods
             m_replay.active = !m_replay.compQueue.empty();
             if (m_replay.active)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Starting throttled replay ({} comps, max {} hides/frame)\n"),
+                VLOG(STR("[MoriaCppMod] Starting throttled replay ({} comps, max {} hides/frame)\n"),
                                                 m_replay.compQueue.size(),
                                                 MAX_HIDES_PER_FRAME);
             }
@@ -1568,7 +1574,7 @@ namespace MoriaMods
             // All components processed — replay complete
             m_replay.active = false;
             int pending = pendingCount();
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Replay done: {} hidden, {} pending\n"), m_replay.totalHidden, pending);
+            VLOG(STR("[MoriaCppMod] Replay done: {} hidden, {} pending\n"), m_replay.totalHidden, pending);
             return false;
         }
 
@@ -1592,28 +1598,28 @@ namespace MoriaMods
             m_replay = {};
             m_replay.compQueue = std::move(newComps);
             m_replay.active = true;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Streaming: {} new components queued for replay\n"), m_replay.compQueue.size());
+            VLOG(STR("[MoriaCppMod] Streaming: {} new components queued for replay\n"), m_replay.compQueue.size());
         }
 
         // ── Actions ──
 
         void inspectAimed()
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] --- Inspect ---\n"));
+            VLOG(STR("[MoriaCppMod] --- Inspect ---\n"));
 
             FVec3f start{}, end{};
             if (!getCameraRay(start, end))
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] getCameraRay failed\n"));
+                VLOG(STR("[MoriaCppMod] getCameraRay failed\n"));
                 return;
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Ray: ({:.0f},{:.0f},{:.0f}) -> ({:.0f},{:.0f},{:.0f})\n"), start.X, start.Y, start.Z, end.X, end.Y, end.Z);
+            VLOG(STR("[MoriaCppMod] Ray: ({:.0f},{:.0f},{:.0f}) -> ({:.0f},{:.0f},{:.0f})\n"), start.X, start.Y, start.Z, end.X, end.Y, end.Z);
 
             uint8_t hitBuf[136]{};
             if (!doLineTrace(start, end, hitBuf, true))
             { // debugDraw=true
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No hit\n"));
+                VLOG(STR("[MoriaCppMod] No hit\n"));
                 showOnScreen(Loc::get("msg.no_hit").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
@@ -1637,9 +1643,9 @@ namespace MoriaMods
             std::string meshId = hitComp ? componentNameToMeshId(compName) : "(null)";
             std::wstring meshIdW(meshId.begin(), meshId.end());
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Component: {} | Class: {} | Item: {} | HISM: {}\n"), compName, className, item, isHISM);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] FullPath: {}\n"), fullName);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] MeshID: {} | Impact: ({:.1f},{:.1f},{:.1f})\n"),
+            VLOG(STR("[MoriaCppMod] Component: {} | Class: {} | Item: {} | HISM: {}\n"), compName, className, item, isHISM);
+            VLOG(STR("[MoriaCppMod] FullPath: {}\n"), fullName);
+            VLOG(STR("[MoriaCppMod] MeshID: {} | Impact: ({:.1f},{:.1f},{:.1f})\n"),
                                             meshIdW,
                                             impactPoint.X,
                                             impactPoint.Y,
@@ -1657,7 +1663,7 @@ namespace MoriaMods
                     hitComp->ProcessEvent(transFunc, &tp);
                     if (tp.ReturnValue)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Instance #{} pos: ({:.1f},{:.1f},{:.1f})\n"),
+                        VLOG(STR("[MoriaCppMod] Instance #{} pos: ({:.1f},{:.1f},{:.1f})\n"),
                                                         item,
                                                         tp.OutTransform.Translation.X,
                                                         tp.OutTransform.Translation.Y,
@@ -1689,7 +1695,7 @@ namespace MoriaMods
             uint8_t hitBuf[136]{};
             if (!doLineTrace(start, end, hitBuf))
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No hit\n"));
+                VLOG(STR("[MoriaCppMod] No hit\n"));
                 return;
             }
 
@@ -1709,13 +1715,13 @@ namespace MoriaMods
                     auto* c = hitComp->GetClassPrivate();
                     if (c) cls = std::wstring(c->GetName());
                 }
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Not HISM: {} ({})\n"), name, cls);
+                VLOG(STR("[MoriaCppMod] Not HISM: {} ({})\n"), name, cls);
                 return;
             }
 
             if (item < 0)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No instance index (Item=-1)\n"));
+                VLOG(STR("[MoriaCppMod] No instance index (Item=-1)\n"));
                 return;
             }
 
@@ -1781,7 +1787,7 @@ namespace MoriaMods
             }
 
             std::wstring meshIdW(meshId.begin(), meshId.end());
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] REMOVED {} stacked at ({:.0f},{:.0f},{:.0f}) from {} | Total: {}\n"),
+            VLOG(STR("[MoriaCppMod] REMOVED {} stacked at ({:.0f},{:.0f},{:.0f}) from {} | Total: {}\n"),
                                             hiddenCount,
                                             targetX,
                                             targetY,
@@ -1798,7 +1804,7 @@ namespace MoriaMods
             uint8_t hitBuf[136]{};
             if (!doLineTrace(start, end, hitBuf))
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No hit\n"));
+                VLOG(STR("[MoriaCppMod] No hit\n"));
                 return;
             }
 
@@ -1806,7 +1812,7 @@ namespace MoriaMods
             if (!hitComp || !isHISMComponent(hitComp))
             {
                 std::wstring name = hitComp ? std::wstring(hitComp->GetName()) : L"(null)";
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Not HISM: {}\n"), name);
+                VLOG(STR("[MoriaCppMod] Not HISM: {}\n"), name);
                 return;
             }
 
@@ -1852,19 +1858,19 @@ namespace MoriaMods
             }
 
             std::wstring meshIdW(meshId.begin(), meshId.end());
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] TYPE RULE: @{} — hidden {} instances (persists across all worlds)\n"), meshIdW, hidden);
+            VLOG(STR("[MoriaCppMod] TYPE RULE: @{} — hidden {} instances (persists across all worlds)\n"), meshIdW, hidden);
         }
 
         // ── Building / UI Exploration (Num7/Num8/Num9) — DISABLED: keybinds removed ──
 #if 0
         void dumpAllWidgets()
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === WIDGET DUMP ===\n"));
+            VLOG(STR("[MoriaCppMod] === WIDGET DUMP ===\n"));
 
             std::vector<UObject*> widgets;
             UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Found {} UserWidgets\n"), widgets.size());
+            VLOG(STR("[MoriaCppMod] Found {} UserWidgets\n"), widgets.size());
 
             int idx = 0;
             for (auto* w : widgets)
@@ -1888,7 +1894,7 @@ namespace MoriaMods
                     visible = vp.Ret;
                 }
 
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   [{}] {} | obj={} | visible={}\n"), idx, clsName, objName, visible);
+                VLOG(STR("[MoriaCppMod]   [{}] {} | obj={} | visible={}\n"), idx, clsName, objName, visible);
 
                 // For build/craft/recipe-related widgets, dump functions too
                 bool interesting = false;
@@ -1920,11 +1926,11 @@ namespace MoriaMods
                         if (funcName == STR("Destruct")) continue;
                         if (funcName.find(STR("ExecuteUbergraph")) == 0) continue;
 
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     fn: {} ({}B)\n"), funcName, parmsSize);
+                        VLOG(STR("[MoriaCppMod]     fn: {} ({}B)\n"), funcName, parmsSize);
                         funcCount++;
                         if (funcCount > 30)
                         {
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     ... (truncated at 30)\n"));
+                            VLOG(STR("[MoriaCppMod]     ... (truncated at 30)\n"));
                             break;
                         }
                     }
@@ -1934,7 +1940,7 @@ namespace MoriaMods
             }
 
             showOnScreen(L"Widget dump: " + std::to_wstring(widgets.size()) + L" widgets (see log)", 5.0f);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END WIDGET DUMP ===\n"));
+            VLOG(STR("[MoriaCppMod] === END WIDGET DUMP ===\n"));
         }
 #endif
 
@@ -1958,7 +1964,7 @@ namespace MoriaMods
                 showOnScreen(Loc::get("msg.char_hidden").c_str(), 2.0f, 0.3f, 0.8f, 1.0f);
             else
                 showOnScreen(Loc::get("msg.char_visible").c_str(), 2.0f, 0.3f, 1.0f, 0.3f);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Character hidden = {}\n"), m_characterHidden ? 1 : 0);
+            VLOG(STR("[MoriaCppMod] Character hidden = {}\n"), m_characterHidden ? 1 : 0);
         }
 
         void toggleFlyMode()
@@ -1978,7 +1984,7 @@ namespace MoriaMods
                 auto* movComp = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(dwarf) + 0x0288);
                 if (!movComp)
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] CharacterMovement is null!\n"));
+                    VLOG(STR("[MoriaCppMod] CharacterMovement is null!\n"));
                     continue;
                 }
 
@@ -1988,12 +1994,12 @@ namespace MoriaMods
                 {
                     uint8_t params[2] = {m_flyMode ? MOVE_Flying : MOVE_Walking, 0};
                     movComp->ProcessEvent(fn, params);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] SetMovementMode({}) called\n"),
+                    VLOG(STR("[MoriaCppMod] SetMovementMode({}) called\n"),
                                                     m_flyMode ? 5 : 1);
                 }
                 else
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] SetMovementMode not found!\n"));
+                    VLOG(STR("[MoriaCppMod] SetMovementMode not found!\n"));
                 }
 
                 // Approach 3 (backup): Set bCheatFlying flag directly
@@ -2003,24 +2009,24 @@ namespace MoriaMods
                     *flags |= 0x08; // set bCheatFlying
                 else
                     *flags &= ~0x08; // clear bCheatFlying
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] bCheatFlying = {}, flags byte = 0x{:02X}\n"),
+                VLOG(STR("[MoriaCppMod] bCheatFlying = {}, flags byte = 0x{:02X}\n"),
                                                 m_flyMode ? 1 : 0, *flags);
             }
             if (m_flyMode)
                 showOnScreen(Loc::get("msg.fly_on").c_str(), 2.0f, 0.3f, 0.8f, 1.0f);
             else
                 showOnScreen(Loc::get("msg.fly_off").c_str(), 2.0f, 0.3f, 1.0f, 0.3f);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Fly mode = {}\n"), m_flyMode ? 1 : 0);
+            VLOG(STR("[MoriaCppMod] Fly mode = {}\n"), m_flyMode ? 1 : 0);
         }
 
         void dumpAimedActor()
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === AIMED ACTOR DUMP ===\n"));
+            VLOG(STR("[MoriaCppMod] === AIMED ACTOR DUMP ===\n"));
 
             FVec3f start{}, end{};
             if (!getCameraRay(start, end))
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] getCameraRay failed\n"));
+                VLOG(STR("[MoriaCppMod] getCameraRay failed\n"));
                 return;
             }
 
@@ -2060,7 +2066,7 @@ namespace MoriaMods
             bool bHit = params[LTOff::ReturnValue] != 0;
             if (!bHit)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No hit\n"));
+                VLOG(STR("[MoriaCppMod] No hit\n"));
                 showOnScreen(Loc::get("msg.actor_dump_no_hit").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
@@ -2072,13 +2078,13 @@ namespace MoriaMods
             UObject* hitComp = resolveHitComponent(hitBuf);
             if (!hitComp)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Hit but null component\n"));
+                VLOG(STR("[MoriaCppMod] Hit but null component\n"));
                 return;
             }
 
             std::wstring compName(hitComp->GetName());
             std::wstring compClass = safeClassName(hitComp);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Hit component: {} ({})\n"), compName, compClass);
+            VLOG(STR("[MoriaCppMod] Hit component: {} ({})\n"), compName, compClass);
 
             // Get the owning actor via GetOwner
             auto* ownerFunc = hitComp->GetFunctionByNameInChain(STR("GetOwner"));
@@ -2095,7 +2101,7 @@ namespace MoriaMods
 
             if (!actor)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No owning actor found\n"));
+                VLOG(STR("[MoriaCppMod] No owning actor found\n"));
                 showOnScreen(L"[ActorDump] Component: " + compName + L" (" + compClass + L")\nNo owning actor", 5.0f);
                 return;
             }
@@ -2113,7 +2119,7 @@ namespace MoriaMods
             auto* getDispFn = actor->GetFunctionByNameInChain(STR("GetDisplayName"));
             if (getDispFn)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] GetDisplayName found, parmsSize={}\n"), getDispFn->GetParmsSize());
+                VLOG(STR("[MoriaCppMod] GetDisplayName found, parmsSize={}\n"), getDispFn->GetParmsSize());
                 if (getDispFn->GetParmsSize() == sizeof(FText))
                 {
                     FText txt{};
@@ -2123,7 +2129,7 @@ namespace MoriaMods
             }
             else
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] GetDisplayName NOT found on this actor\n"));
+                VLOG(STR("[MoriaCppMod] GetDisplayName NOT found on this actor\n"));
             }
             if (displayName.empty())
             {
@@ -2137,12 +2143,12 @@ namespace MoriaMods
                     if (c == L'_') c = L' ';
                 }
                 displayName = cleaned;
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Display name fallback: '{}'\n"), displayName);
+                VLOG(STR("[MoriaCppMod] Display name fallback: '{}'\n"), displayName);
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Actor: {} | Class: {}\n"), actorName, actorClassName);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Display: {}\n"), displayName);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Path: {}\n"), assetPath);
+            VLOG(STR("[MoriaCppMod] Actor: {} | Class: {}\n"), actorName, actorClassName);
+            VLOG(STR("[MoriaCppMod] Display: {}\n"), displayName);
+            VLOG(STR("[MoriaCppMod] Path: {}\n"), assetPath);
 
             // Detect if player-buildable by checking class hierarchy for construction components
             bool isBuildable = false;
@@ -2186,7 +2192,7 @@ namespace MoriaMods
                 }
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Buildable: {} Recipe: {}\n"), isBuildable ? STR("Yes") : STR("No"), recipeRef);
+            VLOG(STR("[MoriaCppMod] Buildable: {} Recipe: {}\n"), isBuildable ? STR("Yes") : STR("No"), recipeRef);
 
             // ── DT_Constructions lookup: find real display name for this actor ──
             std::wstring dtDisplayName;
@@ -2350,7 +2356,7 @@ namespace MoriaMods
                     }
                     dumpFile.close();
 
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] DT_Constructions scan -> actor_dump.txt\n"));
+                    VLOG(STR("[MoriaCppMod] DT_Constructions scan -> actor_dump.txt\n"));
                 }
             }
 
@@ -2358,7 +2364,7 @@ namespace MoriaMods
             if (!dtDisplayName.empty())
             {
                 displayName = dtDisplayName;
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] DT display name: '{}' (row '{}')\n"), displayName, dtRowName);
+                VLOG(STR("[MoriaCppMod] DT display name: '{}' (row '{}')\n"), displayName, dtRowName);
             }
 
             // Store for Shift+F10 build-from-target
@@ -2368,7 +2374,7 @@ namespace MoriaMods
             if (isBuildable && !displayName.empty())
             {
                 m_targetBuildName = displayName;
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] Stored target: name='{}' recipeRef='{}' row='{}'\n"),
+                VLOG(STR("[MoriaCppMod] [TargetBuild] Stored target: name='{}' recipeRef='{}' row='{}'\n"),
                                                 m_targetBuildName,
                                                 m_targetBuildRecipeRef,
                                                 m_targetBuildRowName);
@@ -2426,12 +2432,12 @@ namespace MoriaMods
                             posInfo = std::format(L"Impact: ({:.0f}, {:.0f}, {:.0f})", impactPt.X, impactPt.Y, impactPt.Z);
                         }
 
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [F10] Non-buildable inspect: {} | HISM={} | MeshID={}\n"),
+                        VLOG(STR("[MoriaCppMod] [F10] Non-buildable inspect: {} | HISM={} | MeshID={}\n"),
                                                         inspCompName, inspIsHISM, inspMeshIdW);
 
                         // Show inspect data in target info popup instead of actor data
                         showTargetInfo(inspCompName, friendlyName, inspMeshIdW, inspClassName, false, posInfo, L"");
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
+                        VLOG(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
                         return;
                     }
                 }
@@ -2440,14 +2446,14 @@ namespace MoriaMods
             // Show target info popup window (buildable objects or inspect fallback failed)
             showTargetInfo(actorName, displayName, assetPath, actorClassName, isBuildable, recipeRef, dtRowName);
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
+            VLOG(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
         }
 
         // ── Debug probes (Num9, Alt+Num7/8/9) — DISABLED: keybinds removed ──
 #if 0
         void dumpBuildCraftClasses()
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === BUILD/CRAFT CLASS SEARCH ===\n"));
+            VLOG(STR("[MoriaCppMod] === BUILD/CRAFT CLASS SEARCH ===\n"));
 
             // Search patterns for build/craft related classes
             const wchar_t* searchPatterns[] = {
@@ -2517,7 +2523,7 @@ namespace MoriaMods
                     totalFound++;
 
                     std::wstring objName(obj->GetName());
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [{}] Class: {} | Base: {} | Obj: {}\n"), totalFound, clsName, baseClass, objName);
+                    VLOG(STR("[MoriaCppMod] [{}] Class: {} | Base: {} | Obj: {}\n"), totalFound, clsName, baseClass, objName);
 
                     // Dump functions for this class
                     auto* ustruct = static_cast<UStruct*>(cls);
@@ -2528,11 +2534,11 @@ namespace MoriaMods
                         std::wstring funcName(func->GetName());
                         if (funcName.find(STR("ExecuteUbergraph")) == 0) continue;
                         int parmsSize = func->GetParmsSize();
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     fn: {} ({}B)\n"), funcName, parmsSize);
+                        VLOG(STR("[MoriaCppMod]     fn: {} ({}B)\n"), funcName, parmsSize);
                         fc++;
                         if (fc > 40)
                         {
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     ... truncated\n"));
+                            VLOG(STR("[MoriaCppMod]     ... truncated\n"));
                             break;
                         }
                     }
@@ -2545,27 +2551,27 @@ namespace MoriaMods
                         std::wstring propName(prop->GetName());
                         int offset = prop->GetOffset_Internal();
                         int size = prop->GetSize();
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     prop: {} @{} size={}\n"), propName, offset, size);
+                        VLOG(STR("[MoriaCppMod]     prop: {} @{} size={}\n"), propName, offset, size);
                         pc++;
                         if (pc > 40)
                         {
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     ... truncated\n"));
+                            VLOG(STR("[MoriaCppMod]     ... truncated\n"));
                             break;
                         }
                     }
                 }
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Found {} unique build/craft related classes\n"), totalFound);
+            VLOG(STR("[MoriaCppMod] Found {} unique build/craft related classes\n"), totalFound);
             showOnScreen(L"Build/Craft search: " + std::to_wstring(totalFound) + L" classes (see log)", 5.0f, 1.0f, 0.8f, 0.0f);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END BUILD/CRAFT SEARCH ===\n"));
+            VLOG(STR("[MoriaCppMod] === END BUILD/CRAFT SEARCH ===\n"));
         }
 
         // ── Deep Probes (Ctrl+Numpad keys) ──
 
         void probeBuildTabRecipe()
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === PROBE: Build_Tab selectedRecipe ===\n"));
+            VLOG(STR("[MoriaCppMod] === PROBE: Build_Tab selectedRecipe ===\n"));
 
             // Find the Build_Tab widget
             std::vector<UObject*> widgets;
@@ -2583,19 +2589,19 @@ namespace MoriaMods
             }
             if (!buildTab)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Build_Tab widget NOT FOUND\n"));
+                VLOG(STR("[MoriaCppMod] Build_Tab widget NOT FOUND\n"));
                 showOnScreen(L"Build_Tab NOT FOUND", 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Build_Tab found: {}\n"), std::wstring(buildTab->GetName()));
+            VLOG(STR("[MoriaCppMod] Build_Tab found: {}\n"), std::wstring(buildTab->GetName()));
 
             // Read selectedRecipe at offset 1120, size 120
             uint8_t* objPtr = reinterpret_cast<uint8_t*>(buildTab);
             uint8_t* recipePtr = objPtr + 1120;
 
             // Dump raw bytes in hex (8 bytes per line)
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] selectedRecipe @1120 (120 bytes):\n"));
+            VLOG(STR("[MoriaCppMod] selectedRecipe @1120 (120 bytes):\n"));
             for (int row = 0; row < 120; row += 8)
             {
                 std::wstring hexLine;
@@ -2608,7 +2614,7 @@ namespace MoriaMods
                     hexLine += hex;
                     asciiLine += (b >= 32 && b < 127) ? static_cast<wchar_t>(b) : L'.';
                 }
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   +{:3d}: {} | {}\n"), row, hexLine, asciiLine);
+                VLOG(STR("[MoriaCppMod]   +{:3d}: {} | {}\n"), row, hexLine, asciiLine);
             }
 
             // Also read selectedName at offset 1536 (FName, 8 bytes)
@@ -2616,7 +2622,7 @@ namespace MoriaMods
             // FName: ComparisonIndex(4) + Number(4) — try to interpret
             int32_t nameIdx = *reinterpret_cast<int32_t*>(namePtr);
             int32_t nameNum = *reinterpret_cast<int32_t*>(namePtr + 4);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] selectedName @1536: index={} number={}\n"), nameIdx, nameNum);
+            VLOG(STR("[MoriaCppMod] selectedName @1536: index={} number={}\n"), nameIdx, nameNum);
 
             // Try to read recipesDataTable pointer at 1544
             UObject** dtPtr = reinterpret_cast<UObject**>(objPtr + 1544);
@@ -2624,11 +2630,11 @@ namespace MoriaMods
             {
                 std::wstring dtName((*dtPtr)->GetName());
                 std::wstring dtClass = safeClassName(*dtPtr);
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] recipesDataTable @1544: {} ({})\n"), dtName, dtClass);
+                VLOG(STR("[MoriaCppMod] recipesDataTable @1544: {} ({})\n"), dtName, dtClass);
             }
             else
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] recipesDataTable @1544: nullptr\n"));
+                VLOG(STR("[MoriaCppMod] recipesDataTable @1544: nullptr\n"));
             }
 
             // Interpret potential FName values within the recipe struct
@@ -2639,7 +2645,7 @@ namespace MoriaMods
                 // Check if it could be a small int (index, count, enum)
                 if (val > 0 && val < 100000)
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   recipe+{}: int32={}\n"), off, val);
+                    VLOG(STR("[MoriaCppMod]   recipe+{}: int32={}\n"), off, val);
                 }
             }
 
@@ -2647,10 +2653,10 @@ namespace MoriaMods
             auto* showFunc = buildTab->GetFunctionByNameInChain(STR("ShowThisRecipe"));
             if (showFunc)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] ShowThisRecipe params ({}B):\n"), showFunc->GetParmsSize());
+                VLOG(STR("[MoriaCppMod] ShowThisRecipe params ({}B):\n"), showFunc->GetParmsSize());
                 for (auto* prop : showFunc->ForEachProperty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
                                                     std::wstring(prop->GetName()),
                                                     prop->GetOffset_Internal(),
                                                     prop->GetSize());
@@ -2661,10 +2667,10 @@ namespace MoriaMods
             auto* blockFunc = buildTab->GetFunctionByNameInChain(STR("blockSelectedEvent"));
             if (blockFunc)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] blockSelectedEvent params ({}B):\n"), blockFunc->GetParmsSize());
+                VLOG(STR("[MoriaCppMod] blockSelectedEvent params ({}B):\n"), blockFunc->GetParmsSize());
                 for (auto* prop : blockFunc->ForEachProperty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
                                                     std::wstring(prop->GetName()),
                                                     prop->GetOffset_Internal(),
                                                     prop->GetSize());
@@ -2672,12 +2678,12 @@ namespace MoriaMods
             }
 
             showOnScreen(L"Build_Tab recipe probe done (see log)", 5.0f, 0.0f, 1.0f, 0.5f);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END PROBE: Build_Tab ===\n"));
+            VLOG(STR("[MoriaCppMod] === END PROBE: Build_Tab ===\n"));
         }
 
         void probeBuildConstruction()
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === PROBE: BuildNewConstruction ===\n"));
+            VLOG(STR("[MoriaCppMod] === PROBE: BuildNewConstruction ===\n"));
 
             // Find MorBuildingComponent
             std::vector<UObject*> actors;
@@ -2714,23 +2720,23 @@ namespace MoriaMods
 
             if (!buildingComp)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] MorBuildingComponent NOT FOUND\n"));
+                VLOG(STR("[MoriaCppMod] MorBuildingComponent NOT FOUND\n"));
                 showOnScreen(L"MorBuildingComponent NOT FOUND", 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
             std::wstring compName(buildingComp->GetName());
             std::wstring compClass = safeClassName(buildingComp);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Found: {} ({})\n"), compName, compClass);
+            VLOG(STR("[MoriaCppMod] Found: {} ({})\n"), compName, compClass);
 
             // Probe BuildNewConstruction param layout
             auto* buildFunc = buildingComp->GetFunctionByNameInChain(STR("BuildNewConstruction"));
             if (buildFunc)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] BuildNewConstruction params ({}B):\n"), buildFunc->GetParmsSize());
+                VLOG(STR("[MoriaCppMod] BuildNewConstruction params ({}B):\n"), buildFunc->GetParmsSize());
                 for (auto* prop : buildFunc->ForEachProperty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
                                                     std::wstring(prop->GetName()),
                                                     prop->GetOffset_Internal(),
                                                     prop->GetSize());
@@ -2738,17 +2744,17 @@ namespace MoriaMods
             }
             else
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] BuildNewConstruction function NOT FOUND\n"));
+                VLOG(STR("[MoriaCppMod] BuildNewConstruction function NOT FOUND\n"));
             }
 
             // Probe CanBuild
             auto* canBuildFunc = buildingComp->GetFunctionByNameInChain(STR("CanBuild"));
             if (canBuildFunc)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] CanBuild params ({}B):\n"), canBuildFunc->GetParmsSize());
+                VLOG(STR("[MoriaCppMod] CanBuild params ({}B):\n"), canBuildFunc->GetParmsSize());
                 for (auto* prop : canBuildFunc->ForEachProperty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
                                                     std::wstring(prop->GetName()),
                                                     prop->GetOffset_Internal(),
                                                     prop->GetSize());
@@ -2759,10 +2765,10 @@ namespace MoriaMods
             auto* transformFunc = buildingComp->GetFunctionByNameInChain(STR("GetBuildTargetTransform"));
             if (transformFunc)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] GetBuildTargetTransform params ({}B):\n"), transformFunc->GetParmsSize());
+                VLOG(STR("[MoriaCppMod] GetBuildTargetTransform params ({}B):\n"), transformFunc->GetParmsSize());
                 for (auto* prop : transformFunc->ForEachProperty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
                                                     std::wstring(prop->GetName()),
                                                     prop->GetOffset_Internal(),
                                                     prop->GetSize());
@@ -2773,10 +2779,10 @@ namespace MoriaMods
             auto* widgetFunc = buildingComp->GetFunctionByNameInChain(STR("GetActiveBuildingWidget"));
             if (widgetFunc)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] GetActiveBuildingWidget params ({}B):\n"), widgetFunc->GetParmsSize());
+                VLOG(STR("[MoriaCppMod] GetActiveBuildingWidget params ({}B):\n"), widgetFunc->GetParmsSize());
                 for (auto* prop : widgetFunc->ForEachProperty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
                                                     std::wstring(prop->GetName()),
                                                     prop->GetOffset_Internal(),
                                                     prop->GetSize());
@@ -2784,12 +2790,12 @@ namespace MoriaMods
             }
 
             // Dump all properties on the component
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] --- MorBuildingComponent Properties ---\n"));
+            VLOG(STR("[MoriaCppMod] --- MorBuildingComponent Properties ---\n"));
             auto* ustruct = static_cast<UStruct*>(buildingComp->GetClassPrivate());
             for (auto* prop : ustruct->ForEachPropertyInChain())
             {
                 if (!prop) continue;
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   prop: {} @{} size={}\n"),
+                VLOG(STR("[MoriaCppMod]   prop: {} @{} size={}\n"),
                                                 std::wstring(prop->GetName()),
                                                 prop->GetOffset_Internal(),
                                                 prop->GetSize());
@@ -2797,7 +2803,7 @@ namespace MoriaMods
 
             // Read LastSelectedRecipe raw bytes (offset 208, size 16)
             uint8_t* objPtr = reinterpret_cast<uint8_t*>(buildingComp);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] LastSelectedRecipe @208 (16 bytes):\n"));
+            VLOG(STR("[MoriaCppMod] LastSelectedRecipe @208 (16 bytes):\n"));
             for (int row = 0; row < 16; row += 8)
             {
                 std::wstring hexLine;
@@ -2808,16 +2814,16 @@ namespace MoriaMods
                     swprintf(hex, 8, L"%02X ", b);
                     hexLine += hex;
                 }
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   +{}: {}\n"), row, hexLine);
+                VLOG(STR("[MoriaCppMod]   +{}: {}\n"), row, hexLine);
             }
 
             showOnScreen(L"BuildNewConstruction probe done (see log)", 5.0f, 0.0f, 1.0f, 0.5f);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END PROBE: BuildNewConstruction ===\n"));
+            VLOG(STR("[MoriaCppMod] === END PROBE: BuildNewConstruction ===\n"));
         }
 
         void dumpDebugMenus()
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === PROBE: Debug Menus ===\n"));
+            VLOG(STR("[MoriaCppMod] === PROBE: Debug Menus ===\n"));
 
             const wchar_t* debugMenuClasses[] = {
                     STR("BP_DebugMenu_Recipes_C"),
@@ -2831,7 +2837,7 @@ namespace MoriaMods
 
                 if (objects.empty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] {} — no instances found, trying CDO...\n"), menuClass);
+                    VLOG(STR("[MoriaCppMod] {} — no instances found, trying CDO...\n"), menuClass);
 
                     // Try to find the class itself and dump its CDO
                     std::vector<UObject*> allActors;
@@ -2855,26 +2861,26 @@ namespace MoriaMods
                     std::wstring clsName(cls->GetName());
                     std::wstring objName(obj->GetName());
 
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Debug Menu: {} | Obj: {}\n"), clsName, objName);
+                    VLOG(STR("[MoriaCppMod] Debug Menu: {} | Obj: {}\n"), clsName, objName);
 
                     // Dump all functions
                     auto* ustruct = static_cast<UStruct*>(cls);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   Functions:\n"));
+                    VLOG(STR("[MoriaCppMod]   Functions:\n"));
                     for (auto* func : ustruct->ForEachFunctionInChain())
                     {
                         if (!func) continue;
                         std::wstring funcName(func->GetName());
                         if (funcName.find(STR("ExecuteUbergraph")) == 0) continue;
                         int parmsSize = func->GetParmsSize();
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     fn: {} ({}B)\n"), funcName, parmsSize);
+                        VLOG(STR("[MoriaCppMod]     fn: {} ({}B)\n"), funcName, parmsSize);
                     }
 
                     // Dump properties
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   Properties:\n"));
+                    VLOG(STR("[MoriaCppMod]   Properties:\n"));
                     for (auto* prop : ustruct->ForEachPropertyInChain())
                     {
                         if (!prop) continue;
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     prop: {} @{} size={}\n"),
+                        VLOG(STR("[MoriaCppMod]     prop: {} @{} size={}\n"),
                                                         std::wstring(prop->GetName()),
                                                         prop->GetOffset_Internal(),
                                                         prop->GetSize());
@@ -2883,7 +2889,7 @@ namespace MoriaMods
             }
 
             showOnScreen(L"Debug menu probe done (see log)", 5.0f, 0.0f, 1.0f, 0.5f);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END PROBE: Debug Menus ===\n"));
+            VLOG(STR("[MoriaCppMod] === END PROBE: Debug Menus ===\n"));
         }
 #endif
 
@@ -3039,7 +3045,7 @@ namespace MoriaMods
                     {
                         m_bodyInvHandles.push_back(std::vector<uint8_t>(hPtr, hPtr + handleSize));
                     }
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Container[{}] ID={} slots={} class='{}'\n"), i, cId, maxSlots, cName);
+                    VLOG(STR("[MoriaCppMod] Container[{}] ID={} slots={} class='{}'\n"), i, cId, maxSlots, cName);
                 }
             }
 
@@ -3047,7 +3053,7 @@ namespace MoriaMods
             {
                 m_bodyInvHandle = m_bodyInvHandles[0]; // first = hotbar
             }
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Found {} BodyInventory containers\n"), m_bodyInvHandles.size());
+            VLOG(STR("[MoriaCppMod] Found {} BodyInventory containers\n"), m_bodyInvHandles.size());
 
             // If only 1 BodyInventory (hotbar), create 2 more for toolbar swap stash
             if (m_bodyInvHandles.size() == 1 && bodyInvClass)
@@ -3075,13 +3081,13 @@ namespace MoriaMods
                             int32_t newId = reinterpret_cast<const FItemHandleLocal*>(newHandle.data())->ID;
                             m_bodyInvHandles.push_back(newHandle);
 
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Created stash BodyInventory #{} — ID={}\n"), i + 1, newId);
+                            VLOG(STR("[MoriaCppMod] Created stash BodyInventory #{} — ID={}\n"), i + 1, newId);
                         }
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Now have {} BodyInventory containers (1 hotbar + 2 stash)\n"), m_bodyInvHandles.size());
+                        VLOG(STR("[MoriaCppMod] Now have {} BodyInventory containers (1 hotbar + 2 stash)\n"), m_bodyInvHandles.size());
                     }
                     else
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] AddItem param offsets not found (Item={} Count={} Ret={})\n"),
+                        VLOG(STR("[MoriaCppMod] AddItem param offsets not found (Item={} Count={} Ret={})\n"),
                                                         aiItem.offset,
                                                         aiCount.offset,
                                                         aiRet.offset);
@@ -3089,17 +3095,17 @@ namespace MoriaMods
                 }
                 else
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] AddItem function not found on inventory component\n"));
+                    VLOG(STR("[MoriaCppMod] AddItem function not found on inventory component\n"));
                 }
             }
             else if (m_bodyInvHandles.size() == 1)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Only 1 BodyInventory but class not found — cannot create stash\n"));
+                VLOG(STR("[MoriaCppMod] Only 1 BodyInventory but class not found — cannot create stash\n"));
             }
 
             if (m_bagHandle.empty())
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Note: EpicPack bag not equipped\n"));
+                VLOG(STR("[MoriaCppMod] Note: EpicPack bag not equipped\n"));
             }
             if (m_bodyInvHandle.empty())
             {
@@ -3113,7 +3119,7 @@ namespace MoriaMods
 #if 0
         void probeInventoryHotbar()
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === PROBE: Inventory Hotbar ===\n"));
+            VLOG(STR("[MoriaCppMod] === PROBE: Inventory Hotbar ===\n"));
 
             // --- Step 1: Find the player character (BP_FGKDwarf_C) ---
             UObject* playerChar = nullptr;
@@ -3127,20 +3133,20 @@ namespace MoriaMods
                     if (cls.find(STR("Dwarf")) != std::wstring::npos || cls.find(STR("FGK")) != std::wstring::npos)
                     {
                         playerChar = a;
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] Found player char: {} '{}'\n"), cls, std::wstring(a->GetName()));
+                        VLOG(STR("[MoriaCppMod] [Inv] Found player char: {} '{}'\n"), cls, std::wstring(a->GetName()));
                         break;
                     }
                 }
             }
             if (!playerChar)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] Player character NOT FOUND\n"));
+                VLOG(STR("[MoriaCppMod] [Inv] Player character NOT FOUND\n"));
                 showOnScreen(L"Player character not found!", 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
             // --- Step 2: Dump all components on the player character ---
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] --- Player Character Components ---\n"));
+            VLOG(STR("[MoriaCppMod] [Inv] --- Player Character Components ---\n"));
             {
                 auto* getCompsFunc = playerChar->GetFunctionByNameInChain(STR("K2_GetComponentsByClass"));
                 // Also try GetComponents
@@ -3165,7 +3171,7 @@ namespace MoriaMods
 
                     std::wstring compCls = safeClassName(c);
                     std::wstring compName(c->GetName());
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv]   comp[{}]: {} '{}'\n"), compIdx++, compCls, compName);
+                    VLOG(STR("[MoriaCppMod] [Inv]   comp[{}]: {} '{}'\n"), compIdx++, compCls, compName);
 
                     // Check for inventory-related components
                     std::string narrow;
@@ -3177,24 +3183,24 @@ namespace MoriaMods
 
                     if (isInventory)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv]   *** INVENTORY COMPONENT FOUND: {} ***\n"), compCls);
+                        VLOG(STR("[MoriaCppMod] [Inv]   *** INVENTORY COMPONENT FOUND: {} ***\n"), compCls);
 
                         // Dump all functions
                         auto* cls = c->GetClassPrivate();
                         if (cls)
                         {
                             auto* ustruct = static_cast<UStruct*>(cls);
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv]   Functions:\n"));
+                            VLOG(STR("[MoriaCppMod] [Inv]   Functions:\n"));
                             for (auto* func : ustruct->ForEachFunctionInChain())
                             {
                                 if (!func) continue;
                                 std::wstring fn(func->GetName());
                                 if (fn.find(STR("ExecuteUbergraph")) == 0) continue;
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv]     fn: {} ({}B)\n"), fn, func->GetParmsSize());
+                                VLOG(STR("[MoriaCppMod] [Inv]     fn: {} ({}B)\n"), fn, func->GetParmsSize());
                             }
 
                             // Dump properties
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv]   Properties:\n"));
+                            VLOG(STR("[MoriaCppMod] [Inv]   Properties:\n"));
                             for (auto* prop : ustruct->ForEachPropertyInChain())
                             {
                                 if (!prop) continue;
@@ -3228,12 +3234,12 @@ namespace MoriaMods
                                     }
                                 }
 
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv]       prop: {} @{} size={}{}\n"), pn, off, sz, extra);
+                                VLOG(STR("[MoriaCppMod] [Inv]       prop: {} @{} size={}{}\n"), pn, off, sz, extra);
                             }
                         }
                     }
                 }
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] Total components on player: {}\n"), compIdx);
+                VLOG(STR("[MoriaCppMod] [Inv] Total components on player: {}\n"), compIdx);
             }
 
             // --- Step 2b: Read hotbar items via GetItemForHotbarSlot ---
@@ -3252,7 +3258,7 @@ namespace MoriaMods
                         } hs{};
                         invComp->ProcessEvent(hotbarSizeFunc, &hs);
                         hotbarSize = hs.Ret;
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] HotbarSize = {}\n"), hotbarSize);
+                        VLOG(STR("[MoriaCppMod] [Inv] HotbarSize = {}\n"), hotbarSize);
                     }
 
                     // Read HotbarEpicItemIndex
@@ -3266,18 +3272,18 @@ namespace MoriaMods
                         } ei{};
                         invComp->ProcessEvent(epicIdxFunc, &ei);
                         epicIdx = ei.Ret;
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] HotbarEpicItemIndex = {}\n"), epicIdx);
+                        VLOG(STR("[MoriaCppMod] [Inv] HotbarEpicItemIndex = {}\n"), epicIdx);
                     }
 
                     // Probe GetItemForHotbarSlot param layout
                     auto* getItemFunc = invComp->GetFunctionByNameInChain(STR("GetItemForHotbarSlot"));
                     if (getItemFunc)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] GetItemForHotbarSlot ({}B) params:\n"), getItemFunc->GetParmsSize());
+                        VLOG(STR("[MoriaCppMod] [Inv] GetItemForHotbarSlot ({}B) params:\n"), getItemFunc->GetParmsSize());
                         for (auto* prop : getItemFunc->ForEachProperty())
                         {
                             if (!prop) continue;
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv]   param: {} @{} size={}\n"),
+                            VLOG(STR("[MoriaCppMod] [Inv]   param: {} @{} size={}\n"),
                                                             std::wstring(prop->GetName()),
                                                             prop->GetOffset_Internal(),
                                                             prop->GetSize());
@@ -3319,7 +3325,7 @@ namespace MoriaMods
                         {
                             std::memcpy(&itemsList, invBase + ITEMS_LIST_OFFSET, 16);
                         }
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] Items.List TArray @0x330: data={:p} num={} max={}\n"),
+                        VLOG(STR("[MoriaCppMod] [Inv] Items.List TArray @0x330: data={:p} num={} max={}\n"),
                                                         static_cast<void*>(itemsList.Data),
                                                         itemsList.Num,
                                                         itemsList.Max);
@@ -3340,7 +3346,7 @@ namespace MoriaMods
                             int totalBytes = itemsList.Num * ITEMINSTANCE_SIZE;
                             if (isReadableMemory(itemsList.Data, totalBytes))
                             {
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] Reading {} item instances...\n"), itemsList.Num);
+                                VLOG(STR("[MoriaCppMod] [Inv] Reading {} item instances...\n"), itemsList.Num);
                                 for (int i = 0; i < itemsList.Num; i++)
                                 {
                                     uint8_t* entry = itemsList.Data + i * ITEMINSTANCE_SIZE;
@@ -3364,7 +3370,7 @@ namespace MoriaMods
                                     }
 
                                     idMap[id] = {clsName, count, slot, id, durability};
-                                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv]   item[{}]: id={} slot={} count={} dur={:.1f} class='{}'\n"),
+                                    VLOG(STR("[MoriaCppMod] [Inv]   item[{}]: id={} slot={} count={} dur={:.1f} class='{}'\n"),
                                                                     i,
                                                                     id,
                                                                     slot,
@@ -3376,7 +3382,7 @@ namespace MoriaMods
                         }
 
                         // ── Now read each hotbar slot and resolve via the ID map ──
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] === HOTBAR CONTENTS ===\n"));
+                        VLOG(STR("[MoriaCppMod] [Inv] === HOTBAR CONTENTS ===\n"));
                         for (int slot = 0; slot <= hotbarSize; slot++)
                         {
                             int querySlot = slot;
@@ -3401,7 +3407,7 @@ namespace MoriaMods
 
                             if (itemId == 0 && payload == 0)
                             {
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] {}: (empty)\n"), label);
+                                VLOG(STR("[MoriaCppMod] [Inv] {}: (empty)\n"), label);
                             }
                             else
                             {
@@ -3409,7 +3415,7 @@ namespace MoriaMods
                                 if (it != idMap.end())
                                 {
                                     const auto& info = it->second;
-                                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] {}: '{}' x{} (dur={:.0f}, id={})\n"),
+                                    VLOG(STR("[MoriaCppMod] [Inv] {}: '{}' x{} (dur={:.0f}, id={})\n"),
                                                                     label,
                                                                     info.className,
                                                                     info.count,
@@ -3418,24 +3424,24 @@ namespace MoriaMods
                                 }
                                 else
                                 {
-                                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] {}: id={} payload={} (NOT in ClientItems)\n"), label, itemId, payload);
+                                    VLOG(STR("[MoriaCppMod] [Inv] {}: id={} payload={} (NOT in ClientItems)\n"), label, itemId, payload);
                                 }
                             }
                         }
                     }
                     else
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] GetItemForHotbarSlot NOT FOUND\n"));
+                        VLOG(STR("[MoriaCppMod] [Inv] GetItemForHotbarSlot NOT FOUND\n"));
                     }
                 }
                 else
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Inv] Could not find MorInventoryComponent\n"));
+                    VLOG(STR("[MoriaCppMod] [Inv] Could not find MorInventoryComponent\n"));
                 }
             }
 
             showOnScreen(L"Inventory probe done (see UE4SS log)", 5.0f, 0.0f, 1.0f, 0.5f);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END PROBE: Inventory Hotbar ===\n"));
+            VLOG(STR("[MoriaCppMod] === END PROBE: Inventory Hotbar ===\n"));
         }
 
         // ── Clear Hotbar: move slots 0-7 to body inventory (one per frame) ──
@@ -3487,7 +3493,7 @@ namespace MoriaMods
             }
 
             int32_t bagId = reinterpret_cast<const FItemHandleLocal*>(m_bagHandle.data())->ID;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === CLEAR HOTBAR → bag id={} ===\n"), bagId);
+            VLOG(STR("[MoriaCppMod] === CLEAR HOTBAR → bag id={} ===\n"), bagId);
             m_clearingHotbar = true;
             m_clearHotbarCount = 0;
             m_clearHotbarDropped = 0;
@@ -3604,7 +3610,7 @@ namespace MoriaMods
                     std::memcpy(moveBuf.data() + mDest.offset, m_bagHandle.data(), handleSize);
                     invComp->ProcessEvent(moveFunc, moveBuf.data());
                     m_clearHotbarCount++;
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Slot {} (id={}) → bag\n"), slot, itemId);
+                    VLOG(STR("[MoriaCppMod] Slot {} (id={}) → bag\n"), slot, itemId);
                 }
                 else
                 {
@@ -3616,7 +3622,7 @@ namespace MoriaMods
                     *reinterpret_cast<int32_t*>(dropBuf.data() + dc.offset) = 999999;
                     invComp->ProcessEvent(dropFunc, dropBuf.data());
                     m_clearHotbarDropped++;
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Slot {} (id={}) → dropped (bag full)\n"), slot, itemId);
+                    VLOG(STR("[MoriaCppMod] Slot {} (id={}) → dropped (bag full)\n"), slot, itemId);
                 }
 
                 m_clearHotbarWait = 3;
@@ -3626,7 +3632,7 @@ namespace MoriaMods
             // All slots empty — done
             std::wstring msg = std::format(L"Hotbar cleared: {} to bag, {} dropped", m_clearHotbarCount, m_clearHotbarDropped);
             showOnScreen(msg, 3.0f, 0.0f, 1.0f, 0.5f);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] {}\n"), msg);
+            VLOG(STR("[MoriaCppMod] {}\n"), msg);
             m_clearingHotbar = false;
         }
 #endif
@@ -3667,10 +3673,10 @@ namespace MoriaMods
         //   Resolve → Phase 0 (stash hotbar→container) → Phase 1 (restore container→hotbar)
         void swapToolbar()
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] === swapToolbar() called ===\n"));
+            VLOG(STR("[MoriaCppMod] [Swap] === swapToolbar() called ===\n"));
             try
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] State: active={} clearing={} bodyInvHandle.empty={} handles.size={} charLoaded={}\n"),
+                VLOG(STR("[MoriaCppMod] [Swap] State: active={} clearing={} bodyInvHandle.empty={} handles.size={} charLoaded={}\n"),
                                                 m_swap.active,
                                                 m_clearingHotbar,
                                                 m_bodyInvHandle.empty(),
@@ -3680,20 +3686,20 @@ namespace MoriaMods
                 if (m_swap.active)
                 {
                     showOnScreen(Loc::get("msg.swap_in_progress").c_str(), 2.0f, 1.0f, 1.0f, 0.0f);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] BLOCKED: swap already active\n"));
+                    VLOG(STR("[MoriaCppMod] [Swap] BLOCKED: swap already active\n"));
                     return;
                 }
                 if (m_clearingHotbar)
                 {
                     showOnScreen(Loc::get("msg.wait_clear").c_str(), 2.0f, 1.0f, 1.0f, 0.0f);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] BLOCKED: hotbar clear in progress\n"));
+                    VLOG(STR("[MoriaCppMod] [Swap] BLOCKED: hotbar clear in progress\n"));
                     return;
                 }
 
                 // Discover container handles if not cached
                 if (m_bodyInvHandle.empty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] No cached handles, running discovery...\n"));
+                    VLOG(STR("[MoriaCppMod] [Swap] No cached handles, running discovery...\n"));
                     UObject* playerChar = nullptr;
                     {
                         std::vector<UObject*> actors;
@@ -3709,7 +3715,7 @@ namespace MoriaMods
                     }
                     if (playerChar)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] Player found, discovering containers...\n"));
+                        VLOG(STR("[MoriaCppMod] [Swap] Player found, discovering containers...\n"));
                         auto* invComp = findPlayerInventoryComponent(playerChar);
                         if (invComp)
                         {
@@ -3717,25 +3723,25 @@ namespace MoriaMods
                         }
                         else
                         {
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] FAIL: findPlayerInventoryComponent returned null\n"));
+                            VLOG(STR("[MoriaCppMod] [Swap] FAIL: findPlayerInventoryComponent returned null\n"));
                         }
                     }
                     else
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] FAIL: Dwarf character not found in actors\n"));
+                        VLOG(STR("[MoriaCppMod] [Swap] FAIL: Dwarf character not found in actors\n"));
                     }
                 }
                 if (m_bodyInvHandle.empty())
                 {
                     showOnScreen(Loc::get("msg.body_inv_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] FAIL: m_bodyInvHandle still empty after discovery\n"));
+                    VLOG(STR("[MoriaCppMod] [Swap] FAIL: m_bodyInvHandle still empty after discovery\n"));
                     return;
                 }
                 // Need at least 3 BodyInventory containers: [0]=hotbar, [1]=T1 stash, [2]=T2 stash
                 if (m_bodyInvHandles.size() < 3)
                 {
                     showOnScreen(std::format(L"Need 3 BodyInventory containers, found {}", m_bodyInvHandles.size()), 3.0f, 1.0f, 0.3f, 0.3f);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] FAIL: only {} BodyInventory containers (need 3)\n"), m_bodyInvHandles.size());
+                    VLOG(STR("[MoriaCppMod] [Swap] FAIL: only {} BodyInventory containers (need 3)\n"), m_bodyInvHandles.size());
                     return;
                 }
 
@@ -3743,13 +3749,13 @@ namespace MoriaMods
                 for (size_t hi = 0; hi < m_bodyInvHandles.size(); hi++)
                 {
                     int32_t hid = reinterpret_cast<const FItemHandleLocal*>(m_bodyInvHandles[hi].data())->ID;
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] Handle[{}] ID={} size={}\n"), hi, hid, m_bodyInvHandles[hi].size());
+                    VLOG(STR("[MoriaCppMod] [Swap] Handle[{}] ID={} size={}\n"), hi, hid, m_bodyInvHandles[hi].size());
                 }
 
                 int curTB = m_activeToolbar;
                 int nextTB = 1 - curTB; // toggle 0↔1
 
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] toolbar swap: T{} -> T{} (stash->container[{}], restore<-container[{}])\n"),
+                VLOG(STR("[MoriaCppMod] toolbar swap: T{} -> T{} (stash->container[{}], restore<-container[{}])\n"),
                                                 curTB + 1,
                                                 nextTB + 1,
                                                 curTB + 1,
@@ -3771,11 +3777,11 @@ namespace MoriaMods
             }
             catch (const std::exception&)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] EXCEPTION in swapToolbar()\n"));
+                VLOG(STR("[MoriaCppMod] [Swap] EXCEPTION in swapToolbar()\n"));
             }
             catch (...)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] UNKNOWN EXCEPTION in swapToolbar()\n"));
+                VLOG(STR("[MoriaCppMod] [Swap] UNKNOWN EXCEPTION in swapToolbar()\n"));
             }
         }
 
@@ -3826,7 +3832,7 @@ namespace MoriaMods
 
                 if (!getSlotFunc || !moveFunc)
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Swap: functions missing (GetItemForHotbarSlot={} MoveItem={})\n"),
+                    VLOG(STR("[MoriaCppMod] Swap: functions missing (GetItemForHotbarSlot={} MoveItem={})\n"),
                                                     getSlotFunc != nullptr,
                                                     moveFunc != nullptr);
                     m_swap.active = false;
@@ -3839,7 +3845,7 @@ namespace MoriaMods
                     m_ihfCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/FGK.Default__ItemHandleFunctions"));
                     if (m_ihfCDO)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Found IHF CDO: '{}'\n"), std::wstring(m_ihfCDO->GetName()));
+                        VLOG(STR("[MoriaCppMod] Found IHF CDO: '{}'\n"), std::wstring(m_ihfCDO->GetName()));
                     }
                 }
 
@@ -3885,7 +3891,7 @@ namespace MoriaMods
 
                     if (!m_dropItemMgr || !m_ihfCDO)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Resolve: DropItemMgr={} IHF={} — using default mapping stash=[{}] restore=[{}]\n"),
+                        VLOG(STR("[MoriaCppMod] Resolve: DropItemMgr={} IHF={} — using default mapping stash=[{}] restore=[{}]\n"),
                                                         m_dropItemMgr != nullptr,
                                                         m_ihfCDO != nullptr,
                                                         m_swap.stashIdx,
@@ -3900,7 +3906,7 @@ namespace MoriaMods
 
                         if (!getNameFunc || !ihfGetSlot || !ihfIsValid)
                         {
-                            Output::send<LogLevel::Warning>(
+                            VLOG(
                                     STR("[MoriaCppMod] Resolve: missing functions (getName={} getSlot={} isValid={}) — using default\n"),
                                     getNameFunc != nullptr,
                                     ihfGetSlot != nullptr,
@@ -3955,7 +3961,7 @@ namespace MoriaMods
                                     int32_t ci = getNameCI(sb.data() + slotRet.offset);
                                     hotbarCIs.push_back(ci);
                                     auto nameStr = getNameStr(sb.data() + slotRet.offset);
-                                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Resolve: hotbar[{}] id={} name={}\n"), s, slotHandle->ID, nameStr);
+                                    VLOG(STR("[MoriaCppMod] Resolve: hotbar[{}] id={} name={}\n"), s, slotHandle->ID, nameStr);
                                 }
                             }
 
@@ -3978,7 +3984,7 @@ namespace MoriaMods
                                         cis.push_back(ci);
                                         auto* cHandle = reinterpret_cast<const FItemHandleLocal*>(gb.data() + rgsRet.offset);
                                         auto nameStr = getNameStr(gb.data() + rgsRet.offset);
-                                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Resolve: container[{}][{}] id={} name={}\n"), cIdx, s, cHandle->ID, nameStr);
+                                        VLOG(STR("[MoriaCppMod] Resolve: container[{}][{}] id={} name={}\n"), cIdx, s, cHandle->ID, nameStr);
                                     }
                                 }
                                 return cis;
@@ -4005,7 +4011,7 @@ namespace MoriaMods
                                     }
                             }
 
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Resolve: hotbar={} items, c[1]={} items ({} match), c[2]={} items ({} match)\n"),
+                            VLOG(STR("[MoriaCppMod] Resolve: hotbar={} items, c[1]={} items ({} match), c[2]={} items ({} match)\n"),
                                                             hotbarCIs.size(),
                                                             c1CIs.size(),
                                                             c1Match,
@@ -4039,7 +4045,7 @@ namespace MoriaMods
                             }
                             // else: both empty or tied — keep default mapping
 
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Resolve: RESULT stashIdx={} restoreIdx={}\n"), m_swap.stashIdx, m_swap.restoreIdx);
+                            VLOG(STR("[MoriaCppMod] Resolve: RESULT stashIdx={} restoreIdx={}\n"), m_swap.stashIdx, m_swap.restoreIdx);
                             m_swap.wait = 1;
                         }
                     }
@@ -4065,7 +4071,7 @@ namespace MoriaMods
                                 std::vector<uint8_t> emptyBuf(std::max(emptyFunc->GetParmsSize() + 32, 64), 0);
                                 std::memcpy(emptyBuf.data() + emptyItem.offset, stashContainer.data(), handleSize);
                                 invComp->ProcessEvent(emptyFunc, emptyBuf.data());
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Phase0: EmptyContainer([{}]) — clearing stale items before stash\n"),
+                                VLOG(STR("[MoriaCppMod] Phase0: EmptyContainer([{}]) — clearing stale items before stash\n"),
                                                                 m_swap.stashIdx);
                             }
                         }
@@ -4094,13 +4100,13 @@ namespace MoriaMods
                         m_swap.moved++;
                         m_swap.slot = slot + 1;
 
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Phase0: hotbar[{}] id={} -> container[{}]\n"), slot, stashHandle->ID, m_swap.stashIdx);
+                        VLOG(STR("[MoriaCppMod] Phase0: hotbar[{}] id={} -> container[{}]\n"), slot, stashHandle->ID, m_swap.stashIdx);
 
                         m_swap.wait = 3;
                         return;
                     }
 
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Phase0 done: stashed {} items. Restoring from container[{}]\n"),
+                    VLOG(STR("[MoriaCppMod] Phase0 done: stashed {} items. Restoring from container[{}]\n"),
                                                     m_swap.moved,
                                                     m_swap.restoreIdx);
 
@@ -4115,7 +4121,7 @@ namespace MoriaMods
                 {
                     if (!m_ihfCDO)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Phase1: IHF CDO not found\n"));
+                        VLOG(STR("[MoriaCppMod] Phase1: IHF CDO not found\n"));
                         m_swap.active = false;
                         return;
                     }
@@ -4124,7 +4130,7 @@ namespace MoriaMods
                     auto* ihfIsValid = m_ihfCDO->GetFunctionByNameInChain(STR("IsValidItem"));
                     if (!ihfGetSlot || !ihfIsValid)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Phase1: IHF functions missing\n"));
+                        VLOG(STR("[MoriaCppMod] Phase1: IHF functions missing\n"));
                         m_swap.active = false;
                         return;
                     }
@@ -4155,7 +4161,7 @@ namespace MoriaMods
 
                         auto* restHandle = reinterpret_cast<const FItemHandleLocal*>(gsBuf.data() + gsRet.offset);
 
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Phase1: container[{}][{}] id={} -> hotbar\n"), m_swap.restoreIdx, slot, restHandle->ID);
+                        VLOG(STR("[MoriaCppMod] Phase1: container[{}][{}] id={} -> hotbar\n"), m_swap.restoreIdx, slot, restHandle->ID);
 
                         std::vector<uint8_t> moveBuf(std::max(moveFunc->GetParmsSize() + 32, 128), 0);
                         std::memcpy(moveBuf.data() + mItem.offset, gsBuf.data() + gsRet.offset, handleSize);
@@ -4178,7 +4184,7 @@ namespace MoriaMods
                             std::vector<uint8_t> emptyBuf(std::max(emptyFunc->GetParmsSize() + 32, 64), 0);
                             std::memcpy(emptyBuf.data() + emptyItem.offset, restoreContainer.data(), handleSize);
                             invComp->ProcessEvent(emptyFunc, emptyBuf.data());
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Phase1: EmptyContainer([{}]) — cleanup after restore\n"), m_swap.restoreIdx);
+                            VLOG(STR("[MoriaCppMod] Phase1: EmptyContainer([{}]) — cleanup after restore\n"), m_swap.restoreIdx);
                         }
                     }
 
@@ -4189,7 +4195,7 @@ namespace MoriaMods
 
                     std::wstring msg = std::format(L"Toolbar {} active ({} items moved)", m_swap.nextTB + 1, m_swap.moved);
                     showOnScreen(msg, 3.0f, 0.0f, 1.0f, 0.5f);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] {}\n"), msg);
+                    VLOG(STR("[MoriaCppMod] {}\n"), msg);
                     m_swap.active = false;
                     refreshActionBar();
                     return;
@@ -4197,14 +4203,14 @@ namespace MoriaMods
             }
             catch (...)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] EXCEPTION in swapToolbarTick()\n"));
+                VLOG(STR("[MoriaCppMod] EXCEPTION in swapToolbarTick()\n"));
                 m_swap.active = false;
             }
         }
 
         void toggleBuildHUD()
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === Toggle Build HUD ===\n"));
+            VLOG(STR("[MoriaCppMod] === Toggle Build HUD ===\n"));
 
             // Find WBP_MoriaHUD_C
             std::vector<UObject*> widgets;
@@ -4236,7 +4242,7 @@ namespace MoriaMods
 
             if (!moriaHUD)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] WBP_MoriaHUD_C NOT FOUND (visible)\n"));
+                VLOG(STR("[MoriaCppMod] WBP_MoriaHUD_C NOT FOUND (visible)\n"));
                 showOnScreen(Loc::get("msg.hud_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
@@ -4247,10 +4253,10 @@ namespace MoriaMods
 
             if (showFunc)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] BuildHUDShow params ({}B):\n"), showFunc->GetParmsSize());
+                VLOG(STR("[MoriaCppMod] BuildHUDShow params ({}B):\n"), showFunc->GetParmsSize());
                 for (auto* prop : showFunc->ForEachProperty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
                                                     std::wstring(prop->GetName()),
                                                     prop->GetOffset_Internal(),
                                                     prop->GetSize());
@@ -4260,27 +4266,27 @@ namespace MoriaMods
                 int parmsSize = showFunc->GetParmsSize();
                 std::vector<uint8_t> buf(parmsSize, 0);
                 moriaHUD->ProcessEvent(showFunc, buf.data());
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called BuildHUDShow!\n"));
+                VLOG(STR("[MoriaCppMod] Called BuildHUDShow!\n"));
                 showOnScreen(L"BuildHUDShow called!", 3.0f, 0.0f, 1.0f, 0.0f);
             }
             else
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] BuildHUDShow NOT FOUND\n"));
+                VLOG(STR("[MoriaCppMod] BuildHUDShow NOT FOUND\n"));
             }
 
             if (hideFunc)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] BuildHUDHide params ({}B):\n"), hideFunc->GetParmsSize());
+                VLOG(STR("[MoriaCppMod] BuildHUDHide params ({}B):\n"), hideFunc->GetParmsSize());
                 for (auto* prop : hideFunc->ForEachProperty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
+                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
                                                     std::wstring(prop->GetName()),
                                                     prop->GetOffset_Internal(),
                                                     prop->GetSize());
                 }
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END Toggle Build HUD ===\n"));
+            VLOG(STR("[MoriaCppMod] === END Toggle Build HUD ===\n"));
         }
 
         // ── Debug Cheat Functions ──
@@ -4301,7 +4307,7 @@ namespace MoriaMods
                         if (fn)
                         {
                             a->ProcessEvent(fn, nullptr);
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called {}::{} (direct find)\n"),
+                            VLOG(STR("[MoriaCppMod] Called {}::{} (direct find)\n"),
                                                             std::wstring(actorClass), std::wstring(funcName));
                             return true;
                         }
@@ -4322,17 +4328,17 @@ namespace MoriaMods
                     if (fn)
                     {
                         a->ProcessEvent(fn, nullptr);
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Called {}::{} (actor scan)\n"), cls, std::wstring(funcName));
+                        VLOG(STR("[MoriaCppMod] Called {}::{} (actor scan)\n"), cls, std::wstring(funcName));
                         return true;
                     }
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Function {} not found on {}\n"), std::wstring(funcName), cls);
+                    VLOG(STR("[MoriaCppMod] Function {} not found on {}\n"), std::wstring(funcName), cls);
                     return false;
                 }
             }
             // Only log on first retry (not every frame)
             static int s_debugNotFoundCount = 0;
             if (++s_debugNotFoundCount <= 3)
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Actor {} not found (attempt {})\n"), std::wstring(actorClass), s_debugNotFoundCount);
+                VLOG(STR("[MoriaCppMod] Actor {} not found (attempt {})\n"), std::wstring(actorClass), s_debugNotFoundCount);
             return false;
         }
 
@@ -4369,7 +4375,7 @@ namespace MoriaMods
                     msg += prereqs ? L"Prereqs:OFF " : L"Prereqs:ON ";
                     msg += stability ? L"Stability:OFF" : L"Stability:ON";
                     showOnScreen(msg, 5.0f, 0.0f, 1.0f, 1.0f);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] {}\n"), msg);
+                    VLOG(STR("[MoriaCppMod] {}\n"), msg);
                     return;
                 }
             }
@@ -4399,7 +4405,7 @@ namespace MoriaMods
             }
             if (objs.empty())
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] syncDebugToggleState: debug actor not found\n"));
+                VLOG(STR("[MoriaCppMod] syncDebugToggleState: debug actor not found\n"));
                 return false;
             }
 
@@ -4411,7 +4417,7 @@ namespace MoriaMods
 
             s_config.freeBuild = readBool(STR("free_construction"));
 
-            Output::send<LogLevel::Warning>(
+            VLOG(
                 STR("[MoriaCppMod] syncDebugToggleState: freeBuild={}\n"),
                 s_config.freeBuild ? 1 : 0);
             return true;
@@ -4494,7 +4500,7 @@ namespace MoriaMods
             const float step = static_cast<float>(s_overlay.rotationStep);
             if (!setGATARotation(gata, step)) return;
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Rotate] Set SnapRotateIncrement={:.0f} FreePlaceRotateIncrement={:.0f}\n"), step, step);
+            VLOG(STR("[MoriaCppMod] [Rotate] Set SnapRotateIncrement={:.0f} FreePlaceRotateIncrement={:.0f}\n"), step, step);
             std::wstring msg = L"Rotation step: " + std::to_wstring((int)step) + L"\xB0 \x2014 press R!";
             showOnScreen(msg.c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
         }
@@ -4523,7 +4529,7 @@ namespace MoriaMods
             s_overlay.rotationStep = static_cast<int>(newStep);
             s_overlay.needsUpdate = true;
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Rotate] Toggled rotation step to {:.0f}\n"), newStep);
+            VLOG(STR("[MoriaCppMod] [Rotate] Toggled rotation step to {:.0f}\n"), newStep);
             std::wstring msg = L"Rotation step: " + std::to_wstring((int)newStep) + L"\xB0";
             showOnScreen(msg.c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
         }
@@ -4709,7 +4715,7 @@ namespace MoriaMods
             if (refreshFunc)
             {
                 actionBar->ProcessEvent(refreshFunc, nullptr);
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] ActionBar: Set All Action Bar Items called\n"));
+                VLOG(STR("[MoriaCppMod] ActionBar: Set All Action Bar Items called\n"));
             }
         }
 
@@ -4756,7 +4762,7 @@ namespace MoriaMods
             }
             if (loaded > 0)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Loaded {} quick-build slots from disk\n"), loaded);
+                VLOG(STR("[MoriaCppMod] Loaded {} quick-build slots from disk\n"), loaded);
                 updateOverlayText();
                 updateBuildersBar();
             }
@@ -4772,7 +4778,7 @@ namespace MoriaMods
                 file << i << "|" << (int)s_bindings[i].key << "\n";
             }
             file << "mod|" << (int)s_modifierVK.load() << "\n";
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Saved {} keybindings + modifier to disk\n"), BIND_COUNT);
+            VLOG(STR("[MoriaCppMod] Saved {} keybindings + modifier to disk\n"), BIND_COUNT);
         }
 
         void loadKeybindings()
@@ -4796,7 +4802,7 @@ namespace MoriaMods
             }
             if (loaded > 0)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Loaded {} keybindings from disk\n"), loaded);
+                VLOG(STR("[MoriaCppMod] Loaded {} keybindings from disk\n"), loaded);
             }
         }
 
@@ -4858,10 +4864,10 @@ namespace MoriaMods
                 }
                 if (!texture)
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] UTexture2D not found from widget chain\n"));
+                    VLOG(STR("[MoriaCppMod] [Icon] UTexture2D not found from widget chain\n"));
                     return false;
                 }
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] UTexture2D: {} '{}'\n"), safeClassName(texture), std::wstring(texture->GetName()));
+                VLOG(STR("[MoriaCppMod] [Icon] UTexture2D: {} '{}'\n"), safeClassName(texture), std::wstring(texture->GetName()));
 
                 // --- Find required UFunctions ---
                 auto* createRTFn =
@@ -4873,7 +4879,7 @@ namespace MoriaMods
                 auto* exportRTFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.KismetRenderingLibrary:ExportRenderTarget"));
                 auto* drawTexFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.Canvas:K2_DrawTexture"));
 
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] CreateRT={} BeginDraw={} EndDraw={} ExportRT={} K2_DrawTex={}\n"),
+                VLOG(STR("[MoriaCppMod] [Icon] CreateRT={} BeginDraw={} EndDraw={} ExportRT={} K2_DrawTex={}\n"),
                                                 createRTFn ? STR("YES") : STR("no"),
                                                 beginDrawFn ? STR("YES") : STR("no"),
                                                 endDrawFn ? STR("YES") : STR("no"),
@@ -4882,7 +4888,7 @@ namespace MoriaMods
 
                 if (!createRTFn || !beginDrawFn || !endDrawFn || !exportRTFn || !drawTexFn)
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] Missing required UFunctions\n"));
+                    VLOG(STR("[MoriaCppMod] [Icon] Missing required UFunctions\n"));
                     return false;
                 }
 
@@ -4893,10 +4899,10 @@ namespace MoriaMods
                     s_loggedParams = true;
                     for (auto* fn : {createRTFn, beginDrawFn, endDrawFn, drawTexFn, exportRTFn})
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] {} ParmsSize={}:\n"), std::wstring(fn->GetName()), fn->GetParmsSize());
+                        VLOG(STR("[MoriaCppMod] [Icon] {} ParmsSize={}:\n"), std::wstring(fn->GetName()), fn->GetParmsSize());
                         for (auto* prop : fn->ForEachProperty())
                         {
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon]   {} @{} sz={} {}\n"),
+                            VLOG(STR("[MoriaCppMod] [Icon]   {} @{} sz={} {}\n"),
                                                             std::wstring(prop->GetName()),
                                                             prop->GetOffset_Internal(),
                                                             prop->GetSize(),
@@ -4921,7 +4927,7 @@ namespace MoriaMods
                 }
                 if (!worldCtx)
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] No PlayerController\n"));
+                    VLOG(STR("[MoriaCppMod] [Icon] No PlayerController\n"));
                     return false;
                 }
 
@@ -4950,10 +4956,10 @@ namespace MoriaMods
                 }
                 if (!renderTarget)
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] CreateRenderTarget2D returned null\n"));
+                    VLOG(STR("[MoriaCppMod] [Icon] CreateRenderTarget2D returned null\n"));
                     return false;
                 }
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] Created render target OK\n"));
+                VLOG(STR("[MoriaCppMod] [Icon] Created render target OK\n"));
 
                 // === Step 2: BeginDrawCanvasToRenderTarget ===
                 UObject* canvas = nullptr;
@@ -4971,10 +4977,10 @@ namespace MoriaMods
                 }
                 if (!canvas)
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] BeginDrawCanvasToRenderTarget returned no Canvas\n"));
+                    VLOG(STR("[MoriaCppMod] [Icon] BeginDrawCanvasToRenderTarget returned no Canvas\n"));
                     return false;
                 }
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] Got Canvas: {} '{}'\n"), safeClassName(canvas), std::wstring(canvas->GetName()));
+                VLOG(STR("[MoriaCppMod] [Icon] Got Canvas: {} '{}'\n"), safeClassName(canvas), std::wstring(canvas->GetName()));
 
                 // === Step 3: K2_DrawTexture on Canvas ===
                 {
@@ -5033,7 +5039,7 @@ namespace MoriaMods
                     }
 
                     canvas->ProcessEvent(drawTexFn, dtParams.data());
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] Drew texture to canvas\n"));
+                    VLOG(STR("[MoriaCppMod] [Icon] Drew texture to canvas\n"));
                 }
 
                 // === Step 4: EndDrawCanvasToRenderTarget ===
@@ -5053,7 +5059,7 @@ namespace MoriaMods
                         }
                     }
                     krlCDO->ProcessEvent(endDrawFn, eParams.data());
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] EndDrawCanvasToRenderTarget OK\n"));
+                    VLOG(STR("[MoriaCppMod] [Icon] EndDrawCanvasToRenderTarget OK\n"));
                 }
 
                 // === Step 5: ExportRenderTarget ===
@@ -5077,7 +5083,7 @@ namespace MoriaMods
                         auto dotPos = fileName.rfind(L'.');
                         if (dotPos != std::wstring::npos) fileName = fileName.substr(0, dotPos);
                     }
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] Exporting to folder='{}' file='{}'\n"), folder, fileName);
+                    VLOG(STR("[MoriaCppMod] [Icon] Exporting to folder='{}' file='{}'\n"), folder, fileName);
 
                     if (eFP)
                     {
@@ -5090,7 +5096,7 @@ namespace MoriaMods
                         *fstr = FString(fileName.c_str());
                     }
                     krlCDO->ProcessEvent(exportRTFn, eParams.data());
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] ExportRenderTarget called\n"));
+                    VLOG(STR("[MoriaCppMod] [Icon] ExportRenderTarget called\n"));
                 }
 
                 // --- Check for exported file and convert to PNG ---
@@ -5105,7 +5111,7 @@ namespace MoriaMods
                         WIN32_FILE_ATTRIBUTE_DATA fad{};
                         GetFileAttributesExW(candidate.c_str(), GetFileExInfoStandard, &fad);
                         int64_t fsize = ((int64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] Found file: {} ({} bytes)\n"), candidate, fsize);
+                        VLOG(STR("[MoriaCppMod] [Icon] Found file: {} ({} bytes)\n"), candidate, fsize);
                         if (fsize > 0)
                         {
                             exportedPath = candidate;
@@ -5116,7 +5122,7 @@ namespace MoriaMods
 
                 if (exportedPath.empty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] No exported file found (or 0 bytes)\n"));
+                    VLOG(STR("[MoriaCppMod] [Icon] No exported file found (or 0 bytes)\n"));
                     for (const wchar_t* ext : {L".hdr", L".bmp", L".png", L".exr", L""})
                     {
                         std::wstring candidate = baseName + ext;
@@ -5124,7 +5130,7 @@ namespace MoriaMods
                     }
                     return false;
                 }
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] Found exported file: {}\n"), exportedPath);
+                VLOG(STR("[MoriaCppMod] [Icon] Found exported file: {}\n"), exportedPath);
 
                 if (exportedPath == outPath) return true;
 
@@ -5149,7 +5155,7 @@ namespace MoriaMods
                                 {
                                     if (img->Save(outPath.c_str(), &encoders[i].Clsid, nullptr) == Gdiplus::Ok)
                                     {
-                                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] Converted to PNG: {}\n"), outPath);
+                                        VLOG(STR("[MoriaCppMod] [Icon] Converted to PNG: {}\n"), outPath);
                                         delete img;
                                         DeleteFileW(exportedPath.c_str());
                                         Gdiplus::GdiplusShutdown(token);
@@ -5163,12 +5169,12 @@ namespace MoriaMods
                     }
                 }
                 Gdiplus::GdiplusShutdown(token);
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] PNG conversion failed\n"));
+                VLOG(STR("[MoriaCppMod] [Icon] PNG conversion failed\n"));
                 return false;
             }
             catch (...)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] Exception during extraction\n"));
+                VLOG(STR("[MoriaCppMod] [Icon] Exception during extraction\n"));
                 return false;
             }
         }
@@ -5251,7 +5257,7 @@ namespace MoriaMods
                     saveQuickBuildSlots();
                     updateOverlayText();
                     updateBuildersBar();
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] CLEARED F{}\n"), slot + 1);
+                    VLOG(STR("[MoriaCppMod] [QuickBuild] CLEARED F{}\n"), slot + 1);
                     std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" cleared";
                     showOnScreen(msg.c_str(), 2.0f, 1.0f, 0.5f, 0.0f);
                 }
@@ -5270,7 +5276,7 @@ namespace MoriaMods
                 m_recipeSlots[slot].textureName = extractIconTextureName(itemWidget);
                 if (!m_recipeSlots[slot].textureName.empty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] F{} icon: '{}'\n"), slot + 1, m_recipeSlots[slot].textureName);
+                    VLOG(STR("[MoriaCppMod] [QuickBuild] F{} icon: '{}'\n"), slot + 1, m_recipeSlots[slot].textureName);
 
                     // Extract and save the icon as PNG for the overlay
                     if (!s_overlay.iconFolder.empty())
@@ -5284,7 +5290,7 @@ namespace MoriaMods
                         }
                         else
                         {
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Icon] PNG already exists: {}\n"), pngPath);
+                            VLOG(STR("[MoriaCppMod] [Icon] PNG already exists: {}\n"), pngPath);
                         }
                     }
                 }
@@ -5294,7 +5300,7 @@ namespace MoriaMods
             updateOverlayText();
             updateBuildersBar();
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] ASSIGN F{} = '{}'\n"), slot + 1, m_lastCapturedName);
+            VLOG(STR("[MoriaCppMod] [QuickBuild] ASSIGN F{} = '{}'\n"), slot + 1, m_lastCapturedName);
 
             std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" = " + m_lastCapturedName;
             showOnScreen(msg.c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
@@ -5350,7 +5356,7 @@ namespace MoriaMods
                     valueInfo = buf;
                 }
 
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   {}: {} @{} sz={} type={}{}\n"), label, pname, offset, size, typeName, valueInfo);
+                VLOG(STR("[MoriaCppMod]   {}: {} @{} sz={} type={}{}\n"), label, pname, offset, size, typeName, valueInfo);
                 count++;
             }
         }
@@ -5358,13 +5364,13 @@ namespace MoriaMods
         // Probe an Image widget to find its texture/brush
         void probeImageWidget(UObject* imageWidget, const std::wstring& name)
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] --- IMAGE '{}' DEEP DIVE ---\n"), name);
+            VLOG(STR("[MoriaCppMod] --- IMAGE '{}' DEEP DIVE ---\n"), name);
             uint8_t* imgBase = reinterpret_cast<uint8_t*>(imageWidget);
 
             // Step 1: Hex dump the Brush struct (known to be at offset 264, size 136)
             const int BRUSH_OFF = 264;
             const int BRUSH_SZ = 136;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Brush @{} hex dump ({}B):\n"), BRUSH_OFF, BRUSH_SZ);
+            VLOG(STR("[MoriaCppMod] Brush @{} hex dump ({}B):\n"), BRUSH_OFF, BRUSH_SZ);
             for (int row = 0; row < BRUSH_SZ; row += 16)
             {
                 std::wstring hex;
@@ -5374,12 +5380,12 @@ namespace MoriaMods
                     swprintf(h, 4, L"%02X ", imgBase[BRUSH_OFF + row + col]);
                     hex += h;
                 }
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   +{:3d}: {}\n"), row, hex);
+                VLOG(STR("[MoriaCppMod]   +{:3d}: {}\n"), row, hex);
             }
 
             // Step 2: Read ResourceObject at brush+72 (confirmed MID location)
             // brush+112/120 are TSharedPtr ResourceHandle internals (NOT UObjects — crash on GetName)
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Brush ResourceObject at brush+72:\n"));
+            VLOG(STR("[MoriaCppMod] Brush ResourceObject at brush+72:\n"));
             {
                 uint64_t val = *reinterpret_cast<uint64_t*>(imgBase + BRUSH_OFF + 72);
                 if (val >= 0x10000 && val < 0x00007FF000000000)
@@ -5392,22 +5398,22 @@ namespace MoriaMods
                             auto* cls = ptr->GetClassPrivate();
                             std::wstring objCls(cls->GetName());
                             std::wstring objName(ptr->GetName());
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   brush+72: {} '{}' @ 0x{:016X}\n"), objCls, objName, val);
+                            VLOG(STR("[MoriaCppMod]   brush+72: {} '{}' @ 0x{:016X}\n"), objCls, objName, val);
                         }
                         catch (...)
                         {
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   brush+72: 0x{:016X} (exception)\n"), val);
+                            VLOG(STR("[MoriaCppMod]   brush+72: 0x{:016X} (exception)\n"), val);
                         }
                     }
                 }
                 else
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   brush+72: null or out of range\n"));
+                    VLOG(STR("[MoriaCppMod]   brush+72: null or out of range\n"));
                 }
             }
 
             // Step 3: Look for SetBrushFromTexture UFunction (useful for later setting icons)
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Image UFunctions scan:\n"));
+            VLOG(STR("[MoriaCppMod] Image UFunctions scan:\n"));
             const wchar_t* funcNames[] = {
                     STR("SetBrushFromTexture"),
                     STR("SetBrushResourceObject"),
@@ -5428,11 +5434,11 @@ namespace MoriaMods
                 if (ufn)
                 {
                     int pSz = ufn->GetParmsSize();
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   FOUND: {}() ParmsSize={}\n"), fn, pSz);
+                    VLOG(STR("[MoriaCppMod]   FOUND: {}() ParmsSize={}\n"), fn, pSz);
                     // Dump params
                     for (auto* prop : ufn->ForEachProperty())
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     param: {} @{} sz={} type={}\n"),
+                        VLOG(STR("[MoriaCppMod]     param: {} @{} sz={} type={}\n"),
                                                         std::wstring(prop->GetName()),
                                                         prop->GetOffset_Internal(),
                                                         prop->GetSize(),
@@ -5441,12 +5447,12 @@ namespace MoriaMods
                 }
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] --- IMAGE '{}' PROBE DONE ---\n"), name);
+            VLOG(STR("[MoriaCppMod] --- IMAGE '{}' PROBE DONE ---\n"), name);
         }
 
         void probeSelectedRecipe()
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === ICON PROBE: Selected Recipe ===\n"));
+            VLOG(STR("[MoriaCppMod] === ICON PROBE: Selected Recipe ===\n"));
 
             if (!m_hasLastCapture)
             {
@@ -5495,13 +5501,13 @@ namespace MoriaMods
             }
             if (!widget)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No Build_Item_Medium widget found!\n"));
+                VLOG(STR("[MoriaCppMod] No Build_Item_Medium widget found!\n"));
                 showOnScreen(Loc::get("msg.build_menu_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
             std::wstring displayName = readWidgetDisplayName(widget);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Widget: {} (name: '{}')\n"), std::wstring(widget->GetName()), displayName);
+            VLOG(STR("[MoriaCppMod] Widget: {} (name: '{}')\n"), std::wstring(widget->GetName()), displayName);
 
             // Get the Icon Image widget at offset 1104
             uint8_t* base = reinterpret_cast<uint8_t*>(widget);
@@ -5509,7 +5515,7 @@ namespace MoriaMods
             if (iconImage && isReadableMemory(iconImage, 64))
             {
                 std::wstring iconCls = safeClassName(iconImage);
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Icon widget: {} '{}' @ {:p}\n"),
+                VLOG(STR("[MoriaCppMod] Icon widget: {} '{}' @ {:p}\n"),
                                                 iconCls,
                                                 std::wstring(iconImage->GetName()),
                                                 static_cast<void*>(iconImage));
@@ -5525,7 +5531,7 @@ namespace MoriaMods
                     try
                     {
                         std::wstring midCls = safeClassName(mid);
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === MID PROBE: {} '{}' ===\n"), midCls, std::wstring(mid->GetName()));
+                        VLOG(STR("[MoriaCppMod] === MID PROBE: {} '{}' ===\n"), midCls, std::wstring(mid->GetName()));
 
                         // Dump MID properties (looking for TextureParameterValues, etc.)
                         dumpObjectProperties(mid, L"mid", 60);
@@ -5535,10 +5541,10 @@ namespace MoriaMods
                         if (getTexParam)
                         {
                             int pSz = getTexParam->GetParmsSize();
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] GetTextureParameterValue() ParmsSize={}\n"), pSz);
+                            VLOG(STR("[MoriaCppMod] GetTextureParameterValue() ParmsSize={}\n"), pSz);
                             for (auto* prop : getTexParam->ForEachProperty())
                             {
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   param: {} @{} sz={} type={}\n"),
+                                VLOG(STR("[MoriaCppMod]   param: {} @{} sz={} type={}\n"),
                                                                 std::wstring(prop->GetName()),
                                                                 prop->GetOffset_Internal(),
                                                                 prop->GetSize(),
@@ -5578,14 +5584,14 @@ namespace MoriaMods
                                 {
                                     std::wstring texCls = safeClassName(args.OutValue);
                                     std::wstring texName(args.OutValue->GetName());
-                                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] >>> GetTextureParameterValue('{}') = {} '{}' <<<\n"), paramName, texCls, texName);
+                                    VLOG(STR("[MoriaCppMod] >>> GetTextureParameterValue('{}') = {} '{}' <<<\n"), paramName, texCls, texName);
                                     // Walk outer chain for full path
                                     UObject* cur = args.OutValue;
                                     for (int d = 0; d < 5 && cur; d++)
                                     {
                                         auto* o = cur->GetOuterPrivate();
                                         if (!o) break;
-                                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   outer[{}]: {} '{}'\n"), d, safeClassName(o), std::wstring(o->GetName()));
+                                        VLOG(STR("[MoriaCppMod]   outer[{}]: {} '{}'\n"), d, safeClassName(o), std::wstring(o->GetName()));
                                         cur = o;
                                     }
                                     dumpObjectProperties(args.OutValue, L"tex", 30);
@@ -5594,7 +5600,7 @@ namespace MoriaMods
                         }
                         else
                         {
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] GetTextureParameterValue NOT found as UFunction\n"));
+                            VLOG(STR("[MoriaCppMod] GetTextureParameterValue NOT found as UFunction\n"));
                         }
 
                         // Read TextureParameterValues TArray directly from MID+256
@@ -5608,7 +5614,7 @@ namespace MoriaMods
                         const int TEX_PARAMS_OFF = 256;
                         uint8_t* arrData = *reinterpret_cast<uint8_t**>(midBase + TEX_PARAMS_OFF);
                         int32_t arrNum = *reinterpret_cast<int32_t*>(midBase + TEX_PARAMS_OFF + 8);
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] TextureParameterValues TArray: Data={:p} Num={}\n"), static_cast<void*>(arrData), arrNum);
+                        VLOG(STR("[MoriaCppMod] TextureParameterValues TArray: Data={:p} Num={}\n"), static_cast<void*>(arrData), arrNum);
 
                         if (arrNum > 0 && arrNum < 32 && arrData && isReadableMemory(arrData, arrNum * 40))
                         {
@@ -5616,7 +5622,7 @@ namespace MoriaMods
                             const int ENTRY_SIZES[] = {40, 48, 56, 32};
                             for (int entrySz : ENTRY_SIZES)
                             {
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Trying entry size {}B:\n"), entrySz);
+                                VLOG(STR("[MoriaCppMod] Trying entry size {}B:\n"), entrySz);
                                 bool foundAny = false;
 
                                 for (int i = 0; i < arrNum && i < 8; i++)
@@ -5632,7 +5638,7 @@ namespace MoriaMods
                                         swprintf(h, 4, L"%02X ", entry[b]);
                                         hex += h;
                                     }
-                                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   entry[{}]: {}\n"), i, hex);
+                                    VLOG(STR("[MoriaCppMod]   entry[{}]: {}\n"), i, hex);
 
                                     // Try reading UTexture* at offset 16 (after FMaterialParameterInfo)
                                     for (int texOff : {16, 8, 24, 32})
@@ -5648,7 +5654,7 @@ namespace MoriaMods
                                         {
                                             std::wstring cls = safeClassName(texPtr);
                                             std::wstring nm(texPtr->GetName());
-                                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   >>> entry[{}]+{}: {} '{}' <<<\n"), i, texOff, cls, nm);
+                                            VLOG(STR("[MoriaCppMod]   >>> entry[{}]+{}: {} '{}' <<<\n"), i, texOff, cls, nm);
                                             foundAny = true;
                                             // Walk outer chain
                                             UObject* cur = texPtr;
@@ -5656,7 +5662,7 @@ namespace MoriaMods
                                             {
                                                 auto* o = cur->GetOuterPrivate();
                                                 if (!o) break;
-                                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     outer[{}]: {} '{}'\n"),
+                                                VLOG(STR("[MoriaCppMod]     outer[{}]: {} '{}'\n"),
                                                                                 d,
                                                                                 safeClassName(o),
                                                                                 std::wstring(o->GetName()));
@@ -5670,7 +5676,7 @@ namespace MoriaMods
                                             // FTexturePlatformData layout: int32 SizeX, int32 SizeY, int32 NumSlices, EPixelFormat PixelFormat, ...
                                             // We look for a pointer to a struct where first 8 bytes = {SizeX, SizeY} with plausible icon sizes
                                             uint8_t* texBase = reinterpret_cast<uint8_t*>(texPtr);
-                                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Texture raw scan for PlatformData (offsets 8-800):\n"));
+                                            VLOG(STR("[MoriaCppMod] Texture raw scan for PlatformData (offsets 8-800):\n"));
                                             for (int toff = 8; toff < 800; toff += 8)
                                             {
                                                 if (!isReadableMemory(texBase + toff, 8)) break;
@@ -5684,7 +5690,7 @@ namespace MoriaMods
                                                 // Accept any reasonable texture size (removed power-of-2 and square requirements)
                                                 if (sx > 0 && sx <= 4096 && sy > 0 && sy <= 4096)
                                                 {
-                                                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   tex+{}: PlatformData? {}x{} @ 0x{:016X}\n"), toff, sx, sy, tval);
+                                                    VLOG(STR("[MoriaCppMod]   tex+{}: PlatformData? {}x{} @ 0x{:016X}\n"), toff, sx, sy, tval);
                                                     // Dump first 80 bytes of PlatformData
                                                     std::wstring pdHex;
                                                     for (int pb = 0; pb < 80; pb++)
@@ -5694,7 +5700,7 @@ namespace MoriaMods
                                                         pdHex += h;
                                                         if ((pb + 1) % 16 == 0)
                                                         {
-                                                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     +{:3d}: {}\n"), pb - 15, pdHex);
+                                                            VLOG(STR("[MoriaCppMod]     +{:3d}: {}\n"), pb - 15, pdHex);
                                                             pdHex.clear();
                                                         }
                                                     }
@@ -5707,7 +5713,7 @@ namespace MoriaMods
                                                         int32_t mipNum = *reinterpret_cast<int32_t*>(candidate + mipOff + 8);
                                                         if (mipNum > 0 && mipNum <= 16 && mipArrData && isReadableMemory(mipArrData, mipNum * 8))
                                                         {
-                                                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod]     PD+{}: Mips? Num={} Data={:p}\n"),
+                                                            VLOG(STR("[MoriaCppMod]     PD+{}: Mips? Num={} Data={:p}\n"),
                                                                                             mipOff,
                                                                                             mipNum,
                                                                                             static_cast<void*>(mipArrData));
@@ -5718,7 +5724,7 @@ namespace MoriaMods
                                                                 // FTexture2DMipMap: int32 SizeX, SizeY, SizeZ, then FByteBulkData
                                                                 int32_t m0sx = *reinterpret_cast<int32_t*>(mip0);
                                                                 int32_t m0sy = *reinterpret_cast<int32_t*>(mip0 + 4);
-                                                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod]       Mip0: {}x{} @ {:p}\n"),
+                                                                VLOG(STR("[MoriaCppMod]       Mip0: {}x{} @ {:p}\n"),
                                                                                                 m0sx,
                                                                                                 m0sy,
                                                                                                 static_cast<void*>(mip0));
@@ -5734,11 +5740,11 @@ namespace MoriaMods
                                                                             swprintf(h, 4, L"%02X ", mip0[mr + mc]);
                                                                             mhex += h;
                                                                         }
-                                                                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod]         +{:3d}: {}\n"), mr, mhex);
+                                                                        VLOG(STR("[MoriaCppMod]         +{:3d}: {}\n"), mr, mhex);
                                                                     }
                                                                 }
                                                                 // Scan mip0 for heap pointers (bulk data pointer)
-                                                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod]       Mip0 pointer scan:\n"));
+                                                                VLOG(STR("[MoriaCppMod]       Mip0 pointer scan:\n"));
                                                                 for (int mp = 8; mp < 120; mp += 8)
                                                                 {
                                                                     if (!isReadableMemory(mip0 + mp, 8)) break;
@@ -5751,7 +5757,7 @@ namespace MoriaMods
                                                                     if (VirtualQuery(mpPtr, &mbi, sizeof(mbi)))
                                                                     {
                                                                         size_t regionSz = mbi.RegionSize;
-                                                                        Output::send<LogLevel::Warning>(
+                                                                        VLOG(
                                                                                 STR("[MoriaCppMod]         mip0+{}: 0x{:016X} regionSz={} state={}\n"),
                                                                                 mp,
                                                                                 mpv,
@@ -5775,24 +5781,24 @@ namespace MoriaMods
                         }
                         else if (arrNum == 0)
                         {
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] TextureParameterValues is empty!\n"));
+                            VLOG(STR("[MoriaCppMod] TextureParameterValues is empty!\n"));
                         }
 
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END MID PROBE ===\n"));
+                        VLOG(STR("[MoriaCppMod] === END MID PROBE ===\n"));
                     }
                     catch (...)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] MID probe exception\n"));
+                        VLOG(STR("[MoriaCppMod] MID probe exception\n"));
                     }
                 }
                 else
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] No MID at brush+72\n"));
+                    VLOG(STR("[MoriaCppMod] No MID at brush+72\n"));
                 }
             }
             else
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Icon @1104 is null or unreadable!\n"));
+                VLOG(STR("[MoriaCppMod] Icon @1104 is null or unreadable!\n"));
             }
 
             // Also probe blockName text for completeness
@@ -5804,7 +5810,7 @@ namespace MoriaMods
                 {
                     FText txt{};
                     blockName->ProcessEvent(getTextFn, &txt);
-                    if (txt.Data) Output::send<LogLevel::Warning>(STR("[MoriaCppMod] blockName text = \"{}\"\n"), txt.ToString());
+                    if (txt.Data) VLOG(STR("[MoriaCppMod] blockName text = \"{}\"\n"), txt.ToString());
                 }
             }
 
@@ -5817,11 +5823,11 @@ namespace MoriaMods
                 {
                     FText txt{};
                     stackCount->ProcessEvent(getTextFn, &txt);
-                    if (txt.Data) Output::send<LogLevel::Warning>(STR("[MoriaCppMod] StackCount text = \"{}\"\n"), txt.ToString());
+                    if (txt.Data) VLOG(STR("[MoriaCppMod] StackCount text = \"{}\"\n"), txt.ToString());
                 }
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === END ICON PROBE ===\n"));
+            VLOG(STR("[MoriaCppMod] === END ICON PROBE ===\n"));
             showOnScreen(Loc::get("msg.icon_probe_done").c_str(), 5.0f, 0.0f, 1.0f, 0.5f);
         }
 #endif // Disabled: debug probe functions
@@ -5847,7 +5853,7 @@ namespace MoriaMods
         {
             const std::wstring& targetName = m_recipeSlots[slot].displayName;
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] SELECT: searching for '{}' (slot F{})\n"), targetName, slot + 1);
+            VLOG(STR("[MoriaCppMod] [QuickBuild] SELECT: searching for '{}' (slot F{})\n"), targetName, slot + 1);
 
             // Find all Build_Item_Medium widgets and match by display name
             std::vector<UObject*> widgets;
@@ -5882,7 +5888,7 @@ namespace MoriaMods
                 }
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild]   checked {} visible widgets, match: {}\n"), visibleCount, matchedWidget ? L"YES" : L"NO");
+            VLOG(STR("[MoriaCppMod] [QuickBuild]   checked {} visible widgets, match: {}\n"), visibleCount, matchedWidget ? L"YES" : L"NO");
 
             if (!matchedWidget)
             {
@@ -5908,14 +5914,14 @@ namespace MoriaMods
                     {
                         std::memcpy(params, ptr, BLOCK_DATA_SIZE);
                         gotFreshBLock = true;
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild]   using FRESH bLock from widget (indirect @{})\n"), m_bLockWidgetOffset);
+                        VLOG(STR("[MoriaCppMod] [QuickBuild]   using FRESH bLock from widget (indirect @{})\n"), m_bLockWidgetOffset);
                     }
                 }
                 else
                 {
                     std::memcpy(params, widgetBase + m_bLockWidgetOffset, BLOCK_DATA_SIZE);
                     gotFreshBLock = true;
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild]   using FRESH bLock from widget (direct @{})\n"), m_bLockWidgetOffset);
+                    VLOG(STR("[MoriaCppMod] [QuickBuild]   using FRESH bLock from widget (direct @{})\n"), m_bLockWidgetOffset);
                 }
             }
 
@@ -5923,17 +5929,17 @@ namespace MoriaMods
             if (!gotFreshBLock && m_recipeSlots[slot].hasBLockData)
             {
                 std::memcpy(params, m_recipeSlots[slot].bLockData, BLOCK_DATA_SIZE);
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild]   using SAVED bLock (may be stale)\n"));
+                VLOG(STR("[MoriaCppMod] [QuickBuild]   using SAVED bLock (may be stale)\n"));
             }
             else if (!gotFreshBLock)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild]   WARNING: no bLock data at all, using zeros\n"));
+                VLOG(STR("[MoriaCppMod] [QuickBuild]   WARNING: no bLock data at all, using zeros\n"));
             }
 
             *reinterpret_cast<UObject**>(params + 120) = matchedWidget;
             *reinterpret_cast<int32_t*>(params + 128) = 0;
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild]   calling blockSelectedEvent with selfRef={:p}\n"), static_cast<void*>(matchedWidget));
+            VLOG(STR("[MoriaCppMod] [QuickBuild]   calling blockSelectedEvent with selfRef={:p}\n"), static_cast<void*>(matchedWidget));
 
             // Suppress post-hook capture during automated selection (RAII guard ensures reset on exception)
             m_isAutoSelecting = true;
@@ -5968,14 +5974,14 @@ namespace MoriaMods
             // Guard: if a previous quickbuild is still pending, skip
             if (m_pendingQuickBuildSlot >= 0)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] F{} pressed but slot {} already pending (frame {}), ignoring\n"),
+                VLOG(STR("[MoriaCppMod] [QuickBuild] F{} pressed but slot {} already pending (frame {}), ignoring\n"),
                                                 slot + 1,
                                                 m_pendingQuickBuildSlot + 1,
                                                 m_pendingBuildFrames);
                 return;
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] ACTIVATE F{} -> '{}' (charLoaded={} frameCounter={})\n"),
+            VLOG(STR("[MoriaCppMod] [QuickBuild] ACTIVATE F{} -> '{}' (charLoaded={} frameCounter={})\n"),
                                             slot + 1,
                                             m_recipeSlots[slot].displayName,
                                             m_characterLoaded,
@@ -5987,7 +5993,7 @@ namespace MoriaMods
             if (buildTab)
             {
                 // Close existing menu first
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] Build tab already open — closing first (pendingFrames=-15)\n"));
+                VLOG(STR("[MoriaCppMod] [QuickBuild] Build tab already open — closing first (pendingFrames=-15)\n"));
                 keybd_event(0x42, 0, 0, 0);
                 keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                 m_pendingQuickBuildSlot = slot;
@@ -5996,7 +6002,7 @@ namespace MoriaMods
             else
             {
                 // Menu not open — just open it
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] Build tab not open — sending B key (pendingFrames=0)\n"));
+                VLOG(STR("[MoriaCppMod] [QuickBuild] Build tab not open — sending B key (pendingFrames=0)\n"));
                 keybd_event(0x42, 0, 0, 0);
                 keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                 m_pendingQuickBuildSlot = slot;
@@ -6008,7 +6014,7 @@ namespace MoriaMods
 
         void buildFromTarget()
         {
-            Output::send<LogLevel::Warning>(
+            VLOG(
                     STR("[MoriaCppMod] [TargetBuild] buildFromTarget() called: buildable={} name='{}' recipeRef='{}' charLoaded={} frame={}\n"),
                     m_lastTargetBuildable,
                     m_targetBuildName,
@@ -6018,7 +6024,7 @@ namespace MoriaMods
 
             if (m_pendingTargetBuild)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] Already pending (frame {}), ignoring\n"), m_pendingTargetBuildFrames);
+                VLOG(STR("[MoriaCppMod] [TargetBuild] Already pending (frame {}), ignoring\n"), m_pendingTargetBuildFrames);
                 return;
             }
 
@@ -6032,7 +6038,7 @@ namespace MoriaMods
             UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
             if (buildTab)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] Build tab already open — closing first\n"));
+                VLOG(STR("[MoriaCppMod] [TargetBuild] Build tab already open — closing first\n"));
                 keybd_event(0x42, 0, 0, 0);
                 keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                 m_pendingTargetBuild = true;
@@ -6040,7 +6046,7 @@ namespace MoriaMods
             }
             else
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] Build tab not open — sending B key\n"));
+                VLOG(STR("[MoriaCppMod] [TargetBuild] Build tab not open — sending B key\n"));
                 keybd_event(0x42, 0, 0, 0);
                 keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                 m_pendingTargetBuild = true;
@@ -6062,7 +6068,7 @@ namespace MoriaMods
 
         void selectRecipeByTargetName(UObject* buildTab)
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] Searching: name='{}' recipeRef='{}' bLockOffset={} indirect={}\n"),
+            VLOG(STR("[MoriaCppMod] [TargetBuild] Searching: name='{}' recipeRef='{}' bLockOffset={} indirect={}\n"),
                                             m_targetBuildName,
                                             m_targetBuildRecipeRef,
                                             m_bLockWidgetOffset,
@@ -6084,7 +6090,7 @@ namespace MoriaMods
                 uint32_t ci2 = *reinterpret_cast<uint32_t*>(&fn2);
                 targetFNames.push_back({noBP, ci2});
 
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] FName CIs: full='{}' CI={}, short='{}' CI={}\n"),
+                VLOG(STR("[MoriaCppMod] [TargetBuild] FName CIs: full='{}' CI={}, short='{}' CI={}\n"),
                                                 m_targetBuildRecipeRef,
                                                 ci1,
                                                 noBP,
@@ -6124,7 +6130,7 @@ namespace MoriaMods
                 if (isFirstFew)
                 {
                     std::wstring objName(w->GetName());
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild]   W[{}] obj='{}' display='{}'\n"), visibleCount, objName, name);
+                    VLOG(STR("[MoriaCppMod] [TargetBuild]   W[{}] obj='{}' display='{}'\n"), visibleCount, objName, name);
                 }
 
                 // Strategy 1: bLock-based matching via Variants->ResultConstructionHandle RowName
@@ -6146,12 +6152,12 @@ namespace MoriaMods
                     if (!bLock)
                     {
                         bLockNullCount++;
-                        if (isFirstFew) Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild]     bLock=NULL\n"));
+                        if (isFirstFew) VLOG(STR("[MoriaCppMod] [TargetBuild]     bLock=NULL\n"));
                     }
                     else if (!isReadableMemory(bLock + 104, 16))
                     {
                         bLockMemFailCount++;
-                        if (isFirstFew) Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild]     bLock+104 not readable\n"));
+                        if (isFirstFew) VLOG(STR("[MoriaCppMod] [TargetBuild]     bLock+104 not readable\n"));
                     }
                     else
                     {
@@ -6163,7 +6169,7 @@ namespace MoriaMods
                             // Log first 8 bytes of bLock (FGameplayTag FName)
                             uint32_t tagCI = *reinterpret_cast<uint32_t*>(bLock);
                             int32_t tagNum = *reinterpret_cast<int32_t*>(bLock + 4);
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild]     bLock tag CI={} Num={} | variants={} ptr={:p}\n"),
+                            VLOG(STR("[MoriaCppMod] [TargetBuild]     bLock tag CI={} Num={} | variants={} ptr={:p}\n"),
                                                             tagCI,
                                                             tagNum,
                                                             variantsCount,
@@ -6182,7 +6188,7 @@ namespace MoriaMods
 
                             if (isFirstFew)
                             {
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild]     RowName CI={} Num={}\n"), rowCI, rowNum);
+                                VLOG(STR("[MoriaCppMod] [TargetBuild]     RowName CI={} Num={}\n"), rowCI, rowNum);
                             }
 
                             // Check if RowName CI matches any of our target FName CIs
@@ -6192,7 +6198,7 @@ namespace MoriaMods
                                 {
                                     matchedWidget = w;
                                     matchedName = name.empty() ? tName : name;
-                                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] MATCH (bLock RowName CI={}) on '{}' target='{}'\n"),
+                                    VLOG(STR("[MoriaCppMod] [TargetBuild] MATCH (bLock RowName CI={}) on '{}' target='{}'\n"),
                                                                     rowCI,
                                                                     matchedName,
                                                                     tName);
@@ -6202,7 +6208,7 @@ namespace MoriaMods
                         }
                         else if (isFirstFew)
                         {
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild]     variantsPtr not readable (0xE8 bytes)\n"));
+                            VLOG(STR("[MoriaCppMod] [TargetBuild]     variantsPtr not readable (0xE8 bytes)\n"));
                         }
                     }
                 }
@@ -6212,7 +6218,7 @@ namespace MoriaMods
                 {
                     matchedWidget = w;
                     matchedName = name;
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] MATCH (exact display name) on '{}'\n"), name);
+                    VLOG(STR("[MoriaCppMod] [TargetBuild] MATCH (exact display name) on '{}'\n"), name);
                 }
 
                 // Strategy 3: Fuzzy display name match (containment)
@@ -6227,14 +6233,14 @@ namespace MoriaMods
                     {
                         matchedWidget = w;
                         matchedName = name;
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] MATCH (normalized exact) on '{}'\n"), name);
+                        VLOG(STR("[MoriaCppMod] [TargetBuild] MATCH (normalized exact) on '{}'\n"), name);
                     }
                 }
 
                 if (matchedWidget) break;
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] Result: {} visible, bLockNull={} memFail={} varEmpty={} match={}\n"),
+            VLOG(STR("[MoriaCppMod] [TargetBuild] Result: {} visible, bLockNull={} memFail={} varEmpty={} match={}\n"),
                                             visibleCount,
                                             bLockNullCount,
                                             bLockMemFailCount,
@@ -6273,7 +6279,7 @@ namespace MoriaMods
                 }
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] Calling blockSelectedEvent: freshBLock={} selfRef={:p}\n"),
+            VLOG(STR("[MoriaCppMod] [TargetBuild] Calling blockSelectedEvent: freshBLock={} selfRef={:p}\n"),
                                             gotFreshBLock,
                                             static_cast<void*>(matchedWidget));
 
@@ -6587,7 +6593,7 @@ namespace MoriaMods
 
                 umgSetBrushSize(m_umgIconImages[slot], iconW, iconH);
                 umgSetOpacity(m_umgIconImages[slot], 1.0f); // fully visible
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] Slot #{} icon sized: {}x{} (container: {}x{}, tex: {}x{})\n"),
+                VLOG(STR("[MoriaCppMod] [UMG] Slot #{} icon sized: {}x{} (container: {}x{}, tex: {}x{})\n"),
                                                 slot, iconW, iconH, containerW, containerH, texW, texH);
             }
             else
@@ -6648,7 +6654,7 @@ namespace MoriaMods
                         if (tex)
                         {
                             setUmgSlotIcon(i, tex);
-                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] Slot #{} icon set: {}\n"),
+                            VLOG(STR("[MoriaCppMod] [UMG] Slot #{} icon set: {}\n"),
                                                             i, m_recipeSlots[i].textureName);
                         }
                     }
@@ -6675,7 +6681,7 @@ namespace MoriaMods
                 m_umgKeyBgImages[i] = nullptr;
             }
             m_umgTexBlankRect = nullptr;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] Bar removed from viewport\n"));
+            VLOG(STR("[MoriaCppMod] [UMG] Bar removed from viewport\n"));
         }
 
         void createExperimentalBar()
@@ -6687,7 +6693,7 @@ namespace MoriaMods
                 return;
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] === Creating 8-slot toolbar ===\n"));
+            VLOG(STR("[MoriaCppMod] [UMG] === Creating 8-slot toolbar ===\n"));
 
             // --- Phase A: Find all 4 textures ---
             UObject* texFrame = nullptr;
@@ -6698,7 +6704,7 @@ namespace MoriaMods
             {
                 std::vector<UObject*> textures;
                 UObjectGlobals::FindAllOf(STR("Texture2D"), textures);
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] Found {} Texture2D objects\n"), textures.size());
+                VLOG(STR("[MoriaCppMod] [UMG] Found {} Texture2D objects\n"), textures.size());
                 for (auto* t : textures)
                 {
                     if (!t) continue;
@@ -6710,7 +6716,7 @@ namespace MoriaMods
                     else if (name == STR("T_UI_Icon_Input_Blank_Rect")) texBlankRect = t;
                 }
             }
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] Textures: frame={} empty={} inactive={} active={} blankRect={}\n"),
+            VLOG(STR("[MoriaCppMod] [UMG] Textures: frame={} empty={} inactive={} active={} blankRect={}\n"),
                                             texFrame ? STR("OK") : STR("NO"), texEmpty ? STR("OK") : STR("NO"),
                                             texInactive ? STR("OK") : STR("NO"), texActive ? STR("OK") : STR("NO"),
                                             texBlankRect ? STR("OK") : STR("NO"));
@@ -6856,7 +6862,7 @@ namespace MoriaMods
 
             // --- Phase C4: Create 8 columns ---
             float frameW = 0, frameH = 0, stateW = 0, stateH = 0;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] Creating 8 slot columns...\n"));
+            VLOG(STR("[MoriaCppMod] [UMG] Creating 8 slot columns...\n"));
             for (int i = 0; i < 8; i++)
             {
                 // Create VBox column
@@ -6895,7 +6901,7 @@ namespace MoriaMods
                     uint8_t* sBase = reinterpret_cast<uint8_t*>(stateImg);
                     stateW = *reinterpret_cast<float*>(sBase + 0x108 + 0x08);
                     stateH = *reinterpret_cast<float*>(sBase + 0x108 + 0x0C);
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] Frame icon: {}x{}, State icon: {}x{}\n"),
+                    VLOG(STR("[MoriaCppMod] [UMG] Frame icon: {}x{}, State icon: {}x{}\n"),
                                                     frameW, frameH, stateW, stateH);
                 }
 
@@ -7113,7 +7119,7 @@ namespace MoriaMods
                 m_umgStateImages[i] = stateImg;
                 m_umgIconImages[i] = iconImg;
                 m_umgSlotStates[i] = UmgSlotState::Empty;
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] Slot #{} created\n"), i);
+                VLOG(STR("[MoriaCppMod] [UMG] Slot #{} created\n"), i);
             }
 
             // --- Phase D: Size frame from icon dimensions and center on screen ---
@@ -7133,7 +7139,7 @@ namespace MoriaMods
             // Viewport size matches render scale so invisible frame fits the visual
             float totalW = (8.0f * iconW - 7.0f * hOverlapPerSlot) * umgScaleX;
             float totalH = (frameH + stateH - vOverlap) * umgScaleY;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] Frame size: {}x{} (iconW={} frameH={} stateH={})\n"),
+            VLOG(STR("[MoriaCppMod] [UMG] Frame size: {}x{} (iconW={} frameH={} stateH={})\n"),
                                             totalW, totalH, iconW, frameH, stateH);
 
             // Set explicit pixel size
@@ -7176,7 +7182,7 @@ namespace MoriaMods
                     if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
                 }
             }
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] Viewport: {}x{}\n"), viewW, viewH);
+            VLOG(STR("[MoriaCppMod] [UMG] Viewport: {}x{}\n"), viewW, viewH);
 
             // Alignment: center-center pivot (widget center placed at position)
             auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
@@ -7211,7 +7217,7 @@ namespace MoriaMods
 
             m_umgBarWidget = userWidget;
             showOnScreen(Loc::get("msg.builders_bar_created").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [UMG] === Builders bar creation complete ===\n"));
+            VLOG(STR("[MoriaCppMod] [UMG] === Builders bar creation complete ===\n"));
 
             // Sync quick-build slot states to the builders bar
             updateBuildersBar();
@@ -7227,14 +7233,14 @@ namespace MoriaMods
                 m_abBarWidget->ProcessEvent(removeFn, nullptr);
             m_abBarWidget = nullptr;
             m_abKeyLabel = nullptr;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [AB] Advanced Builder toolbar removed\n"));
+            VLOG(STR("[MoriaCppMod] [AB] Advanced Builder toolbar removed\n"));
         }
 
         void createAdvancedBuilderBar()
         {
             if (m_abBarWidget) return; // already exists — persists until world unload
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [AB] === Creating Advanced Builder Toolbar ===\n"));
+            VLOG(STR("[MoriaCppMod] [AB] === Creating Advanced Builder Toolbar ===\n"));
 
             // --- Phase A: Find textures ---
             UObject* texFrame = nullptr;     // T_UI_Frame_HUD_AB_Active_BothHands
@@ -7260,9 +7266,9 @@ namespace MoriaMods
                 texToolsIcon = UObjectGlobals::StaticFindObject<UObject*>(
                     nullptr, nullptr, STR("/Game/UI/textures/ClothingIcons/Tools_Icon.Tools_Icon"));
                 if (texToolsIcon)
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [AB] Tools_Icon found via StaticFindObject\n"));
+                    VLOG(STR("[MoriaCppMod] [AB] Tools_Icon found via StaticFindObject\n"));
                 else
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [AB] WARNING: Tools_Icon NOT found\n"));
+                    VLOG(STR("[MoriaCppMod] [AB] WARNING: Tools_Icon NOT found\n"));
             }
             if (!texFrame || !texActive)
             {
@@ -7680,7 +7686,7 @@ namespace MoriaMods
 
             m_abBarWidget = userWidget;
             showOnScreen(L"Advanced Builder toolbar created!", 3.0f, 0.0f, 1.0f, 0.0f);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [AB] === Advanced Builder toolbar created ({}x{}) ===\n"),
+            VLOG(STR("[MoriaCppMod] [AB] === Advanced Builder toolbar created ({}x{}) ===\n"),
                                             abTotalW, abTotalH);
         }
 
@@ -7705,7 +7711,7 @@ namespace MoriaMods
         void createTargetInfoWidget()
         {
             if (m_targetInfoWidget) return;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TI] === Creating Target Info UMG widget ===\n"));
+            VLOG(STR("[MoriaCppMod] [TI] === Creating Target Info UMG widget ===\n"));
 
             // Find UClasses
             auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
@@ -7936,7 +7942,7 @@ namespace MoriaMods
             if (setVisFn) { uint8_t p[8]{}; p[0] = 1; userWidget->ProcessEvent(setVisFn, p); }
 
             m_targetInfoWidget = userWidget;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TI] Target Info UMG widget created\n"));
+            VLOG(STR("[MoriaCppMod] [TI] Target Info UMG widget created\n"));
         }
 
         void hideTargetInfo()
@@ -7994,7 +8000,7 @@ namespace MoriaMods
                     SetClipboardData(CF_UNICODETEXT, hMem);
                 }
                 CloseClipboard();
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Target info copied to clipboard\n"));
+                VLOG(STR("[MoriaCppMod] Target info copied to clipboard\n"));
             }
 
             m_tiShowTick = GetTickCount64();
@@ -8016,7 +8022,7 @@ namespace MoriaMods
         void createInfoBox()
         {
             if (m_infoBoxWidget) return;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [IB] === Creating Info Box UMG widget ===\n"));
+            VLOG(STR("[MoriaCppMod] [IB] === Creating Info Box UMG widget ===\n"));
 
             auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
             auto* vboxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.VerticalBox"));
@@ -8189,7 +8195,7 @@ namespace MoriaMods
             if (setVisFn) { uint8_t p[8]{}; p[0] = 1; userWidget->ProcessEvent(setVisFn, p); }
 
             m_infoBoxWidget = userWidget;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [IB] Info Box UMG widget created\n"));
+            VLOG(STR("[MoriaCppMod] [IB] Info Box UMG widget created\n"));
         }
 
         void hideInfoBox()
@@ -8469,7 +8475,7 @@ namespace MoriaMods
         void createConfigWidget()
         {
             if (m_configWidget) return;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CFG] === Creating Config UMG widget ===\n"));
+            VLOG(STR("[MoriaCppMod] [CFG] === Creating Config UMG widget ===\n"));
 
             auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
             auto* vboxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.VerticalBox"));
@@ -8577,7 +8583,7 @@ namespace MoriaMods
                 }
             }
             else
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CFG] Vignette texture not found, skipping border\n"));
+                VLOG(STR("[MoriaCppMod] [CFG] Vignette texture not found, skipping border\n"));
 
             // Layer 1: Transparent Border with padding (content container)
             FStaticConstructObjectParameters borderP(borderClass, outer);
@@ -9314,7 +9320,7 @@ namespace MoriaMods
 
             m_configWidget = userWidget;
             updateConfigFreeBuild();
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CFG] Config UMG widget created\n"));
+            VLOG(STR("[MoriaCppMod] [CFG] Config UMG widget created\n"));
         }
 
         // ── Mod Controller Toolbar (3x3, lower-right) ──────────────────────────
@@ -9338,7 +9344,7 @@ namespace MoriaMods
             m_mcSlot0Overlay = nullptr;
             m_mcSlot4Overlay = nullptr;
             m_mcSlot6Overlay = nullptr;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] Mod Controller bar removed\n"));
+            VLOG(STR("[MoriaCppMod] [MC] Mod Controller bar removed\n"));
         }
 
         void createModControllerBar()
@@ -9350,7 +9356,7 @@ namespace MoriaMods
                 return;
             }
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] === Creating 4x2 Mod Controller toolbar ===\n"));
+            VLOG(STR("[MoriaCppMod] [MC] === Creating 4x2 Mod Controller toolbar ===\n"));
 
             // --- Find textures (reuse same state/frame textures + MC slot icons) ---
             UObject* texFrame = nullptr;
@@ -9414,9 +9420,9 @@ namespace MoriaMods
                 {
                     fb.ref = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, fb.path);
                     if (fb.ref)
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] {} found via StaticFindObject fallback\n"), fb.name);
+                        VLOG(STR("[MoriaCppMod] [MC] {} found via StaticFindObject fallback\n"), fb.name);
                     else
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] WARNING: {} NOT found via FindAllOf or StaticFindObject\n"), fb.name);
+                        VLOG(STR("[MoriaCppMod] [MC] WARNING: {} NOT found via FindAllOf or StaticFindObject\n"), fb.name);
                 }
             }
 
@@ -9580,7 +9586,7 @@ namespace MoriaMods
                         uint8_t* sBase = reinterpret_cast<uint8_t*>(stateImg);
                         stateW = *reinterpret_cast<float*>(sBase + 0x108 + 0x08);
                         stateH = *reinterpret_cast<float*>(sBase + 0x108 + 0x0C);
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] Frame: {}x{}, State: {}x{}\n"),
+                        VLOG(STR("[MoriaCppMod] [MC] Frame: {}x{}, State: {}x{}\n"),
                                                         frameW, frameH, stateW, stateH);
                         m_mcSlot0Overlay = overlay; // save for rotation label (added after loop)
                     }
@@ -9796,7 +9802,7 @@ namespace MoriaMods
                     m_mcSlotStates[i] = UmgSlotState::Empty;
                 }
             }
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] All 8 slots created (4x2)\n"));
+            VLOG(STR("[MoriaCppMod] [MC] All 8 slots created (4x2)\n"));
 
             // --- Set custom icons for all 8 MC slots ---
             {
@@ -9839,11 +9845,11 @@ namespace MoriaMods
                             float scale = (scaleX < scaleY ? scaleX : scaleY) * 0.70f;
                             umgSetBrushSize(m_mcIconImages[i], texW * scale, texH * scale);
                         }
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] Slot {} icon set to {}\n"), i, mcSlotNames[i]);
+                        VLOG(STR("[MoriaCppMod] [MC] Slot {} icon set to {}\n"), i, mcSlotNames[i]);
                     }
                     else
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] WARNING: {} texture not found for slot {}\n"), mcSlotNames[i], i);
+                        VLOG(STR("[MoriaCppMod] [MC] WARNING: {} texture not found for slot {}\n"), mcSlotNames[i], i);
                     }
                 }
             }
@@ -9880,7 +9886,7 @@ namespace MoriaMods
                             if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; rotSlot->ProcessEvent(setVA, v.data()); }
                         }
                         m_mcRotationLabel = rotLabel;
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] Rotation label created on slot 0\n"));
+                        VLOG(STR("[MoriaCppMod] [MC] Rotation label created on slot 0\n"));
                     }
                 }
             }
@@ -9913,7 +9919,7 @@ namespace MoriaMods
                             auto* setVA = labelSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
                             if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; labelSlot->ProcessEvent(setVA, v.data()); }
                         }
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] 'Single' label created on slot 4\n"));
+                        VLOG(STR("[MoriaCppMod] [MC] 'Single' label created on slot 4\n"));
                     }
                 }
             }
@@ -9946,7 +9952,7 @@ namespace MoriaMods
                             auto* setVA = labelSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
                             if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; labelSlot->ProcessEvent(setVA, v.data()); }
                         }
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] 'All' label created on slot 6\n"));
+                        VLOG(STR("[MoriaCppMod] [MC] 'All' label created on slot 6\n"));
                     }
                 }
             }
@@ -10040,7 +10046,7 @@ namespace MoriaMods
 
             m_mcBarWidget = userWidget;
             showOnScreen(Loc::get("msg.mod_controller_created").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [MC] === Mod Controller bar creation complete ({}x{}) ===\n"),
+            VLOG(STR("[MoriaCppMod] [MC] === Mod Controller bar creation complete ({}x{}) ===\n"),
                                             mcTotalW, mcTotalH);
         }
 
@@ -10117,7 +10123,7 @@ namespace MoriaMods
             s_overlay.activeToolbar = m_activeToolbar;
             updateOverlaySlots();
             s_overlay.thread = CreateThread(nullptr, 0, overlayThreadProc, nullptr, 0, nullptr);
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Overlay thread started, icons: {}\n"), s_overlay.iconFolder);
+            VLOG(STR("[MoriaCppMod] Overlay thread started, icons: {}\n"), s_overlay.iconFolder);
         }
 
         // LINT NOTE (#9 — stopOverlay race): The 3-second WaitForSingleObject timeout means the render
@@ -10171,7 +10177,7 @@ namespace MoriaMods
             auto* wblCDO = UObjectGlobals::StaticFindObject<UObject*>(
                 nullptr, nullptr, STR("/Script/UMG.Default__WidgetBlueprintLibrary"));
             if (!uiFunc || !wblCDO) {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] setInputModeUI: could not find UIOnlyEx func/CDO\n"));
+                VLOG(STR("[MoriaCppMod] setInputModeUI: could not find UIOnlyEx func/CDO\n"));
                 return;
             }
 
@@ -10187,7 +10193,7 @@ namespace MoriaMods
             uint8_t* pcRaw = reinterpret_cast<uint8_t*>(pc);
             pcRaw[0x0448] |= 0x01;
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Input mode → UI Only (mouse cursor ON)\n"));
+            VLOG(STR("[MoriaCppMod] Input mode → UI Only (mouse cursor ON)\n"));
         }
 
         // Restore game-only input so game controls work normally.
@@ -10201,7 +10207,7 @@ namespace MoriaMods
             auto* wblCDO = UObjectGlobals::StaticFindObject<UObject*>(
                 nullptr, nullptr, STR("/Script/UMG.Default__WidgetBlueprintLibrary"));
             if (!gameFunc || !wblCDO) {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] setInputModeGame: could not find GameOnly func/CDO\n"));
+                VLOG(STR("[MoriaCppMod] setInputModeGame: could not find GameOnly func/CDO\n"));
                 return;
             }
 
@@ -10214,7 +10220,7 @@ namespace MoriaMods
             uint8_t* pcRaw = reinterpret_cast<uint8_t*>(pc);
             pcRaw[0x0448] &= ~0x01;
 
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Input mode → Game Only (mouse cursor OFF)\n"));
+            VLOG(STR("[MoriaCppMod] Input mode → Game Only (mouse cursor OFF)\n"));
         }
 
         void toggleConfig()
@@ -10235,7 +10241,7 @@ namespace MoriaMods
             {
                 setInputModeGame();
             }
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Config {} (UMG)\n"), m_cfgVisible ? STR("shown") : STR("hidden"));
+            VLOG(STR("[MoriaCppMod] Config {} (UMG)\n"), m_cfgVisible ? STR("shown") : STR("hidden"));
         }
 
 
@@ -10256,12 +10262,12 @@ namespace MoriaMods
         {
             if (m_spyActive)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Spy] Already active\n"));
+                VLOG(STR("[MoriaCppMod] [Spy] Already active\n"));
                 return;
             }
             m_spyActive = true;
             m_spyFrameCount = 0;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Spy] === ROTATION SPY ACTIVE — press R now! ===\n"));
+            VLOG(STR("[MoriaCppMod] [Spy] === ROTATION SPY ACTIVE — press R now! ===\n"));
             showOnScreen(L"SPY ACTIVE - press R now!", 5.0f, 1.0f, 1.0f, 0.0f);
         }
 #endif
@@ -10271,7 +10277,7 @@ namespace MoriaMods
         {
             if (m_undoStack.empty())
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Nothing to undo\n"));
+                VLOG(STR("[MoriaCppMod] Nothing to undo\n"));
                 return;
             }
 
@@ -10309,7 +10315,7 @@ namespace MoriaMods
                 buildRemovalEntries();
 
                 std::wstring meshIdW(meshId.begin(), meshId.end());
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Undo type rule: {} — restored {} instances\n"), meshIdW, restored);
+                VLOG(STR("[MoriaCppMod] Undo type rule: {} — restored {} instances\n"), meshIdW, restored);
                 return;
             }
 
@@ -10350,9 +10356,9 @@ namespace MoriaMods
             }
             else
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Undo: component pointer stale, skipping restore\n"));
+                VLOG(STR("[MoriaCppMod] Undo: component pointer stale, skipping restore\n"));
             }
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Restored index {} ({}) | {} remaining\n"),
+            VLOG(STR("[MoriaCppMod] Restored index {} ({}) | {} remaining\n"),
                                             last.instanceIndex,
                                             ok ? STR("ok") : STR("FAILED"),
                                             m_savedRemovals.size());
@@ -10373,7 +10379,7 @@ namespace MoriaMods
             // Init removal list CS before loadSaveFile can be called
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Loaded v1.15\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v1.15\n"));
         }
 
         ~MoriaCppMod() override
@@ -10398,7 +10404,7 @@ namespace MoriaMods
         // and installs ProcessEvent pre/post hooks for rotation + recipe capture.
         auto on_unreal_init() -> void override
         {
-            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Unreal initialized.\n"));
+            VLOG(STR("[MoriaCppMod] Unreal initialized.\n"));
 
             // Load localization string table (compiled English defaults + optional JSON override)
             Loc::load("Mods/MoriaCppMod/localization/");
@@ -10558,7 +10564,7 @@ namespace MoriaMods
                 s_instance->m_lastCapturedName = displayName;
                 std::memcpy(s_instance->m_lastCapturedBLock, p, BLOCK_DATA_SIZE);
                 s_instance->m_hasLastCapture = true;
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] Captured: '{}' (with bLock data)\n"), displayName);
+                VLOG(STR("[MoriaCppMod] [QuickBuild] Captured: '{}' (with bLock data)\n"), displayName);
 
                 // ONE-TIME: scan selfRef widget memory to find where bLock data lives
                 // This discovers the offset so we can read fresh recipe data at activation time
@@ -10576,7 +10582,7 @@ namespace MoriaMods
                             if (match)
                             {
                                 s_instance->m_bLockWidgetOffset = off;
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] DISCOVERED: bLock data at widget offset {} (0x{:X})\n"), off, off);
+                                VLOG(STR("[MoriaCppMod] [QuickBuild] DISCOVERED: bLock data at widget offset {} (0x{:X})\n"), off, off);
                                 break;
                             }
                         }
@@ -10593,7 +10599,7 @@ namespace MoriaMods
                                 // Found it via pointer indirection
                                 s_instance->m_bLockWidgetOffset = off;
                                 s_instance->m_bLockIsIndirect = true;
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] DISCOVERED: bLock via POINTER at widget offset {} (0x{:X})\n"),
+                                VLOG(STR("[MoriaCppMod] [QuickBuild] DISCOVERED: bLock via POINTER at widget offset {} (0x{:X})\n"),
                                                                 off,
                                                                 off);
                                 break;
@@ -10602,13 +10608,13 @@ namespace MoriaMods
                     }
                     if (s_instance->m_bLockWidgetOffset < 0)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] WARNING: bLock data NOT found in widget memory!\n"));
+                        VLOG(STR("[MoriaCppMod] [QuickBuild] WARNING: bLock data NOT found in widget memory!\n"));
                     }
                 }
             });
 
             m_replayActive = true;
-            Output::send<LogLevel::Warning>(
+            VLOG(
                     STR("[MoriaCppMod] v1.15: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
         }
 
@@ -10679,7 +10685,7 @@ namespace MoriaMods
             {
                 m_cfgVisible = false;
                 setInputModeGame();
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CFG] Failsafe: config widget lost, resetting state\n"));
+                VLOG(STR("[MoriaCppMod] [CFG] Failsafe: config widget lost, resetting state\n"));
             }
 
             // Config key (MC slot 7) always polled — allows toggle even when config is visible
@@ -10700,6 +10706,8 @@ namespace MoriaMods
             if (m_mcBarWidget)
             {
                 static bool s_lastMcKey[MC_SLOTS]{};
+                // Hoist SHIFT check once before the loop (perf: avoids up to 7 GetAsyncKeyState calls)
+                const bool shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
                 for (int i = 0; i < MC_SLOTS; i++)
                 {
                     if (i == 7) { s_lastMcKey[i] = false; continue; } // slot 7 handled by always-on config toggle
@@ -10708,14 +10716,14 @@ namespace MoriaMods
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
                     // SHIFT reverses numpad keys (e.g. Num9 → PageUp) — also check alternate VK.
                     // Only when SHIFT is physically held, to avoid false positives from nav keys.
-                    if (!nowDown && (GetAsyncKeyState(VK_SHIFT) & 0x8000))
+                    if (!nowDown && shiftHeld)
                     {
                         uint8_t alt = numpadShiftAlternate(vk);
                         if (alt) nowDown = (GetAsyncKeyState(alt) & 0x8000) != 0;
                     }
                     if (nowDown && !s_lastMcKey[i] && !m_cfgVisible)
                     {
-                        Output::send<LogLevel::Warning>(
+                        VLOG(
                             STR("[MoriaCppMod] [MC] Slot {} pressed (VK=0x{:02X})\n"), i, vk);
                         switch (i)
                         {
@@ -10784,7 +10792,7 @@ namespace MoriaMods
                     if (nowDown && !s_lastAbKey && !m_cfgVisible)
                     {
                         m_toolbarsVisible = !m_toolbarsVisible;
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [AB] Toggle pressed — toolbars {}\n"),
+                        VLOG(STR("[MoriaCppMod] [AB] Toggle pressed — toolbars {}\n"),
                                                         m_toolbarsVisible ? STR("VISIBLE") : STR("HIDDEN"));
 
                         // Toggle visibility on both toolbars via SetVisibility
@@ -10861,7 +10869,7 @@ namespace MoriaMods
                             if (cursor.x >= cbX0 && cursor.x <= cbX1 && cursor.y >= cbY0 && cursor.y <= cbY1)
                             {
                                 s_config.pendingToggleFreeBuild = true;
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CFG] Free Build toggle via mouse click\n"));
+                                VLOG(STR("[MoriaCppMod] [CFG] Free Build toggle via mouse click\n"));
                             }
                             // Unlock All Recipes button: centered, 420px wide, ~340px from top
                             int ubY0 = wTop + 330, ubY1 = ubY0 + 68;
@@ -10869,7 +10877,7 @@ namespace MoriaMods
                             if (cursor.x >= ubX0 && cursor.x <= ubX1 && cursor.y >= ubY0 && cursor.y <= ubY1)
                             {
                                 s_config.pendingUnlockAllRecipes = true;
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CFG] Unlock All Recipes via mouse click\n"));
+                                VLOG(STR("[MoriaCppMod] [CFG] Unlock All Recipes via mouse click\n"));
                             }
                         }
                         // Tab 1: Key box click for rebinding
@@ -10920,7 +10928,7 @@ namespace MoriaMods
                                             s_capturingBind = b;
                                             s_captureSkipTick = true; // skip scan this frame
                                             bindMatched = true;
-                                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CFG] Capturing key for bind {}\n"), b);
+                                            VLOG(STR("[MoriaCppMod] [CFG] Capturing key for bind {}\n"), b);
                                             break;
                                         }
                                         currentY += rowHeight;
@@ -10939,7 +10947,7 @@ namespace MoriaMods
                                             s_modifierVK = VK_CONTROL;
                                         saveKeybindings();
                                         updateConfigKeyLabels();
-                                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CFG] Modifier key cycled to VK 0x{:02X}\n"), (int)s_modifierVK);
+                                        VLOG(STR("[MoriaCppMod] [CFG] Modifier key cycled to VK 0x{:02X}\n"), (int)s_modifierVK);
                                     }
                                 }
                             }
@@ -10958,7 +10966,7 @@ namespace MoriaMods
                                 if (entryIdx >= 0 && entryIdx < count)
                                 {
                                     s_config.pendingRemoveIndex = entryIdx;
-                                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CFG] Delete removal entry {} via mouse click\n"), entryIdx);
+                                    VLOG(STR("[MoriaCppMod] [CFG] Delete removal entry {} via mouse click\n"), entryIdx);
                                 }
                             }
                         }
@@ -10998,7 +11006,7 @@ namespace MoriaMods
                             {
                                 s_capturingBind = -1;
                                 updateConfigKeyLabels();
-                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CFG] Key capture cancelled\n"));
+                                VLOG(STR("[MoriaCppMod] [CFG] Key capture cancelled\n"));
                                 break;
                             }
                             // Capture this key
@@ -11011,7 +11019,7 @@ namespace MoriaMods
                                 updateConfigKeyLabels();
                                 s_overlay.needsUpdate = true;
                                 s_pendingKeyLabelRefresh = true;
-                                Output::send<LogLevel::Warning>(
+                                VLOG(
                                     STR("[MoriaCppMod] [CFG] Key bound: bind {} = VK 0x{:02X} ({})\n"),
                                     idx, vk, vk >= 0x70 && vk <= 0x87 ? STR("F-key") :
                                              vk >= 0x60 && vk <= 0x69 ? STR("Numpad") : STR("other"));
@@ -11059,7 +11067,7 @@ namespace MoriaMods
                     if (tDown && !s_lastCfgT)
                     {
                         s_config.pendingToggleFreeBuild = true;
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CFG] Free Build toggle requested\n"));
+                        VLOG(STR("[MoriaCppMod] [CFG] Free Build toggle requested\n"));
                     }
                     s_lastCfgT = tDown;
                 }
@@ -11072,7 +11080,7 @@ namespace MoriaMods
                     if (uDown && !s_lastCfgU)
                     {
                         s_config.pendingUnlockAllRecipes = true;
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CFG] Unlock All Recipes requested\n"));
+                        VLOG(STR("[MoriaCppMod] [CFG] Unlock All Recipes requested\n"));
                     }
                     s_lastCfgU = uDown;
                 }
@@ -11093,27 +11101,33 @@ namespace MoriaMods
             }
 
             // ── Config window: consume pending cheat toggle requests ──
-            // Retry up to 120 frames (~2s) then give up with error message.
+            // Retry up to 12 attempts (~2s at every-10-frame throttle) then give up.
             {
                 static int s_freeBuildRetries = 0;
-                constexpr int MAX_RETRIES = 120;
+                static int s_freeBuildThrottle = 0;
+                constexpr int MAX_RETRIES = 12;
+                constexpr int RETRY_INTERVAL = 10; // check every 10 frames
 
                 if (s_config.pendingToggleFreeBuild)
                 {
-                    if (callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Free Construction")))
+                    if (++s_freeBuildThrottle >= RETRY_INTERVAL)
                     {
-                        s_config.pendingToggleFreeBuild = false;
-                        syncDebugToggleState(); // read actual state instead of blind flip
-                        showDebugMenuState();
-                        if (m_cfgVisible) updateConfigFreeBuild();
-                        s_freeBuildRetries = 0;
-                    }
-                    else if (++s_freeBuildRetries > MAX_RETRIES)
-                    {
-                        s_config.pendingToggleFreeBuild = false;
-                        s_freeBuildRetries = 0;
-                        showOnScreen(Loc::get("msg.free_build_failed").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Toggle Free Construction FAILED after {} retries\n"), MAX_RETRIES);
+                        s_freeBuildThrottle = 0;
+                        if (callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Free Construction")))
+                        {
+                            s_config.pendingToggleFreeBuild = false;
+                            syncDebugToggleState(); // read actual state instead of blind flip
+                            showDebugMenuState();
+                            if (m_cfgVisible) updateConfigFreeBuild();
+                            s_freeBuildRetries = 0;
+                        }
+                        else if (++s_freeBuildRetries > MAX_RETRIES)
+                        {
+                            s_config.pendingToggleFreeBuild = false;
+                            s_freeBuildRetries = 0;
+                            showOnScreen(Loc::get("msg.free_build_failed").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
+                            VLOG(STR("[MoriaCppMod] Toggle Free Construction FAILED after {} retries\n"), MAX_RETRIES);
+                        }
                     }
                 }
             }
@@ -11171,7 +11185,7 @@ namespace MoriaMods
                         }
                         rewriteSaveFile();
                         buildRemovalEntries();
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Config UI: removed entry {} ({})\n"),
+                        VLOG(STR("[MoriaCppMod] Config UI: removed entry {} ({})\n"),
                                                         removeIdx,
                                                         std::wstring(toRemove.friendlyName));
                     }
@@ -11181,13 +11195,19 @@ namespace MoriaMods
 
             // Detect build menu close → refresh ActionBar (fixes stale hotbar display)
             // Only runs while we're tracking a quickbuild/target-build menu session
+            // Throttled: check every 15 frames to avoid per-frame FindAllOf overhead
             if (m_buildMenuWasOpen)
             {
-                UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
-                if (!buildTab)
+                static int s_buildMenuPollCounter = 0;
+                if (++s_buildMenuPollCounter >= 15)
                 {
-                    m_buildMenuWasOpen = false;
-                    refreshActionBar();
+                    s_buildMenuPollCounter = 0;
+                    UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
+                    if (!buildTab)
+                    {
+                        m_buildMenuWasOpen = false;
+                        refreshActionBar();
+                    }
                 }
             }
 
@@ -11202,7 +11222,7 @@ namespace MoriaMods
                 if (m_pendingBuildFrames == 0)
                 {
                     // Send B key to (re)open build menu
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] SM: frame 0 — sending B key to open menu\n"));
+                    VLOG(STR("[MoriaCppMod] [QuickBuild] SM: frame 0 — sending B key to open menu\n"));
                     keybd_event(0x42, 0, 0, 0);
                     keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                 }
@@ -11212,14 +11232,14 @@ namespace MoriaMods
                     UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
                     if (!buildTab)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] SM: frame 45 — tab NOT visible, RETRYING B key\n"));
+                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: frame 45 — tab NOT visible, RETRYING B key\n"));
                         keybd_event(0x42, 0, 0, 0);
                         keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                     }
                 }
                 else if (m_pendingBuildFrames > 150)
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] SM: TIMEOUT at frame {} — build tab never became visible\n"),
+                    VLOG(STR("[MoriaCppMod] [QuickBuild] SM: TIMEOUT at frame {} — build tab never became visible\n"),
                                                     m_pendingBuildFrames);
                     showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
                     m_pendingQuickBuildSlot = -1;
@@ -11229,7 +11249,7 @@ namespace MoriaMods
                     UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
                     if (buildTab)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [QuickBuild] SM: build tab found at frame {} — selecting recipe\n"),
+                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: build tab found at frame {} — selecting recipe\n"),
                                                         m_pendingBuildFrames);
                         selectRecipeOnBuildTab(buildTab, m_pendingQuickBuildSlot);
                         // Reset total rotation for new build placement
@@ -11252,7 +11272,7 @@ namespace MoriaMods
                 m_pendingTargetBuildFrames++;
                 if (m_pendingTargetBuildFrames == 0)
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] SM: frame 0 — sending B key to open menu\n"));
+                    VLOG(STR("[MoriaCppMod] [TargetBuild] SM: frame 0 — sending B key to open menu\n"));
                     keybd_event(0x42, 0, 0, 0);
                     keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                 }
@@ -11262,14 +11282,14 @@ namespace MoriaMods
                     UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
                     if (!buildTab)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] SM: frame 45 — tab NOT visible, RETRYING B key\n"));
+                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: frame 45 — tab NOT visible, RETRYING B key\n"));
                         keybd_event(0x42, 0, 0, 0);
                         keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                     }
                 }
                 else if (m_pendingTargetBuildFrames > 150)
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] SM: TIMEOUT at frame {} — build tab never became visible\n"),
+                    VLOG(STR("[MoriaCppMod] [TargetBuild] SM: TIMEOUT at frame {} — build tab never became visible\n"),
                                                     m_pendingTargetBuildFrames);
                     showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
                     m_pendingTargetBuild = false;
@@ -11279,7 +11299,7 @@ namespace MoriaMods
                     UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
                     if (buildTab)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [TargetBuild] SM: build tab found at frame {} — selecting recipe\n"),
+                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: build tab found at frame {} — selecting recipe\n"),
                                                         m_pendingTargetBuildFrames);
                         selectRecipeByTargetName(buildTab);
                         // Reset total rotation for new build placement
@@ -11302,7 +11322,7 @@ namespace MoriaMods
                 UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
                 if (dwarves.empty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Character lost — world unloading, resetting replay state\n"));
+                    VLOG(STR("[MoriaCppMod] Character lost — world unloading, resetting replay state\n"));
                     m_characterLoaded = false;
                     m_characterHidden = false; // reset hide toggle for new world
                     m_flyMode = false;         // reset fly toggle for new world
@@ -11401,7 +11421,7 @@ namespace MoriaMods
                     s_config.freeBuild = false;
                     s_config.pendingToggleFreeBuild = false;
                     s_config.pendingUnlockAllRecipes = false;
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] Cleared all container handles, swap state, and cheat toggles\n"));
+                    VLOG(STR("[MoriaCppMod] [Swap] Cleared all container handles, swap state, and cheat toggles\n"));
                 }
             }
 
@@ -11416,7 +11436,7 @@ namespace MoriaMods
                     {
                         m_characterLoaded = true;
                         m_charLoadFrame = m_frameCounter;
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Character loaded at frame {} — waiting 15s before replay\n"), m_frameCounter);
+                        VLOG(STR("[MoriaCppMod] Character loaded at frame {} — waiting 15s before replay\n"), m_frameCounter);
                     }
                 }
                 return; // don't do anything until character exists
@@ -11427,7 +11447,7 @@ namespace MoriaMods
             // Auto-scan containers: retry every ~2s after initial 5s delay, give up after ~60s
             if (m_bodyInvHandle.empty() && framesSinceChar > 300 && framesSinceChar < 3900 && framesSinceChar % 120 == 0)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] Container scan attempt (frame {}). bodyInvHandle.empty={} handles.size={}\n"),
+                VLOG(STR("[MoriaCppMod] [Swap] Container scan attempt (frame {}). bodyInvHandle.empty={} handles.size={}\n"),
                                                 m_frameCounter,
                                                 m_bodyInvHandle.empty(),
                                                 m_bodyInvHandles.size());
@@ -11449,7 +11469,7 @@ namespace MoriaMods
                     auto* invComp = findPlayerInventoryComponent(playerChar);
                     if (invComp)
                     {
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === Auto-scan containers (retry) ===\n"));
+                        VLOG(STR("[MoriaCppMod] === Auto-scan containers (retry) ===\n"));
                         discoverBagHandle(invComp);
                         if (!m_bodyInvHandle.empty())
                         {
@@ -11462,7 +11482,7 @@ namespace MoriaMods
             // Log failure if container scan times out after ~60s
             if (m_bodyInvHandle.empty() && framesSinceChar == 3900)
             {
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [Swap] Container discovery FAILED after 60s — toolbar swap unavailable this session\n"));
+                VLOG(STR("[MoriaCppMod] [Swap] Container discovery FAILED after 60s — toolbar swap unavailable this session\n"));
                 showOnScreen(Loc::get("msg.container_discovery_failed").c_str(), 5.0f, 1.0f, 0.3f, 0.0f);
             }
 
@@ -11474,7 +11494,7 @@ namespace MoriaMods
                 m_initialReplayDone = true;
                 if (!m_savedRemovals.empty() || !m_typeRemovals.empty())
                 {
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Starting initial replay (15s after char load)...\n"));
+                    VLOG(STR("[MoriaCppMod] Starting initial replay (15s after char load)...\n"));
                     startReplay();
                 }
 
@@ -11500,18 +11520,18 @@ namespace MoriaMods
             {
                 m_rescanCounter = 0;
                 int pending = pendingCount();
-                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Periodic rescan ({} pending)...\n"), pending);
+                VLOG(STR("[MoriaCppMod] Periodic rescan ({} pending)...\n"), pending);
                 m_processedComps.clear();
                 startReplay();
                 if (m_stuckLogCount == 0 && pending > 0)
                 {
                     m_stuckLogCount++;
-                    Output::send<LogLevel::Warning>(STR("[MoriaCppMod] === Pending entries ({}) ===\n"), pending);
+                    VLOG(STR("[MoriaCppMod] === Pending entries ({}) ===\n"), pending);
                     for (size_t i = 0; i < m_savedRemovals.size(); i++)
                     {
                         if (m_appliedRemovals[i]) continue;
                         std::wstring meshW(m_savedRemovals[i].meshName.begin(), m_savedRemovals[i].meshName.end());
-                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod]   PENDING [{}]: {} @ ({:.1f},{:.1f},{:.1f})\n"),
+                        VLOG(STR("[MoriaCppMod]   PENDING [{}]: {} @ ({:.1f},{:.1f},{:.1f})\n"),
                                                         i,
                                                         meshW,
                                                         m_savedRemovals[i].posX,
