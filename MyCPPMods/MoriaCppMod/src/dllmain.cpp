@@ -1,5 +1,5 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  MoriaCppMod v1.6 — Advanced Builder & HISM Removal for Return to Moria   ║
+// ║  MoriaCppMod v1.7 — Advanced Builder & HISM Removal for Return to Moria   ║
 // ║                                                                            ║
 // ║  A UE4SS C++ mod for Return to Moria (UE4.27) providing:                  ║
 // ║    - HISM instance hiding with persistence across sessions/worlds          ║
@@ -70,6 +70,7 @@ namespace MoriaMods
     // Verbose logging gate — when false (default), all VLOG() calls are short-circuited
     // to avoid format-string overhead.  Set to true via config or code for debugging.
     static bool s_verbose = false;
+    static std::string s_language = "en"; // localization file (e.g. "en" loads en.json)
     // NOLINTNEXTLINE(cppcoreguidelines-macro-usage) — macro needed to short-circuit variadic template
     #define VLOG(...) do { if (s_verbose) Output::send<LogLevel::Warning>(__VA_ARGS__); } while (0)
 
@@ -249,10 +250,10 @@ namespace MoriaMods
     namespace Loc
     {
         // Load string table: init defaults, then override from JSON file if available
-        static void load(const std::string& locDir)
+        static void load(const std::string& locDir, const std::string& lang = "en")
         {
             initDefaults();
-            std::string jsonPath = locDir + "en.json";
+            std::string jsonPath = locDir + lang + ".json";
             if (parseJsonFile(jsonPath))
             {
                 VLOG(STR("[MoriaCppMod] Loaded localization from {}\n"),
@@ -4828,6 +4829,7 @@ namespace MoriaMods
             file << "\n[Preferences]\n";
             file << "Verbose = " << (s_verbose ? "true" : "false") << "\n";
             file << "RotationStep = " << s_overlay.rotationStep.load() << "\n";
+            file << "Language = " << s_language << "\n";
 
             // Only write [Positions] if user has customized at least one toolbar
             bool hasCustomPos = false;
@@ -4912,6 +4914,10 @@ namespace MoriaMods
                                     if (val >= 0 && val <= 90) s_overlay.rotationStep = val;
                                 }
                                 catch (...) {}
+                            }
+                            else if (strEqualCI(kv->key, "Language"))
+                            {
+                                if (!kv->value.empty()) s_language = kv->value;
                             }
                         }
                         else if (strEqualCI(section, "Positions"))
@@ -8115,7 +8121,7 @@ namespace MoriaMods
                 }
             }
 
-            // Alignment: right-center
+            // Alignment: center pivot (matches InfoBox)
             auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
             if (setAlignFn)
             {
@@ -8125,16 +8131,17 @@ namespace MoriaMods
                     int sz = setAlignFn->GetParmsSize();
                     std::vector<uint8_t> al(sz, 0);
                     auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
-                    v[0] = 1.0f; v[1] = 0.5f; // right edge, vertical center
+                    v[0] = 0.5f; v[1] = 0.5f;
                     userWidget->ProcessEvent(setAlignFn, al.data());
                 }
             }
 
-            // Position: right side, scaled offsets
+            // Position: fraction-based (user-customizable, resolution-independent)
             {
-                float posX = static_cast<float>(viewW) - 575.0f * uiScale;
-                float posY = static_cast<float>(viewH) / 2.0f - 250.0f * uiScale;
-                setWidgetPosition(userWidget, posX, posY);
+                float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
+                float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
+                setWidgetPosition(userWidget, fracX * static_cast<float>(viewW),
+                                              fracY * static_cast<float>(viewH));
             }
 
             // Start hidden
@@ -10887,14 +10894,14 @@ namespace MoriaMods
         // on_update (per-frame tick: state machines, replay, UMG config, keybinds)
         MoriaCppMod()
         {
-            ModVersion = STR("1.6");
+            ModVersion = STR("1.7");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
             // Init removal list CS before loadSaveFile can be called
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v1.6\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v1.7\n"));
         }
 
         ~MoriaCppMod() override
@@ -10921,8 +10928,11 @@ namespace MoriaMods
         {
             VLOG(STR("[MoriaCppMod] Unreal initialized.\n"));
 
+            // Load config first so Language preference is available for localization
+            loadConfig();
+
             // Load localization string table (compiled English defaults + optional JSON override)
-            Loc::load("Mods/MoriaCppMod/localization/");
+            Loc::load("Mods/MoriaCppMod/localization/", s_language);
             // Patch static keybind labels from string table
             s_bindings[0].label = Loc::get("bind.quick_build_1").c_str();
             s_bindings[0].section = Loc::get("bind.section_quick_building").c_str();
@@ -10968,7 +10978,6 @@ namespace MoriaMods
             buildRemovalEntries();
             probePrintString();
             loadQuickBuildSlots();
-            loadConfig();
 
             // Num1/Num2/Num6 removal handlers removed — now handled by MC polling (slots 4/5/6)
 
@@ -11081,6 +11090,11 @@ namespace MoriaMods
                 s_instance->m_hasLastCapture = true;
                 VLOG(STR("[MoriaCppMod] [QuickBuild] Captured: '{}' (with bLock data)\n"), displayName);
 
+                // Reset total rotation for new build piece selection
+                s_overlay.totalRotation = 0;
+                s_overlay.needsUpdate = true;
+                s_instance->updateMcRotationLabel();
+
                 // ONE-TIME: scan selfRef widget memory to find where bLock data lives
                 // This discovers the offset so we can read fresh recipe data at activation time
                 if (s_instance->m_bLockWidgetOffset < 0)
@@ -11130,7 +11144,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v1.6: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v1.7: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
         }
 
         // Per-frame tick. Drives all state machines and periodic tasks:
