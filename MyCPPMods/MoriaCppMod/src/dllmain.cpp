@@ -1978,8 +1978,8 @@ namespace MoriaMods
             if (dwarves.empty()) return;
 
             m_flyMode = !m_flyMode;
-            // EMovementMode: MOVE_Walking=1, MOVE_Flying=5
-            constexpr uint8_t MOVE_Walking = 1;
+            // EMovementMode: MOVE_Walking=1, MOVE_Falling=3, MOVE_Flying=5
+            constexpr uint8_t MOVE_Falling = 3;
             constexpr uint8_t MOVE_Flying  = 5;
 
             for (auto* dwarf : dwarves)
@@ -1992,22 +1992,8 @@ namespace MoriaMods
                     continue;
                 }
 
-                // Approach 1: SetMovementMode(NewMovementMode, NewCustomMode) via ProcessEvent
-                auto* fn = movComp->GetFunctionByNameInChain(STR("SetMovementMode"));
-                if (fn)
-                {
-                    uint8_t params[2] = {m_flyMode ? MOVE_Flying : MOVE_Walking, 0};
-                    movComp->ProcessEvent(fn, params);
-                    VLOG(STR("[MoriaCppMod] SetMovementMode({}) called\n"),
-                                                    m_flyMode ? 5 : 1);
-                }
-                else
-                {
-                    VLOG(STR("[MoriaCppMod] SetMovementMode not found!\n"));
-                }
-
-                // Approach 3 (backup): Set bCheatFlying flag directly
-                // Bitfield at movComp + 0x0388, bit 3 (0x08)
+                // bCheatFlying flag: bitfield at movComp + 0x0388, bit 3 (0x08)
+                // MUST set/clear BEFORE SetMovementMode — the engine checks this during mode change
                 uint8_t* flags = reinterpret_cast<uint8_t*>(movComp) + 0x0388;
                 if (m_flyMode)
                     *flags |= 0x08; // set bCheatFlying
@@ -2015,6 +2001,21 @@ namespace MoriaMods
                     *flags &= ~0x08; // clear bCheatFlying
                 VLOG(STR("[MoriaCppMod] bCheatFlying = {}, flags byte = 0x{:02X}\n"),
                                                 m_flyMode ? 1 : 0, *flags);
+
+                // SetMovementMode(NewMovementMode, NewCustomMode) via ProcessEvent
+                // Use MOVE_Falling when disabling — character drops naturally to ground
+                auto* fn = movComp->GetFunctionByNameInChain(STR("SetMovementMode"));
+                if (fn)
+                {
+                    uint8_t params[2] = {m_flyMode ? MOVE_Flying : MOVE_Falling, 0};
+                    movComp->ProcessEvent(fn, params);
+                    VLOG(STR("[MoriaCppMod] SetMovementMode({}) called\n"),
+                                                    m_flyMode ? 5 : 3);
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] SetMovementMode not found!\n"));
+                }
             }
             if (m_flyMode)
                 showOnScreen(Loc::get("msg.fly_on").c_str(), 2.0f, 0.3f, 0.8f, 1.0f);

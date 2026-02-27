@@ -69,7 +69,7 @@ Built as a UE4SS C++ mod, this pack adds quick-build hotkeys, a rotation control
 Download the latest signed installer from [Releases](https://github.com/jbowensii/MoriaAdvancedBuilder/releases):
 
 ```
-KhazadDumAdvancedBuilderPack_v1.15_Setup.exe
+KhazadDumAdvancedBuilderPack_v1.6_Setup.exe
 ```
 
 The installer auto-detects your Return to Moria installation (Epic Games Store or Steam) and deploys all files.
@@ -78,25 +78,46 @@ The installer auto-detects your Return to Moria installation (Epic Games Store o
 1. Install [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) to `<game>/Moria/Binaries/Win64/`
 2. Copy `MoriaCppMod.dll` to `<game>/Moria/Binaries/Win64/Mods/MoriaCppMod/dlls/main.dll`
 3. Copy `en.json` to `<game>/Moria/Binaries/Win64/Mods/MoriaCppMod/localization/en.json`
-4. Create an empty `enabled.txt` in the `MoriaCppMod/` directory
+4. Copy `MoriaCppMod.ini` to `<game>/Moria/Binaries/Win64/Mods/MoriaCppMod/MoriaCppMod.ini`
+5. Create an empty `enabled.txt` in the `MoriaCppMod/` directory
 
 ## Default Keybindings
 
-| Key | Action | Section |
-|-----|--------|---------|
+**All keybindings are fully assignable** — rebind any key via the in-game Configuration menu (F12 → Key Mapping tab), or edit `MoriaCppMod.ini` directly. The modifier key can be cycled between SHIFT, CTRL, ALT, and RALT.
+
+| Default Key | Action | Section |
+|-------------|--------|---------|
 | F1-F8 | Quick Build slots 1-8 | Quick Building |
-| F10 | Rotation control | Mod Controller |
-| F9 | Target inspection | Mod Controller |
+| F9 | Rotation control | Mod Controller |
+| ] | Target inspection | Mod Controller |
 | PgDn | Toolbar swap | Mod Controller |
-| Num4 | Super Dwarf (hide character) | Mod Controller |
+| Num9 | Super Dwarf (hide/fly) | Mod Controller |
 | Num1 | Remove aimed target | Mod Controller |
 | Num2 | Undo last removal | Mod Controller |
 | Num3 | Remove all of type | Mod Controller |
 | F12 | Configuration menu | Mod Controller |
-| Enter | Advanced Builder open | Advanced Builder |
-| SHIFT | Modifier key (rebindable) | Global |
+| Num+ | Advanced Builder open | Advanced Builder |
+| SHIFT | Modifier key | Global |
 
-All keys are rebindable via the in-game Configuration menu (Key Mapping tab).
+### Configuration File
+
+Keybindings and preferences are stored in `Mods/MoriaCppMod/MoriaCppMod.ini`:
+
+```ini
+[Keybindings]
+QuickBuild1 = F1
+Rotation = F9
+Target = ]
+SuperDwarf = Num9
+AdvancedBuilderOpen = Num+
+ModifierKey = SHIFT
+
+[Preferences]
+Verbose = false
+RotationStep = 5
+```
+
+The INI file is created automatically on first run. Editing it while the game is closed will apply changes on next launch. Changes made in-game via the Configuration menu are saved immediately.
 
 ## Building from Source
 
@@ -120,7 +141,7 @@ cmake --build build --config Release
 ./build/Release/MoriaCppModTests.exe
 ```
 
-108 unit tests covering: localization parsing, string helpers, key mapping, file I/O parsing, and memory safety.
+137 unit tests covering: localization parsing, string helpers, key mapping, file I/O parsing, INI config parsing, and memory safety.
 
 ### Build Installer
 ```powershell
