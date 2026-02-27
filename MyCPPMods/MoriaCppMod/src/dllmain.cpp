@@ -1,5 +1,5 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  MoriaCppMod v1.15 — Advanced Builder & HISM Removal for Return to Moria  ║
+// ║  MoriaCppMod v1.6 — Advanced Builder & HISM Removal for Return to Moria   ║
 // ║                                                                            ║
 // ║  A UE4SS C++ mod for Return to Moria (UE4.27) providing:                  ║
 // ║    - HISM instance hiding with persistence across sessions/worlds          ║
@@ -10372,14 +10372,14 @@ namespace MoriaMods
         // on_update (per-frame tick: state machines, replay, UMG config, keybinds)
         MoriaCppMod()
         {
-            ModVersion = STR("1.15");
+            ModVersion = STR("1.6");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
             // Init removal list CS before loadSaveFile can be called
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v1.15\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v1.6\n"));
         }
 
         ~MoriaCppMod() override
@@ -10615,7 +10615,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v1.15: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v1.6: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
         }
 
         // Per-frame tick. Drives all state machines and periodic tasks:
