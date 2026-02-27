@@ -91,7 +91,7 @@ The installer auto-detects your Return to Moria installation (Epic Games Store o
 | F9 | Rotation control | Mod Controller |
 | ] | Target inspection | Mod Controller |
 | PgDn | Toolbar swap | Mod Controller |
-| Num9 | Super Dwarf (hide/fly) | Mod Controller |
+| \\ | Super Dwarf (hide/fly) | Mod Controller |
 | Num1 | Remove aimed target | Mod Controller |
 | Num2 | Undo last removal | Mod Controller |
 | Num3 | Remove all of type | Mod Controller |
@@ -108,7 +108,7 @@ Keybindings and preferences are stored in `Mods/MoriaCppMod/MoriaCppMod.ini`:
 QuickBuild1 = F1
 Rotation = F9
 Target = ]
-SuperDwarf = Num9
+SuperDwarf = \
 AdvancedBuilderOpen = Num+
 ModifierKey = SHIFT
 

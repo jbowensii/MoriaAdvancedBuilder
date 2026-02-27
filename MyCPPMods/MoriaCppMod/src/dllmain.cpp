@@ -296,7 +296,7 @@ namespace MoriaMods
             {L"Rotation", L"Mod Controller", Input::Key::F9},                          // 8  (BIND_ROTATION, MC slot 0)
             {L"Target", L"Mod Controller", Input::Key::OEM_SIX},                       // 9  (BIND_TARGET, MC slot 1)
             {L"Toolbar Swap", L"Mod Controller", Input::Key::PAGE_DOWN},               // 10 (BIND_SWAP, MC slot 2)
-            {L"Super Dwarf", L"Mod Controller", Input::Key::NUM_NINE},                  // 11 (MC slot 3)
+            {L"Super Dwarf", L"Mod Controller", Input::Key::OEM_FIVE},                   // 11 (MC slot 3)
             {L"Remove Target", L"Mod Controller", Input::Key::NUM_ONE},                // 12 (MC slot 4)
             {L"Undo Last", L"Mod Controller", Input::Key::NUM_TWO},                    // 13 (MC slot 5)
             {L"Remove All", L"Mod Controller", Input::Key::NUM_THREE},                 // 14 (MC slot 6)
@@ -1993,14 +1993,13 @@ namespace MoriaMods
                 }
 
                 // bCheatFlying flag: bitfield at movComp + 0x0388, bit 3 (0x08)
-                // MUST set/clear BEFORE SetMovementMode — the engine checks this during mode change
                 uint8_t* flags = reinterpret_cast<uint8_t*>(movComp) + 0x0388;
-                if (m_flyMode)
-                    *flags |= 0x08; // set bCheatFlying
-                else
-                    *flags &= ~0x08; // clear bCheatFlying
-                VLOG(STR("[MoriaCppMod] bCheatFlying = {}, flags byte = 0x{:02X}\n"),
-                                                m_flyMode ? 1 : 0, *flags);
+
+                // Order matters:
+                // - Disable: clear bCheatFlying FIRST so engine allows mode transition
+                // - Enable: call SetMovementMode FIRST, then set bCheatFlying to keep it active
+                if (!m_flyMode)
+                    *flags &= ~0x08; // clear bCheatFlying before mode change
 
                 // SetMovementMode(NewMovementMode, NewCustomMode) via ProcessEvent
                 // Use MOVE_Falling when disabling — character drops naturally to ground
@@ -2016,6 +2015,12 @@ namespace MoriaMods
                 {
                     VLOG(STR("[MoriaCppMod] SetMovementMode not found!\n"));
                 }
+
+                if (m_flyMode)
+                    *flags |= 0x08; // set bCheatFlying after mode change
+
+                VLOG(STR("[MoriaCppMod] bCheatFlying = {}, flags byte = 0x{:02X}\n"),
+                                                m_flyMode ? 1 : 0, *flags);
             }
             if (m_flyMode)
                 showOnScreen(Loc::get("msg.fly_on").c_str(), 2.0f, 0.3f, 0.8f, 1.0f);
