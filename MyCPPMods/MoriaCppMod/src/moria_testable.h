@@ -515,6 +515,237 @@ namespace MoriaMods
     }
 
     // ════════════════════════════════════════════════════════════════════════════
+    // Reverse Key Name Mapping (INI support)
+    // ════════════════════════════════════════════════════════════════════════════
+
+    // Helper: case-insensitive wstring compare
+    static bool wstrEqualCI(const std::wstring& a, const wchar_t* b)
+    {
+        std::wstring la = a, lb = b;
+        for (auto& c : la)
+            c = towlower(c);
+        for (auto& c : lb)
+            c = towlower(c);
+        return la == lb;
+    }
+
+    // Reverse of keyName(): human-readable key name -> VK code
+    static std::optional<uint8_t> nameToVK(const std::wstring& name)
+    {
+        if (name.empty()) return std::nullopt;
+
+        // F-keys: F1-F24
+        if ((name[0] == L'F' || name[0] == L'f') && name.size() >= 2 && name.size() <= 3)
+        {
+            bool allDigits = true;
+            for (size_t i = 1; i < name.size(); i++)
+                if (!iswdigit(name[i])) allDigits = false;
+            if (allDigits)
+            {
+                std::string narrow;
+                for (size_t i = 1; i < name.size(); i++) narrow += static_cast<char>(name[i]);
+                int n = std::stoi(narrow);
+                if (n >= 1 && n <= 24) return static_cast<uint8_t>(0x70 + n - 1);
+            }
+        }
+
+        // Numpad digits: Num0-Num9
+        if (name.size() == 4 && wstrEqualCI(name.substr(0, 3), L"Num") && iswdigit(name[3]))
+        {
+            return static_cast<uint8_t>(0x60 + (name[3] - L'0'));
+        }
+
+        // Numpad operators (hardcoded English — matches en.json Loc defaults)
+        if (wstrEqualCI(name, L"Num*")) return 0x6A;
+        if (wstrEqualCI(name, L"Num+")) return 0x6B;
+        if (wstrEqualCI(name, L"NumSep")) return 0x6C;
+        if (wstrEqualCI(name, L"Num-")) return 0x6D;
+        if (wstrEqualCI(name, L"Num.")) return 0x6E;
+        if (wstrEqualCI(name, L"Num/")) return 0x6F;
+
+        // Symbol keys (single-char)
+        if (name.size() == 1)
+        {
+            switch (name[0])
+            {
+            case L'\\': return 0xDC;
+            case L'`': return 0xC0;
+            case L';': return 0xBA;
+            case L'=': return 0xBB;
+            case L',': return 0xBC;
+            case L'-': return 0xBD;
+            case L'.': return 0xBE;
+            case L'/': return 0xBF;
+            case L'[': return 0xDB;
+            case L']': return 0xDD;
+            case L'\'': return 0xDE;
+            default: break;
+            }
+            // Single digit 0-9
+            if (name[0] >= L'0' && name[0] <= L'9')
+                return static_cast<uint8_t>(name[0]);
+            // Single letter A-Z (case-insensitive)
+            wchar_t upper = towupper(name[0]);
+            if (upper >= L'A' && upper <= L'Z')
+                return static_cast<uint8_t>(upper);
+        }
+
+        // Special keys (hardcoded English — matches en.json Loc defaults)
+        if (wstrEqualCI(name, L"Space")) return 0x20;
+        if (wstrEqualCI(name, L"Tab")) return 0x09;
+        if (wstrEqualCI(name, L"Enter")) return 0x0D;
+        if (wstrEqualCI(name, L"Ins")) return 0x2D;
+        if (wstrEqualCI(name, L"Del")) return 0x2E;
+        if (wstrEqualCI(name, L"Home")) return 0x24;
+        if (wstrEqualCI(name, L"End")) return 0x23;
+        if (wstrEqualCI(name, L"PgUp")) return 0x21;
+        if (wstrEqualCI(name, L"PgDn")) return 0x22;
+
+        // Hex fallback: "0xFF" format
+        if (name.size() == 4 && name[0] == L'0' && (name[1] == L'x' || name[1] == L'X'))
+        {
+            try
+            {
+                std::string hexStr;
+                for (auto c : name) hexStr += static_cast<char>(c);
+                unsigned long val = std::stoul(hexStr, nullptr, 16);
+                if (val > 0 && val < 256) return static_cast<uint8_t>(val);
+            }
+            catch (...) {}
+        }
+
+        return std::nullopt;
+    }
+
+    // Reverse of modifierName(): modifier string -> VK code (case-insensitive)
+    static std::optional<uint8_t> modifierNameToVK(const std::wstring& name)
+    {
+        if (wstrEqualCI(name, L"SHIFT")) return VK_SHIFT;
+        if (wstrEqualCI(name, L"CTRL")) return VK_CONTROL;
+        if (wstrEqualCI(name, L"ALT")) return VK_MENU;
+        if (wstrEqualCI(name, L"RALT")) return VK_RMENU;
+        return std::nullopt;
+    }
+
+    // Modifier VK code -> INI string (narrow, for file output)
+    static std::string modifierToIniName(uint8_t vk)
+    {
+        switch (vk)
+        {
+        case VK_SHIFT: return "SHIFT";
+        case VK_CONTROL: return "CTRL";
+        case VK_MENU: return "ALT";
+        case VK_RMENU: return "RALT";
+        default: return "SHIFT";
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // INI File Parsing
+    // ════════════════════════════════════════════════════════════════════════════
+
+    struct ParsedIniSection
+    {
+        std::string name;
+    };
+    struct ParsedIniKeyValue
+    {
+        std::string key;
+        std::string value;
+    };
+    using ParsedIniLine = std::variant<std::monostate, ParsedIniSection, ParsedIniKeyValue>;
+
+    // Helper: trim leading/trailing whitespace from a string
+    static std::string trimStr(const std::string& s)
+    {
+        size_t start = s.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) return "";
+        size_t end = s.find_last_not_of(" \t\r\n");
+        return s.substr(start, end - start + 1);
+    }
+
+    // Parse one line of an INI file
+    static ParsedIniLine parseIniLine(const std::string& line)
+    {
+        std::string trimmed = trimStr(line);
+        if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#')
+            return std::monostate{};
+
+        // Section header: [Name]
+        if (trimmed.front() == '[' && trimmed.back() == ']')
+        {
+            std::string name = trimStr(trimmed.substr(1, trimmed.size() - 2));
+            if (!name.empty()) return ParsedIniSection{name};
+            return std::monostate{};
+        }
+
+        // Key = Value
+        auto eq = trimmed.find('=');
+        if (eq == std::string::npos) return std::monostate{};
+
+        std::string key = trimStr(trimmed.substr(0, eq));
+        std::string value = trimStr(trimmed.substr(eq + 1));
+
+        // Strip inline comment (space+semicolon), but not a bare semicolon as value
+        for (size_t i = 1; i < value.size(); i++)
+        {
+            if (value[i] == ';' && value[i - 1] == ' ')
+            {
+                value = trimStr(value.substr(0, i - 1));
+                break;
+            }
+        }
+
+        if (!key.empty()) return ParsedIniKeyValue{key, value};
+        return std::monostate{};
+    }
+
+    // INI key name <-> bind index mapping
+    static const char* bindIndexToIniKey(int idx)
+    {
+        static const char* keys[BIND_COUNT] = {
+            "QuickBuild1",        // 0
+            "QuickBuild2",        // 1
+            "QuickBuild3",        // 2
+            "QuickBuild4",        // 3
+            "QuickBuild5",        // 4
+            "QuickBuild6",        // 5
+            "QuickBuild7",        // 6
+            "QuickBuild8",        // 7
+            "Rotation",           // 8
+            "Target",             // 9
+            "ToolbarSwap",        // 10
+            "SuperDwarf",         // 11
+            "RemoveTarget",       // 12
+            "UndoLast",           // 13
+            "RemoveAll",          // 14
+            "Configuration",      // 15
+            "AdvancedBuilderOpen" // 16
+        };
+        if (idx < 0 || idx >= BIND_COUNT) return nullptr;
+        return keys[idx];
+    }
+
+    // Helper: case-insensitive narrow string compare
+    static bool strEqualCI(const std::string& a, const std::string& b)
+    {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); i++)
+            if (tolower(static_cast<unsigned char>(a[i])) != tolower(static_cast<unsigned char>(b[i])))
+                return false;
+        return true;
+    }
+
+    static int iniKeyToBindIndex(const std::string& key)
+    {
+        for (int i = 0; i < BIND_COUNT; i++)
+        {
+            if (strEqualCI(key, bindIndexToIniKey(i))) return i;
+        }
+        return -1;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
     // Memory Safety Helper
     // ════════════════════════════════════════════════════════════════════════════
 

@@ -285,3 +285,266 @@ TEST(ParseKeybindLine, NoPipe)
     auto result = parseKeybindLine("invalid");
     EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// nameToVK tests (reverse of keyName)
+// ════════════════════════════════════════════════════════════════════════════
+
+class NameToVKTest : public ::testing::Test
+{
+  protected:
+    void SetUp() override { Loc::clear(); Loc::initDefaults(); }
+    void TearDown() override { Loc::clear(); }
+};
+
+TEST_F(NameToVKTest, FKeys)
+{
+    EXPECT_EQ(nameToVK(L"F1"), 0x70);
+    EXPECT_EQ(nameToVK(L"F12"), 0x7B);
+    EXPECT_EQ(nameToVK(L"F24"), 0x87);
+}
+
+TEST_F(NameToVKTest, CaseInsensitive)
+{
+    EXPECT_EQ(nameToVK(L"f1"), 0x70);
+    EXPECT_EQ(nameToVK(L"pgdn"), 0x22);
+    EXPECT_EQ(nameToVK(L"SPACE"), 0x20);
+    EXPECT_EQ(nameToVK(L"num+"), 0x6B);
+}
+
+TEST_F(NameToVKTest, NumpadDigits)
+{
+    EXPECT_EQ(nameToVK(L"Num0"), 0x60);
+    EXPECT_EQ(nameToVK(L"Num9"), 0x69);
+}
+
+TEST_F(NameToVKTest, NumpadOps)
+{
+    EXPECT_EQ(nameToVK(L"Num+"), 0x6B);
+    EXPECT_EQ(nameToVK(L"Num-"), 0x6D);
+    EXPECT_EQ(nameToVK(L"Num*"), 0x6A);
+    EXPECT_EQ(nameToVK(L"Num/"), 0x6F);
+    EXPECT_EQ(nameToVK(L"Num."), 0x6E);
+    EXPECT_EQ(nameToVK(L"NumSep"), 0x6C);
+}
+
+TEST_F(NameToVKTest, Letters)
+{
+    EXPECT_EQ(nameToVK(L"A"), 0x41);
+    EXPECT_EQ(nameToVK(L"Z"), 0x5A);
+    EXPECT_EQ(nameToVK(L"a"), 0x41); // lowercase -> uppercase VK
+}
+
+TEST_F(NameToVKTest, Digits)
+{
+    EXPECT_EQ(nameToVK(L"0"), 0x30);
+    EXPECT_EQ(nameToVK(L"9"), 0x39);
+}
+
+TEST_F(NameToVKTest, Symbols)
+{
+    EXPECT_EQ(nameToVK(L"]"), 0xDD);
+    EXPECT_EQ(nameToVK(L"["), 0xDB);
+    EXPECT_EQ(nameToVK(L"\\"), 0xDC);
+    EXPECT_EQ(nameToVK(L";"), 0xBA);
+    EXPECT_EQ(nameToVK(L"'"), 0xDE);
+    EXPECT_EQ(nameToVK(L"`"), 0xC0);
+    EXPECT_EQ(nameToVK(L","), 0xBC);
+    EXPECT_EQ(nameToVK(L"-"), 0xBD);
+    EXPECT_EQ(nameToVK(L"."), 0xBE);
+    EXPECT_EQ(nameToVK(L"/"), 0xBF);
+    EXPECT_EQ(nameToVK(L"="), 0xBB);
+}
+
+TEST_F(NameToVKTest, SpecialKeys)
+{
+    EXPECT_EQ(nameToVK(L"PgDn"), 0x22);
+    EXPECT_EQ(nameToVK(L"PgUp"), 0x21);
+    EXPECT_EQ(nameToVK(L"Home"), 0x24);
+    EXPECT_EQ(nameToVK(L"End"), 0x23);
+    EXPECT_EQ(nameToVK(L"Space"), 0x20);
+    EXPECT_EQ(nameToVK(L"Tab"), 0x09);
+    EXPECT_EQ(nameToVK(L"Enter"), 0x0D);
+    EXPECT_EQ(nameToVK(L"Ins"), 0x2D);
+    EXPECT_EQ(nameToVK(L"Del"), 0x2E);
+}
+
+TEST_F(NameToVKTest, HexFallback)
+{
+    EXPECT_EQ(nameToVK(L"0xFF"), 0xFF);
+    EXPECT_EQ(nameToVK(L"0x01"), 0x01);
+}
+
+TEST_F(NameToVKTest, Invalid)
+{
+    EXPECT_EQ(nameToVK(L"INVALID"), std::nullopt);
+    EXPECT_EQ(nameToVK(L""), std::nullopt);
+    EXPECT_EQ(nameToVK(L"F0"), std::nullopt);
+    EXPECT_EQ(nameToVK(L"F25"), std::nullopt);
+}
+
+TEST_F(NameToVKTest, RoundTrip)
+{
+    // For all VK codes that keyName produces a recognizable name, verify round-trip
+    for (int vk = 1; vk < 256; vk++)
+    {
+        std::wstring name = keyName(static_cast<uint8_t>(vk));
+        if (name.substr(0, 2) == L"0x") continue; // hex fallback = unknown key, skip
+        auto result = nameToVK(name);
+        std::string narrow;
+        for (auto c : name) narrow += static_cast<char>(c);
+        EXPECT_TRUE(result.has_value())
+            << "nameToVK failed for keyName(" << vk << ") = '" << narrow << "'";
+        if (result)
+            EXPECT_EQ(*result, static_cast<uint8_t>(vk))
+                << "Round-trip failed for VK " << vk;
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// modifierNameToVK / modifierToIniName tests
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST(ModifierMapping, NameToVK)
+{
+    EXPECT_EQ(modifierNameToVK(L"SHIFT"), VK_SHIFT);
+    EXPECT_EQ(modifierNameToVK(L"CTRL"), VK_CONTROL);
+    EXPECT_EQ(modifierNameToVK(L"ALT"), VK_MENU);
+    EXPECT_EQ(modifierNameToVK(L"RALT"), VK_RMENU);
+    EXPECT_EQ(modifierNameToVK(L"shift"), VK_SHIFT);
+    EXPECT_EQ(modifierNameToVK(L"invalid"), std::nullopt);
+}
+
+TEST(ModifierMapping, ToIniName)
+{
+    EXPECT_EQ(modifierToIniName(VK_SHIFT), "SHIFT");
+    EXPECT_EQ(modifierToIniName(VK_CONTROL), "CTRL");
+    EXPECT_EQ(modifierToIniName(VK_MENU), "ALT");
+    EXPECT_EQ(modifierToIniName(VK_RMENU), "RALT");
+}
+
+TEST(ModifierMapping, RoundTrip)
+{
+    for (uint8_t vk : {(uint8_t)VK_SHIFT, (uint8_t)VK_CONTROL, (uint8_t)VK_MENU, (uint8_t)VK_RMENU})
+    {
+        std::string name = modifierToIniName(vk);
+        std::wstring wname(name.begin(), name.end());
+        auto result = modifierNameToVK(wname);
+        EXPECT_TRUE(result.has_value());
+        if (result) EXPECT_EQ(*result, vk);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// parseIniLine tests
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST(ParseIniLine, SectionHeader)
+{
+    auto r = parseIniLine("[Keybindings]");
+    auto* sec = std::get_if<ParsedIniSection>(&r);
+    ASSERT_NE(sec, nullptr);
+    EXPECT_EQ(sec->name, "Keybindings");
+}
+
+TEST(ParseIniLine, SectionWithSpaces)
+{
+    auto r = parseIniLine("  [ Preferences ]");
+    auto* sec = std::get_if<ParsedIniSection>(&r);
+    ASSERT_NE(sec, nullptr);
+    EXPECT_EQ(sec->name, "Preferences");
+}
+
+TEST(ParseIniLine, KeyValueSimple)
+{
+    auto r = parseIniLine("QuickBuild1 = F1");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->key, "QuickBuild1");
+    EXPECT_EQ(kv->value, "F1");
+}
+
+TEST(ParseIniLine, KeyValueNoSpaces)
+{
+    auto r = parseIniLine("Rotation=F9");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->key, "Rotation");
+    EXPECT_EQ(kv->value, "F9");
+}
+
+TEST(ParseIniLine, InlineComment)
+{
+    auto r = parseIniLine("Verbose = false ; enable for debugging");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->value, "false");
+}
+
+TEST(ParseIniLine, SemicolonValue)
+{
+    // Bare semicolon as value should NOT be stripped as comment
+    auto r = parseIniLine("Target = ;");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->value, ";");
+}
+
+TEST(ParseIniLine, SemicolonComment)
+{
+    auto r = parseIniLine("; This is a comment");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(r));
+}
+
+TEST(ParseIniLine, HashComment)
+{
+    auto r = parseIniLine("# This is a comment");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(r));
+}
+
+TEST(ParseIniLine, EmptyLine)
+{
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(parseIniLine("")));
+}
+
+TEST(ParseIniLine, WhitespaceOnly)
+{
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(parseIniLine("   ")));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// bindIndexToIniKey / iniKeyToBindIndex tests
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST(IniKeyMapping, AllIndicesHaveKeys)
+{
+    for (int i = 0; i < BIND_COUNT; i++)
+        EXPECT_NE(bindIndexToIniKey(i), nullptr) << "Missing INI key for index " << i;
+}
+
+TEST(IniKeyMapping, OutOfRange)
+{
+    EXPECT_EQ(bindIndexToIniKey(-1), nullptr);
+    EXPECT_EQ(bindIndexToIniKey(BIND_COUNT), nullptr);
+}
+
+TEST(IniKeyMapping, RoundTrip)
+{
+    for (int i = 0; i < BIND_COUNT; i++)
+    {
+        const char* key = bindIndexToIniKey(i);
+        EXPECT_EQ(iniKeyToBindIndex(key), i) << "Round-trip failed for index " << i;
+    }
+}
+
+TEST(IniKeyMapping, CaseInsensitive)
+{
+    EXPECT_EQ(iniKeyToBindIndex("quickbuild1"), 0);
+    EXPECT_EQ(iniKeyToBindIndex("QUICKBUILD1"), 0);
+    EXPECT_EQ(iniKeyToBindIndex("ROTATION"), 8);
+}
+
+TEST(IniKeyMapping, Unknown)
+{
+    EXPECT_EQ(iniKeyToBindIndex("nonexistent"), -1);
+}

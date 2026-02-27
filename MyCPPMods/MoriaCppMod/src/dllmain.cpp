@@ -293,20 +293,24 @@ namespace MoriaMods
             {L"Quick Build 6", L"Quick Building", Input::Key::F6},                     // 5
             {L"Quick Build 7", L"Quick Building", Input::Key::F7},                     // 6
             {L"Quick Build 8", L"Quick Building", Input::Key::F8},                     // 7
-            {L"Rotation", L"Mod Controller", Input::Key::F10},                         // 8  (BIND_ROTATION, MC slot 0)
-            {L"Target", L"Mod Controller", Input::Key::F9},                            // 9  (BIND_TARGET, MC slot 1)
+            {L"Rotation", L"Mod Controller", Input::Key::F9},                          // 8  (BIND_ROTATION, MC slot 0)
+            {L"Target", L"Mod Controller", Input::Key::OEM_SIX},                       // 9  (BIND_TARGET, MC slot 1)
             {L"Toolbar Swap", L"Mod Controller", Input::Key::PAGE_DOWN},               // 10 (BIND_SWAP, MC slot 2)
-            {L"Super Dwarf", L"Mod Controller", Input::Key::NUM_FOUR},                  // 11 (MC slot 3)
+            {L"Super Dwarf", L"Mod Controller", Input::Key::NUM_NINE},                  // 11 (MC slot 3)
             {L"Remove Target", L"Mod Controller", Input::Key::NUM_ONE},                // 12 (MC slot 4)
             {L"Undo Last", L"Mod Controller", Input::Key::NUM_TWO},                    // 13 (MC slot 5)
             {L"Remove All", L"Mod Controller", Input::Key::NUM_THREE},                 // 14 (MC slot 6)
             {L"Configuration", L"Mod Controller", Input::Key::F12},                    // 15 (BIND_CONFIG, MC slot 7)
-            {L"Advanced Builder Open", L"Advanced Builder", Input::Key::RETURN},         // 16 (BIND_AB_OPEN)
+            {L"Advanced Builder Open", L"Advanced Builder", Input::Key::ADD},             // 16 (BIND_AB_OPEN)
     };
     static std::atomic<int> s_capturingBind{-1};
 
     // Modifier key choice: VK_SHIFT (0x10), VK_CONTROL (0x11), VK_MENU (0x12 = ALT), or VK_RMENU (0xA5 = RALT)
     static std::atomic<uint8_t> s_modifierVK{VK_SHIFT};
+
+    // Config file paths
+    static const char* INI_PATH = "Mods/MoriaCppMod/MoriaCppMod.ini";
+    static const char* OLD_KEYBIND_PATH = "Mods/MoriaCppMod/keybindings.txt";
 
     static bool isModifierDown()
     {
@@ -4528,6 +4532,7 @@ namespace MoriaMods
             setGATARotation(gata, newStep);
             s_overlay.rotationStep = static_cast<int>(newStep);
             s_overlay.needsUpdate = true;
+            saveConfig();
 
             VLOG(STR("[MoriaCppMod] [Rotate] Toggled rotation step to {:.0f}\n"), newStep);
             std::wstring msg = L"Rotation step: " + std::to_wstring((int)newStep) + L"\xB0";
@@ -4735,8 +4740,7 @@ namespace MoriaMods
                     narrowTex.push_back(static_cast<char>(c));
                 file << i << "|" << narrowName << "|" << narrowTex << "\n";
             }
-            // Persist rotation step
-            file << "rotation|" << s_overlay.rotationStep << "\n";
+            // NOTE: rotationStep now persisted in MoriaCppMod.ini [Preferences], not here
         }
 
         void loadQuickBuildSlots()
@@ -4768,42 +4772,139 @@ namespace MoriaMods
             }
         }
 
-        void saveKeybindings()
+        void saveConfig()
         {
-            std::ofstream file("Mods/MoriaCppMod/keybindings.txt", std::ios::trunc);
+            std::ofstream file(INI_PATH, std::ios::trunc);
             if (!file.is_open()) return;
-            file << "# MoriaCppMod keybindings (index|VK_code)\n";
+
+            file << "; MoriaCppMod Configuration\n";
+            file << "; Key names: F1-F12, Num0-Num9, Num+, Num-, Num*, Num/, A-Z, 0-9,\n";
+            file << ";   PgUp, PgDn, Home, End, Ins, Del, Space, Tab, Enter,\n";
+            file << ";   [ ] \\ ; = , - . / ` '\n";
+            file << "; Modifier: SHIFT, CTRL, ALT, RALT\n";
+            file << "\n";
+
+            file << "[Keybindings]\n";
             for (int i = 0; i < BIND_COUNT; i++)
             {
-                file << i << "|" << (int)s_bindings[i].key << "\n";
+                const char* iniKey = bindIndexToIniKey(i);
+                if (!iniKey) continue;
+                std::wstring wname = keyName(s_bindings[i].key);
+                std::string name;
+                for (auto wc : wname) name += static_cast<char>(wc); // ASCII-safe narrow
+                file << iniKey << " = " << name << "\n";
             }
-            file << "mod|" << (int)s_modifierVK.load() << "\n";
-            VLOG(STR("[MoriaCppMod] Saved {} keybindings + modifier to disk\n"), BIND_COUNT);
+            file << "ModifierKey = " << modifierToIniName(s_modifierVK) << "\n";
+
+            file << "\n[Preferences]\n";
+            file << "Verbose = " << (s_verbose ? "true" : "false") << "\n";
+            file << "RotationStep = " << s_overlay.rotationStep.load() << "\n";
+
+            VLOG(STR("[MoriaCppMod] Saved config to MoriaCppMod.ini\n"));
         }
 
-        void loadKeybindings()
+        void loadConfig()
         {
-            std::ifstream file("Mods/MoriaCppMod/keybindings.txt");
-            if (!file.is_open()) return;
-            std::string line;
-            int loaded = 0;
-            while (std::getline(file, line))
+            std::ifstream file(INI_PATH);
+            if (file.is_open())
             {
-                auto parsed = parseKeybindLine(line);
-                if (auto* kb = std::get_if<ParsedKeybind>(&parsed))
+                // Parse INI file
+                std::string section;
+                std::string line;
+                int loaded = 0;
+                while (std::getline(file, line))
                 {
-                    s_bindings[kb->bindIndex].key = kb->vkCode;
-                    loaded++;
+                    auto parsed = parseIniLine(line);
+                    if (auto* sec = std::get_if<ParsedIniSection>(&parsed))
+                    {
+                        section = sec->name;
+                    }
+                    else if (auto* kv = std::get_if<ParsedIniKeyValue>(&parsed))
+                    {
+                        if (strEqualCI(section, "Keybindings"))
+                        {
+                            if (strEqualCI(kv->key, "ModifierKey"))
+                            {
+                                std::wstring wval(kv->value.begin(), kv->value.end());
+                                auto mvk = modifierNameToVK(wval);
+                                if (mvk) s_modifierVK = *mvk;
+                            }
+                            else
+                            {
+                                int idx = iniKeyToBindIndex(kv->key);
+                                if (idx >= 0)
+                                {
+                                    std::wstring wval(kv->value.begin(), kv->value.end());
+                                    auto vk = nameToVK(wval);
+                                    if (vk)
+                                    {
+                                        s_bindings[idx].key = *vk;
+                                        loaded++;
+                                    }
+                                    else
+                                    {
+                                        VLOG(STR("[MoriaCppMod] INI: unrecognized key '{}' for {}\n"),
+                                             std::wstring(kv->value.begin(), kv->value.end()),
+                                             std::wstring(kv->key.begin(), kv->key.end()));
+                                    }
+                                }
+                            }
+                        }
+                        else if (strEqualCI(section, "Preferences"))
+                        {
+                            if (strEqualCI(kv->key, "Verbose"))
+                            {
+                                s_verbose = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                            else if (strEqualCI(kv->key, "RotationStep"))
+                            {
+                                try
+                                {
+                                    int val = std::stoi(kv->value);
+                                    if (val >= 0 && val <= 90) s_overlay.rotationStep = val;
+                                }
+                                catch (...) {}
+                            }
+                        }
+                    }
                 }
-                else if (auto* mod = std::get_if<ParsedModifier>(&parsed))
+                if (loaded > 0)
                 {
-                    s_modifierVK = mod->vkCode;
+                    VLOG(STR("[MoriaCppMod] Loaded {} keybindings from MoriaCppMod.ini\n"), loaded);
                 }
+                return;
             }
-            if (loaded > 0)
+
+            // Migration: try old keybindings.txt format
+            std::ifstream oldFile(OLD_KEYBIND_PATH);
+            if (oldFile.is_open())
             {
-                VLOG(STR("[MoriaCppMod] Loaded {} keybindings from disk\n"), loaded);
+                std::string line;
+                int loaded = 0;
+                while (std::getline(oldFile, line))
+                {
+                    auto parsed = parseKeybindLine(line);
+                    if (auto* kb = std::get_if<ParsedKeybind>(&parsed))
+                    {
+                        s_bindings[kb->bindIndex].key = kb->vkCode;
+                        loaded++;
+                    }
+                    else if (auto* mod = std::get_if<ParsedModifier>(&parsed))
+                    {
+                        s_modifierVK = mod->vkCode;
+                    }
+                }
+                oldFile.close();
+                VLOG(STR("[MoriaCppMod] Migrated {} keybindings from keybindings.txt\n"), loaded);
+
+                // Write new INI and rename old file
+                saveConfig();
+                std::rename(OLD_KEYBIND_PATH, "Mods/MoriaCppMod/keybindings.txt.bak");
+                return;
             }
+
+            // First run: write default INI from hardcoded s_bindings
+            saveConfig();
         }
 
         // NOTE: DXT5 decoder, saveBGRAAsPng, isRangeReadable, looksLikeDXT5, findBulkDataPtr
@@ -10453,7 +10554,7 @@ namespace MoriaMods
             buildRemovalEntries();
             probePrintString();
             loadQuickBuildSlots();
-            loadKeybindings();
+            loadConfig();
 
             // Num1/Num2/Num6 removal handlers removed — now handled by MC polling (slots 4/5/6)
 
@@ -10738,6 +10839,7 @@ namespace MoriaMods
                                 next = (cur >= 90) ? 5 : cur + 5;   // no modifier = increase
                             s_overlay.rotationStep = next;
                             s_overlay.needsUpdate = true;
+                            saveConfig();
                             UObject* gata = resolveGATA();
                             if (gata) setGATARotation(gata, static_cast<float>(next));
                             std::wstring msg = L"Rotation step: " + std::to_wstring(next) + L"\xB0";
@@ -10945,7 +11047,7 @@ namespace MoriaMods
                                             s_modifierVK = VK_RMENU; // Right ALT (0xA5)
                                         else
                                             s_modifierVK = VK_CONTROL;
-                                        saveKeybindings();
+                                        saveConfig();
                                         updateConfigKeyLabels();
                                         VLOG(STR("[MoriaCppMod] [CFG] Modifier key cycled to VK 0x{:02X}\n"), (int)s_modifierVK);
                                     }
@@ -11015,7 +11117,7 @@ namespace MoriaMods
                             {
                                 s_bindings[idx].key = static_cast<uint8_t>(vk);
                                 s_capturingBind = -1;
-                                saveKeybindings();
+                                saveConfig();
                                 updateConfigKeyLabels();
                                 s_overlay.needsUpdate = true;
                                 s_pendingKeyLabelRefresh = true;
@@ -11093,7 +11195,7 @@ namespace MoriaMods
                     if (mDown && !s_lastCfgM)
                     {
                         s_modifierVK = nextModifier(s_modifierVK);
-                        saveKeybindings();
+                        saveConfig();
                         updateConfigKeyLabels();
                     }
                     s_lastCfgM = mDown;
