@@ -1,5 +1,5 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  MoriaCppMod v1.7 — Advanced Builder & HISM Removal for Return to Moria   ║
+// ║  MoriaCppMod v1.8 — Advanced Builder & HISM Removal for Return to Moria   ║
 // ║                                                                            ║
 // ║  A UE4SS C++ mod for Return to Moria (UE4.27) providing:                  ║
 // ║    - HISM instance hiding with persistence across sessions/worlds          ║
@@ -4577,9 +4577,16 @@ namespace MoriaMods
         int m_bLockWidgetOffset{BLOCK_WIDGET_OFFSET}; // hardcoded, verified via scan
         bool m_bLockIsIndirect{false};                // direct memory, not a pointer
 
-        // Pending quick-build: set when we simulate B key, waiting for build menu to open
-        int m_pendingQuickBuildSlot{-1};
-        int m_pendingBuildFrames{0};
+        // Reactive quick-build state machine (replaces frame-counting)
+        enum class QBPhase { Idle, CancelPlacement, CloseMenu, OpenMenu, SelectRecipe };
+        int m_pendingQuickBuildSlot{-1};     // which F1-F8 slot is pending (-1 = none)
+        QBPhase m_qbPhase{QBPhase::Idle};    // quickbuild phase
+        int m_qbTimeout{0};                  // safety timeout counter
+
+        // Cached widget pointers for cheap state checks (invalidated on world unload)
+        UObject* m_cachedBuildHUD{nullptr};  // UI_WBP_BuildHUDv2_C
+        UObject* m_cachedBuildTab{nullptr};  // UI_WBP_Build_Tab_C
+        UFunction* m_fnIsShowing{nullptr};   // cached IsShowing() on Build_Tab
 
         // Target-to-build: Shift+F10 — build the last targeted buildable object
         std::wstring m_targetBuildName;      // display name from last F10 target
@@ -4588,8 +4595,8 @@ namespace MoriaMods
         bool m_lastTargetBuildable{false};   // was the last target buildable?
         bool m_pendingTargetBuild{false};    // pending build-from-target state machine
         bool m_buildMenuWasOpen{false};      // tracks build menu open/close for ActionBar refresh
-        bool m_buildPlacementActive{false};  // true after quickbuild recipe selected (player placing piece)
-        int m_pendingTargetBuildFrames{0};   // frame counter for state machine
+        QBPhase m_tbPhase{QBPhase::Idle};    // target-build phase
+        int m_tbTimeout{0};                  // safety timeout counter
 
         // Clear-hotbar state machine: move one item per frame
         bool m_clearingHotbar{false};
@@ -4739,6 +4746,68 @@ namespace MoriaMods
                 }
             }
             return nullptr;
+        }
+
+        // Cached Build_Tab lookup — avoids FindAllOf on every check
+        UObject* getCachedBuildTab()
+        {
+            if (m_cachedBuildTab)
+            {
+                std::wstring cls = safeClassName(m_cachedBuildTab);
+                if (cls != L"UI_WBP_Build_Tab_C")
+                {
+                    m_cachedBuildTab = nullptr;
+                    m_fnIsShowing = nullptr;
+                }
+            }
+            if (!m_cachedBuildTab)
+            {
+                m_cachedBuildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", false);
+                if (m_cachedBuildTab)
+                    m_fnIsShowing = m_cachedBuildTab->GetFunctionByNameInChain(STR("IsShowing"));
+            }
+            return m_cachedBuildTab;
+        }
+
+        // Cheap Build_Tab visibility check via cached IsShowing() — no FindAllOf
+        bool isBuildTabShowing()
+        {
+            UObject* tab = getCachedBuildTab();
+            if (!tab || !m_fnIsShowing) return false;
+            struct { bool Ret{false}; } params{};
+            tab->ProcessEvent(m_fnIsShowing, &params);
+            return params.Ret;
+        }
+
+        // Cached BuildHUD lookup
+        UObject* getCachedBuildHUD()
+        {
+            if (m_cachedBuildHUD)
+            {
+                std::wstring cls = safeClassName(m_cachedBuildHUD);
+                if (cls.find(L"BuildHUD") == std::wstring::npos)
+                    m_cachedBuildHUD = nullptr;
+            }
+            if (!m_cachedBuildHUD)
+                m_cachedBuildHUD = findWidgetByClass(L"UI_WBP_BuildHUDv2_C", false);
+            return m_cachedBuildHUD;
+        }
+
+        // Live placement-active check: BuildHUD is showing AND not in recipe select mode
+        // Replaces the mod-maintained m_buildPlacementActive flag
+        bool isPlacementActive()
+        {
+            UObject* hud = getCachedBuildHUD();
+            if (!hud) return false;
+            // Check IsShowing via ProcessEvent
+            auto* fn = hud->GetFunctionByNameInChain(STR("IsShowing"));
+            if (!fn) return false;
+            struct { bool Ret{false}; } params{};
+            hud->ProcessEvent(fn, &params);
+            if (!params.Ret) return false;
+            // HUD is showing — check if past the recipe picker (recipeSelectMode @ 0x054A)
+            bool recipeSelectMode = *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(hud) + 0x054A);
+            return !recipeSelectMode; // in placement if HUD showing but NOT selecting recipes
         }
 
         // Force the game's action bar (hotbar UI) to refresh its display
@@ -6025,7 +6094,8 @@ namespace MoriaMods
         }
 
         // Find a Build_Item_Medium widget whose display name matches, then trigger blockSelectedEvent
-        void selectRecipeOnBuildTab(UObject* buildTab, int slot)
+        // Returns true if recipe was found and selected, false if not found (allows retry)
+        bool selectRecipeOnBuildTab(UObject* buildTab, int slot)
         {
             const std::wstring& targetName = m_recipeSlots[slot].displayName;
 
@@ -6068,12 +6138,12 @@ namespace MoriaMods
 
             if (!matchedWidget)
             {
-                showOnScreen((L"Recipe '" + targetName + L"' not found in menu!").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
-                return;
+                VLOG(STR("[MoriaCppMod] [QuickBuild] No match among {} visible widgets\n"), visibleCount);
+                return false;
             }
 
             auto* func = buildTab->GetFunctionByNameInChain(STR("blockSelectedEvent"));
-            if (!func) return;
+            if (!func) return false;
 
             // blockSelectedEvent params: bLock@0(120B) + selfRef@120(8B) + Index@128(4B)
             uint8_t params[132]{};
@@ -6129,12 +6199,12 @@ namespace MoriaMods
 
             showOnScreen((L"Build: " + targetName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
             m_buildMenuWasOpen = true;       // track menu so we refresh ActionBar when it closes
-            m_buildPlacementActive = true;   // player is now holding a ghost piece
             refreshActionBar();              // also refresh immediately after recipe selection
 
             // Set this slot as Active on the builders bar, all others become Inactive/Empty
             m_activeBuilderSlot = slot;
             updateBuildersBar();
+            return true;
         }
 
         void quickBuildSlot(int slot)
@@ -6148,13 +6218,11 @@ namespace MoriaMods
                 return;
             }
 
-            // Guard: if a previous quickbuild is still pending, skip
-            if (m_pendingQuickBuildSlot >= 0)
+            // Guard: if a previous quickbuild is already in progress, skip
+            if (m_qbPhase != QBPhase::Idle)
             {
-                VLOG(STR("[MoriaCppMod] [QuickBuild] F{} pressed but slot {} already pending (frame {}), ignoring\n"),
-                                                slot + 1,
-                                                m_pendingQuickBuildSlot + 1,
-                                                m_pendingBuildFrames);
+                VLOG(STR("[MoriaCppMod] [QuickBuild] F{} pressed but phase {} active, ignoring\n"),
+                                                slot + 1, static_cast<int>(m_qbPhase));
                 return;
             }
 
@@ -6164,40 +6232,33 @@ namespace MoriaMods
                                             m_characterLoaded,
                                             m_frameCounter);
 
-            // If player is currently placing a build piece, cancel it first with ESC
-            // Back-to-back F-key presses (e.g. F2 then F3) would otherwise crash the
-            // UMG animation system by opening the build menu during active placement.
-            if (m_buildPlacementActive)
+            m_pendingQuickBuildSlot = slot;
+            m_qbTimeout = 0;
+
+            // Reactive phase transitions: check live game state and proceed accordingly
+            if (isPlacementActive())
             {
+                // Player is holding a ghost piece — cancel with ESC first
                 VLOG(STR("[MoriaCppMod] [QuickBuild] Placement active — sending ESC to cancel first\n"));
                 keybd_event(VK_ESCAPE, 0, 0, 0);
                 keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
-                m_buildPlacementActive = false;
-                m_pendingQuickBuildSlot = slot;
-                m_pendingBuildFrames = -20; // wait 20 frames for ESC to process, then open menu
-                return;
+                m_qbPhase = QBPhase::CancelPlacement;
             }
-
-            // Always close the build menu first if it's open, then reopen fresh.
-            // Reusing a stale menu session causes widget recycling issues.
-            UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
-            if (buildTab)
+            else if (isBuildTabShowing())
             {
-                // Close existing menu first
-                VLOG(STR("[MoriaCppMod] [QuickBuild] Build tab already open — closing first (pendingFrames=-15)\n"));
+                // Build menu is open — close it first, then reopen fresh
+                VLOG(STR("[MoriaCppMod] [QuickBuild] Build tab already open — closing first\n"));
                 keybd_event(0x42, 0, 0, 0);
                 keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                m_pendingQuickBuildSlot = slot;
-                m_pendingBuildFrames = -15; // negative = wait for close, then reopen at frame 0
+                m_qbPhase = QBPhase::CloseMenu;
             }
             else
             {
-                // Menu not open — just open it
-                VLOG(STR("[MoriaCppMod] [QuickBuild] Build tab not open — sending B key (pendingFrames=0)\n"));
+                // Menu not open — open it
+                VLOG(STR("[MoriaCppMod] [QuickBuild] Build tab not open — sending B key\n"));
                 keybd_event(0x42, 0, 0, 0);
                 keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                m_pendingQuickBuildSlot = slot;
-                m_pendingBuildFrames = 0;
+                m_qbPhase = QBPhase::OpenMenu;
             }
         }
 
@@ -6213,9 +6274,10 @@ namespace MoriaMods
                     m_characterLoaded,
                     m_frameCounter);
 
-            if (m_pendingTargetBuild)
+            // Guard: if a previous target-build is already in progress, skip
+            if (m_tbPhase != QBPhase::Idle)
             {
-                VLOG(STR("[MoriaCppMod] [TargetBuild] Already pending (frame {}), ignoring\n"), m_pendingTargetBuildFrames);
+                VLOG(STR("[MoriaCppMod] [TargetBuild] Already active (phase {}), ignoring\n"), static_cast<int>(m_tbPhase));
                 return;
             }
 
@@ -6225,35 +6287,30 @@ namespace MoriaMods
                 return;
             }
 
-            // If player is currently placing a build piece, cancel it first with ESC
-            if (m_buildPlacementActive)
+            m_pendingTargetBuild = true;
+            m_tbTimeout = 0;
+
+            // Reactive phase transitions: check live game state
+            if (isPlacementActive())
             {
                 VLOG(STR("[MoriaCppMod] [TargetBuild] Placement active — sending ESC to cancel first\n"));
                 keybd_event(VK_ESCAPE, 0, 0, 0);
                 keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
-                m_buildPlacementActive = false;
-                m_pendingTargetBuild = true;
-                m_pendingTargetBuildFrames = -20; // wait for ESC to process
-                return;
+                m_tbPhase = QBPhase::CancelPlacement;
             }
-
-            // Same pattern as quickBuildSlot: open/reopen build menu, then select by name
-            UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
-            if (buildTab)
+            else if (isBuildTabShowing())
             {
                 VLOG(STR("[MoriaCppMod] [TargetBuild] Build tab already open — closing first\n"));
                 keybd_event(0x42, 0, 0, 0);
                 keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                m_pendingTargetBuild = true;
-                m_pendingTargetBuildFrames = -15;
+                m_tbPhase = QBPhase::CloseMenu;
             }
             else
             {
                 VLOG(STR("[MoriaCppMod] [TargetBuild] Build tab not open — sending B key\n"));
                 keybd_event(0x42, 0, 0, 0);
                 keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                m_pendingTargetBuild = true;
-                m_pendingTargetBuildFrames = 0;
+                m_tbPhase = QBPhase::OpenMenu;
             }
         }
 
@@ -6501,7 +6558,6 @@ namespace MoriaMods
 
             showOnScreen((L"Build: " + matchedName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
             m_buildMenuWasOpen = true;       // track menu so we refresh ActionBar when it closes
-            m_buildPlacementActive = true;   // player is now holding a ghost piece
             refreshActionBar();              // also refresh immediately after recipe selection
         }
 
@@ -7358,11 +7414,11 @@ namespace MoriaMods
             }
             VLOG(STR("[MoriaCppMod] [UMG] Viewport: {}x{}\n"), viewW, viewH);
             float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
-            // SetRenderScale: horizontal 0.825, vertical 0.75 — scaled by uiScale
-            float umgScaleX = 0.825f * uiScale;
-            float umgScaleY = 0.75f * uiScale;
-            umgSetRenderScale(outerBorder, umgScaleX, umgScaleY);
+            // SetRenderScale: uniform 0.81 scaled by uiScale (matches AB/MC)
+            float bbScale = 0.81f * uiScale;
+            umgSetRenderScale(outerBorder, bbScale, bbScale);
 
             // Use the larger of frame/state width for column width
             float iconW = (frameW > stateW) ? frameW : stateW;
@@ -7373,8 +7429,8 @@ namespace MoriaMods
             float vOverlap = stateH * 0.15f;                   // 15% vertical overlap
             float hOverlapPerSlot = iconW * 0.20f;             // 20% horizontal overlap (10% each side)
             // Viewport size matches render scale so invisible frame fits the visual
-            float totalW = (8.0f * iconW - 7.0f * hOverlapPerSlot) * umgScaleX;
-            float totalH = (frameH + stateH - vOverlap) * umgScaleY;
+            float totalW = (8.0f * iconW - 7.0f * hOverlapPerSlot) * bbScale;
+            float totalH = (frameH + stateH - vOverlap) * bbScale;
             VLOG(STR("[MoriaCppMod] [UMG] Frame size: {}x{} (iconW={} frameH={} stateH={})\n"),
                                             totalW, totalH, iconW, frameH, stateH);
 
@@ -7831,6 +7887,7 @@ namespace MoriaMods
                 }
             }
             float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             float abScale = 0.81f * uiScale;
             umgSetRenderScale(outerBorder, abScale, abScale);
@@ -8102,6 +8159,7 @@ namespace MoriaMods
                 }
             }
             float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // Apply render scale for resolution independence
             if (rootSizeBox) umgSetRenderScale(rootSizeBox, uiScale, uiScale);
@@ -8184,6 +8242,27 @@ namespace MoriaMods
                 umgSetTextColor(m_tiBuildLabel, 0.7f, 0.55f, 0.39f, 0.8f);
             std::wstring recipeDisplay = !rowName.empty() ? rowName : recipe;
             umgSetText(m_tiRecipeLabel, recipeDisplay.empty() ? L"" : wrapText(Loc::get("ui.value_recipe_prefix"), recipeDisplay));
+
+            // Reposition to current saved position (may have changed via drag)
+            {
+                int32_t viewW = 1920, viewH = 1080;
+                auto* pcVp = findPlayerController();
+                if (pcVp)
+                {
+                    auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                    if (vpFunc)
+                    {
+                        struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                        pcVp->ProcessEvent(vpFunc, &vpParams);
+                        if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                        if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                    }
+                }
+                float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
+                float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
+                setWidgetPosition(m_targetInfoWidget, fracX * static_cast<float>(viewW),
+                                                      fracY * static_cast<float>(viewH));
+            }
 
             // Show widget
             auto* fn = m_targetInfoWidget->GetFunctionByNameInChain(STR("SetVisibility"));
@@ -8355,6 +8434,7 @@ namespace MoriaMods
                 }
             }
             float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // Apply render scale for resolution independence
             if (vbox) umgSetRenderScale(vbox, uiScale, uiScale);
@@ -8424,6 +8504,27 @@ namespace MoriaMods
             umgSetText(m_ibTitleLabel, title);
             umgSetTextColor(m_ibTitleLabel, r, g, b, 1.0f);
             umgSetText(m_ibMessageLabel, message);
+
+            // Reposition to current saved position (may have changed via drag)
+            {
+                int32_t viewW = 1920, viewH = 1080;
+                auto* pcVp = findPlayerController();
+                if (pcVp)
+                {
+                    auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                    if (vpFunc)
+                    {
+                        struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                        pcVp->ProcessEvent(vpFunc, &vpParams);
+                        if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                        if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                    }
+                }
+                float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
+                float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
+                setWidgetPosition(m_infoBoxWidget, fracX * static_cast<float>(viewW),
+                                                   fracY * static_cast<float>(viewH));
+            }
 
             auto* fn = m_infoBoxWidget->GetFunctionByNameInChain(STR("SetVisibility"));
             if (fn) { uint8_t p[8]{}; p[0] = 0; m_infoBoxWidget->ProcessEvent(fn, p); }
@@ -9481,6 +9582,7 @@ namespace MoriaMods
                 }
             }
             float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // Apply render scale for resolution independence (scales entire widget tree)
             if (rootSizeBox) umgSetRenderScale(rootSizeBox, uiScale, uiScale);
@@ -10179,6 +10281,7 @@ namespace MoriaMods
                 }
             }
             float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // SetRenderScale 0.81 * uiScale
             float mcScale = 0.81f * uiScale;
@@ -10519,6 +10622,7 @@ namespace MoriaMods
                 }
             }
             float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // Set desired size and alignment
             auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
@@ -10669,6 +10773,7 @@ namespace MoriaMods
                 }
             }
             float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // Render scale
             if (rootBorder) umgSetRenderScale(rootBorder, uiScale, uiScale);
@@ -10894,14 +10999,14 @@ namespace MoriaMods
         // on_update (per-frame tick: state machines, replay, UMG config, keybinds)
         MoriaCppMod()
         {
-            ModVersion = STR("1.7");
+            ModVersion = STR("1.8");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
             // Init removal list CS before loadSaveFile can be called
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v1.7\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v1.8\n"));
         }
 
         ~MoriaCppMod() override
@@ -11144,7 +11249,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v1.7: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v1.8: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
         }
 
         // Per-frame tick. Drives all state machines and periodic tasks:
@@ -11452,6 +11557,7 @@ namespace MoriaMods
                         GetClientRect(gw, &cr);
                         int viewW = cr.right; int viewH = cr.bottom;
                         float uis = static_cast<float>(viewH) / 2160.0f; // uiScale for hit-test
+                        if (uis < 0.5f) uis = 0.5f;
                         // Config widget: pos (viewW/2, viewH/2 - 100*uis), size 1400*uis x 900*uis, alignment (0.5,0.5)
                         int wLeft = static_cast<int>(viewW / 2 - 700 * uis);
                         int wTop  = static_cast<int>(viewH / 2 - 100 * uis - 450 * uis);
@@ -11801,123 +11907,190 @@ namespace MoriaMods
             }
 
             // Detect build menu close → refresh ActionBar (fixes stale hotbar display)
-            // Only runs while we're tracking a quickbuild/target-build menu session
-            // Throttled: check every 15 frames to avoid per-frame FindAllOf overhead
-            if (m_buildMenuWasOpen)
+            // Now uses cheap isBuildTabShowing() instead of FindAllOf every 15 frames
+            if (m_buildMenuWasOpen && !isBuildTabShowing())
             {
-                static int s_buildMenuPollCounter = 0;
-                if (++s_buildMenuPollCounter >= 15)
-                {
-                    s_buildMenuPollCounter = 0;
-                    UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
-                    if (!buildTab)
-                    {
-                        m_buildMenuWasOpen = false;
-                        refreshActionBar();
-                    }
-                }
+                m_buildMenuWasOpen = false;
+                refreshActionBar();
             }
 
-            // Clear build-placement flag when user presses ESC manually (exits placement mode)
-            if (m_buildPlacementActive && (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0)
-                m_buildPlacementActive = false;
-
-            // Handle pending quick-build: state machine with B-key retry
-            // Phase 1 (frames < 0): waiting for menu to close after B key toggle
-            // Phase 2 (frame 0): send B key to open menu
-            // Phase 3 (frames 1-14): waiting for menu to become visible
-            // Phase 4 (frame 15+): check visibility. If not found by frame 45, retry B key
-            if (m_pendingQuickBuildSlot >= 0)
+            // ── Reactive quickbuild state machine ──
+            // Polls cheap widget booleans each tick, proceeds the instant game state transitions
+            if (m_qbPhase != QBPhase::Idle)
             {
-                m_pendingBuildFrames++;
-                if (m_pendingBuildFrames == 0)
+                m_qbTimeout++;
+
+                // Global safety timeout
+                if (m_qbTimeout > 150)
                 {
-                    // Send B key to (re)open build menu
-                    VLOG(STR("[MoriaCppMod] [QuickBuild] SM: frame 0 — sending B key to open menu\n"));
-                    keybd_event(0x42, 0, 0, 0);
-                    keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                    VLOG(STR("[MoriaCppMod] [QuickBuild] SM: TIMEOUT at tick {} phase {}\n"),
+                                                    m_qbTimeout, static_cast<int>(m_qbPhase));
+                    showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
+                    m_pendingQuickBuildSlot = -1;
+                    m_qbPhase = QBPhase::Idle;
+                    m_qbTimeout = 0;
                 }
-                else if (m_pendingBuildFrames == 45)
+                else if (m_qbPhase == QBPhase::CancelPlacement)
                 {
-                    // Retry: if tab still not visible, maybe first B closed the menu — send B again
-                    UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
-                    if (!buildTab)
+                    // Wait for ESC to take effect — placement deactivates
+                    if (!isPlacementActive())
                     {
-                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: frame 45 — tab NOT visible, RETRYING B key\n"));
+                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: placement cancelled (tick {})\n"), m_qbTimeout);
+                        if (isBuildTabShowing())
+                        {
+                            // Build menu still showing after ESC — close it first
+                            keybd_event(0x42, 0, 0, 0);
+                            keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                            m_qbPhase = QBPhase::CloseMenu;
+                        }
+                        else
+                        {
+                            // Menu already closed — open fresh
+                            keybd_event(0x42, 0, 0, 0);
+                            keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                            m_qbPhase = QBPhase::OpenMenu;
+                        }
+                    }
+                }
+                else if (m_qbPhase == QBPhase::CloseMenu)
+                {
+                    // Wait for build tab to close
+                    if (!isBuildTabShowing())
+                    {
+                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu closed (tick {}) — opening fresh\n"), m_qbTimeout);
+                        keybd_event(0x42, 0, 0, 0);
+                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                        m_qbPhase = QBPhase::OpenMenu;
+                    }
+                }
+                else if (m_qbPhase == QBPhase::OpenMenu)
+                {
+                    if (isBuildTabShowing())
+                    {
+                        // Menu opened — proceed to recipe selection
+                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu opened (tick {}) — selecting recipe\n"), m_qbTimeout);
+                        m_qbPhase = QBPhase::SelectRecipe;
+                        // Fall through to SelectRecipe on same tick
+                    }
+                    else if (m_qbTimeout == 25)
+                    {
+                        // Retry B key if menu hasn't appeared yet
+                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: tick 25 — retrying B key\n"));
                         keybd_event(0x42, 0, 0, 0);
                         keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                     }
                 }
-                else if (m_pendingBuildFrames > 150)
+
+                if (m_qbPhase == QBPhase::SelectRecipe)
                 {
-                    VLOG(STR("[MoriaCppMod] [QuickBuild] SM: TIMEOUT at frame {} — build tab never became visible\n"),
-                                                    m_pendingBuildFrames);
-                    showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
-                    m_pendingQuickBuildSlot = -1;
-                }
-                else if (m_pendingBuildFrames >= 15)
-                {
-                    UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
-                    if (buildTab)
+                    UObject* buildTab = getCachedBuildTab();
+                    if (buildTab && selectRecipeOnBuildTab(buildTab, m_pendingQuickBuildSlot))
                     {
-                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: build tab found at frame {} — selecting recipe\n"),
-                                                        m_pendingBuildFrames);
-                        selectRecipeOnBuildTab(buildTab, m_pendingQuickBuildSlot);
-                        // Reset total rotation for new build placement
+                        // Success — reset total rotation for new build placement
                         s_overlay.totalRotation = 0;
                         s_overlay.needsUpdate = true;
                         updateMcRotationLabel();
                         m_pendingQuickBuildSlot = -1;
+                        m_qbPhase = QBPhase::Idle;
+                        m_qbTimeout = 0;
                     }
+                    else if (m_qbTimeout > 100)
+                    {
+                        // Items never loaded — show error
+                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: recipe not found after {} ticks\n"), m_qbTimeout);
+                        const std::wstring& targetName = m_recipeSlots[m_pendingQuickBuildSlot].displayName;
+                        showOnScreen((L"Recipe '" + targetName + L"' not found in menu!").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
+                        m_pendingQuickBuildSlot = -1;
+                        m_qbPhase = QBPhase::Idle;
+                        m_qbTimeout = 0;
+                    }
+                    // else: stay in SelectRecipe, items may still be loading
                 }
             }
 
             // Toolbar swap state machine: one item per tick
             swapToolbarTick();
 
-            // Win32 swap-key fallback removed — MC polling handles all keybinds now
-
-            // ── Pending target-build state machine (Shift+F10 → build from targeted actor) ──
-            if (m_pendingTargetBuild)
+            // ── Reactive target-build state machine (Shift+F10 → build from targeted actor) ──
+            if (m_tbPhase != QBPhase::Idle)
             {
-                m_pendingTargetBuildFrames++;
-                if (m_pendingTargetBuildFrames == 0)
+                m_tbTimeout++;
+
+                // Global safety timeout
+                if (m_tbTimeout > 150)
                 {
-                    VLOG(STR("[MoriaCppMod] [TargetBuild] SM: frame 0 — sending B key to open menu\n"));
-                    keybd_event(0x42, 0, 0, 0);
-                    keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                    VLOG(STR("[MoriaCppMod] [TargetBuild] SM: TIMEOUT at tick {} phase {}\n"),
+                                                    m_tbTimeout, static_cast<int>(m_tbPhase));
+                    showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
+                    m_pendingTargetBuild = false;
+                    m_tbPhase = QBPhase::Idle;
+                    m_tbTimeout = 0;
                 }
-                else if (m_pendingTargetBuildFrames == 45)
+                else if (m_tbPhase == QBPhase::CancelPlacement)
                 {
-                    // Retry: if tab still not visible, maybe first B closed the menu — send B again
-                    UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
-                    if (!buildTab)
+                    if (!isPlacementActive())
                     {
-                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: frame 45 — tab NOT visible, RETRYING B key\n"));
+                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: placement cancelled (tick {})\n"), m_tbTimeout);
+                        if (isBuildTabShowing())
+                        {
+                            keybd_event(0x42, 0, 0, 0);
+                            keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                            m_tbPhase = QBPhase::CloseMenu;
+                        }
+                        else
+                        {
+                            keybd_event(0x42, 0, 0, 0);
+                            keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                            m_tbPhase = QBPhase::OpenMenu;
+                        }
+                    }
+                }
+                else if (m_tbPhase == QBPhase::CloseMenu)
+                {
+                    if (!isBuildTabShowing())
+                    {
+                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu closed (tick {}) — opening fresh\n"), m_tbTimeout);
+                        keybd_event(0x42, 0, 0, 0);
+                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                        m_tbPhase = QBPhase::OpenMenu;
+                    }
+                }
+                else if (m_tbPhase == QBPhase::OpenMenu)
+                {
+                    if (isBuildTabShowing())
+                    {
+                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu opened (tick {}) — selecting recipe\n"), m_tbTimeout);
+                        m_tbPhase = QBPhase::SelectRecipe;
+                    }
+                    else if (m_tbTimeout == 25)
+                    {
+                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: tick 25 — retrying B key\n"));
                         keybd_event(0x42, 0, 0, 0);
                         keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                     }
                 }
-                else if (m_pendingTargetBuildFrames > 150)
+
+                if (m_tbPhase == QBPhase::SelectRecipe)
                 {
-                    VLOG(STR("[MoriaCppMod] [TargetBuild] SM: TIMEOUT at frame {} — build tab never became visible\n"),
-                                                    m_pendingTargetBuildFrames);
-                    showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
-                    m_pendingTargetBuild = false;
-                }
-                else if (m_pendingTargetBuildFrames >= 15)
-                {
-                    UObject* buildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", true);
+                    UObject* buildTab = getCachedBuildTab();
                     if (buildTab)
                     {
-                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: build tab found at frame {} — selecting recipe\n"),
-                                                        m_pendingTargetBuildFrames);
                         selectRecipeByTargetName(buildTab);
                         // Reset total rotation for new build placement
                         s_overlay.totalRotation = 0;
                         s_overlay.needsUpdate = true;
                         updateMcRotationLabel();
                         m_pendingTargetBuild = false;
+                        m_tbPhase = QBPhase::Idle;
+                        m_tbTimeout = 0;
+                    }
+                    else if (m_tbTimeout > 100)
+                    {
+                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: build tab lost after {} ticks\n"), m_tbTimeout);
+                        showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
+                        m_pendingTargetBuild = false;
+                        m_tbPhase = QBPhase::Idle;
+                        m_tbTimeout = 0;
                     }
                 }
             }
@@ -11937,7 +12110,16 @@ namespace MoriaMods
                     m_characterLoaded = false;
                     m_characterHidden = false;       // reset hide toggle for new world
                     m_flyMode = false;               // reset fly toggle for new world
-                    m_buildPlacementActive = false;  // no active placement in new world
+                    // Reset reactive state machine — cached pointers are stale in new world
+                    m_cachedBuildHUD = nullptr;
+                    m_cachedBuildTab = nullptr;
+                    m_fnIsShowing = nullptr;
+                    m_qbPhase = QBPhase::Idle;
+                    m_qbTimeout = 0;
+                    m_tbPhase = QBPhase::Idle;
+                    m_tbTimeout = 0;
+                    m_pendingQuickBuildSlot = -1;
+                    m_pendingTargetBuild = false;
                     s_overlay.visible = false; // hide overlay until character reloads
                     m_initialReplayDone = false;
                     m_processedComps.clear();
