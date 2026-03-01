@@ -11,6 +11,7 @@ Built as a UE4SS C++ mod, this pack adds quick-build hotkeys, a rotation control
 - Capture any build recipe by selecting it in the build menu and pressing a slot key
 - Recipes persist across sessions (saved to `quickbuild_slots.txt`)
 - Automatic icon extraction from game textures (cached as PNGs)
+- Recipe diagnostics logging for differentiating same-named items across categories
 
 ### Mod Controller Toolbar
 - **8-slot UMG toolbar** (4x2 grid) with live icons and key labels
@@ -20,6 +21,7 @@ Built as a UE4SS C++ mod, this pack adds quick-build hotkeys, a rotation control
 - Step-based rotation: 5-90 degrees in 5-degree increments
 - Modifier key decreases, plain key increases
 - Live overlay display showing current step and total rotation
+- Rotation resets to 0 on manual build piece selection
 
 ### Target Inspection
 - Aim at any actor and press the Target key to inspect
@@ -69,7 +71,7 @@ Built as a UE4SS C++ mod, this pack adds quick-build hotkeys, a rotation control
 Download the latest signed installer from [Releases](https://github.com/jbowensii/MoriaAdvancedBuilder/releases):
 
 ```
-KhazadDumAdvancedBuilderPack_v1.6_Setup.exe
+KhazadDumAdvancedBuilderPack_v2.0_Setup.exe
 ```
 
 The installer auto-detects your Return to Moria installation (Epic Games Store or Steam) and deploys all files.
@@ -115,6 +117,7 @@ ModifierKey = SHIFT
 [Preferences]
 Verbose = false
 RotationStep = 5
+Language = en
 ```
 
 The INI file is created automatically on first run. Editing it while the game is closed will apply changes on next launch. Changes made in-game via the Configuration menu are saved immediately.
@@ -158,7 +161,7 @@ Requires [Inno Setup 6](https://jrsoftware.org/isdl.php).
 cpp-mod/                          # Git repo root
   MyCPPMods/MoriaCppMod/
     src/
-      dllmain.cpp                 # Main mod source (~12,000 lines)
+      dllmain.cpp                 # Main mod source (~11,000 lines)
       moria_testable.h            # Extracted pure-logic functions (shared with tests)
     localization/
       en.json                     # English string table
@@ -178,7 +181,8 @@ cpp-mod/                          # Git repo root
 - **Engine**: Unreal Engine 4.27
 - **Framework**: UE4SS (custom build, experimental-latest branch)
 - **Player Character**: `BP_FGKDwarf_C` (inherits `AMorCharacter` -> `ACharacter`)
-- **UE4SS Settings**: GraphicsAPI=opengl (dx11 hangs this game), RenderMode=ExternalThread
+- **UE4SS Settings**: GraphicsAPI=dx11, RenderMode=ExternalThread
+- **Offset Resolution**: Runtime reflection via `ForEachProperty()` — no hardcoded Blueprint offsets
 - **Icon Extraction**: Canvas render target approach (CPU bulk data not available after GPU upload)
 - **Key Polling**: `GetAsyncKeyState` with 0x8000 edge detection + SHIFT-numpad VK alternate handling
 - **Overlay**: `WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TRANSPARENT` with GDI+ per-pixel alpha

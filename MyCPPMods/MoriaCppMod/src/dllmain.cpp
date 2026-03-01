@@ -1,5 +1,5 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  MoriaCppMod v1.8 — Advanced Builder & HISM Removal for Return to Moria   ║
+// ║  MoriaCppMod v2.0 — Advanced Builder & HISM Removal for Return to Moria   ║
 // ║                                                                            ║
 // ║  A UE4SS C++ mod for Return to Moria (UE4.27) providing:                  ║
 // ║    - HISM instance hiding with persistence across sessions/worlds          ║
@@ -52,6 +52,7 @@
 #include <Unreal/UFunction.hpp>
 #include <Unreal/UClass.hpp>
 #include <Unreal/FProperty.hpp>
+#include <Unreal/Property/FStructProperty.hpp>
 #include <Unreal/UScriptStruct.hpp>
 #include <Unreal/UStruct.hpp>
 #include <Unreal/AActor.hpp>
@@ -86,6 +87,87 @@ namespace MoriaMods
     static constexpr float TRACE_DIST = 5000.0f;   // 50m (was 500m — way too far)
     static constexpr float POS_TOLERANCE = 100.0f; // 1 meter — game scale is huge (walls = 2000 units)
     static constexpr int STREAM_CHECK_INTERVAL = 180;
+
+    // ── Cached property offsets (resolved via ForEachProperty on first use) ──
+    // -2 = not yet resolved, -1 = property not found
+    static inline int s_off_widgetTree = -2;       // UUserWidget::WidgetTree
+    static inline int s_off_rootWidget = -2;       // UWidgetTree::RootWidget
+    static inline int s_off_bIsFocusable = -2;     // UUserWidget::bIsFocusable
+    static inline int s_off_font = -2;             // UTextBlock::Font
+    static inline int s_off_brush = -2;            // UImage::Brush
+    static inline int s_off_showMouseCursor = -2;  // APlayerController::bShowMouseCursor
+    static inline int s_off_charMovement = -2;     // ACharacter::CharacterMovement
+    static inline int s_off_capsuleComp = -2;      // ACharacter::CapsuleComponent
+    static inline int s_off_bCheatFlying = -2;     // UCharacterMovementComponent::bCheatFlying
+    static inline int s_off_recipeSelectMode = -2; // UI_WBP_BuildHUDv2_C::recipeSelectMode
+    static inline int s_off_bLock = -2;            // UI_WBP_Build_Item_C::bLock
+    static inline int s_off_icon = -2;             // UI_WBP_Build_Item_Medium_C::Icon
+    static inline int s_off_blockName = -2;        // UI_WBP_Build_Item_Medium_C::blockName
+    static inline int s_off_stackCount = -2;       // UI_WBP_Build_Item_Medium_C::StackCount
+    static inline int s_off_texParamValues = -2;   // UMaterialInstanceDynamic::TextureParameterValues
+    static inline int s_off_targetActor = -2;      // UBuildOverlayWidget::TargetActor
+    static inline int s_off_selectedRecipe = -2;    // UI_WBP_Build_Tab_C::selectedRecipe
+    static inline int s_off_selectedName = -2;      // UI_WBP_Build_Tab_C::selectedName
+    static inline int s_off_recipesDataTable = -2;  // UI_WBP_Build_Tab_C::recipesDataTable
+
+    // ── Struct-internal offsets (confirmed from SlateCore.hpp / Moria.hpp headers) ──
+    // These are POD struct internals or UObject base layout — NOT resolvable via ForEachProperty
+    static constexpr int BRUSH_IMAGE_SIZE_X = 0x08;     // FSlateBrush::ImageSize.X
+    static constexpr int BRUSH_IMAGE_SIZE_Y = 0x0C;     // FSlateBrush::ImageSize.Y
+    static constexpr int BRUSH_RESOURCE_OBJECT = 0x48;  // FSlateBrush::ResourceObject
+    static constexpr int FONT_TYPEFACE_NAME = 0x40;     // FSlateFontInfo::TypefaceFontName
+    static constexpr int FONT_SIZE = 0x48;              // FSlateFontInfo::Size
+    static constexpr int FONT_STRUCT_SIZE = 0x58;       // sizeof(FSlateFontInfo)
+    static constexpr int CONSTRUCTION_DISPLAY_NAME = 0x18;  // FMorConstructionDefinition::DisplayName (FText)
+    static constexpr int RECIPE_BLOCK_VARIANTS = 0x68;   // FMorRecipeBlock::Variants (TArray data ptr)
+    static constexpr int RECIPE_BLOCK_VARIANTS_NUM = 0x70; // FMorRecipeBlock::Variants.Num (int32)
+    static constexpr int VARIANT_ROW_CI = 0xE0;         // FMorConstructionRecipeDefinition::ResultConstructionHandle.RowName.ComparisonIndex
+    static constexpr int VARIANT_ROW_NUM = 0xE4;        // FMorConstructionRecipeDefinition::ResultConstructionHandle.RowName.Number
+    static constexpr int TEX_PARAM_VALUE_PTR = 0x10;     // FTextureParameterValue::ParameterValue (UTexture*)
+    static constexpr int DT_ROWMAP_OFFSET = 0x30;       // UDataTable internal RowMap offset
+    static constexpr int DT_ROW_ACTOR_FNAME = 0x60;     // FSoftObjectPath.AssetPathName within construction row
+
+    // Resolve a UProperty offset by name on an object's class (walks full inheritance chain).
+    static int resolveOffset(UObject* obj, const wchar_t* propName, int& cache)
+    {
+        if (cache != -2) return cache;
+        cache = -1;
+        if (!obj) return -1;
+        // Walk the class hierarchy: child → parent → grandparent → ...
+        for (auto* strct = static_cast<UStruct*>(obj->GetClassPrivate());
+             strct;
+             strct = strct->GetSuperStruct())
+        {
+            for (auto* prop : strct->ForEachProperty())
+            {
+                if (prop->GetName() == std::wstring_view(propName))
+                {
+                    cache = prop->GetOffset_Internal();
+                    VLOG(STR("[MoriaCppMod] Resolved '{}' at offset 0x{:04X} (on {})\n"),
+                         std::wstring(propName), cache, strct->GetName());
+                    return cache;
+                }
+            }
+        }
+        VLOG(STR("[MoriaCppMod] WARNING: property '{}' not found on {} (full chain)\n"),
+                                        std::wstring(propName), obj->GetClassPrivate()->GetName());
+        return cache;
+    }
+
+    // Ensure s_off_brush is resolved (call with any UImage* before reading Brush fields)
+    static void ensureBrushOffset(UObject* imageWidget)
+    {
+        if (s_off_brush == -2 && imageWidget)
+            resolveOffset(imageWidget, L"Brush", s_off_brush);
+    }
+
+    // Set UWidgetTree::RootWidget via reflected offset
+    static void setRootWidget(UObject* widgetTree, UObject* root)
+    {
+        int off = resolveOffset(widgetTree, L"RootWidget", s_off_rootWidget);
+        if (off >= 0)
+            *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + off) = root;
+    }
 
     // ── Raw UE4.27 types (floats, not doubles) ──
     struct FVec3f
@@ -166,24 +248,75 @@ namespace MoriaMods
     }; // 0x14
     static_assert(sizeof(FItemHandleLocal) == 0x14, "FItemHandle must be 20 bytes");
 
-    // LineTraceSingle param offsets (237 bytes, probed)
-    namespace LTOff
+    // LineTraceSingle param offsets — resolved at runtime from UFunction::ForEachProperty
+    struct LTResolved
     {
-        constexpr int WorldContextObject = 0;
-        constexpr int Start = 8;
-        constexpr int End = 20;
-        constexpr int TraceChannel = 32;
-        constexpr int bTraceComplex = 33;
-        constexpr int ActorsToIgnore = 40;
-        constexpr int DrawDebugType = 56;
-        constexpr int OutHit = 60;
-        constexpr int bIgnoreSelf = 196;
-        constexpr int TraceColor = 200;
-        constexpr int TraceHitColor = 216;
-        constexpr int DrawTime = 232;
-        constexpr int ReturnValue = 236;
-        constexpr int ParmsSize = 237;
-    } // namespace LTOff
+        int WorldContextObject{-1}, Start{-1}, End{-1}, TraceChannel{-1};
+        int bTraceComplex{-1}, ActorsToIgnore{-1}, DrawDebugType{-1};
+        int OutHit{-1}, bIgnoreSelf{-1}, TraceColor{-1};
+        int TraceHitColor{-1}, DrawTime{-1}, ReturnValue{-1};
+        int parmsSize{0};
+        bool resolved{false};
+    };
+    static inline LTResolved s_lt{};
+
+    static void resolveLTOffsets(UFunction* ltFunc)
+    {
+        if (s_lt.resolved) return;
+        s_lt.resolved = true;
+        s_lt.parmsSize = ltFunc->GetParmsSize();
+        for (auto* prop : ltFunc->ForEachProperty())
+        {
+            std::wstring n(prop->GetName());
+            int off = prop->GetOffset_Internal();
+            if (n == L"WorldContextObject") s_lt.WorldContextObject = off;
+            else if (n == L"Start") s_lt.Start = off;
+            else if (n == L"End") s_lt.End = off;
+            else if (n == L"TraceChannel") s_lt.TraceChannel = off;
+            else if (n == L"bTraceComplex") s_lt.bTraceComplex = off;
+            else if (n == L"ActorsToIgnore") s_lt.ActorsToIgnore = off;
+            else if (n == L"DrawDebugType") s_lt.DrawDebugType = off;
+            else if (n == L"OutHit") s_lt.OutHit = off;
+            else if (n == L"bIgnoreSelf") s_lt.bIgnoreSelf = off;
+            else if (n == L"TraceColor") s_lt.TraceColor = off;
+            else if (n == L"TraceHitColor") s_lt.TraceHitColor = off;
+            else if (n == L"DrawTime") s_lt.DrawTime = off;
+            else if (n == L"ReturnValue") s_lt.ReturnValue = off;
+        }
+        VLOG(STR("[MoriaCppMod] Resolved LineTraceSingle: parmsSize={} Start={} End={} OutHit={} ReturnValue={}\n"),
+             s_lt.parmsSize, s_lt.Start, s_lt.End, s_lt.OutHit, s_lt.ReturnValue);
+    }
+
+    // UpdateInstanceTransform param offsets — resolved at runtime from UFunction::ForEachProperty
+    struct UITResolved
+    {
+        int InstanceIndex{-1}, NewInstanceTransform{-1};
+        int bWorldSpace{-1}, bMarkRenderStateDirty{-1}, bTeleport{-1};
+        int ReturnValue{-1};
+        int parmsSize{0};
+        bool resolved{false};
+    };
+    static inline UITResolved s_uit{};
+
+    static void resolveUITOffsets(UFunction* uitFunc)
+    {
+        if (s_uit.resolved) return;
+        s_uit.resolved = true;
+        s_uit.parmsSize = uitFunc->GetParmsSize();
+        for (auto* prop : uitFunc->ForEachProperty())
+        {
+            std::wstring n(prop->GetName());
+            int off = prop->GetOffset_Internal();
+            if (n == L"InstanceIndex") s_uit.InstanceIndex = off;
+            else if (n == L"NewInstanceTransform") s_uit.NewInstanceTransform = off;
+            else if (n == L"bWorldSpace") s_uit.bWorldSpace = off;
+            else if (n == L"bMarkRenderStateDirty") s_uit.bMarkRenderStateDirty = off;
+            else if (n == L"bTeleport") s_uit.bTeleport = off;
+            else if (n == L"ReturnValue") s_uit.ReturnValue = off;
+        }
+        VLOG(STR("[MoriaCppMod] Resolved UpdateInstanceTransform: parmsSize={} Index={} Transform={} ReturnValue={}\n"),
+             s_uit.parmsSize, s_uit.InstanceIndex, s_uit.NewInstanceTransform, s_uit.ReturnValue);
+    }
 
     // SavedRemoval, RemovalEntry, extractFriendlyName — defined in moria_testable.h
 
@@ -829,7 +962,6 @@ namespace MoriaMods
     static inline std::atomic<bool> s_pendingKeyLabelRefresh{false}; // cross-thread flag: config→game thread
 
 
-
     // ════════════════════════════════════════════════════════════════════════════
     // Section 6: MoriaCppMod Class — Main Mod Implementation
     //   Subsections: 6A File I/O, 6B Player Helpers, 6C Display/UI,
@@ -1112,7 +1244,12 @@ namespace MoriaMods
             auto* fn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:PrintString"));
             auto* cdo = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Engine.Default__KismetSystemLibrary"));
             auto* pc = findPlayerController();
-            if (!fn || !cdo || !pc) return;
+            if (!fn || !cdo || !pc)
+            {
+                VLOG(STR("[MoriaCppMod] showOnScreen FAILED: fn={} cdo={} pc={}\n"),
+                                                (void*)fn, (void*)cdo, (void*)pc);
+                return;
+            }
 
             std::vector<uint8_t> buf(m_ps.parmsSize, 0);
 
@@ -1144,6 +1281,7 @@ namespace MoriaMods
             std::memcpy(buf.data() + m_ps.duration, &duration, 4);
 
             cdo->ProcessEvent(fn, buf.data());
+            VLOG(STR("[MoriaCppMod] showOnScreen: '{}' dur={:.1f}\n"), text, duration);
         }
 
         // ── Chat/Widget display ──
@@ -1183,78 +1321,6 @@ namespace MoriaMods
             m_chatWidget->ProcessEvent(func, buf);
         }
 
-        // ── Test all display methods (Num5) — DISABLED: keybind removed ──
-#if 0
-        void testAllDisplayMethods()
-        {
-            VLOG(STR("[MoriaCppMod] === Testing display methods ===\n"));
-            findWidgets();
-
-            if (m_chatWidget)
-            {
-                VLOG(STR("[MoriaCppMod] ChatWidget found\n"));
-
-                // Test 1: AddToShortChat
-                auto* f1 = m_chatWidget->GetFunctionByNameInChain(STR("AddToShortChat"));
-                if (f1)
-                {
-                    FText t1(STR("[Mod] Test 1: AddToShortChat"));
-                    uint8_t buf[sizeof(FText) + 16]{};
-                    std::memcpy(buf, &t1, sizeof(FText));
-                    m_chatWidget->ProcessEvent(f1, buf);
-                    VLOG(STR("[MoriaCppMod] Called AddToShortChat\n"));
-                }
-
-                // Test 2: SystemMessageEvent
-                auto* f2 = m_chatWidget->GetFunctionByNameInChain(STR("SystemMessageEvent"));
-                if (f2)
-                {
-                    FText t2(STR("[Mod] Test 2: SystemMessageEvent"));
-                    uint8_t buf[sizeof(FText) + 16]{};
-                    std::memcpy(buf, &t2, sizeof(FText));
-                    m_chatWidget->ProcessEvent(f2, buf);
-                    VLOG(STR("[MoriaCppMod] Called SystemMessageEvent\n"));
-                }
-
-                // Test 3: AddFormattedMessage
-                auto* f3 = m_chatWidget->GetFunctionByNameInChain(STR("AddFormattedMessage"));
-                if (f3)
-                {
-                    FText t3(STR("[Mod] Test 3: AddFormattedMessage"));
-                    uint8_t buf[sizeof(FText) + 16]{};
-                    std::memcpy(buf, &t3, sizeof(FText));
-                    m_chatWidget->ProcessEvent(f3, buf);
-                    VLOG(STR("[MoriaCppMod] Called AddFormattedMessage\n"));
-                }
-            }
-            else
-            {
-                VLOG(STR("[MoriaCppMod] ChatWidget NOT found\n"));
-            }
-
-            if (m_sysMessages)
-            {
-                VLOG(STR("[MoriaCppMod] SystemMessages found\n"));
-
-                // Test 4: AppendMessage
-                auto* f4 = m_sysMessages->GetFunctionByNameInChain(STR("AppendMessage"));
-                if (f4)
-                {
-                    FText t4(STR("[Mod] Test 4: AppendMessage"));
-                    uint8_t buf[sizeof(FText) + 16]{};
-                    std::memcpy(buf, &t4, sizeof(FText));
-                    m_sysMessages->ProcessEvent(f4, buf);
-                    VLOG(STR("[MoriaCppMod] Called AppendMessage\n"));
-                }
-            }
-            else
-            {
-                VLOG(STR("[MoriaCppMod] SystemMessages NOT found\n"));
-            }
-
-            VLOG(STR("[MoriaCppMod] === Display test done ===\n"));
-        }
-#endif
 
         // ── Camera & Trace ──
 
@@ -1332,9 +1398,35 @@ namespace MoriaMods
             auto* updateFunc = comp->GetFunctionByNameInChain(STR("UpdateInstanceTransform"));
             if (!updateFunc) return false;
 
+            resolveUITOffsets(updateFunc);
+            if (s_uit.ReturnValue < 0) return false;
+
             // Get current transform first
             auto* transFunc = comp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
             if (!transFunc) return false;
+
+            // One-time: validate GetInstanceTransform_Params layout against reflection
+            static bool s_gtpValidated = false;
+            if (!s_gtpValidated)
+            {
+                s_gtpValidated = true;
+                for (auto* prop : transFunc->ForEachProperty())
+                {
+                    std::wstring n(prop->GetName());
+                    int off = prop->GetOffset_Internal();
+                    if (n == L"InstanceIndex" && off != 0)
+                        VLOG(STR("[MoriaCppMod] WARN: GetInstanceTransform InstanceIndex expected @0, got @{}\n"), off);
+                    else if (n == L"bWorldSpace" && off != offsetof(GetInstanceTransform_Params, bWorldSpace))
+                        VLOG(STR("[MoriaCppMod] WARN: GetInstanceTransform bWorldSpace expected @{}, got @{}\n"),
+                             (int)offsetof(GetInstanceTransform_Params, bWorldSpace), off);
+                    else if (n == L"ReturnValue" && off != offsetof(GetInstanceTransform_Params, ReturnValue))
+                        VLOG(STR("[MoriaCppMod] WARN: GetInstanceTransform ReturnValue expected @{}, got @{}\n"),
+                             (int)offsetof(GetInstanceTransform_Params, ReturnValue), off);
+                }
+                VLOG(STR("[MoriaCppMod] Validated GetInstanceTransform_Params ({}B struct vs {}B UFunction)\n"),
+                     (int)sizeof(GetInstanceTransform_Params), transFunc->GetParmsSize());
+            }
+
             GetInstanceTransform_Params gtp{};
             gtp.InstanceIndex = instanceIndex;
             gtp.bWorldSpace = 1;
@@ -1346,18 +1438,15 @@ namespace MoriaMods
             hidden.Translation.Z -= 50000.0f;
             hidden.Scale3D = {0.001f, 0.001f, 0.001f};
 
-            // UpdateInstanceTransform(int32 Index, FTransform NewTrans, bool bWorldSpace,
-            //                         bool bMarkRenderStateDirty, bool bTeleport) -> bool
-            // Layout matches GetInstanceTransform + 2 extra bools
-            uint8_t params[72]{};
-            int32_t idx = instanceIndex;
-            std::memcpy(params + 0, &idx, 4);      // InstanceIndex
-            std::memcpy(params + 16, &hidden, 48); // NewInstanceTransform (aligned)
-            params[64] = 1;                        // bWorldSpace
-            params[65] = 1;                        // bMarkRenderStateDirty
-            params[66] = 1;                        // bTeleport
-            comp->ProcessEvent(updateFunc, params);
-            return params[67] != 0; // ReturnValue
+            // UpdateInstanceTransform — offsets resolved from UFunction
+            std::vector<uint8_t> params(s_uit.parmsSize, 0);
+            std::memcpy(params.data() + s_uit.InstanceIndex, &instanceIndex, 4);
+            std::memcpy(params.data() + s_uit.NewInstanceTransform, &hidden, 48);
+            params[s_uit.bWorldSpace] = 1;
+            params[s_uit.bMarkRenderStateDirty] = 1;
+            params[s_uit.bTeleport] = 1;
+            comp->ProcessEvent(updateFunc, params.data());
+            return params[s_uit.ReturnValue] != 0;
         }
 
         // Restore instance to original transform (undo a hide)
@@ -1366,20 +1455,23 @@ namespace MoriaMods
             auto* updateFunc = comp->GetFunctionByNameInChain(STR("UpdateInstanceTransform"));
             if (!updateFunc) return false;
 
-            uint8_t params[72]{};
-            std::memcpy(params + 0, &instanceIndex, 4);
-            std::memcpy(params + 16, &original, 48);
-            params[64] = 1; // bWorldSpace
-            params[65] = 1; // bMarkRenderStateDirty
-            params[66] = 1; // bTeleport
-            comp->ProcessEvent(updateFunc, params);
-            return params[67] != 0;
+            resolveUITOffsets(updateFunc);
+            if (s_uit.ReturnValue < 0) return false;
+
+            std::vector<uint8_t> params(s_uit.parmsSize, 0);
+            std::memcpy(params.data() + s_uit.InstanceIndex, &instanceIndex, 4);
+            std::memcpy(params.data() + s_uit.NewInstanceTransform, &original, 48);
+            params[s_uit.bWorldSpace] = 1;
+            params[s_uit.bMarkRenderStateDirty] = 1;
+            params[s_uit.bTeleport] = 1;
+            comp->ProcessEvent(updateFunc, params.data());
+            return params[s_uit.ReturnValue] != 0;
         }
 
         // Performs KismetSystemLibrary::LineTraceSingle via ProcessEvent.
         // Returns true if hit. Fills hitBuf (136 bytes = FHitResultLocal).
         // debugDraw=true shows red/green trace line in-game for 5 seconds.
-        // Param buffer: 237 bytes (see LTOff namespace for layout).
+        // Param offsets resolved from UFunction at runtime (s_lt struct).
         bool doLineTrace(const FVec3f& start, const FVec3f& end, uint8_t* hitBuf, bool debugDraw = false)
         {
             auto* ltFunc = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:LineTraceSingle"));
@@ -1387,13 +1479,16 @@ namespace MoriaMods
             auto* pc = findPlayerController();
             if (!ltFunc || !kslCDO || !pc) return false;
 
-            uint8_t params[LTOff::ParmsSize]{};
-            std::memcpy(params + LTOff::WorldContextObject, &pc, 8);
-            std::memcpy(params + LTOff::Start, &start, 12);
-            std::memcpy(params + LTOff::End, &end, 12);
-            params[LTOff::TraceChannel] = 0;  // Visibility
-            params[LTOff::bTraceComplex] = 1; // Per-triangle for accuracy
-            params[LTOff::bIgnoreSelf] = 1;
+            resolveLTOffsets(ltFunc);
+            if (s_lt.ReturnValue < 0) return false;
+
+            std::vector<uint8_t> params(s_lt.parmsSize, 0);
+            std::memcpy(params.data() + s_lt.WorldContextObject, &pc, 8);
+            std::memcpy(params.data() + s_lt.Start, &start, 12);
+            std::memcpy(params.data() + s_lt.End, &end, 12);
+            params[s_lt.TraceChannel] = 0;  // Visibility
+            params[s_lt.bTraceComplex] = 1; // Per-triangle for accuracy
+            params[s_lt.bIgnoreSelf] = 1;
 
             // Add player pawn to ActorsToIgnore so trace doesn't hit the character
             auto* pawn = getPawn();
@@ -1401,32 +1496,32 @@ namespace MoriaMods
             {
                 uintptr_t arrPtr = reinterpret_cast<uintptr_t>(&pawn);
                 int32_t one = 1;
-                std::memcpy(params + LTOff::ActorsToIgnore, &arrPtr, 8);
-                std::memcpy(params + LTOff::ActorsToIgnore + 8, &one, 4);
-                std::memcpy(params + LTOff::ActorsToIgnore + 12, &one, 4);
+                std::memcpy(params.data() + s_lt.ActorsToIgnore, &arrPtr, 8);
+                std::memcpy(params.data() + s_lt.ActorsToIgnore + 8, &one, 4);
+                std::memcpy(params.data() + s_lt.ActorsToIgnore + 12, &one, 4);
             }
 
             if (debugDraw)
             {
-                params[LTOff::DrawDebugType] = 2; // ForDuration
+                params[s_lt.DrawDebugType] = 2; // ForDuration
                 float greenColor[4] = {0.0f, 1.0f, 0.0f, 1.0f};
                 float redColor[4] = {1.0f, 0.0f, 0.0f, 1.0f};
                 float drawTime = 5.0f;
-                std::memcpy(params + LTOff::TraceColor, greenColor, 16);
-                std::memcpy(params + LTOff::TraceHitColor, redColor, 16);
-                std::memcpy(params + LTOff::DrawTime, &drawTime, 4);
+                std::memcpy(params.data() + s_lt.TraceColor, greenColor, 16);
+                std::memcpy(params.data() + s_lt.TraceHitColor, redColor, 16);
+                std::memcpy(params.data() + s_lt.DrawTime, &drawTime, 4);
             }
             else
             {
-                params[LTOff::DrawDebugType] = 0; // None
+                params[s_lt.DrawDebugType] = 0; // None
             }
 
-            kslCDO->ProcessEvent(ltFunc, params);
+            kslCDO->ProcessEvent(ltFunc, params.data());
 
-            bool bHit = params[LTOff::ReturnValue] != 0;
+            bool bHit = params[s_lt.ReturnValue] != 0;
             if (bHit)
             {
-                std::memcpy(hitBuf, params + LTOff::OutHit, 136);
+                std::memcpy(hitBuf, params.data() + s_lt.OutHit, 136);
             }
             return bHit;
         }
@@ -1867,88 +1962,6 @@ namespace MoriaMods
             VLOG(STR("[MoriaCppMod] TYPE RULE: @{} — hidden {} instances (persists across all worlds)\n"), meshIdW, hidden);
         }
 
-        // ── Building / UI Exploration (Num7/Num8/Num9) — DISABLED: keybinds removed ──
-#if 0
-        void dumpAllWidgets()
-        {
-            VLOG(STR("[MoriaCppMod] === WIDGET DUMP ===\n"));
-
-            std::vector<UObject*> widgets;
-            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
-
-            VLOG(STR("[MoriaCppMod] Found {} UserWidgets\n"), widgets.size());
-
-            int idx = 0;
-            for (auto* w : widgets)
-            {
-                if (!w) continue;
-                auto* cls = w->GetClassPrivate();
-                if (!cls) continue;
-                std::wstring clsName(cls->GetName());
-                std::wstring objName(w->GetName());
-
-                // Check visibility via IsVisible or IsInViewport
-                bool visible = false;
-                auto* visFunc = w->GetFunctionByNameInChain(STR("IsVisible"));
-                if (visFunc)
-                {
-                    struct
-                    {
-                        bool Ret{false};
-                    } vp{};
-                    w->ProcessEvent(visFunc, &vp);
-                    visible = vp.Ret;
-                }
-
-                VLOG(STR("[MoriaCppMod]   [{}] {} | obj={} | visible={}\n"), idx, clsName, objName, visible);
-
-                // For build/craft/recipe-related widgets, dump functions too
-                bool interesting = false;
-                std::string narrow;
-                for (wchar_t c : clsName)
-                    narrow.push_back(static_cast<char>(c));
-                for (auto& ch : narrow)
-                    ch = static_cast<char>(std::tolower(ch));
-                if (narrow.find("build") != std::string::npos || narrow.find("craft") != std::string::npos || narrow.find("recipe") != std::string::npos ||
-                    narrow.find("construct") != std::string::npos || narrow.find("place") != std::string::npos || narrow.find("inventory") != std::string::npos ||
-                    narrow.find("radial") != std::string::npos || narrow.find("wheel") != std::string::npos || narrow.find("menu") != std::string::npos)
-                {
-                    interesting = true;
-                }
-
-                if (interesting || visible)
-                {
-                    // Dump functions
-                    auto* ustruct = static_cast<UStruct*>(cls);
-                    int funcCount = 0;
-                    for (auto* func : ustruct->ForEachFunctionInChain())
-                    {
-                        if (!func) continue;
-                        std::wstring funcName(func->GetName());
-                        int parmsSize = func->GetParmsSize();
-
-                        // Skip common inherited UE functions to reduce noise
-                        if (funcName.find(STR("Construct")) == 0 && funcName.find(STR("Construction")) == std::wstring::npos) continue;
-                        if (funcName == STR("Destruct")) continue;
-                        if (funcName.find(STR("ExecuteUbergraph")) == 0) continue;
-
-                        VLOG(STR("[MoriaCppMod]     fn: {} ({}B)\n"), funcName, parmsSize);
-                        funcCount++;
-                        if (funcCount > 30)
-                        {
-                            VLOG(STR("[MoriaCppMod]     ... (truncated at 30)\n"));
-                            break;
-                        }
-                    }
-                }
-
-                idx++;
-            }
-
-            showOnScreen(L"Widget dump: " + std::to_wstring(widgets.size()) + L" widgets (see log)", 5.0f);
-            VLOG(STR("[MoriaCppMod] === END WIDGET DUMP ===\n"));
-        }
-#endif
 
         void toggleHideCharacter()
         {
@@ -1986,16 +1999,18 @@ namespace MoriaMods
 
             for (auto* dwarf : dwarves)
             {
-                // ACharacter::CharacterMovement at offset 0x0288
-                auto* movComp = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(dwarf) + 0x0288);
+                int cmOff = resolveOffset(dwarf, L"CharacterMovement", s_off_charMovement);
+                if (cmOff < 0) continue;
+                auto* movComp = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(dwarf) + cmOff);
                 if (!movComp)
                 {
                     VLOG(STR("[MoriaCppMod] CharacterMovement is null!\n"));
                     continue;
                 }
 
-                // bCheatFlying flag: bitfield at movComp + 0x0388, bit 3 (0x08)
-                uint8_t* flags = reinterpret_cast<uint8_t*>(movComp) + 0x0388;
+                int cfOff = resolveOffset(movComp, L"bCheatFlying", s_off_bCheatFlying);
+                if (cfOff < 0) continue;
+                uint8_t* flags = reinterpret_cast<uint8_t*>(movComp) + cfOff;
 
                 // Order matters:
                 // - Disable: clear bCheatFlying FIRST so engine allows mode transition
@@ -2023,9 +2038,32 @@ namespace MoriaMods
 
                 VLOG(STR("[MoriaCppMod] bCheatFlying = {}, flags byte = 0x{:02X}\n"),
                                                 m_flyMode ? 1 : 0, *flags);
+
+                // Toggle capsule collision for noclip (disable when flying, enable when walking)
+                // SetCollisionEnabled on CapsuleComponent: NoCollision=0, QueryAndPhysics=3
+                int capOff = resolveOffset(dwarf, L"CapsuleComponent", s_off_capsuleComp);
+                if (capOff >= 0)
+                {
+                    auto* capsule = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(dwarf) + capOff);
+                    if (capsule)
+                    {
+                        auto* colFn = capsule->GetFunctionByNameInChain(STR("SetCollisionEnabled"));
+                        if (colFn)
+                        {
+                            uint8_t newType = m_flyMode ? 0 : 3; // NoCollision=0, QueryAndPhysics=3
+                            capsule->ProcessEvent(colFn, &newType);
+                            VLOG(STR("[MoriaCppMod] CapsuleComponent SetCollisionEnabled({}) — noclip {}\n"),
+                                                            newType, m_flyMode ? STR("ON") : STR("OFF"));
+                        }
+                        else
+                        {
+                            VLOG(STR("[MoriaCppMod] SetCollisionEnabled not found on CapsuleComponent\n"));
+                        }
+                    }
+                }
             }
             if (m_flyMode)
-                showOnScreen(Loc::get("msg.fly_on").c_str(), 2.0f, 0.3f, 0.8f, 1.0f);
+                showOnScreen(L"Fly + Noclip ON", 2.0f, 0.3f, 0.8f, 1.0f);
             else
                 showOnScreen(Loc::get("msg.fly_off").c_str(), 2.0f, 0.3f, 1.0f, 0.3f);
             VLOG(STR("[MoriaCppMod] Fly mode = {}\n"), m_flyMode ? 1 : 0);
@@ -2048,34 +2086,37 @@ namespace MoriaMods
             auto* pc = findPlayerController();
             if (!ltFunc || !kslCDO || !pc) return;
 
-            uint8_t params[LTOff::ParmsSize]{};
-            std::memcpy(params + LTOff::WorldContextObject, &pc, 8);
-            std::memcpy(params + LTOff::Start, &start, 12);
-            std::memcpy(params + LTOff::End, &end, 12);
-            params[LTOff::TraceChannel] = 0;  // Visibility
-            params[LTOff::bTraceComplex] = 0; // Simple trace to hit actor bounds
-            params[LTOff::bIgnoreSelf] = 1;
-            params[LTOff::DrawDebugType] = 2; // ForDuration
+            resolveLTOffsets(ltFunc);
+            if (s_lt.ReturnValue < 0) return;
+
+            std::vector<uint8_t> params(s_lt.parmsSize, 0);
+            std::memcpy(params.data() + s_lt.WorldContextObject, &pc, 8);
+            std::memcpy(params.data() + s_lt.Start, &start, 12);
+            std::memcpy(params.data() + s_lt.End, &end, 12);
+            params[s_lt.TraceChannel] = 0;  // Visibility
+            params[s_lt.bTraceComplex] = 0; // Simple trace to hit actor bounds
+            params[s_lt.bIgnoreSelf] = 1;
+            params[s_lt.DrawDebugType] = 2; // ForDuration
             float greenColor[4] = {0.0f, 1.0f, 1.0f, 1.0f};
             float redColor[4] = {1.0f, 1.0f, 0.0f, 1.0f};
             float drawTime = 5.0f;
-            std::memcpy(params + LTOff::TraceColor, greenColor, 16);
-            std::memcpy(params + LTOff::TraceHitColor, redColor, 16);
-            std::memcpy(params + LTOff::DrawTime, &drawTime, 4);
+            std::memcpy(params.data() + s_lt.TraceColor, greenColor, 16);
+            std::memcpy(params.data() + s_lt.TraceHitColor, redColor, 16);
+            std::memcpy(params.data() + s_lt.DrawTime, &drawTime, 4);
 
             auto* pawn = getPawn();
             if (pawn)
             {
                 uintptr_t arrPtr = reinterpret_cast<uintptr_t>(&pawn);
                 int32_t one = 1;
-                std::memcpy(params + LTOff::ActorsToIgnore, &arrPtr, 8);
-                std::memcpy(params + LTOff::ActorsToIgnore + 8, &one, 4);
-                std::memcpy(params + LTOff::ActorsToIgnore + 12, &one, 4);
+                std::memcpy(params.data() + s_lt.ActorsToIgnore, &arrPtr, 8);
+                std::memcpy(params.data() + s_lt.ActorsToIgnore + 8, &one, 4);
+                std::memcpy(params.data() + s_lt.ActorsToIgnore + 12, &one, 4);
             }
 
-            kslCDO->ProcessEvent(ltFunc, params);
+            kslCDO->ProcessEvent(ltFunc, params.data());
 
-            bool bHit = params[LTOff::ReturnValue] != 0;
+            bool bHit = params[s_lt.ReturnValue] != 0;
             if (!bHit)
             {
                 VLOG(STR("[MoriaCppMod] No hit\n"));
@@ -2084,7 +2125,7 @@ namespace MoriaMods
             }
 
             uint8_t hitBuf[136]{};
-            std::memcpy(hitBuf, params + LTOff::OutHit, 136);
+            std::memcpy(hitBuf, params.data() + s_lt.OutHit, 136);
 
             // Get the hit component and its owning actor
             UObject* hitComp = resolveHitComponent(hitBuf);
@@ -2255,9 +2296,8 @@ namespace MoriaMods
                     {
                         dumpFile << L"Found DT_Constructions at " << dtConst << L"\n\n";
 
-                        // Read RowMap: offset 0x30, TSet<TPair<FName, uint8*>>
+                        // Read RowMap: DT_ROWMAP_OFFSET, TSet<TPair<FName, uint8*>>
                         uint8_t* dtBase = reinterpret_cast<uint8_t*>(dtConst);
-                        constexpr int ROWMAP_OFFSET = 0x30;
                         constexpr int SET_ELEMENT_SIZE = 24;
                         constexpr int FNAME_SIZE = 8;
 
@@ -2267,7 +2307,7 @@ namespace MoriaMods
                             int32_t Num;
                             int32_t Max;
                         } elemArray{};
-                        std::memcpy(&elemArray, dtBase + ROWMAP_OFFSET, 16);
+                        std::memcpy(&elemArray, dtBase + DT_ROWMAP_OFFSET, 16);
 
                         dumpFile << L"RowMap: " << elemArray.Num << L" rows\n\n";
                         dumpFile.flush();
@@ -2277,7 +2317,7 @@ namespace MoriaMods
                         //   +0x08 (row+0x58): int32 TagAtLastTest (4 bytes) + 4 bytes padding
                         //   +0x10 (row+0x60): FName AssetPathName (8 bytes) — the asset path
                         //   +0x18 (row+0x68): FString SubPathString (16 bytes) — usually empty
-                        constexpr int ACTOR_FNAME_OFFSET = 0x60; // FSoftObjectPath.AssetPathName within row
+                        // DT_ROW_ACTOR_FNAME defined in struct-internal constants section
 
                         int matchCount = 0;
 
@@ -2291,7 +2331,7 @@ namespace MoriaMods
 
                             // Read Actor AssetPathName FName at row+0x60
                             FName assetFName;
-                            std::memcpy(&assetFName, rowData + ACTOR_FNAME_OFFSET, FNAME_SIZE);
+                            std::memcpy(&assetFName, rowData + DT_ROW_ACTOR_FNAME, FNAME_SIZE);
                             std::wstring rowAssetPath;
                             try
                             {
@@ -2334,7 +2374,7 @@ namespace MoriaMods
                                 std::wstring dispName;
                                 try
                                 {
-                                    FText* txt = reinterpret_cast<FText*>(rowData + 0x18);
+                                    FText* txt = reinterpret_cast<FText*>(rowData + CONSTRUCTION_DISPLAY_NAME);
                                     if (txt && txt->Data && isReadableMemory(txt->Data, 8)) dispName = txt->ToString();
                                 }
                                 catch (...)
@@ -2461,454 +2501,11 @@ namespace MoriaMods
             VLOG(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
         }
 
-        // ── Debug probes (Num9, Alt+Num7/8/9) — DISABLED: keybinds removed ──
-#if 0
-        void dumpBuildCraftClasses()
-        {
-            VLOG(STR("[MoriaCppMod] === BUILD/CRAFT CLASS SEARCH ===\n"));
-
-            // Search patterns for build/craft related classes
-            const wchar_t* searchPatterns[] = {
-                    STR("Build"),
-                    STR("Craft"),
-                    STR("Recipe"),
-                    STR("Construct"),
-                    STR("Place"),
-                    STR("Structure"),
-                    STR("Buildable"),
-                    STR("Blueprint"),
-            };
-
-            // Dump all UObject subclasses that match our search terms
-            // Strategy: Search common game class hierarchies
-            const wchar_t* baseClasses[] = {
-                    STR("Actor"),
-                    STR("UserWidget"),
-                    STR("DataAsset"),
-                    STR("Object"),
-            };
-
-            int totalFound = 0;
-            std::set<std::wstring> seenClasses;
-
-            for (auto* baseClass : baseClasses)
-            {
-                std::vector<UObject*> objects;
-                UObjectGlobals::FindAllOf(baseClass, objects);
-
-                for (auto* obj : objects)
-                {
-                    if (!obj) continue;
-                    auto* cls = obj->GetClassPrivate();
-                    if (!cls) continue;
-                    std::wstring clsName(cls->GetName());
-
-                    // Skip if already seen this class
-                    if (seenClasses.count(clsName)) continue;
-
-                    // Check if class name matches any search pattern
-                    std::string narrow;
-                    for (wchar_t c : clsName)
-                        narrow.push_back(static_cast<char>(c));
-                    std::string lower = narrow;
-                    for (auto& ch : lower)
-                        ch = static_cast<char>(std::tolower(ch));
-
-                    bool matches = false;
-                    for (auto* pattern : searchPatterns)
-                    {
-                        std::string patNarrow;
-                        for (const wchar_t* p = pattern; *p; p++)
-                            patNarrow.push_back(static_cast<char>(*p));
-                        std::string patLower = patNarrow;
-                        for (auto& ch : patLower)
-                            ch = static_cast<char>(std::tolower(ch));
-                        if (lower.find(patLower) != std::string::npos)
-                        {
-                            matches = true;
-                            break;
-                        }
-                    }
-
-                    if (!matches) continue;
-                    seenClasses.insert(clsName);
-                    totalFound++;
-
-                    std::wstring objName(obj->GetName());
-                    VLOG(STR("[MoriaCppMod] [{}] Class: {} | Base: {} | Obj: {}\n"), totalFound, clsName, baseClass, objName);
-
-                    // Dump functions for this class
-                    auto* ustruct = static_cast<UStruct*>(cls);
-                    int fc = 0;
-                    for (auto* func : ustruct->ForEachFunction())
-                    {
-                        if (!func) continue;
-                        std::wstring funcName(func->GetName());
-                        if (funcName.find(STR("ExecuteUbergraph")) == 0) continue;
-                        int parmsSize = func->GetParmsSize();
-                        VLOG(STR("[MoriaCppMod]     fn: {} ({}B)\n"), funcName, parmsSize);
-                        fc++;
-                        if (fc > 40)
-                        {
-                            VLOG(STR("[MoriaCppMod]     ... truncated\n"));
-                            break;
-                        }
-                    }
-
-                    // Dump properties (own only, not inherited)
-                    int pc = 0;
-                    for (auto* prop : ustruct->ForEachProperty())
-                    {
-                        if (!prop) continue;
-                        std::wstring propName(prop->GetName());
-                        int offset = prop->GetOffset_Internal();
-                        int size = prop->GetSize();
-                        VLOG(STR("[MoriaCppMod]     prop: {} @{} size={}\n"), propName, offset, size);
-                        pc++;
-                        if (pc > 40)
-                        {
-                            VLOG(STR("[MoriaCppMod]     ... truncated\n"));
-                            break;
-                        }
-                    }
-                }
-            }
-
-            VLOG(STR("[MoriaCppMod] Found {} unique build/craft related classes\n"), totalFound);
-            showOnScreen(L"Build/Craft search: " + std::to_wstring(totalFound) + L" classes (see log)", 5.0f, 1.0f, 0.8f, 0.0f);
-            VLOG(STR("[MoriaCppMod] === END BUILD/CRAFT SEARCH ===\n"));
-        }
-
-        // ── Deep Probes (Ctrl+Numpad keys) ──
-
-        void probeBuildTabRecipe()
-        {
-            VLOG(STR("[MoriaCppMod] === PROBE: Build_Tab selectedRecipe ===\n"));
-
-            // Find the Build_Tab widget
-            std::vector<UObject*> widgets;
-            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
-            UObject* buildTab = nullptr;
-            for (auto* w : widgets)
-            {
-                if (!w) continue;
-                std::wstring clsName = safeClassName(w);
-                if (clsName == STR("UI_WBP_Build_Tab_C"))
-                {
-                    buildTab = w;
-                    break;
-                }
-            }
-            if (!buildTab)
-            {
-                VLOG(STR("[MoriaCppMod] Build_Tab widget NOT FOUND\n"));
-                showOnScreen(L"Build_Tab NOT FOUND", 3.0f, 1.0f, 0.3f, 0.3f);
-                return;
-            }
-
-            VLOG(STR("[MoriaCppMod] Build_Tab found: {}\n"), std::wstring(buildTab->GetName()));
-
-            // Read selectedRecipe at offset 1120, size 120
-            uint8_t* objPtr = reinterpret_cast<uint8_t*>(buildTab);
-            uint8_t* recipePtr = objPtr + 1120;
-
-            // Dump raw bytes in hex (8 bytes per line)
-            VLOG(STR("[MoriaCppMod] selectedRecipe @1120 (120 bytes):\n"));
-            for (int row = 0; row < 120; row += 8)
-            {
-                std::wstring hexLine;
-                std::wstring asciiLine;
-                for (int col = 0; col < 8 && (row + col) < 120; col++)
-                {
-                    uint8_t b = recipePtr[row + col];
-                    wchar_t hex[8]{};
-                    swprintf(hex, 8, L"%02X ", b);
-                    hexLine += hex;
-                    asciiLine += (b >= 32 && b < 127) ? static_cast<wchar_t>(b) : L'.';
-                }
-                VLOG(STR("[MoriaCppMod]   +{:3d}: {} | {}\n"), row, hexLine, asciiLine);
-            }
-
-            // Also read selectedName at offset 1536 (FName, 8 bytes)
-            uint8_t* namePtr = objPtr + 1536;
-            // FName: ComparisonIndex(4) + Number(4) — try to interpret
-            int32_t nameIdx = *reinterpret_cast<int32_t*>(namePtr);
-            int32_t nameNum = *reinterpret_cast<int32_t*>(namePtr + 4);
-            VLOG(STR("[MoriaCppMod] selectedName @1536: index={} number={}\n"), nameIdx, nameNum);
-
-            // Try to read recipesDataTable pointer at 1544
-            UObject** dtPtr = reinterpret_cast<UObject**>(objPtr + 1544);
-            if (*dtPtr)
-            {
-                std::wstring dtName((*dtPtr)->GetName());
-                std::wstring dtClass = safeClassName(*dtPtr);
-                VLOG(STR("[MoriaCppMod] recipesDataTable @1544: {} ({})\n"), dtName, dtClass);
-            }
-            else
-            {
-                VLOG(STR("[MoriaCppMod] recipesDataTable @1544: nullptr\n"));
-            }
-
-            // Interpret potential FName values within the recipe struct
-            // FName indices are typically small positive integers
-            for (int off = 0; off < 120; off += 4)
-            {
-                int32_t val = *reinterpret_cast<int32_t*>(recipePtr + off);
-                // Check if it could be a small int (index, count, enum)
-                if (val > 0 && val < 100000)
-                {
-                    VLOG(STR("[MoriaCppMod]   recipe+{}: int32={}\n"), off, val);
-                }
-            }
-
-            // Also dump the ShowThisRecipe function params layout
-            auto* showFunc = buildTab->GetFunctionByNameInChain(STR("ShowThisRecipe"));
-            if (showFunc)
-            {
-                VLOG(STR("[MoriaCppMod] ShowThisRecipe params ({}B):\n"), showFunc->GetParmsSize());
-                for (auto* prop : showFunc->ForEachProperty())
-                {
-                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
-                                                    std::wstring(prop->GetName()),
-                                                    prop->GetOffset_Internal(),
-                                                    prop->GetSize());
-                }
-            }
-
-            // And blockSelectedEvent params
-            auto* blockFunc = buildTab->GetFunctionByNameInChain(STR("blockSelectedEvent"));
-            if (blockFunc)
-            {
-                VLOG(STR("[MoriaCppMod] blockSelectedEvent params ({}B):\n"), blockFunc->GetParmsSize());
-                for (auto* prop : blockFunc->ForEachProperty())
-                {
-                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
-                                                    std::wstring(prop->GetName()),
-                                                    prop->GetOffset_Internal(),
-                                                    prop->GetSize());
-                }
-            }
-
-            showOnScreen(L"Build_Tab recipe probe done (see log)", 5.0f, 0.0f, 1.0f, 0.5f);
-            VLOG(STR("[MoriaCppMod] === END PROBE: Build_Tab ===\n"));
-        }
-
-        void probeBuildConstruction()
-        {
-            VLOG(STR("[MoriaCppMod] === PROBE: BuildNewConstruction ===\n"));
-
-            // Find MorBuildingComponent
-            std::vector<UObject*> actors;
-            UObjectGlobals::FindAllOf(STR("Actor"), actors);
-
-            UObject* buildingComp = nullptr;
-            for (auto* actor : actors)
-            {
-                if (!actor) continue;
-                std::wstring clsName = safeClassName(actor);
-                if (clsName.find(STR("MorBuildingComponent")) != std::wstring::npos)
-                {
-                    buildingComp = actor;
-                    break;
-                }
-            }
-
-            // Also try finding via component search
-            if (!buildingComp)
-            {
-                std::vector<UObject*> comps;
-                UObjectGlobals::FindAllOf(STR("ActorComponent"), comps);
-                for (auto* c : comps)
-                {
-                    if (!c) continue;
-                    std::wstring clsName = safeClassName(c);
-                    if (clsName.find(STR("MorBuildingComponent")) != std::wstring::npos)
-                    {
-                        buildingComp = c;
-                        break;
-                    }
-                }
-            }
-
-            if (!buildingComp)
-            {
-                VLOG(STR("[MoriaCppMod] MorBuildingComponent NOT FOUND\n"));
-                showOnScreen(L"MorBuildingComponent NOT FOUND", 3.0f, 1.0f, 0.3f, 0.3f);
-                return;
-            }
-
-            std::wstring compName(buildingComp->GetName());
-            std::wstring compClass = safeClassName(buildingComp);
-            VLOG(STR("[MoriaCppMod] Found: {} ({})\n"), compName, compClass);
-
-            // Probe BuildNewConstruction param layout
-            auto* buildFunc = buildingComp->GetFunctionByNameInChain(STR("BuildNewConstruction"));
-            if (buildFunc)
-            {
-                VLOG(STR("[MoriaCppMod] BuildNewConstruction params ({}B):\n"), buildFunc->GetParmsSize());
-                for (auto* prop : buildFunc->ForEachProperty())
-                {
-                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
-                                                    std::wstring(prop->GetName()),
-                                                    prop->GetOffset_Internal(),
-                                                    prop->GetSize());
-                }
-            }
-            else
-            {
-                VLOG(STR("[MoriaCppMod] BuildNewConstruction function NOT FOUND\n"));
-            }
-
-            // Probe CanBuild
-            auto* canBuildFunc = buildingComp->GetFunctionByNameInChain(STR("CanBuild"));
-            if (canBuildFunc)
-            {
-                VLOG(STR("[MoriaCppMod] CanBuild params ({}B):\n"), canBuildFunc->GetParmsSize());
-                for (auto* prop : canBuildFunc->ForEachProperty())
-                {
-                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
-                                                    std::wstring(prop->GetName()),
-                                                    prop->GetOffset_Internal(),
-                                                    prop->GetSize());
-                }
-            }
-
-            // Probe GetBuildTargetTransform
-            auto* transformFunc = buildingComp->GetFunctionByNameInChain(STR("GetBuildTargetTransform"));
-            if (transformFunc)
-            {
-                VLOG(STR("[MoriaCppMod] GetBuildTargetTransform params ({}B):\n"), transformFunc->GetParmsSize());
-                for (auto* prop : transformFunc->ForEachProperty())
-                {
-                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
-                                                    std::wstring(prop->GetName()),
-                                                    prop->GetOffset_Internal(),
-                                                    prop->GetSize());
-                }
-            }
-
-            // Probe GetActiveBuildingWidget
-            auto* widgetFunc = buildingComp->GetFunctionByNameInChain(STR("GetActiveBuildingWidget"));
-            if (widgetFunc)
-            {
-                VLOG(STR("[MoriaCppMod] GetActiveBuildingWidget params ({}B):\n"), widgetFunc->GetParmsSize());
-                for (auto* prop : widgetFunc->ForEachProperty())
-                {
-                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
-                                                    std::wstring(prop->GetName()),
-                                                    prop->GetOffset_Internal(),
-                                                    prop->GetSize());
-                }
-            }
-
-            // Dump all properties on the component
-            VLOG(STR("[MoriaCppMod] --- MorBuildingComponent Properties ---\n"));
-            auto* ustruct = static_cast<UStruct*>(buildingComp->GetClassPrivate());
-            for (auto* prop : ustruct->ForEachPropertyInChain())
-            {
-                if (!prop) continue;
-                VLOG(STR("[MoriaCppMod]   prop: {} @{} size={}\n"),
-                                                std::wstring(prop->GetName()),
-                                                prop->GetOffset_Internal(),
-                                                prop->GetSize());
-            }
-
-            // Read LastSelectedRecipe raw bytes (offset 208, size 16)
-            uint8_t* objPtr = reinterpret_cast<uint8_t*>(buildingComp);
-            VLOG(STR("[MoriaCppMod] LastSelectedRecipe @208 (16 bytes):\n"));
-            for (int row = 0; row < 16; row += 8)
-            {
-                std::wstring hexLine;
-                for (int col = 0; col < 8 && (row + col) < 16; col++)
-                {
-                    uint8_t b = objPtr[208 + row + col];
-                    wchar_t hex[8]{};
-                    swprintf(hex, 8, L"%02X ", b);
-                    hexLine += hex;
-                }
-                VLOG(STR("[MoriaCppMod]   +{}: {}\n"), row, hexLine);
-            }
-
-            showOnScreen(L"BuildNewConstruction probe done (see log)", 5.0f, 0.0f, 1.0f, 0.5f);
-            VLOG(STR("[MoriaCppMod] === END PROBE: BuildNewConstruction ===\n"));
-        }
-
-        void dumpDebugMenus()
-        {
-            VLOG(STR("[MoriaCppMod] === PROBE: Debug Menus ===\n"));
-
-            const wchar_t* debugMenuClasses[] = {
-                    STR("BP_DebugMenu_Recipes_C"),
-                    STR("BP_DebugMenu_CraftingAndConstruction_C"),
-            };
-
-            for (auto* menuClass : debugMenuClasses)
-            {
-                std::vector<UObject*> objects;
-                UObjectGlobals::FindAllOf(menuClass, objects);
-
-                if (objects.empty())
-                {
-                    VLOG(STR("[MoriaCppMod] {} — no instances found, trying CDO...\n"), menuClass);
-
-                    // Try to find the class itself and dump its CDO
-                    std::vector<UObject*> allActors;
-                    UObjectGlobals::FindAllOf(STR("Actor"), allActors);
-                    for (auto* a : allActors)
-                    {
-                        if (!a) continue;
-                        std::wstring clsName = safeClassName(a);
-                        if (clsName == menuClass)
-                        {
-                            objects.push_back(a);
-                            break;
-                        }
-                    }
-                }
-
-                for (auto* obj : objects)
-                {
-                    if (!obj) continue;
-                    auto* cls = obj->GetClassPrivate();
-                    std::wstring clsName(cls->GetName());
-                    std::wstring objName(obj->GetName());
-
-                    VLOG(STR("[MoriaCppMod] Debug Menu: {} | Obj: {}\n"), clsName, objName);
-
-                    // Dump all functions
-                    auto* ustruct = static_cast<UStruct*>(cls);
-                    VLOG(STR("[MoriaCppMod]   Functions:\n"));
-                    for (auto* func : ustruct->ForEachFunctionInChain())
-                    {
-                        if (!func) continue;
-                        std::wstring funcName(func->GetName());
-                        if (funcName.find(STR("ExecuteUbergraph")) == 0) continue;
-                        int parmsSize = func->GetParmsSize();
-                        VLOG(STR("[MoriaCppMod]     fn: {} ({}B)\n"), funcName, parmsSize);
-                    }
-
-                    // Dump properties
-                    VLOG(STR("[MoriaCppMod]   Properties:\n"));
-                    for (auto* prop : ustruct->ForEachPropertyInChain())
-                    {
-                        if (!prop) continue;
-                        VLOG(STR("[MoriaCppMod]     prop: {} @{} size={}\n"),
-                                                        std::wstring(prop->GetName()),
-                                                        prop->GetOffset_Internal(),
-                                                        prop->GetSize());
-                    }
-                }
-            }
-
-            showOnScreen(L"Debug menu probe done (see log)", 5.0f, 0.0f, 1.0f, 0.5f);
-            VLOG(STR("[MoriaCppMod] === END PROBE: Debug Menus ===\n"));
-        }
-#endif
 
         // Find the MorInventoryComponent on a character
         // ── 6E: Inventory & Toolbar System ────────────────────────────────────
-        // Inventory component discovery, toolbar swap (PageDown), clear hotbar
-        // BodyInventory stash containers, name-matching resolve phase
+        // Inventory component discovery, toolbar swap, BodyInventory stash containers
+        // Name-matching resolve phase
 
         // Finds the MorInventoryComponent on the player character.
         // Searches character's components for class containing "InventoryComponent".
@@ -2934,7 +2531,7 @@ namespace MoriaMods
             return nullptr;
         }
 
-        // Discover the EpicPack bag container handle — shared by clearHotbar and swapToolbar
+        // Discover the EpicPack bag container handle — used by swapToolbar
         bool discoverBagHandle(UObject* invComp)
         {
             auto* getContainersFunc = invComp->GetFunctionByNameInChain(STR("GetContainers"));
@@ -3063,9 +2660,70 @@ namespace MoriaMods
 
             if (!m_bodyInvHandles.empty())
             {
-                m_bodyInvHandle = m_bodyInvHandles[0]; // first = hotbar
+                m_bodyInvHandle = m_bodyInvHandles[0]; // fallback: first scanned container
             }
             VLOG(STR("[MoriaCppMod] Found {} BodyInventory containers\n"), m_bodyInvHandles.size());
+
+            // Repair stale stash containers (once per session):
+            // Trigger: more than 2 stash containers (extras accumulated from previous sessions)
+            // Drop contents + containers, let creation code rebuild exactly 2.
+            if (m_bodyInvHandles.size() > 3 && !m_repairDone)
+            {
+                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Found {} BodyInventory containers (expected 3) — repairing\n"),
+                                                m_bodyInvHandles.size());
+                auto* dropFunc = invComp->GetFunctionByNameInChain(STR("DropItem"));
+                auto* ihfGetSlotN = m_ihfCDO ? m_ihfCDO->GetFunctionByNameInChain(STR("GetItemForSlot")) : nullptr;
+                auto* ihfIsValidN = m_ihfCDO ? m_ihfCDO->GetFunctionByNameInChain(STR("IsValidItem")) : nullptr;
+                if (dropFunc && ihfGetSlotN && ihfIsValidN)
+                    {
+                        auto diItem = findParam(dropFunc, L"Item");
+                        auto diCount = findParam(dropFunc, L"Count");
+                        int gsItem = -1, gsSlot = -1, gsRet = -1, ivItem = -1, ivRet = -1;
+                        for (auto* p : ihfGetSlotN->ForEachProperty()) {
+                            std::wstring n(p->GetName());
+                            if (n == STR("Item")) gsItem = p->GetOffset_Internal();
+                            else if (n == STR("Slot")) gsSlot = p->GetOffset_Internal();
+                            else if (n == STR("ReturnValue")) gsRet = p->GetOffset_Internal();
+                        }
+                        for (auto* p : ihfIsValidN->ForEachProperty()) {
+                            std::wstring n(p->GetName());
+                            if (n == STR("Item")) ivItem = p->GetOffset_Internal();
+                            else if (n == STR("ReturnValue")) ivRet = p->GetOffset_Internal();
+                        }
+                        for (int d = static_cast<int>(m_bodyInvHandles.size()) - 1; d >= 1; d--)
+                        {
+                            for (int s = 0; s < TOOLBAR_SLOTS; s++)
+                            {
+                                std::vector<uint8_t> gb(std::max(ihfGetSlotN->GetParmsSize() + 32, 64), 0);
+                                std::memcpy(gb.data() + gsItem, m_bodyInvHandles[d].data(), handleSize);
+                                *reinterpret_cast<int32_t*>(gb.data() + gsSlot) = s;
+                                m_ihfCDO->ProcessEvent(ihfGetSlotN, gb.data());
+                                std::vector<uint8_t> vb(std::max(ihfIsValidN->GetParmsSize() + 32, 64), 0);
+                                std::memcpy(vb.data() + ivItem, gb.data() + gsRet, handleSize);
+                                m_ihfCDO->ProcessEvent(ihfIsValidN, vb.data());
+                                if (vb[ivRet] != 0)
+                                {
+                                    auto* ih = reinterpret_cast<const FItemHandleLocal*>(gb.data() + gsRet);
+                                    VLOG(STR("[MoriaCppMod] Repair: dropping item ID={} from stash[{}] slot {}\n"), ih->ID, d, s);
+                                    std::vector<uint8_t> db(std::max(dropFunc->GetParmsSize() + 32, 64), 0);
+                                    std::memcpy(db.data() + diItem.offset, gb.data() + gsRet, handleSize);
+                                    *reinterpret_cast<int32_t*>(db.data() + diCount.offset) = 1;
+                                    invComp->ProcessEvent(dropFunc, db.data());
+                                }
+                            }
+                            int droppedId = reinterpret_cast<const FItemHandleLocal*>(m_bodyInvHandles[d].data())->ID;
+                            std::vector<uint8_t> db(std::max(dropFunc->GetParmsSize() + 32, 64), 0);
+                            std::memcpy(db.data() + diItem.offset, m_bodyInvHandles[d].data(), handleSize);
+                            *reinterpret_cast<int32_t*>(db.data() + diCount.offset) = 1;
+                            invComp->ProcessEvent(dropFunc, db.data());
+                            VLOG(STR("[MoriaCppMod] Repair: dropped stash container ID={}\n"), droppedId);
+                        }
+                        m_bodyInvHandles.resize(1);
+                        m_bodyInvHandle = m_bodyInvHandles[0];
+                        m_repairDone = true;
+                        Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Repair: stash containers removed — recreating fresh\n"));
+                    }
+            }
 
             // If only 1 BodyInventory (hotbar), create 2 more for toolbar swap stash
             if (m_bodyInvHandles.size() == 1 && bodyInvClass)
@@ -3127,530 +2785,8 @@ namespace MoriaMods
             return true;
         }
 
-        // ── Inventory/Hotbar Probe + Clear Hotbar — DISABLED: keybinds removed ──
-#if 0
-        void probeInventoryHotbar()
-        {
-            VLOG(STR("[MoriaCppMod] === PROBE: Inventory Hotbar ===\n"));
 
-            // --- Step 1: Find the player character (BP_FGKDwarf_C) ---
-            UObject* playerChar = nullptr;
-            {
-                std::vector<UObject*> actors;
-                UObjectGlobals::FindAllOf(STR("Character"), actors);
-                for (auto* a : actors)
-                {
-                    if (!a) continue;
-                    std::wstring cls = safeClassName(a);
-                    if (cls.find(STR("Dwarf")) != std::wstring::npos || cls.find(STR("FGK")) != std::wstring::npos)
-                    {
-                        playerChar = a;
-                        VLOG(STR("[MoriaCppMod] [Inv] Found player char: {} '{}'\n"), cls, std::wstring(a->GetName()));
-                        break;
-                    }
-                }
-            }
-            if (!playerChar)
-            {
-                VLOG(STR("[MoriaCppMod] [Inv] Player character NOT FOUND\n"));
-                showOnScreen(L"Player character not found!", 3.0f, 1.0f, 0.3f, 0.3f);
-                return;
-            }
-
-            // --- Step 2: Dump all components on the player character ---
-            VLOG(STR("[MoriaCppMod] [Inv] --- Player Character Components ---\n"));
-            {
-                auto* getCompsFunc = playerChar->GetFunctionByNameInChain(STR("K2_GetComponentsByClass"));
-                // Also try GetComponents
-                if (!getCompsFunc) getCompsFunc = playerChar->GetFunctionByNameInChain(STR("GetComponents"));
-
-                // Direct approach: search all ActorComponents and filter by owner
-                std::vector<UObject*> allComps;
-                UObjectGlobals::FindAllOf(STR("ActorComponent"), allComps);
-                int compIdx = 0;
-                for (auto* c : allComps)
-                {
-                    if (!c) continue;
-                    // Check if this component belongs to our player character
-                    auto* ownerFunc = c->GetFunctionByNameInChain(STR("GetOwner"));
-                    if (!ownerFunc) continue;
-                    struct
-                    {
-                        UObject* Ret{nullptr};
-                    } op{};
-                    c->ProcessEvent(ownerFunc, &op);
-                    if (op.Ret != playerChar) continue;
-
-                    std::wstring compCls = safeClassName(c);
-                    std::wstring compName(c->GetName());
-                    VLOG(STR("[MoriaCppMod] [Inv]   comp[{}]: {} '{}'\n"), compIdx++, compCls, compName);
-
-                    // Check for inventory-related components
-                    std::string narrow;
-                    for (wchar_t ch : compCls)
-                        narrow.push_back(static_cast<char>(std::tolower(ch)));
-                    bool isInventory = (narrow.find("inventor") != std::string::npos || narrow.find("storage") != std::string::npos ||
-                                        narrow.find("hotbar") != std::string::npos || narrow.find("equip") != std::string::npos ||
-                                        narrow.find("item") != std::string::npos || narrow.find("container") != std::string::npos);
-
-                    if (isInventory)
-                    {
-                        VLOG(STR("[MoriaCppMod] [Inv]   *** INVENTORY COMPONENT FOUND: {} ***\n"), compCls);
-
-                        // Dump all functions
-                        auto* cls = c->GetClassPrivate();
-                        if (cls)
-                        {
-                            auto* ustruct = static_cast<UStruct*>(cls);
-                            VLOG(STR("[MoriaCppMod] [Inv]   Functions:\n"));
-                            for (auto* func : ustruct->ForEachFunctionInChain())
-                            {
-                                if (!func) continue;
-                                std::wstring fn(func->GetName());
-                                if (fn.find(STR("ExecuteUbergraph")) == 0) continue;
-                                VLOG(STR("[MoriaCppMod] [Inv]     fn: {} ({}B)\n"), fn, func->GetParmsSize());
-                            }
-
-                            // Dump properties
-                            VLOG(STR("[MoriaCppMod] [Inv]   Properties:\n"));
-                            for (auto* prop : ustruct->ForEachPropertyInChain())
-                            {
-                                if (!prop) continue;
-                                std::wstring pn(prop->GetName());
-                                int off = prop->GetOffset_Internal();
-                                int sz = prop->GetSize();
-
-                                // For pointer-sized properties, try to read and identify the value
-                                std::wstring extra;
-                                if (sz == 8)
-                                {
-                                    uint8_t* base = reinterpret_cast<uint8_t*>(c);
-                                    if (isReadableMemory(base + off, 8))
-                                    {
-                                        UObject* ptr = *reinterpret_cast<UObject**>(base + off);
-                                        if (ptr && isReadableMemory(ptr, 64))
-                                        {
-                                            try
-                                            {
-                                                extra = L" -> " + safeClassName(ptr) + L" '" + std::wstring(ptr->GetName()) + L"'";
-                                            }
-                                            catch (...)
-                                            {
-                                                extra = L" -> (err)";
-                                            }
-                                        }
-                                        else if (ptr)
-                                        {
-                                            extra = L" -> (ptr, unreadable)";
-                                        }
-                                    }
-                                }
-
-                                VLOG(STR("[MoriaCppMod] [Inv]       prop: {} @{} size={}{}\n"), pn, off, sz, extra);
-                            }
-                        }
-                    }
-                }
-                VLOG(STR("[MoriaCppMod] [Inv] Total components on player: {}\n"), compIdx);
-            }
-
-            // --- Step 2b: Read hotbar items via GetItemForHotbarSlot ---
-            {
-                auto* invComp = findPlayerInventoryComponent(playerChar);
-                if (invComp)
-                {
-                    // Read HotbarSize
-                    auto* hotbarSizeFunc = invComp->GetFunctionByNameInChain(STR("GetHotbarSize"));
-                    int hotbarSize = 8;
-                    if (hotbarSizeFunc)
-                    {
-                        struct
-                        {
-                            int32_t Ret{0};
-                        } hs{};
-                        invComp->ProcessEvent(hotbarSizeFunc, &hs);
-                        hotbarSize = hs.Ret;
-                        VLOG(STR("[MoriaCppMod] [Inv] HotbarSize = {}\n"), hotbarSize);
-                    }
-
-                    // Read HotbarEpicItemIndex
-                    auto* epicIdxFunc = invComp->GetFunctionByNameInChain(STR("GetHotbarEpicItemIndex"));
-                    int epicIdx = -1;
-                    if (epicIdxFunc)
-                    {
-                        struct
-                        {
-                            int32_t Ret{0};
-                        } ei{};
-                        invComp->ProcessEvent(epicIdxFunc, &ei);
-                        epicIdx = ei.Ret;
-                        VLOG(STR("[MoriaCppMod] [Inv] HotbarEpicItemIndex = {}\n"), epicIdx);
-                    }
-
-                    // Probe GetItemForHotbarSlot param layout
-                    auto* getItemFunc = invComp->GetFunctionByNameInChain(STR("GetItemForHotbarSlot"));
-                    if (getItemFunc)
-                    {
-                        VLOG(STR("[MoriaCppMod] [Inv] GetItemForHotbarSlot ({}B) params:\n"), getItemFunc->GetParmsSize());
-                        for (auto* prop : getItemFunc->ForEachProperty())
-                        {
-                            if (!prop) continue;
-                            VLOG(STR("[MoriaCppMod] [Inv]   param: {} @{} size={}\n"),
-                                                            std::wstring(prop->GetName()),
-                                                            prop->GetOffset_Internal(),
-                                                            prop->GetSize());
-                        }
-
-                        // ── Build ID→name map from ClientItems TArray ──
-                        // FItemHandle (from CXXHeaderDump/FGK.hpp):
-                        //   int32 ID @0x00, int32 Payload @0x04, TWeakObjectPtr Owner @0x08
-                        // FItemInstance (from CXXHeaderDump/FGK.hpp):
-                        //   TSubclassOf<AInventoryItem> Item @0x10 (UClass*, 8B)
-                        //   int32 Count @0x18, int32 Slot @0x1C, int32 ID @0x20
-                        //   float Durability @0x24, int32 RepairCount @0x28
-                        // ClientItems TArray<FItemInstance> at UInventoryComponent+0xB8
-                        // Each FItemInstance = 0x30 bytes (48)
-                        // FItemInstance layout (from CXXHeaderDump/FGK.hpp):
-                        //   @0x10: TSubclassOf<AInventoryItem> Item (UClass*, 8B)
-                        //   @0x18: int32 Count, @0x1C: int32 Slot, @0x20: int32 ID
-                        //   @0x24: float Durability, @0x28: int32 RepairCount
-                        // Total: 0x30 = 48 bytes per instance
-                        constexpr int ITEMINSTANCE_SIZE = 0x30;
-                        constexpr int ITEM_CLASS_OFF = 0x10;
-                        constexpr int ITEM_COUNT_OFF = 0x18;
-                        constexpr int ITEM_SLOT_OFF = 0x1C;
-                        constexpr int ITEM_ID_OFF = 0x20;
-                        constexpr int ITEM_DURABILITY_OFF = 0x24;
-                        // Items.List TArray<FItemInstance> at UInventoryComponent+0x0220+0x0110 = +0x0330
-                        constexpr int ITEMS_LIST_OFFSET = 0x0330;
-
-                        uint8_t* invBase = reinterpret_cast<uint8_t*>(invComp);
-
-                        // Read Items.List TArray header (server-side authoritative array)
-                        struct
-                        {
-                            uint8_t* Data;
-                            int32_t Num;
-                            int32_t Max;
-                        } itemsList{};
-                        if (isReadableMemory(invBase + ITEMS_LIST_OFFSET, 16))
-                        {
-                            std::memcpy(&itemsList, invBase + ITEMS_LIST_OFFSET, 16);
-                        }
-                        VLOG(STR("[MoriaCppMod] [Inv] Items.List TArray @0x330: data={:p} num={} max={}\n"),
-                                                        static_cast<void*>(itemsList.Data),
-                                                        itemsList.Num,
-                                                        itemsList.Max);
-
-                        // Build ID → {className, count, slot, durability} map
-                        struct ItemInfo
-                        {
-                            std::wstring className;
-                            int32_t count{0};
-                            int32_t slot{0};
-                            int32_t id{0};
-                            float durability{0.f};
-                        };
-                        std::unordered_map<int32_t, ItemInfo> idMap;
-
-                        if (itemsList.Data && itemsList.Num > 0 && itemsList.Num < 500)
-                        {
-                            int totalBytes = itemsList.Num * ITEMINSTANCE_SIZE;
-                            if (isReadableMemory(itemsList.Data, totalBytes))
-                            {
-                                VLOG(STR("[MoriaCppMod] [Inv] Reading {} item instances...\n"), itemsList.Num);
-                                for (int i = 0; i < itemsList.Num; i++)
-                                {
-                                    uint8_t* entry = itemsList.Data + i * ITEMINSTANCE_SIZE;
-                                    UObject* itemClass = *reinterpret_cast<UObject**>(entry + ITEM_CLASS_OFF);
-                                    int32_t count = *reinterpret_cast<int32_t*>(entry + ITEM_COUNT_OFF);
-                                    int32_t slot = *reinterpret_cast<int32_t*>(entry + ITEM_SLOT_OFF);
-                                    int32_t id = *reinterpret_cast<int32_t*>(entry + ITEM_ID_OFF);
-                                    float durability = *reinterpret_cast<float*>(entry + ITEM_DURABILITY_OFF);
-
-                                    std::wstring clsName = L"(null)";
-                                    if (itemClass && isReadableMemory(itemClass, 64))
-                                    {
-                                        try
-                                        {
-                                            clsName = std::wstring(itemClass->GetName());
-                                        }
-                                        catch (...)
-                                        {
-                                            clsName = L"(err)";
-                                        }
-                                    }
-
-                                    idMap[id] = {clsName, count, slot, id, durability};
-                                    VLOG(STR("[MoriaCppMod] [Inv]   item[{}]: id={} slot={} count={} dur={:.1f} class='{}'\n"),
-                                                                    i,
-                                                                    id,
-                                                                    slot,
-                                                                    count,
-                                                                    durability,
-                                                                    clsName);
-                                }
-                            }
-                        }
-
-                        // ── Now read each hotbar slot and resolve via the ID map ──
-                        VLOG(STR("[MoriaCppMod] [Inv] === HOTBAR CONTENTS ===\n"));
-                        for (int slot = 0; slot <= hotbarSize; slot++)
-                        {
-                            int querySlot = slot;
-                            bool isEpic = false;
-                            if (slot == hotbarSize)
-                            {
-                                if (epicIdx < 0) break;
-                                querySlot = epicIdx;
-                                isEpic = true;
-                            }
-
-                            uint8_t buf[64]{};
-                            *reinterpret_cast<int32_t*>(buf) = querySlot;
-                            invComp->ProcessEvent(getItemFunc, buf);
-
-                            // FItemHandle ReturnValue @4: {ID, Payload, Owner}
-                            auto* itemHandle = reinterpret_cast<const FItemHandleLocal*>(buf + 4);
-                            int32_t itemId = itemHandle->ID;
-                            int32_t payload = itemHandle->Payload;
-
-                            std::wstring label = isEpic ? std::format(L"EpicSlot[{}]", querySlot) : std::format(L"Slot[{}]", querySlot);
-
-                            if (itemId == 0 && payload == 0)
-                            {
-                                VLOG(STR("[MoriaCppMod] [Inv] {}: (empty)\n"), label);
-                            }
-                            else
-                            {
-                                auto it = idMap.find(itemId);
-                                if (it != idMap.end())
-                                {
-                                    const auto& info = it->second;
-                                    VLOG(STR("[MoriaCppMod] [Inv] {}: '{}' x{} (dur={:.0f}, id={})\n"),
-                                                                    label,
-                                                                    info.className,
-                                                                    info.count,
-                                                                    info.durability,
-                                                                    itemId);
-                                }
-                                else
-                                {
-                                    VLOG(STR("[MoriaCppMod] [Inv] {}: id={} payload={} (NOT in ClientItems)\n"), label, itemId, payload);
-                                }
-                            }
-                        }
-                    }
-                    else
-                    {
-                        VLOG(STR("[MoriaCppMod] [Inv] GetItemForHotbarSlot NOT FOUND\n"));
-                    }
-                }
-                else
-                {
-                    VLOG(STR("[MoriaCppMod] [Inv] Could not find MorInventoryComponent\n"));
-                }
-            }
-
-            showOnScreen(L"Inventory probe done (see UE4SS log)", 5.0f, 0.0f, 1.0f, 0.5f);
-            VLOG(STR("[MoriaCppMod] === END PROBE: Inventory Hotbar ===\n"));
-        }
-
-        // ── Clear Hotbar: move slots 0-7 to body inventory (one per frame) ──
-        void clearHotbar()
-        {
-            if (m_clearingHotbar)
-            {
-                showOnScreen(Loc::get("msg.already_clearing").c_str(), 2.0f, 1.0f, 1.0f, 0.0f);
-                return;
-            }
-            if (m_swap.active)
-            {
-                showOnScreen(Loc::get("msg.wait_swap").c_str(), 2.0f, 1.0f, 1.0f, 0.0f);
-                return;
-            }
-
-            // Find player + inventory to discover bag container once
-            UObject* playerChar = nullptr;
-            {
-                std::vector<UObject*> actors;
-                UObjectGlobals::FindAllOf(STR("Character"), actors);
-                for (auto* a : actors)
-                {
-                    if (!a) continue;
-                    if (safeClassName(a).find(STR("Dwarf")) != std::wstring::npos)
-                    {
-                        playerChar = a;
-                        break;
-                    }
-                }
-            }
-            if (!playerChar)
-            {
-                showOnScreen(Loc::get("msg.player_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
-                return;
-            }
-            auto* invComp = findPlayerInventoryComponent(playerChar);
-            if (!invComp)
-            {
-                showOnScreen(Loc::get("msg.inventory_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
-                return;
-            }
-
-            if (!discoverBagHandle(invComp)) return;
-            if (m_bagHandle.empty())
-            {
-                showOnScreen(Loc::get("msg.equip_bag").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
-                return;
-            }
-
-            int32_t bagId = reinterpret_cast<const FItemHandleLocal*>(m_bagHandle.data())->ID;
-            VLOG(STR("[MoriaCppMod] === CLEAR HOTBAR → bag id={} ===\n"), bagId);
-            m_clearingHotbar = true;
-            m_clearHotbarCount = 0;
-            m_clearHotbarDropped = 0;
-            m_clearHotbarWait = 0;
-            showOnScreen(Loc::get("msg.clearing_hotbar").c_str(), 3.0f, 0.0f, 1.0f, 0.5f);
-        }
-
-        // Called from on_update() — moves one hotbar item per tick to the EpicPack bag
-        void clearHotbarTick()
-        {
-            if (!m_clearingHotbar) return;
-            if (m_clearHotbarWait > 0)
-            {
-                m_clearHotbarWait--;
-                return;
-            }
-            if (m_clearHotbarCount + m_clearHotbarDropped >= 8)
-            {
-                std::wstring msg = std::format(L"Hotbar cleared: {} to bag, {} dropped", m_clearHotbarCount, m_clearHotbarDropped);
-                showOnScreen(msg, 3.0f, 0.0f, 1.0f, 0.5f);
-                m_clearingHotbar = false;
-                return;
-            }
-
-            // Find player + inventory (lightweight per-tick lookup)
-            UObject* playerChar = nullptr;
-            {
-                std::vector<UObject*> actors;
-                UObjectGlobals::FindAllOf(STR("Character"), actors);
-                for (auto* a : actors)
-                {
-                    if (!a) continue;
-                    if (safeClassName(a).find(STR("Dwarf")) != std::wstring::npos)
-                    {
-                        playerChar = a;
-                        break;
-                    }
-                }
-            }
-            if (!playerChar)
-            {
-                m_clearingHotbar = false;
-                return;
-            }
-
-            auto* invComp = findPlayerInventoryComponent(playerChar);
-            if (!invComp)
-            {
-                m_clearingHotbar = false;
-                return;
-            }
-
-            auto* getSlotFunc = invComp->GetFunctionByNameInChain(STR("GetItemForHotbarSlot"));
-            auto* canMoveFunc = invComp->GetFunctionByNameInChain(STR("CanMoveItem"));
-            auto* moveFunc = invComp->GetFunctionByNameInChain(STR("MoveItem"));
-            auto* dropFunc = invComp->GetFunctionByNameInChain(STR("DropItem"));
-            if (!getSlotFunc || !moveFunc || !dropFunc)
-            {
-                m_clearingHotbar = false;
-                return;
-            }
-
-            struct ParamInfo
-            {
-                int offset{-1};
-                int size{0};
-            };
-            auto findParam = [](UFunction* func, const wchar_t* name) -> ParamInfo {
-                for (auto* prop : func->ForEachProperty())
-                {
-                    if (std::wstring(prop->GetName()) == name) return {prop->GetOffset_Internal(), prop->GetSize()};
-                }
-                return {};
-            };
-
-            auto slotInput = findParam(getSlotFunc, L"HotbarIndex");
-            auto slotRet = findParam(getSlotFunc, L"ReturnValue");
-            auto mItem = findParam(moveFunc, L"Item");
-            auto mDest = findParam(moveFunc, L"Destination");
-            int handleSize = slotRet.size;
-
-            // Scan for first non-empty hotbar slot
-            for (int slot = 0; slot < 8; slot++)
-            {
-                std::vector<uint8_t> slotBuf(std::max(getSlotFunc->GetParmsSize() + 32, 64), 0);
-                *reinterpret_cast<int32_t*>(slotBuf.data() + slotInput.offset) = slot;
-                invComp->ProcessEvent(getSlotFunc, slotBuf.data());
-
-                int32_t itemId = reinterpret_cast<const FItemHandleLocal*>(slotBuf.data() + slotRet.offset)->ID;
-                if (itemId == 0) continue;
-
-                // Check if bag has room (CanMoveItem)
-                bool canMove = true;
-                if (canMoveFunc)
-                {
-                    auto ci = findParam(canMoveFunc, L"Item");
-                    auto cd = findParam(canMoveFunc, L"Destination");
-                    auto cr = findParam(canMoveFunc, L"ReturnValue");
-                    if (ci.offset >= 0 && cd.offset >= 0 && cr.offset >= 0)
-                    {
-                        std::vector<uint8_t> canBuf(std::max(canMoveFunc->GetParmsSize() + 32, 128), 0);
-                        std::memcpy(canBuf.data() + ci.offset, slotBuf.data() + slotRet.offset, handleSize);
-                        std::memcpy(canBuf.data() + cd.offset, m_bagHandle.data(), handleSize);
-                        invComp->ProcessEvent(canMoveFunc, canBuf.data());
-                        canMove = canBuf[cr.offset] != 0;
-                    }
-                }
-
-                if (canMove)
-                {
-                    // Move to bag
-                    std::vector<uint8_t> moveBuf(std::max(moveFunc->GetParmsSize() + 32, 128), 0);
-                    std::memcpy(moveBuf.data() + mItem.offset, slotBuf.data() + slotRet.offset, handleSize);
-                    std::memcpy(moveBuf.data() + mDest.offset, m_bagHandle.data(), handleSize);
-                    invComp->ProcessEvent(moveFunc, moveBuf.data());
-                    m_clearHotbarCount++;
-                    VLOG(STR("[MoriaCppMod] Slot {} (id={}) → bag\n"), slot, itemId);
-                }
-                else
-                {
-                    // Bag full — drop on ground
-                    auto di = findParam(dropFunc, L"Item");
-                    auto dc = findParam(dropFunc, L"Count");
-                    std::vector<uint8_t> dropBuf(std::max(dropFunc->GetParmsSize() + 32, 128), 0);
-                    std::memcpy(dropBuf.data() + di.offset, slotBuf.data() + slotRet.offset, handleSize);
-                    *reinterpret_cast<int32_t*>(dropBuf.data() + dc.offset) = 999999;
-                    invComp->ProcessEvent(dropFunc, dropBuf.data());
-                    m_clearHotbarDropped++;
-                    VLOG(STR("[MoriaCppMod] Slot {} (id={}) → dropped (bag full)\n"), slot, itemId);
-                }
-
-                m_clearHotbarWait = 3;
-                return; // one item per tick
-            }
-
-            // All slots empty — done
-            std::wstring msg = std::format(L"Hotbar cleared: {} to bag, {} dropped", m_clearHotbarCount, m_clearHotbarDropped);
-            showOnScreen(msg, 3.0f, 0.0f, 1.0f, 0.5f);
-            VLOG(STR("[MoriaCppMod] {}\n"), msg);
-            m_clearingHotbar = false;
-        }
-#endif
-
-
-        // ── Toolbar Swap: F12 — 2 toolbars via BodyInventory containers ──
+        // ── Toolbar Swap: PAGE_DOWN — 2 toolbars via BodyInventory containers ──
         // m_bodyInvHandles[0] = hotbar, [1] = T1 stash, [2] = T2 stash
         // Phase 0: MoveItem(hotbar items → stash container) using GetItemForHotbarSlot
         // Phase 1: MoveItem(stash items → hotbar) using IHF::GetItemForSlot on stash
@@ -3662,7 +2798,8 @@ namespace MoriaMods
         {
             bool active{false};
             bool resolved{false}; // true after name-matching resolve phase
-            bool cleared{false};  // true after EmptyContainer on stash destination
+            bool cleared{false};      // true after EmptyContainer on stash destination
+            bool dropToGround{false}; // true = drop hotbar items instead of stashing (both-containers failsafe)
             int phase{0};         // 0 = stash hotbar→container, 1 = restore container→hotbar
             int slot{0};          // current slot being processed (0-7)
             int moved{0};         // items successfully moved
@@ -3688,9 +2825,8 @@ namespace MoriaMods
             VLOG(STR("[MoriaCppMod] [Swap] === swapToolbar() called ===\n"));
             try
             {
-                VLOG(STR("[MoriaCppMod] [Swap] State: active={} clearing={} bodyInvHandle.empty={} handles.size={} charLoaded={}\n"),
+                VLOG(STR("[MoriaCppMod] [Swap] State: active={} bodyInvHandle.empty={} handles.size={} charLoaded={}\n"),
                                                 m_swap.active,
-                                                m_clearingHotbar,
                                                 m_bodyInvHandle.empty(),
                                                 m_bodyInvHandles.size(),
                                                 m_characterLoaded);
@@ -3701,13 +2837,6 @@ namespace MoriaMods
                     VLOG(STR("[MoriaCppMod] [Swap] BLOCKED: swap already active\n"));
                     return;
                 }
-                if (m_clearingHotbar)
-                {
-                    showOnScreen(Loc::get("msg.wait_clear").c_str(), 2.0f, 1.0f, 1.0f, 0.0f);
-                    VLOG(STR("[MoriaCppMod] [Swap] BLOCKED: hotbar clear in progress\n"));
-                    return;
-                }
-
                 // Discover container handles if not cached
                 if (m_bodyInvHandle.empty())
                 {
@@ -3798,8 +2927,8 @@ namespace MoriaMods
         }
 
         // Called from on_update() — processes one move per tick.
-        // Phase 0: Move hotbar items → stash BodyInventory container[curTB+1]
-        // Phase 1: Move stash items from BodyInventory container[nextTB+1] → hotbar
+        // Phase 0: Move hotbar items → stash BodyInventory container (or drop on ground)
+        // Phase 1: Move stash items from BodyInventory container → hotbar
         void swapToolbarTick()
         {
             if (!m_swap.active) return;
@@ -3838,27 +2967,29 @@ namespace MoriaMods
                     return;
                 }
 
-                // Look up functions
-                auto* getSlotFunc = invComp->GetFunctionByNameInChain(STR("GetItemForHotbarSlot"));
+                // Look up functions — all phases use IHF::GetItemForSlot + IsValidItem
                 auto* moveFunc = invComp->GetFunctionByNameInChain(STR("MoveItem"));
-
-                if (!getSlotFunc || !moveFunc)
-                {
-                    VLOG(STR("[MoriaCppMod] Swap: functions missing (GetItemForHotbarSlot={} MoveItem={})\n"),
-                                                    getSlotFunc != nullptr,
-                                                    moveFunc != nullptr);
-                    m_swap.active = false;
-                    return;
-                }
-
-                // Find IHF CDO for phase 1 (scanning stash container)
                 if (!m_ihfCDO)
                 {
                     m_ihfCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/FGK.Default__ItemHandleFunctions"));
                     if (m_ihfCDO)
-                    {
                         VLOG(STR("[MoriaCppMod] Found IHF CDO: '{}'\n"), std::wstring(m_ihfCDO->GetName()));
-                    }
+                }
+                if (!m_ihfCDO || !moveFunc)
+                {
+                    VLOG(STR("[MoriaCppMod] Swap: functions missing (IHF={} MoveItem={})\n"), m_ihfCDO != nullptr, moveFunc != nullptr);
+                    m_swap.active = false;
+                    return;
+                }
+
+                auto* ihfGetSlot = m_ihfCDO->GetFunctionByNameInChain(STR("GetItemForSlot"));
+                auto* ihfIsValid = m_ihfCDO->GetFunctionByNameInChain(STR("IsValidItem"));
+                if (!ihfGetSlot || !ihfIsValid)
+                {
+                    VLOG(STR("[MoriaCppMod] Swap: IHF functions missing (GetItemForSlot={} IsValidItem={})\n"),
+                                                    ihfGetSlot != nullptr, ihfIsValid != nullptr);
+                    m_swap.active = false;
+                    return;
                 }
 
                 struct ParamInfo
@@ -3874,252 +3005,191 @@ namespace MoriaMods
                     return {};
                 };
 
-                auto slotInput = findParam(getSlotFunc, L"HotbarIndex");
-                auto slotRet = findParam(getSlotFunc, L"ReturnValue");
+                auto gsItem = findParam(ihfGetSlot, L"Item");
+                auto gsSlot = findParam(ihfGetSlot, L"Slot");
+                auto gsRet = findParam(ihfGetSlot, L"ReturnValue");
+                auto ivItem = findParam(ihfIsValid, L"Item");
+                auto ivRet = findParam(ihfIsValid, L"ReturnValue");
                 auto mItem = findParam(moveFunc, L"Item");
                 auto mDest = findParam(moveFunc, L"Destination");
-                int handleSize = slotRet.size;
+                int handleSize = gsRet.size;
                 if (handleSize <= 0) handleSize = 20;
 
                 auto& hotbarContainer = m_bodyInvHandles[0];
 
-                // ── Resolve Phase: determine stash/restore containers via item name matching ──
+                // Helper: check if a slot in a container has a valid item
+                // Returns true if valid, and slotBuf will contain the item handle at gsRet.offset
+                auto readSlot = [&](const std::vector<uint8_t>& container, int slot,
+                                    std::vector<uint8_t>& slotBuf) -> bool {
+                    slotBuf.assign(std::max(ihfGetSlot->GetParmsSize() + 32, 64), 0);
+                    std::memcpy(slotBuf.data() + gsItem.offset, container.data(), handleSize);
+                    *reinterpret_cast<int32_t*>(slotBuf.data() + gsSlot.offset) = slot;
+                    m_ihfCDO->ProcessEvent(ihfGetSlot, slotBuf.data());
+                    std::vector<uint8_t> vb(std::max(ihfIsValid->GetParmsSize() + 32, 64), 0);
+                    std::memcpy(vb.data() + ivItem.offset, slotBuf.data() + gsRet.offset, handleSize);
+                    m_ihfCDO->ProcessEvent(ihfIsValid, vb.data());
+                    return vb[ivRet.offset] != 0;
+                };
+
+                // ── Resolve Phase: determine stash/restore containers by item count ──
                 if (!m_swap.resolved)
                 {
                     m_swap.resolved = true;
 
-                    // Find DropItemManager for GetNameForItemHandle
-                    if (!m_dropItemMgr)
+                    // Count valid items in each stash container
+                    auto countItems = [&](int cIdx) -> int {
+                        int count = 0;
+                        std::vector<uint8_t> buf;
+                        for (int s = 0; s < TOOLBAR_SLOTS; s++)
+                            if (readSlot(m_bodyInvHandles[cIdx], s, buf)) count++;
+                        return count;
+                    };
+
+                    int c1Count = countItems(1);
+                    int c2Count = countItems(2);
+
+                    VLOG(STR("[MoriaCppMod] Resolve: c[1]={} items, c[2]={} items\n"), c1Count, c2Count);
+
+                    if (c1Count == 0 && c2Count > 0)
                     {
-                        std::vector<UObject*> actors;
-                        UObjectGlobals::FindAllOf(STR("BP_DropItemManager_C"), actors);
-                        if (!actors.empty()) m_dropItemMgr = actors[0];
+                        // Container[1] empty, [2] has items → stash to [1], restore from [2]
+                        m_swap.stashIdx = 1;
+                        m_swap.restoreIdx = 2;
                     }
-                    // Find IHF CDO if needed
-                    if (!m_ihfCDO)
+                    else if (c2Count == 0 && c1Count > 0)
                     {
-                        m_ihfCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/FGK.Default__ItemHandleFunctions"));
+                        // Container[2] empty, [1] has items → stash to [2], restore from [1]
+                        m_swap.stashIdx = 2;
+                        m_swap.restoreIdx = 1;
                     }
-
-                    if (!m_dropItemMgr || !m_ihfCDO)
+                    else if (c1Count > 0 && c2Count > 0)
                     {
-                        VLOG(STR("[MoriaCppMod] Resolve: DropItemMgr={} IHF={} — using default mapping stash=[{}] restore=[{}]\n"),
-                                                        m_dropItemMgr != nullptr,
-                                                        m_ihfCDO != nullptr,
-                                                        m_swap.stashIdx,
-                                                        m_swap.restoreIdx);
-                        m_swap.wait = 1;
+                        // Both containers have items — ERROR STATE
+                        // Drop hotbar items on ground, restore from whichever has more items
+                        m_swap.dropToGround = true;
+                        m_swap.restoreIdx = (c1Count >= c2Count) ? 1 : 2;
+                        Output::send<LogLevel::Warning>(
+                            STR("[MoriaCppMod] Resolve: BOTH containers have items (c[1]={}, c[2]={}) — dropping hotbar, restoring from [{}]\n"),
+                            c1Count, c2Count, m_swap.restoreIdx);
                     }
-                    else
-                    {
-                        auto* getNameFunc = m_dropItemMgr->GetFunctionByNameInChain(STR("GetNameForItemHandle"));
-                        auto* ihfGetSlot = m_ihfCDO->GetFunctionByNameInChain(STR("GetItemForSlot"));
-                        auto* ihfIsValid = m_ihfCDO->GetFunctionByNameInChain(STR("IsValidItem"));
+                    // else: both empty — keep default mapping (first swap, Toolbar 2 starts empty)
 
-                        if (!getNameFunc || !ihfGetSlot || !ihfIsValid)
-                        {
-                            VLOG(
-                                    STR("[MoriaCppMod] Resolve: missing functions (getName={} getSlot={} isValid={}) — using default\n"),
-                                    getNameFunc != nullptr,
-                                    ihfGetSlot != nullptr,
-                                    ihfIsValid != nullptr);
-                            m_swap.wait = 1;
-                        }
-                        else
-                        {
-                            auto gnItem = findParam(getNameFunc, L"Item");
-                            auto gnRet = findParam(getNameFunc, L"ReturnValue");
-
-                            auto rgsItem = findParam(ihfGetSlot, L"Item");
-                            auto rgsSlot = findParam(ihfGetSlot, L"Slot");
-                            auto rgsRet = findParam(ihfGetSlot, L"ReturnValue");
-                            auto rivItem = findParam(ihfIsValid, L"Item");
-                            auto rivRet = findParam(ihfIsValid, L"ReturnValue");
-
-                            // Helper: get FName ComparisonIndex for an item handle
-                            auto getNameCI = [&](const uint8_t* handleData) -> int32_t {
-                                std::vector<uint8_t> buf(std::max(getNameFunc->GetParmsSize() + 32, 64), 0);
-                                std::memcpy(buf.data() + gnItem.offset, handleData, handleSize);
-                                m_dropItemMgr->ProcessEvent(getNameFunc, buf.data());
-                                return *reinterpret_cast<int32_t*>(buf.data() + gnRet.offset);
-                            };
-
-                            // Helper: try to get FName string for logging (best-effort)
-                            auto getNameStr = [&](const uint8_t* handleData) -> std::wstring {
-                                try
-                                {
-                                    std::vector<uint8_t> buf(std::max(getNameFunc->GetParmsSize() + 32, 64), 0);
-                                    std::memcpy(buf.data() + gnItem.offset, handleData, handleSize);
-                                    m_dropItemMgr->ProcessEvent(getNameFunc, buf.data());
-                                    FName* fn = reinterpret_cast<FName*>(buf.data() + gnRet.offset);
-                                    return fn->ToString();
-                                }
-                                catch (...)
-                                {
-                                    return L"???";
-                                }
-                            };
-
-                            // Collect hotbar item names
-                            std::vector<int32_t> hotbarCIs;
-                            for (int s = 0; s < TOOLBAR_SLOTS; s++)
-                            {
-                                std::vector<uint8_t> sb(std::max(getSlotFunc->GetParmsSize() + 32, 64), 0);
-                                *reinterpret_cast<int32_t*>(sb.data() + slotInput.offset) = s;
-                                invComp->ProcessEvent(getSlotFunc, sb.data());
-                                auto* slotHandle = reinterpret_cast<const FItemHandleLocal*>(sb.data() + slotRet.offset);
-                                if (slotHandle->ID != 0)
-                                {
-                                    int32_t ci = getNameCI(sb.data() + slotRet.offset);
-                                    hotbarCIs.push_back(ci);
-                                    auto nameStr = getNameStr(sb.data() + slotRet.offset);
-                                    VLOG(STR("[MoriaCppMod] Resolve: hotbar[{}] id={} name={}\n"), s, slotHandle->ID, nameStr);
-                                }
-                            }
-
-                            // Helper: collect names from a stash container
-                            auto collectContainerCIs = [&](int cIdx) -> std::vector<int32_t> {
-                                std::vector<int32_t> cis;
-                                for (int s = 0; s < TOOLBAR_SLOTS; s++)
-                                {
-                                    std::vector<uint8_t> gb(std::max(ihfGetSlot->GetParmsSize() + 32, 64), 0);
-                                    std::memcpy(gb.data() + rgsItem.offset, m_bodyInvHandles[cIdx].data(), handleSize);
-                                    *reinterpret_cast<int32_t*>(gb.data() + rgsSlot.offset) = s;
-                                    m_ihfCDO->ProcessEvent(ihfGetSlot, gb.data());
-
-                                    std::vector<uint8_t> vb(std::max(ihfIsValid->GetParmsSize() + 32, 64), 0);
-                                    std::memcpy(vb.data() + rivItem.offset, gb.data() + rgsRet.offset, handleSize);
-                                    m_ihfCDO->ProcessEvent(ihfIsValid, vb.data());
-                                    if (vb[rivRet.offset] != 0)
-                                    {
-                                        int32_t ci = getNameCI(gb.data() + rgsRet.offset);
-                                        cis.push_back(ci);
-                                        auto* cHandle = reinterpret_cast<const FItemHandleLocal*>(gb.data() + rgsRet.offset);
-                                        auto nameStr = getNameStr(gb.data() + rgsRet.offset);
-                                        VLOG(STR("[MoriaCppMod] Resolve: container[{}][{}] id={} name={}\n"), cIdx, s, cHandle->ID, nameStr);
-                                    }
-                                }
-                                return cis;
-                            };
-
-                            auto c1CIs = collectContainerCIs(1);
-                            auto c2CIs = collectContainerCIs(2);
-
-                            // Count matches: how many hotbar names appear in each container
-                            int c1Match = 0, c2Match = 0;
-                            for (auto ci : hotbarCIs)
-                            {
-                                for (auto n : c1CIs)
-                                    if (n == ci)
-                                    {
-                                        c1Match++;
-                                        break;
-                                    }
-                                for (auto n : c2CIs)
-                                    if (n == ci)
-                                    {
-                                        c2Match++;
-                                        break;
-                                    }
-                            }
-
-                            VLOG(STR("[MoriaCppMod] Resolve: hotbar={} items, c[1]={} items ({} match), c[2]={} items ({} match)\n"),
-                                                            hotbarCIs.size(),
-                                                            c1CIs.size(),
-                                                            c1Match,
-                                                            c2CIs.size(),
-                                                            c2Match);
-
-                            // Determine mapping based on matches
-                            if (c1Match > c2Match && c1Match > 0)
-                            {
-                                // Container[1] matches hotbar → stale copies → stash to [1], restore from [2]
-                                m_swap.stashIdx = 1;
-                                m_swap.restoreIdx = 2;
-                            }
-                            else if (c2Match > c1Match && c2Match > 0)
-                            {
-                                // Container[2] matches hotbar → stale copies → stash to [2], restore from [1]
-                                m_swap.stashIdx = 2;
-                                m_swap.restoreIdx = 1;
-                            }
-                            else if (c1CIs.empty() && !c2CIs.empty())
-                            {
-                                // Container[1] empty, [2] has items → stash to [1], restore from [2]
-                                m_swap.stashIdx = 1;
-                                m_swap.restoreIdx = 2;
-                            }
-                            else if (c2CIs.empty() && !c1CIs.empty())
-                            {
-                                // Container[2] empty, [1] has items → stash to [2], restore from [1]
-                                m_swap.stashIdx = 2;
-                                m_swap.restoreIdx = 1;
-                            }
-                            // else: both empty or tied — keep default mapping
-
-                            VLOG(STR("[MoriaCppMod] Resolve: RESULT stashIdx={} restoreIdx={}\n"), m_swap.stashIdx, m_swap.restoreIdx);
-                            m_swap.wait = 1;
-                        }
-                    }
+                    VLOG(STR("[MoriaCppMod] Resolve: RESULT stashIdx={} restoreIdx={} dropToGround={}\n"),
+                                                    m_swap.stashIdx, m_swap.restoreIdx, m_swap.dropToGround);
+                    m_swap.wait = 1;
                     return;
                 }
 
                 auto& stashContainer = m_bodyInvHandles[m_swap.stashIdx];
                 auto& restoreContainer = m_bodyInvHandles[m_swap.restoreIdx];
 
-                // ── Phase 0: Move hotbar items → stash container ──
+                // ── Phase 0: Move hotbar items → stash container (or drop on ground) ──
                 if (m_swap.phase == 0)
                 {
-                    // Clear stash destination if it has stale items (persisted from previous session)
-                    if (!m_swap.cleared)
+                    if (m_swap.dropToGround)
                     {
-                        m_swap.cleared = true;
-                        auto* emptyFunc = invComp->GetFunctionByNameInChain(STR("EmptyContainer"));
-                        if (emptyFunc)
+                        // Failsafe: both containers have items — drop hotbar items on ground
+                        auto* dropFunc = invComp->GetFunctionByNameInChain(STR("DropItem"));
+                        if (!dropFunc)
                         {
-                            auto emptyItem = findParam(emptyFunc, L"Item");
-                            if (emptyItem.offset >= 0)
+                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Phase0: DropItem function not found\n"));
+                            m_swap.active = false;
+                            return;
+                        }
+                        auto diItem = findParam(dropFunc, L"Item");
+                        auto diCount = findParam(dropFunc, L"Count");
+
+                        for (int slot = m_swap.slot; slot < TOOLBAR_SLOTS; slot++)
+                        {
+                            std::vector<uint8_t> slotBuf;
+                            if (!readSlot(hotbarContainer, slot, slotBuf))
                             {
-                                std::vector<uint8_t> emptyBuf(std::max(emptyFunc->GetParmsSize() + 32, 64), 0);
-                                std::memcpy(emptyBuf.data() + emptyItem.offset, stashContainer.data(), handleSize);
-                                invComp->ProcessEvent(emptyFunc, emptyBuf.data());
-                                VLOG(STR("[MoriaCppMod] Phase0: EmptyContainer([{}]) — clearing stale items before stash\n"),
-                                                                m_swap.stashIdx);
+                                m_swap.slot = slot + 1;
+                                continue;
                             }
-                        }
-                        m_swap.wait = 3;
-                        return; // give a tick for empty to process
-                    }
 
-                    for (int slot = m_swap.slot; slot < TOOLBAR_SLOTS; slot++)
-                    {
-                        std::vector<uint8_t> slotBuf(std::max(getSlotFunc->GetParmsSize() + 32, 64), 0);
-                        *reinterpret_cast<int32_t*>(slotBuf.data() + slotInput.offset) = slot;
-                        invComp->ProcessEvent(getSlotFunc, slotBuf.data());
+                            auto* slotHandle = reinterpret_cast<const FItemHandleLocal*>(slotBuf.data() + gsRet.offset);
 
-                        auto* stashHandle = reinterpret_cast<const FItemHandleLocal*>(slotBuf.data() + slotRet.offset);
-                        if (stashHandle->ID == 0)
-                        {
+                            std::vector<uint8_t> dropBuf(std::max(dropFunc->GetParmsSize() + 32, 128), 0);
+                            std::memcpy(dropBuf.data() + diItem.offset, slotBuf.data() + gsRet.offset, handleSize);
+                            *reinterpret_cast<int32_t*>(dropBuf.data() + diCount.offset) = 999999;
+                            invComp->ProcessEvent(dropFunc, dropBuf.data());
+
+                            m_swap.moved++;
                             m_swap.slot = slot + 1;
-                            continue;
+                            Output::send<LogLevel::Warning>(
+                                STR("[MoriaCppMod] Phase0: hotbar[{}] id={} DROPPED on ground (both-containers failsafe)\n"),
+                                slot, slotHandle->ID);
+                            m_swap.wait = 3;
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        // Normal path: stash hotbar items → stash container
+                        // Clear stash destination if it has stale items (persisted from previous session)
+                        if (!m_swap.cleared)
+                        {
+                            m_swap.cleared = true;
+                            auto* emptyFunc = invComp->GetFunctionByNameInChain(STR("EmptyContainer"));
+                            if (emptyFunc)
+                            {
+                                auto emptyItem = findParam(emptyFunc, L"Item");
+                                if (emptyItem.offset >= 0)
+                                {
+                                    std::vector<uint8_t> emptyBuf(std::max(emptyFunc->GetParmsSize() + 32, 64), 0);
+                                    std::memcpy(emptyBuf.data() + emptyItem.offset, stashContainer.data(), handleSize);
+                                    invComp->ProcessEvent(emptyFunc, emptyBuf.data());
+                                    VLOG(STR("[MoriaCppMod] Phase0: EmptyContainer([{}]) — clearing stale items before stash\n"),
+                                                                    m_swap.stashIdx);
+                                }
+                            }
+                            m_swap.wait = 3;
+                            return; // give a tick for empty to process
                         }
 
-                        std::vector<uint8_t> moveBuf(std::max(moveFunc->GetParmsSize() + 32, 128), 0);
-                        std::memcpy(moveBuf.data() + mItem.offset, slotBuf.data() + slotRet.offset, handleSize);
-                        std::memcpy(moveBuf.data() + mDest.offset, stashContainer.data(), handleSize);
-                        invComp->ProcessEvent(moveFunc, moveBuf.data());
+                        for (int slot = m_swap.slot; slot < TOOLBAR_SLOTS; slot++)
+                        {
+                            std::vector<uint8_t> slotBuf;
+                            if (!readSlot(hotbarContainer, slot, slotBuf))
+                            {
+                                m_swap.slot = slot + 1;
+                                continue;
+                            }
 
-                        m_swap.moved++;
-                        m_swap.slot = slot + 1;
+                            auto* stashHandle = reinterpret_cast<const FItemHandleLocal*>(slotBuf.data() + gsRet.offset);
 
-                        VLOG(STR("[MoriaCppMod] Phase0: hotbar[{}] id={} -> container[{}]\n"), slot, stashHandle->ID, m_swap.stashIdx);
+                            std::vector<uint8_t> moveBuf(std::max(moveFunc->GetParmsSize() + 32, 128), 0);
+                            std::memcpy(moveBuf.data() + mItem.offset, slotBuf.data() + gsRet.offset, handleSize);
+                            std::memcpy(moveBuf.data() + mDest.offset, stashContainer.data(), handleSize);
+                            invComp->ProcessEvent(moveFunc, moveBuf.data());
 
-                        m_swap.wait = 3;
-                        return;
+                            // Validate: re-read the slot we just moved FROM
+                            std::vector<uint8_t> verifyBuf;
+                            bool stillHasItem = readSlot(hotbarContainer, slot, verifyBuf);
+                            if (stillHasItem)
+                            {
+                                auto* vh = reinterpret_cast<const FItemHandleLocal*>(verifyBuf.data() + gsRet.offset);
+                                Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Phase0: WARN hotbar[{}] still has item id={} after MoveItem\n"), slot, vh->ID);
+                            }
+                            else
+                            {
+                                VLOG(STR("[MoriaCppMod] Phase0: hotbar[{}] verified empty after move\n"), slot);
+                            }
+
+                            m_swap.moved++;
+                            m_swap.slot = slot + 1;
+
+                            VLOG(STR("[MoriaCppMod] Phase0: hotbar[{}] id={} -> container[{}]\n"), slot, stashHandle->ID, m_swap.stashIdx);
+
+                            m_swap.wait = 3;
+                            return;
+                        }
                     }
 
-                    VLOG(STR("[MoriaCppMod] Phase0 done: stashed {} items. Restoring from container[{}]\n"),
+                    VLOG(STR("[MoriaCppMod] Phase0 done: {} items {}. Restoring from container[{}]\n"),
                                                     m_swap.moved,
+                                                    m_swap.dropToGround ? STR("dropped") : STR("stashed"),
                                                     m_swap.restoreIdx);
 
                     m_swap.phase = 1;
@@ -4131,54 +3201,35 @@ namespace MoriaMods
                 // ── Phase 1: Move items from restore container → hotbar ──
                 if (m_swap.phase == 1)
                 {
-                    if (!m_ihfCDO)
-                    {
-                        VLOG(STR("[MoriaCppMod] Phase1: IHF CDO not found\n"));
-                        m_swap.active = false;
-                        return;
-                    }
-
-                    auto* ihfGetSlot = m_ihfCDO->GetFunctionByNameInChain(STR("GetItemForSlot"));
-                    auto* ihfIsValid = m_ihfCDO->GetFunctionByNameInChain(STR("IsValidItem"));
-                    if (!ihfGetSlot || !ihfIsValid)
-                    {
-                        VLOG(STR("[MoriaCppMod] Phase1: IHF functions missing\n"));
-                        m_swap.active = false;
-                        return;
-                    }
-
-                    auto gsItem = findParam(ihfGetSlot, L"Item");
-                    auto gsSlot = findParam(ihfGetSlot, L"Slot");
-                    auto gsRet = findParam(ihfGetSlot, L"ReturnValue");
-                    auto ivItem = findParam(ihfIsValid, L"Item");
-                    auto ivRet = findParam(ihfIsValid, L"ReturnValue");
-
                     for (int slot = m_swap.slot; slot < TOOLBAR_SLOTS; slot++)
                     {
-                        std::vector<uint8_t> gsBuf(std::max(ihfGetSlot->GetParmsSize() + 32, 64), 0);
-                        std::memcpy(gsBuf.data() + gsItem.offset, restoreContainer.data(), handleSize);
-                        *reinterpret_cast<int32_t*>(gsBuf.data() + gsSlot.offset) = slot;
-                        m_ihfCDO->ProcessEvent(ihfGetSlot, gsBuf.data());
-
-                        std::vector<uint8_t> ivBuf(std::max(ihfIsValid->GetParmsSize() + 32, 64), 0);
-                        std::memcpy(ivBuf.data() + ivItem.offset, gsBuf.data() + gsRet.offset, handleSize);
-                        m_ihfCDO->ProcessEvent(ihfIsValid, ivBuf.data());
-                        bool isItem = ivBuf[ivRet.offset] != 0;
-
-                        if (!isItem)
+                        std::vector<uint8_t> slotBuf;
+                        if (!readSlot(restoreContainer, slot, slotBuf))
                         {
                             m_swap.slot = slot + 1;
                             continue;
                         }
 
-                        auto* restHandle = reinterpret_cast<const FItemHandleLocal*>(gsBuf.data() + gsRet.offset);
+                        auto* restHandle = reinterpret_cast<const FItemHandleLocal*>(slotBuf.data() + gsRet.offset);
 
                         VLOG(STR("[MoriaCppMod] Phase1: container[{}][{}] id={} -> hotbar\n"), m_swap.restoreIdx, slot, restHandle->ID);
 
                         std::vector<uint8_t> moveBuf(std::max(moveFunc->GetParmsSize() + 32, 128), 0);
-                        std::memcpy(moveBuf.data() + mItem.offset, gsBuf.data() + gsRet.offset, handleSize);
+                        std::memcpy(moveBuf.data() + mItem.offset, slotBuf.data() + gsRet.offset, handleSize);
                         std::memcpy(moveBuf.data() + mDest.offset, hotbarContainer.data(), handleSize);
                         invComp->ProcessEvent(moveFunc, moveBuf.data());
+
+                        // Validate: re-read the hotbar slot we just moved TO
+                        std::vector<uint8_t> verifyBuf;
+                        bool arrived = readSlot(hotbarContainer, slot, verifyBuf);
+                        if (!arrived)
+                            Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Phase1: WARN hotbar[{}] still empty after MoveItem from container[{}]\n"), slot, m_swap.restoreIdx);
+                        else
+                        {
+                            auto* vh = reinterpret_cast<const FItemHandleLocal*>(verifyBuf.data() + gsRet.offset);
+                            VLOG(STR("[MoriaCppMod] Phase1: hotbar[{}] verified item id={} after move\n"), slot, vh->ID);
+                        }
+
                         m_swap.moved++;
 
                         m_swap.slot = slot + 1;
@@ -4436,7 +3487,6 @@ namespace MoriaMods
         }
 
 
-
         // ── Rotate Aimed Building: set mobility then rotate + raw memory fallback ──
         // Find BuildHUDv2 widget by searching all UserWidgets
         UObject* findBuildHUD()
@@ -4478,10 +3528,13 @@ namespace MoriaMods
         {
             auto* hud = findBuildHUD();
             if (!hud) return nullptr;
+            if (s_off_targetActor == -2)
+                resolveOffset(hud, L"TargetActor", s_off_targetActor);
+            if (s_off_targetActor < 0) return nullptr;
             uint8_t* hudBase = reinterpret_cast<uint8_t*>(hud);
-            if (!isReadableMemory(hudBase + 1000, sizeof(RC::Unreal::FWeakObjectPtr))) return nullptr;
+            if (!isReadableMemory(hudBase + s_off_targetActor, sizeof(RC::Unreal::FWeakObjectPtr))) return nullptr;
             RC::Unreal::FWeakObjectPtr weakPtr{};
-            std::memcpy(&weakPtr, hudBase + 1000, sizeof(RC::Unreal::FWeakObjectPtr));
+            std::memcpy(&weakPtr, hudBase + s_off_targetActor, sizeof(RC::Unreal::FWeakObjectPtr));
             return weakPtr.Get();
         }
 
@@ -4497,56 +3550,6 @@ namespace MoriaMods
             return true;
         }
 
-
-        // ── Manual rotation keybind wrappers — DISABLED: keybinds removed ──
-#if 0
-        void rotateBuildPlacement()
-        {
-            UObject* gata = resolveGATA();
-            if (!gata)
-            {
-                showOnScreen(Loc::get("msg.not_in_build_mode").c_str(), 2.0f, 1.0f, 0.5f, 0.0f);
-                return;
-            }
-
-            const float step = static_cast<float>(s_overlay.rotationStep);
-            if (!setGATARotation(gata, step)) return;
-
-            VLOG(STR("[MoriaCppMod] [Rotate] Set SnapRotateIncrement={:.0f} FreePlaceRotateIncrement={:.0f}\n"), step, step);
-            std::wstring msg = L"Rotation step: " + std::to_wstring((int)step) + L"\xB0 \x2014 press R!";
-            showOnScreen(msg.c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
-        }
-
-        void rotateBuildPlacementCcw()
-        {
-            UObject* gata = resolveGATA();
-            if (!gata)
-            {
-                showOnScreen(Loc::get("msg.not_in_build_mode").c_str(), 2.0f, 1.0f, 0.5f, 0.0f);
-                return;
-            }
-
-            // Cycle: 5 → 15 → 45 → 90 → 5
-            float current = getGATARotation(gata);
-            float newStep;
-            if (current < 10.0f)
-                newStep = 15.0f;
-            else if (current < 30.0f)
-                newStep = 45.0f;
-            else if (current < 60.0f)
-                newStep = 90.0f;
-            else
-                newStep = 5.0f;
-            setGATARotation(gata, newStep);
-            s_overlay.rotationStep = static_cast<int>(newStep);
-            s_overlay.needsUpdate = true;
-            saveConfig();
-
-            VLOG(STR("[MoriaCppMod] [Rotate] Toggled rotation step to {:.0f}\n"), newStep);
-            std::wstring msg = L"Rotation step: " + std::to_wstring((int)newStep) + L"\xB0";
-            showOnScreen(msg.c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
-        }
-#endif
 
         static inline MoriaCppMod* s_instance{nullptr};
 
@@ -4571,11 +3574,7 @@ namespace MoriaMods
         bool m_hasLastCapture{false};
         bool m_isAutoSelecting{false}; // suppress post-hook capture during automated quickbuild
 
-        // Offset where bLock recipe data lives in Build_Item_Medium widget memory
-        // Discovered via runtime scan: widget base + 616 (0x268) = 120-byte recipe struct
-        static constexpr int BLOCK_WIDGET_OFFSET = 616;
-        int m_bLockWidgetOffset{BLOCK_WIDGET_OFFSET}; // hardcoded, verified via scan
-        bool m_bLockIsIndirect{false};                // direct memory, not a pointer
+        // bLock offset resolved via s_off_bLock (ForEachProperty on UI_WBP_Build_Item_C)
 
         // Reactive quick-build state machine (replaces frame-counting)
         enum class QBPhase { Idle, CancelPlacement, CloseMenu, OpenMenu, SelectRecipe };
@@ -4598,17 +3597,12 @@ namespace MoriaMods
         QBPhase m_tbPhase{QBPhase::Idle};    // target-build phase
         int m_tbTimeout{0};                  // safety timeout counter
 
-        // Clear-hotbar state machine: move one item per frame
-        bool m_clearingHotbar{false};
-        int m_clearHotbarCount{0};        // items moved so far
-        int m_clearHotbarDropped{0};      // items dropped (bag full)
-        int m_clearHotbarWait{0};         // frames to wait before next move
         std::vector<uint8_t> m_bagHandle; // cached EpicPack bag FItemHandle
 
         // Hotbar overlay: Win32 transparent bar at top-center of screen
         bool m_showHotbar{true}; // ON by default
 
-        // Experimental UMG toolbar (Num5 toggle)
+        // Experimental UMG toolbar
         UObject* m_umgBarWidget{nullptr};           // root UUserWidget
         UObject* m_umgStateImages[8]{};             // state icon UImage per slot
         UObject* m_umgIconImages[8]{};              // recipe icon UImage per slot (overlaid on state)
@@ -4622,7 +3616,7 @@ namespace MoriaMods
         int m_activeBuilderSlot{-1};               // which slot is currently Active (-1 = none)
         UFunction* m_umgSetBrushFn{nullptr};       // cached SetBrushFromTexture function
 
-        // Mod Controller toolbar (Num7 toggle) — 4x2 grid, lower-right of screen
+        // Mod Controller toolbar — 4x2 grid, lower-right of screen
         static constexpr int MC_SLOTS = 8;
         UObject* m_mcBarWidget{nullptr};               // root UUserWidget
         UObject* m_mcStateImages[MC_SLOTS]{};          // state icon UImage per slot
@@ -4645,6 +3639,9 @@ namespace MoriaMods
         bool m_toolbarsVisible{false};             // toggle state: are builders bar + MC bar visible?
         bool m_characterHidden{false};             // toggle state: is player character hidden?
         bool m_flyMode{false};                     // toggle state: is fly mode active?
+
+        // Stash container repair — run once per character load, not on every retry scan
+        bool m_repairDone{false};
 
         // Toolbar repositioning mode
         bool m_repositionMode{false};              // are we in drag-to-reposition mode?
@@ -4748,13 +3745,21 @@ namespace MoriaMods
             return nullptr;
         }
 
+        // Check if a UObject is safe to call ProcessEvent on (not pending GC destruction)
+        static bool isWidgetAlive(UObject* obj)
+        {
+            if (!obj) return false;
+            if (obj->HasAnyFlags(static_cast<EObjectFlags>(RF_BeginDestroyed | RF_FinishDestroyed))) return false;
+            if (obj->IsUnreachable()) return false;
+            return true;
+        }
+
         // Cached Build_Tab lookup — avoids FindAllOf on every check
         UObject* getCachedBuildTab()
         {
             if (m_cachedBuildTab)
             {
-                std::wstring cls = safeClassName(m_cachedBuildTab);
-                if (cls != L"UI_WBP_Build_Tab_C")
+                if (!isWidgetAlive(m_cachedBuildTab) || safeClassName(m_cachedBuildTab) != L"UI_WBP_Build_Tab_C")
                 {
                     m_cachedBuildTab = nullptr;
                     m_fnIsShowing = nullptr;
@@ -4763,6 +3768,8 @@ namespace MoriaMods
             if (!m_cachedBuildTab)
             {
                 m_cachedBuildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", false);
+                if (m_cachedBuildTab && !isWidgetAlive(m_cachedBuildTab))
+                    m_cachedBuildTab = nullptr; // findWidgetByClass returned a dying widget
                 if (m_cachedBuildTab)
                     m_fnIsShowing = m_cachedBuildTab->GetFunctionByNameInChain(STR("IsShowing"));
             }
@@ -4784,12 +3791,15 @@ namespace MoriaMods
         {
             if (m_cachedBuildHUD)
             {
-                std::wstring cls = safeClassName(m_cachedBuildHUD);
-                if (cls.find(L"BuildHUD") == std::wstring::npos)
+                if (!isWidgetAlive(m_cachedBuildHUD) || safeClassName(m_cachedBuildHUD).find(L"BuildHUD") == std::wstring::npos)
                     m_cachedBuildHUD = nullptr;
             }
             if (!m_cachedBuildHUD)
+            {
                 m_cachedBuildHUD = findWidgetByClass(L"UI_WBP_BuildHUDv2_C", false);
+                if (m_cachedBuildHUD && !isWidgetAlive(m_cachedBuildHUD))
+                    m_cachedBuildHUD = nullptr;
+            }
             return m_cachedBuildHUD;
         }
 
@@ -4805,8 +3815,10 @@ namespace MoriaMods
             struct { bool Ret{false}; } params{};
             hud->ProcessEvent(fn, &params);
             if (!params.Ret) return false;
-            // HUD is showing — check if past the recipe picker (recipeSelectMode @ 0x054A)
-            bool recipeSelectMode = *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(hud) + 0x054A);
+            // HUD is showing — check if past the recipe picker
+            int rsOff = resolveOffset(hud, L"recipeSelectMode", s_off_recipeSelectMode);
+            if (rsOff < 0) return false;
+            bool recipeSelectMode = *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(hud) + rsOff);
             return !recipeSelectMode; // in placement if HUD showing but NOT selecting recipes
         }
 
@@ -4814,7 +3826,9 @@ namespace MoriaMods
         void refreshActionBar()
         {
             UObject* actionBar = findWidgetByClass(L"WBP_UI_ActionBar_C", true);
-            if (!actionBar) return;
+            if (!actionBar)
+                return;
+
             auto* refreshFunc = actionBar->GetFunctionByNameInChain(STR("Set All Action Bar Items"));
             if (refreshFunc)
             {
@@ -5085,24 +4099,33 @@ namespace MoriaMods
             try
             {
                 // --- Get UTexture2D from the widget chain ---
-                // widget+1104 → Image → Image+264+72 → MID → MID+256 → TextureParamValues[0]+16 → UTexture2D*
+                // widget→Icon → Brush.ResourceObject(MID) → TextureParameterValues[0]+16 → UTexture2D*
                 UObject* texture = nullptr;
                 {
                     uint8_t* base = reinterpret_cast<uint8_t*>(widget);
-                    UObject* iconImg = *reinterpret_cast<UObject**>(base + 1104);
+                    if (s_off_icon == -2) resolveOffset(widget, L"Icon", s_off_icon);
+                    UObject* iconImg = (s_off_icon >= 0) ? *reinterpret_cast<UObject**>(base + s_off_icon) : nullptr;
                     if (iconImg && isReadableMemory(iconImg, 400))
                     {
-                        uint8_t* imgBase = reinterpret_cast<uint8_t*>(iconImg);
-                        UObject* mid = *reinterpret_cast<UObject**>(imgBase + 264 + 72);
-                        if (mid && isReadableMemory(mid, 280))
+                        ensureBrushOffset(iconImg);
+                        if (s_off_brush >= 0)
                         {
-                            uint8_t* midBase = reinterpret_cast<uint8_t*>(mid);
-                            uint8_t* arrData = *reinterpret_cast<uint8_t**>(midBase + 256);
-                            int32_t arrNum = *reinterpret_cast<int32_t*>(midBase + 256 + 8);
-                            if (arrNum >= 1 && arrNum <= 32 && arrData && isReadableMemory(arrData, 40))
+                            uint8_t* imgBase = reinterpret_cast<uint8_t*>(iconImg);
+                            UObject* mid = *reinterpret_cast<UObject**>(imgBase + s_off_brush + BRUSH_RESOURCE_OBJECT);
+                            if (mid && isReadableMemory(mid, 280))
                             {
-                                texture = *reinterpret_cast<UObject**>(arrData + 16);
-                                if (texture && !isReadableMemory(texture, 64)) texture = nullptr;
+                                if (s_off_texParamValues == -2) resolveOffset(mid, L"TextureParameterValues", s_off_texParamValues);
+                                if (s_off_texParamValues >= 0)
+                                {
+                                    uint8_t* midBase = reinterpret_cast<uint8_t*>(mid);
+                                    uint8_t* arrData = *reinterpret_cast<uint8_t**>(midBase + s_off_texParamValues);
+                                    int32_t arrNum = *reinterpret_cast<int32_t*>(midBase + s_off_texParamValues + 8);
+                                    if (arrNum >= 1 && arrNum <= 32 && arrData && isReadableMemory(arrData, 40))
+                                    {
+                                        texture = *reinterpret_cast<UObject**>(arrData + TEX_PARAM_VALUE_PTR);
+                                        if (texture && !isReadableMemory(texture, 64)) texture = nullptr;
+                                    }
+                                }
                             }
                         }
                     }
@@ -5439,20 +4462,25 @@ namespace MoriaMods
             try
             {
                 uint8_t* base = reinterpret_cast<uint8_t*>(widget);
-                // Icon Image at widget+1104
-                UObject* iconImg = *reinterpret_cast<UObject**>(base + 1104);
+                if (s_off_icon == -2) resolveOffset(widget, L"Icon", s_off_icon);
+                if (s_off_icon < 0) return L"";
+                UObject* iconImg = *reinterpret_cast<UObject**>(base + s_off_icon);
                 if (!iconImg || !isReadableMemory(iconImg, 400)) return L"";
-                // MID at Image+264+72 = Image+336
+                // MID via Brush.ResourceObject
+                ensureBrushOffset(iconImg);
+                if (s_off_brush < 0) return L"";
                 uint8_t* imgBase = reinterpret_cast<uint8_t*>(iconImg);
-                UObject* mid = *reinterpret_cast<UObject**>(imgBase + 264 + 72);
+                UObject* mid = *reinterpret_cast<UObject**>(imgBase + s_off_brush + BRUSH_RESOURCE_OBJECT);
                 if (!mid || !isReadableMemory(mid, 280)) return L"";
-                // TextureParameterValues TArray at MID+256
+                // TextureParameterValues TArray on MID
+                if (s_off_texParamValues == -2) resolveOffset(mid, L"TextureParameterValues", s_off_texParamValues);
+                if (s_off_texParamValues < 0) return L"";
                 uint8_t* midBase = reinterpret_cast<uint8_t*>(mid);
-                uint8_t* arrData = *reinterpret_cast<uint8_t**>(midBase + 256);
-                int32_t arrNum = *reinterpret_cast<int32_t*>(midBase + 256 + 8);
+                uint8_t* arrData = *reinterpret_cast<uint8_t**>(midBase + s_off_texParamValues);
+                int32_t arrNum = *reinterpret_cast<int32_t*>(midBase + s_off_texParamValues + 8);
                 if (arrNum < 1 || arrNum > 32 || !arrData || !isReadableMemory(arrData, 40)) return L"";
                 // UTexture2D* at entry+16
-                UObject* texPtr = *reinterpret_cast<UObject**>(arrData + 16);
+                UObject* texPtr = *reinterpret_cast<UObject**>(arrData + TEX_PARAM_VALUE_PTR);
                 if (!texPtr || !isReadableMemory(texPtr, 64)) return L"";
                 UObject** cs = reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(texPtr) + 0x10);
                 if (!isReadableMemory(cs, 8) || !*cs || !isReadableMemory(*cs, 64)) return L"";
@@ -5478,6 +4506,63 @@ namespace MoriaMods
                 if (name == recipeName) return w;
             }
             return nullptr;
+        }
+
+        // Log bLock diagnostics for recipe differentiation.
+        // Dumps Tag, CategoryTag.Tag, Variants RowName, and hex of key regions.
+        void logBLockDiagnostics(const wchar_t* context, const std::wstring& displayName, const uint8_t* bLock)
+        {
+            if (!bLock)
+            {
+                VLOG(STR("[MoriaCppMod] [{}] '{}' — no bLock data\n"), context, displayName);
+                return;
+            }
+
+            // bLock+0x00: Tag (FGameplayTag = FName, 8B)
+            uint32_t tagCI = *reinterpret_cast<const uint32_t*>(bLock);
+            int32_t tagNum = *reinterpret_cast<const int32_t*>(bLock + 4);
+
+            // bLock+0x20: CategoryTag.Tag (FGameplayTag = FName, 8B)
+            //   CategoryTag starts at +0x08, inherits FFGKTableRowBase (+0x18), so Tag is at +0x08+0x18=+0x20
+            uint32_t catTagCI = *reinterpret_cast<const uint32_t*>(bLock + 0x20);
+            int32_t catTagNum = *reinterpret_cast<const int32_t*>(bLock + 0x24);
+
+            // bLock+0x60: CategoryTag.SortOrder (int32)
+            int32_t sortOrder = *reinterpret_cast<const int32_t*>(bLock + 0x60);
+
+            VLOG(STR("[MoriaCppMod] [{}] '{}' Tag CI={} Num={} | CatTag CI={} Num={} | SortOrder={}\n"),
+                 context, displayName, tagCI, tagNum, catTagCI, catTagNum, sortOrder);
+
+            // Variants TArray at bLock+0x68
+            const uint8_t* variantsPtr = *reinterpret_cast<const uint8_t* const*>(bLock + RECIPE_BLOCK_VARIANTS);
+            int32_t variantsCount = *reinterpret_cast<const int32_t*>(bLock + RECIPE_BLOCK_VARIANTS_NUM);
+
+            if (variantsCount > 0 && variantsPtr && isReadableMemory(variantsPtr, 0xE8))
+            {
+                uint32_t rowCI = *reinterpret_cast<const uint32_t*>(variantsPtr + VARIANT_ROW_CI);
+                int32_t rowNum = *reinterpret_cast<const int32_t*>(variantsPtr + VARIANT_ROW_NUM);
+                VLOG(STR("[MoriaCppMod] [{}]   Variants={} RowName CI={} Num={}\n"),
+                     context, variantsCount, rowCI, rowNum);
+            }
+            else
+            {
+                VLOG(STR("[MoriaCppMod] [{}]   Variants={} (no readable data)\n"), context, variantsCount);
+            }
+
+            // Hex dump: first 16 bytes (Tag + start of CategoryTag) and bytes 0x60-0x77 (SortOrder + Variants)
+            auto hexRow = [](const uint8_t* p, int len) -> std::wstring {
+                std::wstring h;
+                for (int i = 0; i < len; i++)
+                {
+                    wchar_t buf[4];
+                    swprintf(buf, 4, L"%02X ", p[i]);
+                    h += buf;
+                }
+                return h;
+            };
+            VLOG(STR("[MoriaCppMod] [{}]   hex[00-0F]: {}\n"), context, hexRow(bLock, 16));
+            VLOG(STR("[MoriaCppMod] [{}]   hex[20-2F]: {}\n"), context, hexRow(bLock + 0x20, 16));
+            VLOG(STR("[MoriaCppMod] [{}]   hex[60-77]: {}\n"), context, hexRow(bLock + 0x60, 24));
         }
 
         void assignRecipeSlot(int slot)
@@ -5546,542 +4631,19 @@ namespace MoriaMods
             updateBuildersBar();
 
             VLOG(STR("[MoriaCppMod] [QuickBuild] ASSIGN F{} = '{}'\n"), slot + 1, m_lastCapturedName);
+            logBLockDiagnostics(L"ASSIGN", m_lastCapturedName, m_recipeSlots[slot].bLockData);
 
             std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" = " + m_lastCapturedName;
             showOnScreen(msg.c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
         }
 
-        // ── Deep probe: dump Icon image data from selected Build_Item_Medium widget ──
-#if 0 // Disabled: debug probe functions (dumpObjectProperties, probeImageWidget, probeSelectedRecipe)
-        void dumpObjectProperties(UObject* obj, const std::wstring& label, int maxProps = 200)
-        {
-            if (!obj) return;
-            uint8_t* base = reinterpret_cast<uint8_t*>(obj);
-            int count = 0;
-            for (auto* prop : obj->GetClassPrivate()->ForEachPropertyInChain())
-            {
-                if (count >= maxProps) break;
-                std::wstring pname(prop->GetName());
-                int offset = prop->GetOffset_Internal();
-                int size = prop->GetSize();
-                std::wstring typeName(prop->GetClass().GetName());
-
-                std::wstring valueInfo;
-                if (size == 8 && typeName.find(STR("Object")) != std::wstring::npos)
-                {
-                    UObject* ptr = *reinterpret_cast<UObject**>(base + offset);
-                    if (ptr && isReadableMemory(ptr, 64))
-                    {
-                        try
-                        {
-                            valueInfo = L" -> " + safeClassName(ptr) + L" '" + std::wstring(ptr->GetName()) + L"'";
-                        }
-                        catch (...)
-                        {
-                            valueInfo = L" -> (err)";
-                        }
-                    }
-                    else
-                    {
-                        valueInfo = ptr ? L" -> (unreadable)" : L" -> null";
-                    }
-                }
-                else if (size == 1 && typeName.find(STR("Bool")) != std::wstring::npos)
-                {
-                    valueInfo = (*(base + offset)) ? L" = true" : L" = false";
-                }
-                else if (size == 4 && typeName.find(STR("Int")) != std::wstring::npos)
-                {
-                    valueInfo = L" = " + std::to_wstring(*reinterpret_cast<int32_t*>(base + offset));
-                }
-                else if (size == 4 && typeName.find(STR("Float")) != std::wstring::npos)
-                {
-                    wchar_t buf[32]{};
-                    swprintf(buf, 32, L" = %.3f", *reinterpret_cast<float*>(base + offset));
-                    valueInfo = buf;
-                }
-
-                VLOG(STR("[MoriaCppMod]   {}: {} @{} sz={} type={}{}\n"), label, pname, offset, size, typeName, valueInfo);
-                count++;
-            }
-        }
-
-        // Probe an Image widget to find its texture/brush
-        void probeImageWidget(UObject* imageWidget, const std::wstring& name)
-        {
-            VLOG(STR("[MoriaCppMod] --- IMAGE '{}' DEEP DIVE ---\n"), name);
-            uint8_t* imgBase = reinterpret_cast<uint8_t*>(imageWidget);
-
-            // Step 1: Hex dump the Brush struct (known to be at offset 264, size 136)
-            const int BRUSH_OFF = 264;
-            const int BRUSH_SZ = 136;
-            VLOG(STR("[MoriaCppMod] Brush @{} hex dump ({}B):\n"), BRUSH_OFF, BRUSH_SZ);
-            for (int row = 0; row < BRUSH_SZ; row += 16)
-            {
-                std::wstring hex;
-                for (int col = 0; col < 16 && (row + col) < BRUSH_SZ; col++)
-                {
-                    wchar_t h[4]{};
-                    swprintf(h, 4, L"%02X ", imgBase[BRUSH_OFF + row + col]);
-                    hex += h;
-                }
-                VLOG(STR("[MoriaCppMod]   +{:3d}: {}\n"), row, hex);
-            }
-
-            // Step 2: Read ResourceObject at brush+72 (confirmed MID location)
-            // brush+112/120 are TSharedPtr ResourceHandle internals (NOT UObjects — crash on GetName)
-            VLOG(STR("[MoriaCppMod] Brush ResourceObject at brush+72:\n"));
-            {
-                uint64_t val = *reinterpret_cast<uint64_t*>(imgBase + BRUSH_OFF + 72);
-                if (val >= 0x10000 && val < 0x00007FF000000000)
-                {
-                    UObject* ptr = reinterpret_cast<UObject*>(val);
-                    if (isReadableMemory(ptr, 64))
-                    {
-                        try
-                        {
-                            auto* cls = ptr->GetClassPrivate();
-                            std::wstring objCls(cls->GetName());
-                            std::wstring objName(ptr->GetName());
-                            VLOG(STR("[MoriaCppMod]   brush+72: {} '{}' @ 0x{:016X}\n"), objCls, objName, val);
-                        }
-                        catch (...)
-                        {
-                            VLOG(STR("[MoriaCppMod]   brush+72: 0x{:016X} (exception)\n"), val);
-                        }
-                    }
-                }
-                else
-                {
-                    VLOG(STR("[MoriaCppMod]   brush+72: null or out of range\n"));
-                }
-            }
-
-            // Step 3: Look for SetBrushFromTexture UFunction (useful for later setting icons)
-            VLOG(STR("[MoriaCppMod] Image UFunctions scan:\n"));
-            const wchar_t* funcNames[] = {
-                    STR("SetBrushFromTexture"),
-                    STR("SetBrushResourceObject"),
-                    STR("SetBrush"),
-                    STR("SetBrushFromMaterial"),
-                    STR("SetBrushFromAtlasInterface"),
-                    STR("SetBrushFromSoftTexture"),
-                    STR("SetColorAndOpacity"),
-                    STR("SetOpacity"),
-                    STR("GetBrush"),
-                    STR("SetBrushSize"),
-                    STR("SetBrushTintColor"),
-                    STR("SetDesiredSizeOverride"),
-            };
-            for (auto* fn : funcNames)
-            {
-                auto* ufn = imageWidget->GetFunctionByNameInChain(fn);
-                if (ufn)
-                {
-                    int pSz = ufn->GetParmsSize();
-                    VLOG(STR("[MoriaCppMod]   FOUND: {}() ParmsSize={}\n"), fn, pSz);
-                    // Dump params
-                    for (auto* prop : ufn->ForEachProperty())
-                    {
-                        VLOG(STR("[MoriaCppMod]     param: {} @{} sz={} type={}\n"),
-                                                        std::wstring(prop->GetName()),
-                                                        prop->GetOffset_Internal(),
-                                                        prop->GetSize(),
-                                                        std::wstring(prop->GetClass().GetName()));
-                    }
-                }
-            }
-
-            VLOG(STR("[MoriaCppMod] --- IMAGE '{}' PROBE DONE ---\n"), name);
-        }
-
-        void probeSelectedRecipe()
-        {
-            VLOG(STR("[MoriaCppMod] === ICON PROBE: Selected Recipe ===\n"));
-
-            if (!m_hasLastCapture)
-            {
-                showOnScreen(Loc::get("msg.no_recipe_selected").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
-                return;
-            }
-
-            // Find the Build_Item_Medium widget that matches the last captured name
-            UObject* widget = nullptr;
-            std::vector<UObject*> widgets;
-            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
-            for (auto* w : widgets)
-            {
-                if (!w) continue;
-                std::wstring cls = safeClassName(w);
-                if (cls != L"UI_WBP_Build_Item_Medium_C") continue;
-                std::wstring name = readWidgetDisplayName(w);
-                if (name == m_lastCapturedName)
-                {
-                    widget = w;
-                    break;
-                }
-            }
-            if (!widget)
-            {
-                for (auto* w : widgets)
-                {
-                    if (!w) continue;
-                    std::wstring cls = safeClassName(w);
-                    if (cls != L"UI_WBP_Build_Item_Medium_C") continue;
-                    auto* visFunc = w->GetFunctionByNameInChain(STR("IsVisible"));
-                    if (visFunc)
-                    {
-                        struct
-                        {
-                            bool Ret{false};
-                        } vp{};
-                        w->ProcessEvent(visFunc, &vp);
-                        if (vp.Ret)
-                        {
-                            widget = w;
-                            break;
-                        }
-                    }
-                }
-            }
-            if (!widget)
-            {
-                VLOG(STR("[MoriaCppMod] No Build_Item_Medium widget found!\n"));
-                showOnScreen(Loc::get("msg.build_menu_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
-                return;
-            }
-
-            std::wstring displayName = readWidgetDisplayName(widget);
-            VLOG(STR("[MoriaCppMod] Widget: {} (name: '{}')\n"), std::wstring(widget->GetName()), displayName);
-
-            // Get the Icon Image widget at offset 1104
-            uint8_t* base = reinterpret_cast<uint8_t*>(widget);
-            UObject* iconImage = *reinterpret_cast<UObject**>(base + 1104);
-            if (iconImage && isReadableMemory(iconImage, 64))
-            {
-                std::wstring iconCls = safeClassName(iconImage);
-                VLOG(STR("[MoriaCppMod] Icon widget: {} '{}' @ {:p}\n"),
-                                                iconCls,
-                                                std::wstring(iconImage->GetName()),
-                                                static_cast<void*>(iconImage));
-
-                probeImageWidget(iconImage, L"Icon");
-
-                // Step: Probe the MaterialInstanceDynamic at brush+72
-                uint8_t* imgBase = reinterpret_cast<uint8_t*>(iconImage);
-                const int BRUSH_OFF = 264;
-                UObject* mid = *reinterpret_cast<UObject**>(imgBase + BRUSH_OFF + 72);
-                if (mid && isReadableMemory(mid, 64))
-                {
-                    try
-                    {
-                        std::wstring midCls = safeClassName(mid);
-                        VLOG(STR("[MoriaCppMod] === MID PROBE: {} '{}' ===\n"), midCls, std::wstring(mid->GetName()));
-
-                        // Dump MID properties (looking for TextureParameterValues, etc.)
-                        dumpObjectProperties(mid, L"mid", 60);
-
-                        // Try GetTextureParameterValue with common parameter names
-                        auto* getTexParam = mid->GetFunctionByNameInChain(STR("GetTextureParameterValue"));
-                        if (getTexParam)
-                        {
-                            int pSz = getTexParam->GetParmsSize();
-                            VLOG(STR("[MoriaCppMod] GetTextureParameterValue() ParmsSize={}\n"), pSz);
-                            for (auto* prop : getTexParam->ForEachProperty())
-                            {
-                                VLOG(STR("[MoriaCppMod]   param: {} @{} sz={} type={}\n"),
-                                                                std::wstring(prop->GetName()),
-                                                                prop->GetOffset_Internal(),
-                                                                prop->GetSize(),
-                                                                std::wstring(prop->GetClass().GetName()));
-                            }
-
-                            // Try common texture parameter names
-                            const wchar_t* texParamNames[] = {
-                                    STR("Texture"),
-                                    STR("BaseColor"),
-                                    STR("Icon"),
-                                    STR("DiffuseTexture"),
-                                    STR("BaseColorTexture"),
-                                    STR("MainTexture"),
-                                    STR("Image"),
-                                    STR("T_Icon"),
-                                    STR("Param"),
-                                    STR("TextureParam"),
-                            };
-                            for (auto* paramName : texParamNames)
-                            {
-                                // GetTextureParameterValue(FName ParameterName, UTexture*& OutValue) -> bool
-                                // Layout: FName(8B) + UTexture*(8B) + bool ReturnValue(1B) = 17B typically
-                                // But ParmsSize tells us the actual layout
-                                struct GetTexParamArgs
-                                {
-                                    FName ParamName;
-                                    UObject* OutValue{nullptr};
-                                    bool ReturnValue{false};
-                                    uint8_t pad[7]{}; // safety padding
-                                };
-                                GetTexParamArgs args{};
-                                args.ParamName = FName(paramName, FNAME_Add);
-                                mid->ProcessEvent(getTexParam, &args);
-
-                                if (args.ReturnValue && args.OutValue)
-                                {
-                                    std::wstring texCls = safeClassName(args.OutValue);
-                                    std::wstring texName(args.OutValue->GetName());
-                                    VLOG(STR("[MoriaCppMod] >>> GetTextureParameterValue('{}') = {} '{}' <<<\n"), paramName, texCls, texName);
-                                    // Walk outer chain for full path
-                                    UObject* cur = args.OutValue;
-                                    for (int d = 0; d < 5 && cur; d++)
-                                    {
-                                        auto* o = cur->GetOuterPrivate();
-                                        if (!o) break;
-                                        VLOG(STR("[MoriaCppMod]   outer[{}]: {} '{}'\n"), d, safeClassName(o), std::wstring(o->GetName()));
-                                        cur = o;
-                                    }
-                                    dumpObjectProperties(args.OutValue, L"tex", 30);
-                                }
-                            }
-                        }
-                        else
-                        {
-                            VLOG(STR("[MoriaCppMod] GetTextureParameterValue NOT found as UFunction\n"));
-                        }
-
-                        // Read TextureParameterValues TArray directly from MID+256
-                        // TArray layout: { void* Data (8B), int32 Num (4B), int32 Max (4B) } = 16B
-                        // FTextureParameterValue layout (UE4.27):
-                        //   FMaterialParameterInfo { FName(8B) + int32 Association(4B) + int32 Index(4B) } = 16B
-                        //   UTexture* ParameterValue = 8B
-                        //   FGuid ExpressionGUID = 16B
-                        //   Total = 40B per entry
-                        uint8_t* midBase = reinterpret_cast<uint8_t*>(mid);
-                        const int TEX_PARAMS_OFF = 256;
-                        uint8_t* arrData = *reinterpret_cast<uint8_t**>(midBase + TEX_PARAMS_OFF);
-                        int32_t arrNum = *reinterpret_cast<int32_t*>(midBase + TEX_PARAMS_OFF + 8);
-                        VLOG(STR("[MoriaCppMod] TextureParameterValues TArray: Data={:p} Num={}\n"), static_cast<void*>(arrData), arrNum);
-
-                        if (arrNum > 0 && arrNum < 32 && arrData && isReadableMemory(arrData, arrNum * 40))
-                        {
-                            // Try multiple entry sizes in case layout differs
-                            const int ENTRY_SIZES[] = {40, 48, 56, 32};
-                            for (int entrySz : ENTRY_SIZES)
-                            {
-                                VLOG(STR("[MoriaCppMod] Trying entry size {}B:\n"), entrySz);
-                                bool foundAny = false;
-
-                                for (int i = 0; i < arrNum && i < 8; i++)
-                                {
-                                    uint8_t* entry = arrData + i * entrySz;
-                                    if (!isReadableMemory(entry, entrySz)) break;
-
-                                    // Hex dump entry
-                                    std::wstring hex;
-                                    for (int b = 0; b < entrySz && b < 56; b++)
-                                    {
-                                        wchar_t h[4]{};
-                                        swprintf(h, 4, L"%02X ", entry[b]);
-                                        hex += h;
-                                    }
-                                    VLOG(STR("[MoriaCppMod]   entry[{}]: {}\n"), i, hex);
-
-                                    // Try reading UTexture* at offset 16 (after FMaterialParameterInfo)
-                                    for (int texOff : {16, 8, 24, 32})
-                                    {
-                                        if (texOff + 8 > entrySz) continue;
-                                        uint64_t val = *reinterpret_cast<uint64_t*>(entry + texOff);
-                                        if (val < 0x10000 || val > 0x00007FF000000000) continue;
-                                        UObject* texPtr = reinterpret_cast<UObject*>(val);
-                                        if (!isReadableMemory(texPtr, 64)) continue;
-                                        UObject** cs = reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(texPtr) + 0x10);
-                                        if (!isReadableMemory(cs, 8) || !*cs || !isReadableMemory(*cs, 64)) continue;
-                                        try
-                                        {
-                                            std::wstring cls = safeClassName(texPtr);
-                                            std::wstring nm(texPtr->GetName());
-                                            VLOG(STR("[MoriaCppMod]   >>> entry[{}]+{}: {} '{}' <<<\n"), i, texOff, cls, nm);
-                                            foundAny = true;
-                                            // Walk outer chain
-                                            UObject* cur = texPtr;
-                                            for (int d = 0; d < 5 && cur; d++)
-                                            {
-                                                auto* o = cur->GetOuterPrivate();
-                                                if (!o) break;
-                                                VLOG(STR("[MoriaCppMod]     outer[{}]: {} '{}'\n"),
-                                                                                d,
-                                                                                safeClassName(o),
-                                                                                std::wstring(o->GetName()));
-                                                cur = o;
-                                            }
-                                            // Dump Texture2D properties
-                                            dumpObjectProperties(texPtr, L"tex", 40);
-
-                                            // Scan texture memory for PlatformData pointer
-                                            // PlatformData contains SizeX, SizeY as consecutive int32 at its start
-                                            // FTexturePlatformData layout: int32 SizeX, int32 SizeY, int32 NumSlices, EPixelFormat PixelFormat, ...
-                                            // We look for a pointer to a struct where first 8 bytes = {SizeX, SizeY} with plausible icon sizes
-                                            uint8_t* texBase = reinterpret_cast<uint8_t*>(texPtr);
-                                            VLOG(STR("[MoriaCppMod] Texture raw scan for PlatformData (offsets 8-800):\n"));
-                                            for (int toff = 8; toff < 800; toff += 8)
-                                            {
-                                                if (!isReadableMemory(texBase + toff, 8)) break;
-                                                uint64_t tval = *reinterpret_cast<uint64_t*>(texBase + toff);
-                                                if (tval < 0x10000 || tval > 0x00007FF000000000) continue;
-                                                uint8_t* candidate = reinterpret_cast<uint8_t*>(tval);
-                                                if (!isReadableMemory(candidate, 64)) continue;
-                                                // Read first two int32s as potential SizeX, SizeY
-                                                int32_t sx = *reinterpret_cast<int32_t*>(candidate);
-                                                int32_t sy = *reinterpret_cast<int32_t*>(candidate + 4);
-                                                // Accept any reasonable texture size (removed power-of-2 and square requirements)
-                                                if (sx > 0 && sx <= 4096 && sy > 0 && sy <= 4096)
-                                                {
-                                                    VLOG(STR("[MoriaCppMod]   tex+{}: PlatformData? {}x{} @ 0x{:016X}\n"), toff, sx, sy, tval);
-                                                    // Dump first 80 bytes of PlatformData
-                                                    std::wstring pdHex;
-                                                    for (int pb = 0; pb < 80; pb++)
-                                                    {
-                                                        wchar_t h[4]{};
-                                                        swprintf(h, 4, L"%02X ", candidate[pb]);
-                                                        pdHex += h;
-                                                        if ((pb + 1) % 16 == 0)
-                                                        {
-                                                            VLOG(STR("[MoriaCppMod]     +{:3d}: {}\n"), pb - 15, pdHex);
-                                                            pdHex.clear();
-                                                        }
-                                                    }
-                                                    // Check for Mips TIndirectArray at PlatformData+16 or +20
-                                                    // TIndirectArray: void** Data, int32 Num, int32 Max
-                                                    for (int mipOff : {16, 20, 24, 32})
-                                                    {
-                                                        if (!isReadableMemory(candidate + mipOff, 16)) continue;
-                                                        uint8_t* mipArrData = *reinterpret_cast<uint8_t**>(candidate + mipOff);
-                                                        int32_t mipNum = *reinterpret_cast<int32_t*>(candidate + mipOff + 8);
-                                                        if (mipNum > 0 && mipNum <= 16 && mipArrData && isReadableMemory(mipArrData, mipNum * 8))
-                                                        {
-                                                            VLOG(STR("[MoriaCppMod]     PD+{}: Mips? Num={} Data={:p}\n"),
-                                                                                            mipOff,
-                                                                                            mipNum,
-                                                                                            static_cast<void*>(mipArrData));
-                                                            // Read first mip pointer
-                                                            uint8_t* mip0 = *reinterpret_cast<uint8_t**>(mipArrData);
-                                                            if (mip0 && isReadableMemory(mip0, 64))
-                                                            {
-                                                                // FTexture2DMipMap: int32 SizeX, SizeY, SizeZ, then FByteBulkData
-                                                                int32_t m0sx = *reinterpret_cast<int32_t*>(mip0);
-                                                                int32_t m0sy = *reinterpret_cast<int32_t*>(mip0 + 4);
-                                                                VLOG(STR("[MoriaCppMod]       Mip0: {}x{} @ {:p}\n"),
-                                                                                                m0sx,
-                                                                                                m0sy,
-                                                                                                static_cast<void*>(mip0));
-                                                                // Hex dump first 128 bytes of mip0
-                                                                if (isReadableMemory(mip0, 128))
-                                                                {
-                                                                    for (int mr = 0; mr < 128; mr += 16)
-                                                                    {
-                                                                        std::wstring mhex;
-                                                                        for (int mc = 0; mc < 16; mc++)
-                                                                        {
-                                                                            wchar_t h[4]{};
-                                                                            swprintf(h, 4, L"%02X ", mip0[mr + mc]);
-                                                                            mhex += h;
-                                                                        }
-                                                                        VLOG(STR("[MoriaCppMod]         +{:3d}: {}\n"), mr, mhex);
-                                                                    }
-                                                                }
-                                                                // Scan mip0 for heap pointers (bulk data pointer)
-                                                                VLOG(STR("[MoriaCppMod]       Mip0 pointer scan:\n"));
-                                                                for (int mp = 8; mp < 120; mp += 8)
-                                                                {
-                                                                    if (!isReadableMemory(mip0 + mp, 8)) break;
-                                                                    uint64_t mpv = *reinterpret_cast<uint64_t*>(mip0 + mp);
-                                                                    if (mpv < 0x10000 || mpv > 0x00007FF000000000) continue;
-                                                                    void* mpPtr = reinterpret_cast<void*>(mpv);
-                                                                    if (!isReadableMemory(mpPtr, 16)) continue;
-                                                                    // Check allocation size with VirtualQuery
-                                                                    MEMORY_BASIC_INFORMATION mbi{};
-                                                                    if (VirtualQuery(mpPtr, &mbi, sizeof(mbi)))
-                                                                    {
-                                                                        size_t regionSz = mbi.RegionSize;
-                                                                        VLOG(
-                                                                                STR("[MoriaCppMod]         mip0+{}: 0x{:016X} regionSz={} state={}\n"),
-                                                                                mp,
-                                                                                mpv,
-                                                                                regionSz,
-                                                                                mbi.State);
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        catch (...)
-                                        {
-                                        }
-                                    }
-                                }
-                                if (foundAny) break; // found textures with this entry size
-                            }
-                        }
-                        else if (arrNum == 0)
-                        {
-                            VLOG(STR("[MoriaCppMod] TextureParameterValues is empty!\n"));
-                        }
-
-                        VLOG(STR("[MoriaCppMod] === END MID PROBE ===\n"));
-                    }
-                    catch (...)
-                    {
-                        VLOG(STR("[MoriaCppMod] MID probe exception\n"));
-                    }
-                }
-                else
-                {
-                    VLOG(STR("[MoriaCppMod] No MID at brush+72\n"));
-                }
-            }
-            else
-            {
-                VLOG(STR("[MoriaCppMod] Icon @1104 is null or unreadable!\n"));
-            }
-
-            // Also probe blockName text for completeness
-            UObject* blockName = *reinterpret_cast<UObject**>(base + 1040);
-            if (blockName && isReadableMemory(blockName, 64))
-            {
-                auto* getTextFn = blockName->GetFunctionByNameInChain(STR("GetText"));
-                if (getTextFn && getTextFn->GetParmsSize() == sizeof(FText))
-                {
-                    FText txt{};
-                    blockName->ProcessEvent(getTextFn, &txt);
-                    if (txt.Data) VLOG(STR("[MoriaCppMod] blockName text = \"{}\"\n"), txt.ToString());
-                }
-            }
-
-            // Also probe StackCount text
-            UObject* stackCount = *reinterpret_cast<UObject**>(base + 1176);
-            if (stackCount && isReadableMemory(stackCount, 64))
-            {
-                auto* getTextFn = stackCount->GetFunctionByNameInChain(STR("GetText"));
-                if (getTextFn && getTextFn->GetParmsSize() == sizeof(FText))
-                {
-                    FText txt{};
-                    stackCount->ProcessEvent(getTextFn, &txt);
-                    if (txt.Data) VLOG(STR("[MoriaCppMod] StackCount text = \"{}\"\n"), txt.ToString());
-                }
-            }
-
-            VLOG(STR("[MoriaCppMod] === END ICON PROBE ===\n"));
-            showOnScreen(Loc::get("msg.icon_probe_done").c_str(), 5.0f, 0.0f, 1.0f, 0.5f);
-        }
-#endif // Disabled: debug probe functions
-
         // Read display name from a Build_Item_Medium widget's blockName TextBlock
         std::wstring readWidgetDisplayName(UObject* widget)
         {
             uint8_t* base = reinterpret_cast<uint8_t*>(widget);
-            UObject* blockNameWidget = *reinterpret_cast<UObject**>(base + 1040);
+            if (s_off_blockName == -2) resolveOffset(widget, L"blockName", s_off_blockName);
+            if (s_off_blockName < 0) return L"";
+            UObject* blockNameWidget = *reinterpret_cast<UObject**>(base + s_off_blockName);
             if (!blockNameWidget) return L"";
 
             auto* getTextFunc = blockNameWidget->GetFunctionByNameInChain(STR("GetText"));
@@ -6149,26 +4711,17 @@ namespace MoriaMods
             uint8_t params[132]{};
             bool gotFreshBLock = false;
 
-            // BEST: read fresh bLock directly from the matched widget (offset discovered at runtime)
-            if (m_bLockWidgetOffset >= 0)
+            // Resolve bLock offset on first quickbuild (walks inheritance chain to UI_WBP_Build_Item_C)
+            if (s_off_bLock == -2)
+                resolveOffset(matchedWidget, L"bLock", s_off_bLock);
+
+            // BEST: read fresh bLock directly from the matched widget (offset resolved via reflection)
+            if (s_off_bLock >= 0)
             {
                 uint8_t* widgetBase = reinterpret_cast<uint8_t*>(matchedWidget);
-                if (m_bLockIsIndirect)
-                {
-                    uint8_t* ptr = *reinterpret_cast<uint8_t**>(widgetBase + m_bLockWidgetOffset);
-                    if (ptr && isReadableMemory(ptr, BLOCK_DATA_SIZE))
-                    {
-                        std::memcpy(params, ptr, BLOCK_DATA_SIZE);
-                        gotFreshBLock = true;
-                        VLOG(STR("[MoriaCppMod] [QuickBuild]   using FRESH bLock from widget (indirect @{})\n"), m_bLockWidgetOffset);
-                    }
-                }
-                else
-                {
-                    std::memcpy(params, widgetBase + m_bLockWidgetOffset, BLOCK_DATA_SIZE);
-                    gotFreshBLock = true;
-                    VLOG(STR("[MoriaCppMod] [QuickBuild]   using FRESH bLock from widget (direct @{})\n"), m_bLockWidgetOffset);
-                }
+                std::memcpy(params, widgetBase + s_off_bLock, BLOCK_DATA_SIZE);
+                gotFreshBLock = true;
+                VLOG(STR("[MoriaCppMod] [QuickBuild]   using FRESH bLock from widget (@0x{:X})\n"), s_off_bLock);
             }
 
             // FALLBACK: use captured bLock from assignment (may have stale pointer at +104)
@@ -6196,6 +4749,8 @@ namespace MoriaMods
             } guard{m_isAutoSelecting};
             buildTab->ProcessEvent(func, params);
             m_isAutoSelecting = false;
+
+            logBLockDiagnostics(L"BUILD", targetName, params);
 
             showOnScreen((L"Build: " + targetName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
             m_buildMenuWasOpen = true;       // track menu so we refresh ActionBar when it closes
@@ -6328,11 +4883,10 @@ namespace MoriaMods
 
         void selectRecipeByTargetName(UObject* buildTab)
         {
-            VLOG(STR("[MoriaCppMod] [TargetBuild] Searching: name='{}' recipeRef='{}' bLockOffset={} indirect={}\n"),
+            VLOG(STR("[MoriaCppMod] [TargetBuild] Searching: name='{}' recipeRef='{}' bLockOffset=0x{:X}\n"),
                                             m_targetBuildName,
                                             m_targetBuildRecipeRef,
-                                            m_bLockWidgetOffset,
-                                            m_bLockIsIndirect);
+                                            s_off_bLock);
 
             // Build FName from our recipeRef for ComparisonIndex matching
             // Try several forms the DataTable row name might use
@@ -6386,6 +4940,10 @@ namespace MoriaMods
                 std::wstring name = readWidgetDisplayName(w);
                 bool isFirstFew = (visibleCount <= 5);
 
+                // Resolve bLock offset on first visible widget (walks inheritance chain)
+                if (s_off_bLock == -2)
+                    resolveOffset(w, L"bLock", s_off_bLock);
+
                 // Log first 5 widgets in detail for diagnostics
                 if (isFirstFew)
                 {
@@ -6394,35 +4952,25 @@ namespace MoriaMods
                 }
 
                 // Strategy 1: bLock-based matching via Variants->ResultConstructionHandle RowName
-                if (!matchedWidget && m_bLockWidgetOffset >= 0 && !m_targetBuildRecipeRef.empty())
+                if (!matchedWidget && s_off_bLock >= 0 && !m_targetBuildRecipeRef.empty())
                 {
                     uint8_t* widgetBase = reinterpret_cast<uint8_t*>(w);
-                    uint8_t* bLock = nullptr;
+                    uint8_t* bLock = widgetBase + s_off_bLock;
 
-                    if (m_bLockIsIndirect)
-                    {
-                        uint8_t* ptr = *reinterpret_cast<uint8_t**>(widgetBase + m_bLockWidgetOffset);
-                        if (ptr && isReadableMemory(ptr, BLOCK_DATA_SIZE)) bLock = ptr;
-                    }
-                    else
-                    {
-                        bLock = widgetBase + m_bLockWidgetOffset;
-                    }
-
-                    if (!bLock)
+                    if (!isReadableMemory(bLock, BLOCK_DATA_SIZE))
                     {
                         bLockNullCount++;
                         if (isFirstFew) VLOG(STR("[MoriaCppMod] [TargetBuild]     bLock=NULL\n"));
                     }
-                    else if (!isReadableMemory(bLock + 104, 16))
+                    else if (!isReadableMemory(bLock + RECIPE_BLOCK_VARIANTS, 16))
                     {
                         bLockMemFailCount++;
                         if (isFirstFew) VLOG(STR("[MoriaCppMod] [TargetBuild]     bLock+104 not readable\n"));
                     }
                     else
                     {
-                        uint8_t* variantsPtr = *reinterpret_cast<uint8_t**>(bLock + 104);
-                        int32_t variantsCount = *reinterpret_cast<int32_t*>(bLock + 112);
+                        uint8_t* variantsPtr = *reinterpret_cast<uint8_t**>(bLock + RECIPE_BLOCK_VARIANTS);
+                        int32_t variantsCount = *reinterpret_cast<int32_t*>(bLock + RECIPE_BLOCK_VARIANTS_NUM);
 
                         if (isFirstFew)
                         {
@@ -6443,8 +4991,8 @@ namespace MoriaMods
                         else if (isReadableMemory(variantsPtr, 0xE8))
                         {
                             // Read ResultConstructionHandle.RowName at variant+0xE0
-                            uint32_t rowCI = *reinterpret_cast<uint32_t*>(variantsPtr + 0xE0);
-                            int32_t rowNum = *reinterpret_cast<int32_t*>(variantsPtr + 0xE4);
+                            uint32_t rowCI = *reinterpret_cast<uint32_t*>(variantsPtr + VARIANT_ROW_CI);
+                            int32_t rowNum = *reinterpret_cast<int32_t*>(variantsPtr + VARIANT_ROW_NUM);
 
                             if (isFirstFew)
                             {
@@ -6520,23 +5068,11 @@ namespace MoriaMods
 
             // Read fresh bLock data from the matched widget
             bool gotFreshBLock = false;
-            if (m_bLockWidgetOffset >= 0)
+            if (s_off_bLock >= 0)
             {
                 uint8_t* widgetBase = reinterpret_cast<uint8_t*>(matchedWidget);
-                if (m_bLockIsIndirect)
-                {
-                    uint8_t* ptr = *reinterpret_cast<uint8_t**>(widgetBase + m_bLockWidgetOffset);
-                    if (ptr && isReadableMemory(ptr, BLOCK_DATA_SIZE))
-                    {
-                        std::memcpy(params, ptr, BLOCK_DATA_SIZE);
-                        gotFreshBLock = true;
-                    }
-                }
-                else
-                {
-                    std::memcpy(params, widgetBase + m_bLockWidgetOffset, BLOCK_DATA_SIZE);
-                    gotFreshBLock = true;
-                }
+                std::memcpy(params, widgetBase + s_off_bLock, BLOCK_DATA_SIZE);
+                gotFreshBLock = true;
             }
 
             VLOG(STR("[MoriaCppMod] [TargetBuild] Calling blockSelectedEvent: freshBLock={} selfRef={:p}\n"),
@@ -6556,6 +5092,8 @@ namespace MoriaMods
             buildTab->ProcessEvent(func, params);
             m_isAutoSelecting = false;
 
+            logBLockDiagnostics(L"TARGET-BUILD", matchedName, params);
+
             showOnScreen((L"Build: " + matchedName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
             m_buildMenuWasOpen = true;       // track menu so we refresh ActionBar when it closes
             refreshActionBar();              // also refresh immediately after recipe selection
@@ -6573,6 +5111,7 @@ namespace MoriaMods
         // Helper: set a UImage's brush to a texture via ProcessEvent
         void umgSetBrush(UObject* img, UObject* texture, UFunction* setBrushFn)
         {
+            ensureBrushOffset(img); // resolve Brush property offset on first call
             auto* pTex = findParam(setBrushFn, STR("Texture"));
             auto* pMatch = findParam(setBrushFn, STR("bMatchSize"));
             int sz = setBrushFn->GetParmsSize();
@@ -6713,49 +5252,50 @@ namespace MoriaMods
         // Helper: set bold typeface on a UTextBlock by patching FSlateFontInfo.TypefaceFontName
         // FSlateFontInfo layout (SlateCore.hpp:309): FontObject@0x00, FontMaterial@0x08,
         //   OutlineSettings@0x10(0x20), TypefaceFontName@0x40(FName), Size@0x48, LetterSpacing@0x4C
-        // UTextBlock::Font property at offset 0x0188 (size 0x58)
         void umgSetBold(UObject* textBlock)
         {
             if (!textBlock) return;
             auto* setFontFn = textBlock->GetFunctionByNameInChain(STR("SetFont"));
             if (!setFontFn) return;
+            int fontOff = resolveOffset(textBlock, L"Font", s_off_font);
+            if (fontOff < 0) return;
             auto* pFontInfo = findParam(setFontFn, STR("InFontInfo"));
             if (!pFontInfo) return;
 
             // Read current FSlateFontInfo from the TextBlock
             uint8_t* tbRaw = reinterpret_cast<uint8_t*>(textBlock);
-            uint8_t fontBuf[0x58];
-            std::memcpy(fontBuf, tbRaw + 0x0188, 0x58);
+            uint8_t fontBuf[FONT_STRUCT_SIZE];
+            std::memcpy(fontBuf, tbRaw + fontOff, FONT_STRUCT_SIZE);
 
-            // Patch TypefaceFontName (FName at offset 0x40) to "Bold"
+            // Patch TypefaceFontName to "Bold"
             RC::Unreal::FName boldName(STR("Bold"), RC::Unreal::FNAME_Add);
-            std::memcpy(fontBuf + 0x40, &boldName, sizeof(RC::Unreal::FName));
+            std::memcpy(fontBuf + FONT_TYPEFACE_NAME, &boldName, sizeof(RC::Unreal::FName));
 
             // Call SetFont with the patched FSlateFontInfo
             int sz = setFontFn->GetParmsSize();
             std::vector<uint8_t> buf(sz, 0);
-            std::memcpy(buf.data() + pFontInfo->GetOffset_Internal(), fontBuf, 0x58);
+            std::memcpy(buf.data() + pFontInfo->GetOffset_Internal(), fontBuf, FONT_STRUCT_SIZE);
             textBlock->ProcessEvent(setFontFn, buf.data());
         }
 
-        // Set font size on a UTextBlock (patches FSlateFontInfo.Size at struct offset 0x48)
         void umgSetFontSize(UObject* textBlock, int32_t fontSize)
         {
             if (!textBlock) return;
             auto* setFontFn = textBlock->GetFunctionByNameInChain(STR("SetFont"));
             if (!setFontFn) return;
+            int fontOff = resolveOffset(textBlock, L"Font", s_off_font);
+            if (fontOff < 0) return;
             auto* pFontInfo = findParam(setFontFn, STR("InFontInfo"));
             if (!pFontInfo) return;
 
             uint8_t* tbRaw = reinterpret_cast<uint8_t*>(textBlock);
-            uint8_t fontBuf[0x58];
-            std::memcpy(fontBuf, tbRaw + 0x0188, 0x58);
-            // Patch Size (int32 at offset 0x48)
-            std::memcpy(fontBuf + 0x48, &fontSize, sizeof(int32_t));
+            uint8_t fontBuf[FONT_STRUCT_SIZE];
+            std::memcpy(fontBuf, tbRaw + fontOff, FONT_STRUCT_SIZE);
+            std::memcpy(fontBuf + FONT_SIZE, &fontSize, sizeof(int32_t));
 
             int sz = setFontFn->GetParmsSize();
             std::vector<uint8_t> buf(sz, 0);
-            std::memcpy(buf.data() + pFontInfo->GetOffset_Internal(), fontBuf, 0x58);
+            std::memcpy(buf.data() + pFontInfo->GetOffset_Internal(), fontBuf, FONT_STRUCT_SIZE);
             textBlock->ProcessEvent(setFontFn, buf.data());
         }
 
@@ -6802,6 +5342,7 @@ namespace MoriaMods
         // Helper: set brush WITHOUT matching size (for icon images that need explicit sizing)
         void umgSetBrushNoMatch(UObject* img, UObject* texture, UFunction* setBrushFn)
         {
+            ensureBrushOffset(img);
             auto* pTex = findParam(setBrushFn, STR("Texture"));
             auto* pMatch = findParam(setBrushFn, STR("bMatchSize"));
             int sz = setBrushFn->GetParmsSize();
@@ -6838,8 +5379,8 @@ namespace MoriaMods
 
                 // Read the icon texture's native size from the brush (FSlateBrush.ImageSize at UImage+0x108+0x08)
                 uint8_t* iBase = reinterpret_cast<uint8_t*>(m_umgIconImages[slot]);
-                float texW = *reinterpret_cast<float*>(iBase + 0x108 + 0x08);
-                float texH = *reinterpret_cast<float*>(iBase + 0x108 + 0x0C);
+                float texW = *reinterpret_cast<float*>(iBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
+                float texH = *reinterpret_cast<float*>(iBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
 
                 // Get state icon size as the container bounds
                 float containerW = 64.0f;
@@ -6847,8 +5388,8 @@ namespace MoriaMods
                 if (m_umgStateImages[slot])
                 {
                     uint8_t* sBase = reinterpret_cast<uint8_t*>(m_umgStateImages[slot]);
-                    containerW = *reinterpret_cast<float*>(sBase + 0x108 + 0x08);
-                    containerH = *reinterpret_cast<float*>(sBase + 0x108 + 0x0C);
+                    containerW = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
+                    containerH = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
                 }
                 if (containerW < 1.0f) containerW = 64.0f;
                 if (containerH < 1.0f) containerH = 64.0f;
@@ -7042,7 +5583,8 @@ namespace MoriaMods
             if (!userWidget) { showOnScreen(L"UMG: CreateWidget null!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
 
             // --- Phase C2: Get WidgetTree ---
-            UObject* widgetTree = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + 0x01D8);
+            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
+            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // --- Phase C3: Build widget tree ---
@@ -7058,7 +5600,7 @@ namespace MoriaMods
 
             // Set as WidgetTree root
             if (widgetTree)
-                *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + 0x0028) = outerBorder;
+                setRootWidget(widgetTree, outerBorder);
 
             // Outer border: fully transparent (invisible frame)
             auto* setBrushColorFn = outerBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
@@ -7171,11 +5713,11 @@ namespace MoriaMods
                 if (i == 0)
                 {
                     uint8_t* fBase = reinterpret_cast<uint8_t*>(frameImg);
-                    frameW = *reinterpret_cast<float*>(fBase + 0x108 + 0x08);
-                    frameH = *reinterpret_cast<float*>(fBase + 0x108 + 0x0C);
+                    frameW = *reinterpret_cast<float*>(fBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
+                    frameH = *reinterpret_cast<float*>(fBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
                     uint8_t* sBase = reinterpret_cast<uint8_t*>(stateImg);
-                    stateW = *reinterpret_cast<float*>(sBase + 0x108 + 0x08);
-                    stateH = *reinterpret_cast<float*>(sBase + 0x108 + 0x0C);
+                    stateW = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
+                    stateH = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
                     VLOG(STR("[MoriaCppMod] [UMG] Frame icon: {}x{}, State icon: {}x{}\n"),
                                                     frameW, frameH, stateW, stateH);
                 }
@@ -7583,7 +6125,8 @@ namespace MoriaMods
             if (!userWidget) { showOnScreen(L"AB: CreateWidget null!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
 
             // --- Get WidgetTree ---
-            UObject* widgetTree = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + 0x01D8);
+            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
+            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // --- Cache SetBrushFromTexture ---
@@ -7597,7 +6140,7 @@ namespace MoriaMods
             if (!outerBorder) return;
 
             if (widgetTree)
-                *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + 0x0028) = outerBorder;
+                setRootWidget(widgetTree, outerBorder);
 
             auto* setBrushColorFn = outerBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
             if (setBrushColorFn)
@@ -7661,13 +6204,13 @@ namespace MoriaMods
                 umgSetBrush(iconImg, texToolsIcon, setBrushFn);
                 umgSetOpacity(iconImg, 1.0f);
                 uint8_t* iBase = reinterpret_cast<uint8_t*>(iconImg);
-                float texW = *reinterpret_cast<float*>(iBase + 0x108 + 0x08);
-                float texH = *reinterpret_cast<float*>(iBase + 0x108 + 0x0C);
+                float texW = *reinterpret_cast<float*>(iBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
+                float texH = *reinterpret_cast<float*>(iBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
                 if (texW > 0.0f && texH > 0.0f)
                 {
                     uint8_t* sBase = reinterpret_cast<uint8_t*>(stateImg);
-                    float containerW = *reinterpret_cast<float*>(sBase + 0x108 + 0x08);
-                    float containerH = *reinterpret_cast<float*>(sBase + 0x108 + 0x0C);
+                    float containerW = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
+                    float containerH = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
                     if (containerW < 1.0f) containerW = 64.0f;
                     if (containerH < 1.0f) containerH = 64.0f;
                     float scaleX = containerW / texW;
@@ -7683,11 +6226,11 @@ namespace MoriaMods
 
             // Read native sizes
             uint8_t* fBase = reinterpret_cast<uint8_t*>(frameImg);
-            float frameW = *reinterpret_cast<float*>(fBase + 0x108 + 0x08);
-            float frameH = *reinterpret_cast<float*>(fBase + 0x108 + 0x0C);
+            float frameW = *reinterpret_cast<float*>(fBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
+            float frameH = *reinterpret_cast<float*>(fBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
             uint8_t* sBase = reinterpret_cast<uint8_t*>(stateImg);
-            float stateW = *reinterpret_cast<float*>(sBase + 0x108 + 0x08);
-            float stateH = *reinterpret_cast<float*>(sBase + 0x108 + 0x0C);
+            float stateW = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
+            float stateH = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
 
             // Create Overlay for state + icon
             FStaticConstructObjectParameters olP(overlayClass, outer);
@@ -8011,7 +6554,8 @@ namespace MoriaMods
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) return;
 
-            UObject* widgetTree = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + 0x01D8);
+            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
+            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // Root SizeBox — enforces fixed width so TextBlocks can wrap text
@@ -8023,7 +6567,7 @@ namespace MoriaMods
                 if (rootSizeBox)
                 {
                     if (widgetTree)
-                        *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + 0x0028) = rootSizeBox;
+                        setRootWidget(widgetTree, rootSizeBox);
                     // SetWidthOverride(550) — hard width constraint for text wrapping
                     auto* setWFn = rootSizeBox->GetFunctionByNameInChain(STR("SetWidthOverride"));
                     if (setWFn) { int sz = setWFn->GetParmsSize(); std::vector<uint8_t> wp(sz, 0); auto* p = findParam(setWFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = 550.0f; rootSizeBox->ProcessEvent(setWFn, wp.data()); }
@@ -8052,7 +6596,7 @@ namespace MoriaMods
             }
             else if (widgetTree)
             {
-                *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + 0x0028) = rootBorder;
+                setRootWidget(widgetTree, rootBorder);
             }
 
             auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
@@ -8337,7 +6881,8 @@ namespace MoriaMods
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) return;
 
-            UObject* widgetTree = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + 0x01D8);
+            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
+            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // Root border (dark blue bg — same as Target Info)
@@ -8345,7 +6890,7 @@ namespace MoriaMods
             UObject* rootBorder = UObjectGlobals::StaticConstructObject(borderP);
             if (!rootBorder) return;
             if (widgetTree)
-                *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + 0x0028) = rootBorder;
+                setRootWidget(widgetTree, rootBorder);
 
             auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
             if (setBrushColorFn)
@@ -8821,19 +7366,21 @@ namespace MoriaMods
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) return;
 
-            UObject* widgetTree = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + 0x01D8);
+            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
+            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // Make widget focusable for modal input mode
             uint8_t* uwRaw = reinterpret_cast<uint8_t*>(userWidget);
-            uwRaw[0x01E4] |= 0x02; // bIsFocusable (bit 1 at 0x01E4)
+            int focOff = resolveOffset(userWidget, L"bIsFocusable", s_off_bIsFocusable);
+            if (focOff >= 0) uwRaw[focOff] |= 0x02;
 
             // Root SizeBox to enforce fixed 1400x450 size
             FStaticConstructObjectParameters rootSbP(sizeBoxClass, outer);
             UObject* rootSizeBox = UObjectGlobals::StaticConstructObject(rootSbP);
             if (!rootSizeBox) return;
             if (widgetTree)
-                *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + 0x0028) = rootSizeBox;
+                setRootWidget(widgetTree, rootSizeBox);
             // SetWidthOverride(1400) and SetHeightOverride(900)
             auto* setWidthOvFn = rootSizeBox->GetFunctionByNameInChain(STR("SetWidthOverride"));
             if (setWidthOvFn) { int sz = setWidthOvFn->GetParmsSize(); std::vector<uint8_t> wp(sz, 0); auto* p = findParam(setWidthOvFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = 1400.0f; rootSizeBox->ProcessEvent(setWidthOvFn, wp.data()); }
@@ -9771,7 +8318,8 @@ namespace MoriaMods
             if (!userWidget) { showOnScreen(L"MC: CreateWidget null!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
 
             // --- Get WidgetTree ---
-            UObject* widgetTree = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + 0x01D8);
+            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
+            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // --- Cache SetBrushFromTexture ---
@@ -9786,7 +8334,7 @@ namespace MoriaMods
             if (!outerBorder) return;
 
             if (widgetTree)
-                *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + 0x0028) = outerBorder;
+                setRootWidget(widgetTree, outerBorder);
 
             auto* setBrushColorFn = outerBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
             if (setBrushColorFn)
@@ -9889,11 +8437,11 @@ namespace MoriaMods
                     if (i == 0)
                     {
                         uint8_t* fBase = reinterpret_cast<uint8_t*>(frameImg);
-                        frameW = *reinterpret_cast<float*>(fBase + 0x108 + 0x08);
-                        frameH = *reinterpret_cast<float*>(fBase + 0x108 + 0x0C);
+                        frameW = *reinterpret_cast<float*>(fBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
+                        frameH = *reinterpret_cast<float*>(fBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
                         uint8_t* sBase = reinterpret_cast<uint8_t*>(stateImg);
-                        stateW = *reinterpret_cast<float*>(sBase + 0x108 + 0x08);
-                        stateH = *reinterpret_cast<float*>(sBase + 0x108 + 0x0C);
+                        stateW = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
+                        stateH = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
                         VLOG(STR("[MoriaCppMod] [MC] Frame: {}x{}, State: {}x{}\n"),
                                                         frameW, frameH, stateW, stateH);
                         m_mcSlot0Overlay = overlay; // save for rotation label (added after loop)
@@ -10134,8 +8682,8 @@ namespace MoriaMods
                             umgSetBrush(m_mcStateImages[i], texActive, setBrushFn);
                         // Scale icon to 70% with aspect ratio preservation
                         uint8_t* iBase = reinterpret_cast<uint8_t*>(m_mcIconImages[i]);
-                        float texW = *reinterpret_cast<float*>(iBase + 0x108 + 0x08);
-                        float texH = *reinterpret_cast<float*>(iBase + 0x108 + 0x0C);
+                        float texW = *reinterpret_cast<float*>(iBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
+                        float texH = *reinterpret_cast<float*>(iBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
                         if (texW > 0.0f && texH > 0.0f)
                         {
                             // Get state icon size as container bounds
@@ -10143,8 +8691,8 @@ namespace MoriaMods
                             if (m_mcStateImages[i])
                             {
                                 uint8_t* sBase = reinterpret_cast<uint8_t*>(m_mcStateImages[i]);
-                                containerW = *reinterpret_cast<float*>(sBase + 0x108 + 0x08);
-                                containerH = *reinterpret_cast<float*>(sBase + 0x108 + 0x0C);
+                                containerW = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
+                                containerH = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
                             }
                             if (containerW < 1.0f) containerW = 64.0f;
                             if (containerH < 1.0f) containerH = 64.0f;
@@ -10495,9 +9043,10 @@ namespace MoriaMods
             params[16] = 0; // EMouseLockMode::DoNotLock
             wblCDO->ProcessEvent(uiFunc, params);
 
-            // Set bShowMouseCursor bit (offset 0x0448, bit 0)
+            // Set bShowMouseCursor bit
+            int mcOff = resolveOffset(pc, L"bShowMouseCursor", s_off_showMouseCursor);
             uint8_t* pcRaw = reinterpret_cast<uint8_t*>(pc);
-            pcRaw[0x0448] |= 0x01;
+            if (mcOff >= 0) pcRaw[mcOff] |= 0x01;
 
             VLOG(STR("[MoriaCppMod] Input mode → UI Only (mouse cursor ON)\n"));
         }
@@ -10522,9 +9071,10 @@ namespace MoriaMods
             std::memcpy(params + 0, &pc, 8);
             wblCDO->ProcessEvent(gameFunc, params);
 
-            // Clear bShowMouseCursor bit (offset 0x0448, bit 0)
+            // Clear bShowMouseCursor bit
+            int mcOff = resolveOffset(pc, L"bShowMouseCursor", s_off_showMouseCursor);
             uint8_t* pcRaw = reinterpret_cast<uint8_t*>(pc);
-            pcRaw[0x0448] &= ~0x01;
+            if (mcOff >= 0) pcRaw[mcOff] &= ~0x01;
 
             VLOG(STR("[MoriaCppMod] Input mode → Game Only (mouse cursor OFF)\n"));
         }
@@ -10577,7 +9127,10 @@ namespace MoriaMods
                 auto* widgetTree = UObjectGlobals::StaticConstructObject(wtP);
                 if (widgetTree)
                 {
-                    *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + 0x0058) = widgetTree;
+                    // Set WidgetTree on UserWidget via reflected offset
+                    if (s_off_widgetTree == -2) resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
+                    if (s_off_widgetTree >= 0)
+                        *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + s_off_widgetTree) = widgetTree;
 
                     // Create a TextBlock as root
                     auto* tbClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
@@ -10587,7 +9140,7 @@ namespace MoriaMods
                         auto* textBlock = UObjectGlobals::StaticConstructObject(tbP);
                         if (textBlock)
                         {
-                            *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + 0x0028) = textBlock;
+                            setRootWidget(widgetTree, textBlock);
                             umgSetText(textBlock, L"Using the mouse move the toolbar(s) into your desired positions, hit ESC to exit.");
                             // Yellow text for visibility
                             umgSetTextColor(textBlock, 1.0f, 0.95f, 0.2f, 1.0f);
@@ -10695,7 +9248,8 @@ namespace MoriaMods
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) return;
 
-            UObject* widgetTree = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + 0x01D8);
+            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
+            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // Root border (dark blue bg — same as real info box)
@@ -10703,7 +9257,7 @@ namespace MoriaMods
             UObject* rootBorder = UObjectGlobals::StaticConstructObject(borderP);
             if (!rootBorder) return;
             if (widgetTree)
-                *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + 0x0028) = rootBorder;
+                setRootWidget(widgetTree, rootBorder);
 
             auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
             if (setBrushColorFn)
@@ -10883,23 +9437,6 @@ namespace MoriaMods
             showTargetInfoUMG(name, display, path, cls, buildable, recipe, rowName);
         }
 
-        // ── startRotationSpy — DISABLED: keybind removed ──
-#if 0
-        void startRotationSpy()
-        {
-            if (m_spyActive)
-            {
-                VLOG(STR("[MoriaCppMod] [Spy] Already active\n"));
-                return;
-            }
-            m_spyActive = true;
-            m_spyFrameCount = 0;
-            VLOG(STR("[MoriaCppMod] [Spy] === ROTATION SPY ACTIVE — press R now! ===\n"));
-            showOnScreen(L"SPY ACTIVE - press R now!", 5.0f, 1.0f, 1.0f, 0.0f);
-        }
-#endif
-
-
         void undoLast()
         {
             if (m_undoStack.empty())
@@ -10999,14 +9536,14 @@ namespace MoriaMods
         // on_update (per-frame tick: state machines, replay, UMG config, keybinds)
         MoriaCppMod()
         {
-            ModVersion = STR("1.8");
+            ModVersion = STR("2.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
             // Init removal list CS before loadSaveFile can be called
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v1.8\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v2.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -11194,62 +9731,21 @@ namespace MoriaMods
                 std::memcpy(s_instance->m_lastCapturedBLock, p, BLOCK_DATA_SIZE);
                 s_instance->m_hasLastCapture = true;
                 VLOG(STR("[MoriaCppMod] [QuickBuild] Captured: '{}' (with bLock data)\n"), displayName);
+                s_instance->logBLockDiagnostics(L"CAPTURE", displayName, p);
 
                 // Reset total rotation for new build piece selection
                 s_overlay.totalRotation = 0;
                 s_overlay.needsUpdate = true;
                 s_instance->updateMcRotationLabel();
 
-                // ONE-TIME: scan selfRef widget memory to find where bLock data lives
-                // This discovers the offset so we can read fresh recipe data at activation time
-                if (s_instance->m_bLockWidgetOffset < 0)
-                {
-                    uint8_t* widgetBase = reinterpret_cast<uint8_t*>(selfRef);
-                    // Scan first 2048 bytes of widget for the bLock data
-                    // Match on first 16 bytes (should be unique enough — recipe identifier)
-                    for (int off = 0; off <= 2048 - BLOCK_DATA_SIZE; off += 8)
-                    {
-                        if (std::memcmp(widgetBase + off, p, 16) == 0)
-                        {
-                            // Verify full 120-byte match (skip bytes 104-111 which is the volatile pointer)
-                            bool match = (std::memcmp(widgetBase + off, p, 104) == 0) && (std::memcmp(widgetBase + off + 112, p + 112, 8) == 0);
-                            if (match)
-                            {
-                                s_instance->m_bLockWidgetOffset = off;
-                                VLOG(STR("[MoriaCppMod] [QuickBuild] DISCOVERED: bLock data at widget offset {} (0x{:X})\n"), off, off);
-                                break;
-                            }
-                        }
-                    }
-                    if (s_instance->m_bLockWidgetOffset < 0)
-                    {
-                        // Try indirect: check if widget has a pointer to memory containing bLock
-                        for (int off = 0; off <= 2048 - 8; off += 8)
-                        {
-                            uint8_t* ptr = *reinterpret_cast<uint8_t**>(widgetBase + off);
-                            if (!ptr || !isReadableMemory(ptr, BLOCK_DATA_SIZE)) continue;
-                            if (std::memcmp(ptr, p, 104) == 0 && std::memcmp(ptr + 112, p + 112, 8) == 0)
-                            {
-                                // Found it via pointer indirection
-                                s_instance->m_bLockWidgetOffset = off;
-                                s_instance->m_bLockIsIndirect = true;
-                                VLOG(STR("[MoriaCppMod] [QuickBuild] DISCOVERED: bLock via POINTER at widget offset {} (0x{:X})\n"),
-                                                                off,
-                                                                off);
-                                break;
-                            }
-                        }
-                    }
-                    if (s_instance->m_bLockWidgetOffset < 0)
-                    {
-                        VLOG(STR("[MoriaCppMod] [QuickBuild] WARNING: bLock data NOT found in widget memory!\n"));
-                    }
-                }
+                // ONE-TIME: resolve bLock property offset via reflection
+                if (s_off_bLock == -2)
+                    resolveOffset(selfRef, L"bLock", s_off_bLock);
             });
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v1.8: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v2.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
         }
 
         // Per-frame tick. Drives all state machines and periodic tasks:
@@ -11258,7 +9754,7 @@ namespace MoriaMods
         //   - Toolbar swap phases (resolve → stash → restore)
         //   - Quick-build state machine (open menu → find widget → select recipe)
         //   - Icon extraction pipeline (render target → export → PNG conversion)
-        //   - Clear-hotbar progress, config window actions, periodic rescans
+        //   - Config window actions, periodic rescans
         auto on_update() -> void override
         {
 
@@ -11907,10 +10403,14 @@ namespace MoriaMods
             }
 
             // Detect build menu close → refresh ActionBar (fixes stale hotbar display)
-            // Now uses cheap isBuildTabShowing() instead of FindAllOf every 15 frames
+            // Uses cheap isBuildTabShowing() — cached pointer with GC-flag validation
             if (m_buildMenuWasOpen && !isBuildTabShowing())
             {
                 m_buildMenuWasOpen = false;
+                // Clear cached pointers — Build_Tab widget may be getting destroyed
+                m_cachedBuildTab = nullptr;
+                m_cachedBuildHUD = nullptr;
+                m_fnIsShowing = nullptr;
                 refreshActionBar();
             }
 
@@ -12134,6 +10634,7 @@ namespace MoriaMods
                     // Clear swap state — handles become stale on world unload
                     m_bodyInvHandle.clear();
                     m_bodyInvHandles.clear();
+                    m_repairDone = false;
                     m_bagHandle.clear();
                     m_ihfCDO = nullptr;
                     m_dropItemMgr = nullptr;
