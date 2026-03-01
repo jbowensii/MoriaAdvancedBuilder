@@ -1,5 +1,5 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  MoriaCppMod v2.0 — Advanced Builder & HISM Removal for Return to Moria   ║
+// ║  MoriaCppMod v2.1 — Advanced Builder & HISM Removal for Return to Moria   ║
 // ║                                                                            ║
 // ║  A UE4SS C++ mod for Return to Moria (UE4.27) providing:                  ║
 // ║    - HISM instance hiding with persistence across sessions/worlds          ║
@@ -60,6 +60,7 @@
 #include <Unreal/NameTypes.hpp>
 #include <Unreal/FString.hpp>
 #include <Unreal/FText.hpp>
+#include <Unreal/Property/FBoolProperty.hpp>
 
 #include "moria_testable.h"
 
@@ -75,6 +76,15 @@ namespace MoriaMods
     // NOLINTNEXTLINE(cppcoreguidelines-macro-usage) — macro needed to short-circuit variadic template
     #define VLOG(...) do { if (s_verbose) Output::send<LogLevel::Warning>(__VA_ARGS__); } while (0)
 
+    // QuickBuild/TargetBuild logging — compile-time switch (0=off, 1=on)
+    #define QUICKBUILD_LOGGING 0
+    // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+    #if QUICKBUILD_LOGGING
+        #define QBLOG(...) do { if (s_verbose) Output::send<LogLevel::Warning>(__VA_ARGS__); } while (0)
+    #else
+        #define QBLOG(...) do {} while (0)
+    #endif
+
     // ════════════════════════════════════════════════════════════════════════════
     // Section 2: Geometry Structs, Data Types & Constants
     //   FVec3f, FQuat4f, FRotator3f, FTransformRaw — raw UE4.27 float types
@@ -86,19 +96,14 @@ namespace MoriaMods
     static constexpr float DEG2RAD = MY_PI / 180.0f;
     static constexpr float TRACE_DIST = 5000.0f;   // 50m (was 500m — way too far)
     static constexpr float POS_TOLERANCE = 100.0f; // 1 meter — game scale is huge (walls = 2000 units)
-    static constexpr int STREAM_CHECK_INTERVAL = 180;
-
     // ── Cached property offsets (resolved via ForEachProperty on first use) ──
     // -2 = not yet resolved, -1 = property not found
     static inline int s_off_widgetTree = -2;       // UUserWidget::WidgetTree
     static inline int s_off_rootWidget = -2;       // UWidgetTree::RootWidget
-    static inline int s_off_bIsFocusable = -2;     // UUserWidget::bIsFocusable
     static inline int s_off_font = -2;             // UTextBlock::Font
     static inline int s_off_brush = -2;            // UImage::Brush
-    static inline int s_off_showMouseCursor = -2;  // APlayerController::bShowMouseCursor
     static inline int s_off_charMovement = -2;     // ACharacter::CharacterMovement
     static inline int s_off_capsuleComp = -2;      // ACharacter::CapsuleComponent
-    static inline int s_off_bCheatFlying = -2;     // UCharacterMovementComponent::bCheatFlying
     static inline int s_off_recipeSelectMode = -2; // UI_WBP_BuildHUDv2_C::recipeSelectMode
     static inline int s_off_bLock = -2;            // UI_WBP_Build_Item_C::bLock
     static inline int s_off_icon = -2;             // UI_WBP_Build_Item_Medium_C::Icon
@@ -109,6 +114,10 @@ namespace MoriaMods
     static inline int s_off_selectedRecipe = -2;    // UI_WBP_Build_Tab_C::selectedRecipe
     static inline int s_off_selectedName = -2;      // UI_WBP_Build_Tab_C::selectedName
     static inline int s_off_recipesDataTable = -2;  // UI_WBP_Build_Tab_C::recipesDataTable
+    static inline int s_off_playerCameraManager = -2; // APlayerController::PlayerCameraManager
+    static inline int s_off_camSettings = -2;         // AFGKPlayerCameraManager::Settings
+    static inline int s_off_probeType = -2;           // AFGKPlayerCameraManager::ProbeType
+    static inline int s_off_probeRadius = -2;         // AFGKPlayerCameraManager::ProbeRadius
 
     // ── Struct-internal offsets (confirmed from SlateCore.hpp / Moria.hpp headers) ──
     // These are POD struct internals or UObject base layout — NOT resolvable via ForEachProperty
@@ -167,6 +176,88 @@ namespace MoriaMods
         int off = resolveOffset(widgetTree, L"RootWidget", s_off_rootWidget);
         if (off >= 0)
             *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + off) = root;
+    }
+
+    // Resolve a UProperty offset + property size by name (for runtime struct size validation)
+    static int resolveOffsetWithSize(UObject* obj, const wchar_t* propName, int& cache, int& sizeOut)
+    {
+        sizeOut = 0;
+        if (cache != -2) return cache;
+        cache = -1;
+        if (!obj) return -1;
+        for (auto* strct = static_cast<UStruct*>(obj->GetClassPrivate());
+             strct;
+             strct = strct->GetSuperStruct())
+        {
+            for (auto* prop : strct->ForEachProperty())
+            {
+                if (prop->GetName() == std::wstring_view(propName))
+                {
+                    cache = prop->GetOffset_Internal();
+                    sizeOut = prop->GetSize();
+                    VLOG(STR("[MoriaCppMod] Resolved '{}' at offset 0x{:04X} size {} (on {})\n"),
+                         std::wstring(propName), cache, sizeOut, strct->GetName());
+                    return cache;
+                }
+            }
+        }
+        return cache;
+    }
+
+    // Resolve a bool property using FBoolProperty API (handles bitfields correctly)
+    static FBoolProperty* resolveBoolProperty(UObject* obj, const wchar_t* propName)
+    {
+        if (!obj) return nullptr;
+        for (auto* strct = static_cast<UStruct*>(obj->GetClassPrivate());
+             strct;
+             strct = strct->GetSuperStruct())
+        {
+            for (auto* prop : strct->ForEachProperty())
+            {
+                if (prop->GetName() == std::wstring_view(propName))
+                {
+                    auto* bp = CastField<FBoolProperty>(prop);
+                    if (bp)
+                    {
+                        VLOG(STR("[MoriaCppMod] Resolved FBoolProperty '{}' (native={}) on {}\n"),
+                             std::wstring(propName), bp->IsNativeBool() ? 1 : 0, strct->GetName());
+                    }
+                    return bp;
+                }
+            }
+        }
+        VLOG(STR("[MoriaCppMod] WARNING: FBoolProperty '{}' not found on {}\n"),
+             std::wstring(propName), obj->GetClassPrivate()->GetName());
+        return nullptr;
+    }
+
+    // Set a bool property value on an object using FBoolProperty (handles bitfields)
+    static bool setBoolProp(UObject* obj, const wchar_t* propName, bool value)
+    {
+        auto* bp = resolveBoolProperty(obj, propName);
+        if (!bp) return false;
+        bp->SetPropertyValueInContainer(obj, value);
+        return true;
+    }
+
+    // Get a bool property value from an object using FBoolProperty (handles bitfields)
+    static bool getBoolProp(UObject* obj, const wchar_t* propName)
+    {
+        auto* bp = resolveBoolProperty(obj, propName);
+        if (!bp) return false;
+        return bp->GetPropertyValueInContainer(obj);
+    }
+
+    // Check if a real-time interval has elapsed (replaces frame-counting)
+    static bool intervalElapsed(ULONGLONG& lastTime, ULONGLONG intervalMs)
+    {
+        ULONGLONG now = GetTickCount64();
+        if (now - lastTime >= intervalMs)
+        {
+            lastTime = now;
+            return true;
+        }
+        return false;
     }
 
     // ── Raw UE4.27 types (floats, not doubles) ──
@@ -316,6 +407,110 @@ namespace MoriaMods
         }
         VLOG(STR("[MoriaCppMod] Resolved UpdateInstanceTransform: parmsSize={} Index={} Transform={} ReturnValue={}\n"),
              s_uit.parmsSize, s_uit.InstanceIndex, s_uit.NewInstanceTransform, s_uit.ReturnValue);
+    }
+
+    // DeprojectScreenPositionToWorld param offsets — resolved at runtime from UFunction::ForEachProperty
+    struct DSPResolved
+    {
+        int ScreenX{-1}, ScreenY{-1}, WorldLocation{-1}, WorldDirection{-1}, ReturnValue{-1};
+        int parmsSize{0};
+        bool resolved{false};
+    };
+    static inline DSPResolved s_dsp{};
+
+    static void resolveDSPOffsets(UFunction* fn)
+    {
+        if (s_dsp.resolved) return;
+        s_dsp.resolved = true;
+        s_dsp.parmsSize = fn->GetParmsSize();
+        for (auto* prop : fn->ForEachProperty())
+        {
+            std::wstring n(prop->GetName());
+            int off = prop->GetOffset_Internal();
+            if (n == L"ScreenX")            s_dsp.ScreenX = off;
+            else if (n == L"ScreenY")       s_dsp.ScreenY = off;
+            else if (n == L"WorldLocation") s_dsp.WorldLocation = off;
+            else if (n == L"WorldDirection") s_dsp.WorldDirection = off;
+            else if (n == L"ReturnValue")   s_dsp.ReturnValue = off;
+        }
+        VLOG(STR("[MoriaCppMod] Resolved DeprojectScreenPositionToWorld: parmsSize={} ScreenX={} ScreenY={} WorldLoc={} WorldDir={}\n"),
+             s_dsp.parmsSize, s_dsp.ScreenX, s_dsp.ScreenY, s_dsp.WorldLocation, s_dsp.WorldDirection);
+    }
+
+    // SetInputMode_UIOnlyEx param offsets — resolved at runtime
+    struct SIMUIResolved
+    {
+        int PlayerController{-1}, InWidgetToFocus{-1}, InMouseLockMode{-1};
+        int parmsSize{0};
+        bool resolved{false};
+    };
+    static inline SIMUIResolved s_simui{};
+
+    static void resolveSIMUIOffsets(UFunction* fn)
+    {
+        if (s_simui.resolved) return;
+        s_simui.resolved = true;
+        s_simui.parmsSize = fn->GetParmsSize();
+        for (auto* prop : fn->ForEachProperty())
+        {
+            std::wstring n(prop->GetName());
+            int off = prop->GetOffset_Internal();
+            if (n == L"PlayerController")       s_simui.PlayerController = off;
+            else if (n == L"InWidgetToFocus")   s_simui.InWidgetToFocus = off;
+            else if (n == L"InMouseLockMode")   s_simui.InMouseLockMode = off;
+        }
+        VLOG(STR("[MoriaCppMod] Resolved SetInputMode_UIOnlyEx: parmsSize={} PC={} Focus={} LockMode={}\n"),
+             s_simui.parmsSize, s_simui.PlayerController, s_simui.InWidgetToFocus, s_simui.InMouseLockMode);
+    }
+
+    // SetInputMode_GameOnly param offsets — resolved at runtime
+    struct SIMGResolved
+    {
+        int PlayerController{-1};
+        int parmsSize{0};
+        bool resolved{false};
+    };
+    static inline SIMGResolved s_simg{};
+
+    static void resolveSIMGOffsets(UFunction* fn)
+    {
+        if (s_simg.resolved) return;
+        s_simg.resolved = true;
+        s_simg.parmsSize = fn->GetParmsSize();
+        for (auto* prop : fn->ForEachProperty())
+        {
+            std::wstring n(prop->GetName());
+            int off = prop->GetOffset_Internal();
+            if (n == L"PlayerController") s_simg.PlayerController = off;
+        }
+        VLOG(STR("[MoriaCppMod] Resolved SetInputMode_GameOnly: parmsSize={} PC={}\n"),
+             s_simg.parmsSize, s_simg.PlayerController);
+    }
+
+    // blockSelectedEvent param offsets — resolved at runtime
+    struct BSEResolved
+    {
+        int bLock{-1}, selfRef{-1}, Index{-1};
+        int parmsSize{0};
+        bool resolved{false};
+    };
+    static inline BSEResolved s_bse{};
+
+    static void resolveBSEOffsets(UFunction* fn)
+    {
+        if (s_bse.resolved) return;
+        s_bse.resolved = true;
+        s_bse.parmsSize = fn->GetParmsSize();
+        for (auto* prop : fn->ForEachProperty())
+        {
+            std::wstring n(prop->GetName());
+            int off = prop->GetOffset_Internal();
+            if (n == L"bLock")      s_bse.bLock = off;
+            else if (n == L"selfRef") s_bse.selfRef = off;
+            else if (n == L"Index")   s_bse.Index = off;
+        }
+        VLOG(STR("[MoriaCppMod] Resolved blockSelectedEvent: parmsSize={} bLock={} selfRef={} Index={}\n"),
+             s_bse.parmsSize, s_bse.bLock, s_bse.selfRef, s_bse.Index);
     }
 
     // SavedRemoval, RemovalEntry, extractFriendlyName — defined in moria_testable.h
@@ -978,7 +1173,6 @@ namespace MoriaMods
         int m_frameCounter{0};
         bool m_replayActive{false};
         bool m_characterLoaded{false};
-        int m_charLoadFrame{0}; // frame when character was first detected
         bool m_initialReplayDone{false};
         int m_stuckLogCount{0}; // only log stuck entries once
         std::string m_saveFilePath;
@@ -986,7 +1180,15 @@ namespace MoriaMods
         UObject* m_chatWidget{nullptr};
         UObject* m_sysMessages{nullptr};
         std::vector<bool> m_appliedRemovals; // parallel to m_savedRemovals: true = already removed
-        int m_rescanCounter{0};              // frames since last full rescan
+
+        // Real-time interval tracking (replaces FPS-dependent frame counting)
+        ULONGLONG m_lastWorldCheck{0};     // world-unload detection (~1s)
+        ULONGLONG m_lastCharPoll{0};       // character detection (~0.5s)
+        ULONGLONG m_lastStreamCheck{0};    // new component streaming (~3s)
+        ULONGLONG m_lastRescanTime{0};     // full rescan (~60s)
+        ULONGLONG m_charLoadTime{0};       // timestamp when character first detected
+        ULONGLONG m_lastContainerScan{0};  // container discovery retry (~2s)
+        bool m_containerTimeoutLogged{false}; // one-shot flag for 65s timeout message
 
         // Throttled replay: spread UpdateInstanceTransform across frames to avoid
         // crashing the render thread (FStaticMeshInstanceBuffer::UpdateFromCommandBuffer_Concurrent)
@@ -1348,18 +1550,19 @@ namespace MoriaMods
             float centerX = vpParams.SizeX / 2.0f;
             float centerY = vpParams.SizeY / 2.0f;
 
-            // Deproject screen center to world ray
+            // Deproject screen center to world ray (offsets resolved via reflection)
             auto* deprojFunc = pc->GetFunctionByNameInChain(STR("DeprojectScreenPositionToWorld"));
             if (!deprojFunc) return false;
-            int parmsSize = deprojFunc->GetParmsSize();
-            std::vector<uint8_t> buf(parmsSize, 0);
-            std::memcpy(buf.data() + 0, &centerX, 4);
-            std::memcpy(buf.data() + 4, &centerY, 4);
+            resolveDSPOffsets(deprojFunc);
+            if (s_dsp.ScreenX < 0 || s_dsp.ScreenY < 0 || s_dsp.WorldLocation < 0 || s_dsp.WorldDirection < 0) return false;
+            std::vector<uint8_t> buf(s_dsp.parmsSize, 0);
+            std::memcpy(buf.data() + s_dsp.ScreenX, &centerX, 4);
+            std::memcpy(buf.data() + s_dsp.ScreenY, &centerY, 4);
             pc->ProcessEvent(deprojFunc, buf.data());
 
             FVec3f cameraLoc{}, worldDir{};
-            std::memcpy(&cameraLoc, buf.data() + 8, 12);
-            std::memcpy(&worldDir, buf.data() + 20, 12);
+            std::memcpy(&cameraLoc, buf.data() + s_dsp.WorldLocation, 12);
+            std::memcpy(&worldDir, buf.data() + s_dsp.WorldDirection, 12);
 
             // 3rd-person fix: start trace PAST the character to avoid hitting
             // objects between the camera and the player (the "behind me" problem)
@@ -1993,10 +2196,57 @@ namespace MoriaMods
             if (dwarves.empty()) return;
 
             m_flyMode = !m_flyMode;
-            // EMovementMode: MOVE_Walking=1, MOVE_Falling=3, MOVE_Flying=5
             constexpr uint8_t MOVE_Falling = 3;
             constexpr uint8_t MOVE_Flying  = 5;
 
+            /* ── Camera save/restore DISABLED for testing — SetActorEnableCollision may be sufficient ──
+            // ── ENTERING fly: save camera state BEFORE any changes ──
+            if (m_flyMode && m_noCollisionWhileFlying)
+            {
+                auto* pc = findPlayerController();
+                if (pc)
+                {
+                    int camOff = resolveOffset(pc, L"PlayerCameraManager", s_off_playerCameraManager);
+                    if (camOff >= 0)
+                    {
+                        auto* camMgr = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(pc) + camOff);
+                        if (camMgr)
+                        {
+                            m_hasSavedCameraState = true;
+                            VLOG(STR("[MoriaCppMod] [Camera SAVE] camMgr={:p} class={}\n"),
+                                static_cast<void*>(camMgr), safeClassName(camMgr));
+                            int setOff = resolveOffset(camMgr, L"Settings", s_off_camSettings);
+                            VLOG(STR("[MoriaCppMod] [Camera SAVE] Settings offset={}\n"), setOff);
+                            if (setOff >= 0)
+                            {
+                                std::memcpy(m_savedCamSettings, reinterpret_cast<uint8_t*>(camMgr) + setOff, 0x4C);
+                                auto* f = reinterpret_cast<float*>(m_savedCamSettings);
+                                VLOG(STR("[MoriaCppMod] [Camera SAVE] Settings: FOVScale={:.2f} CamOff=({:.1f},{:.1f},{:.1f}) PivotOff=({:.1f},{:.1f},{:.1f}) PivotSmooth={:.2f}\n"),
+                                    f[0], f[4], f[5], f[6], f[7], f[8], f[9], f[10]);
+                            }
+                            int ptOff = resolveOffset(camMgr, L"ProbeType", s_off_probeType);
+                            VLOG(STR("[MoriaCppMod] [Camera SAVE] ProbeType offset={}\n"), ptOff);
+                            if (ptOff >= 0)
+                            {
+                                m_savedProbeType = *(reinterpret_cast<uint8_t*>(camMgr) + ptOff);
+                                VLOG(STR("[MoriaCppMod] [Camera SAVE] ProbeType={}\n"), m_savedProbeType);
+                            }
+                            int prOff = resolveOffset(camMgr, L"ProbeRadius", s_off_probeRadius);
+                            VLOG(STR("[MoriaCppMod] [Camera SAVE] ProbeRadius offset={}\n"), prOff);
+                            if (prOff >= 0)
+                            {
+                                m_savedProbeRadius = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(camMgr) + prOff);
+                                VLOG(STR("[MoriaCppMod] [Camera SAVE] ProbeRadius={:.1f}\n"), m_savedProbeRadius);
+                            }
+                            m_savedProbeDisallowIntersect = getBoolProp(camMgr, L"bProbeDisallowIntersect");
+                            VLOG(STR("[MoriaCppMod] [Camera SAVE] bProbeDisallowIntersect={}\n"), m_savedProbeDisallowIntersect ? 1 : 0);
+                        }
+                    }
+                }
+            }
+            */
+
+            // ── Fly toggle ──
             for (auto* dwarf : dwarves)
             {
                 int cmOff = resolveOffset(dwarf, L"CharacterMovement", s_off_charMovement);
@@ -2008,18 +2258,12 @@ namespace MoriaMods
                     continue;
                 }
 
-                int cfOff = resolveOffset(movComp, L"bCheatFlying", s_off_bCheatFlying);
-                if (cfOff < 0) continue;
-                uint8_t* flags = reinterpret_cast<uint8_t*>(movComp) + cfOff;
-
                 // Order matters:
                 // - Disable: clear bCheatFlying FIRST so engine allows mode transition
                 // - Enable: call SetMovementMode FIRST, then set bCheatFlying to keep it active
                 if (!m_flyMode)
-                    *flags &= ~0x08; // clear bCheatFlying before mode change
+                    setBoolProp(movComp, L"bCheatFlying", false);
 
-                // SetMovementMode(NewMovementMode, NewCustomMode) via ProcessEvent
-                // Use MOVE_Falling when disabling — character drops naturally to ground
                 auto* fn = movComp->GetFunctionByNameInChain(STR("SetMovementMode"));
                 if (fn)
                 {
@@ -2028,45 +2272,116 @@ namespace MoriaMods
                     VLOG(STR("[MoriaCppMod] SetMovementMode({}) called\n"),
                                                     m_flyMode ? 5 : 3);
                 }
-                else
-                {
-                    VLOG(STR("[MoriaCppMod] SetMovementMode not found!\n"));
-                }
 
                 if (m_flyMode)
-                    *flags |= 0x08; // set bCheatFlying after mode change
+                    setBoolProp(movComp, L"bCheatFlying", true);
 
-                VLOG(STR("[MoriaCppMod] bCheatFlying = {}, flags byte = 0x{:02X}\n"),
-                                                m_flyMode ? 1 : 0, *flags);
+                VLOG(STR("[MoriaCppMod] bCheatFlying = {}\n"), m_flyMode ? 1 : 0);
 
-                // Toggle capsule collision for noclip (disable when flying, enable when walking)
-                // SetCollisionEnabled on CapsuleComponent: NoCollision=0, QueryAndPhysics=3
-                int capOff = resolveOffset(dwarf, L"CapsuleComponent", s_off_capsuleComp);
-                if (capOff >= 0)
+                // Toggle actor collision AFTER fly is set
+                bool shouldDisableCollision = m_flyMode && m_noCollisionWhileFlying;
+                bool shouldRestoreCollision = !m_flyMode;
+                if (shouldDisableCollision || shouldRestoreCollision)
                 {
-                    auto* capsule = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(dwarf) + capOff);
-                    if (capsule)
+                    auto* colFn = dwarf->GetFunctionByNameInChain(STR("SetActorEnableCollision"));
+                    if (colFn)
                     {
-                        auto* colFn = capsule->GetFunctionByNameInChain(STR("SetCollisionEnabled"));
-                        if (colFn)
-                        {
-                            uint8_t newType = m_flyMode ? 0 : 3; // NoCollision=0, QueryAndPhysics=3
-                            capsule->ProcessEvent(colFn, &newType);
-                            VLOG(STR("[MoriaCppMod] CapsuleComponent SetCollisionEnabled({}) — noclip {}\n"),
-                                                            newType, m_flyMode ? STR("ON") : STR("OFF"));
-                        }
-                        else
-                        {
-                            VLOG(STR("[MoriaCppMod] SetCollisionEnabled not found on CapsuleComponent\n"));
-                        }
+                        bool bEnable = !shouldDisableCollision;
+                        dwarf->ProcessEvent(colFn, &bEnable);
+                        VLOG(STR("[MoriaCppMod] SetActorEnableCollision({}) — noclip {}\n"),
+                                                        bEnable ? 1 : 0, shouldDisableCollision ? STR("ON") : STR("OFF"));
                     }
                 }
             }
+
+            /* ── Camera restore DISABLED for testing — SetActorEnableCollision may be sufficient ──
+            // ── Restore camera to saved state after collision change ──
+            if (m_hasSavedCameraState)
+            {
+                auto* pc = findPlayerController();
+                if (pc)
+                {
+                    int camOff = resolveOffset(pc, L"PlayerCameraManager", s_off_playerCameraManager);
+                    if (camOff >= 0)
+                    {
+                        auto* camMgr = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(pc) + camOff);
+                        if (camMgr)
+                        {
+                            VLOG(STR("[MoriaCppMod] [Camera RESTORE] flyMode={} camMgr={:p}\n"),
+                                m_flyMode ? 1 : 0, static_cast<void*>(camMgr));
+                            if (s_off_camSettings >= 0)
+                            {
+                                auto* livef = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(camMgr) + s_off_camSettings);
+                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] BEFORE: FOVScale={:.2f} CamOff=({:.1f},{:.1f},{:.1f}) PivotOff=({:.1f},{:.1f},{:.1f}) PivotSmooth={:.2f}\n"),
+                                    livef[0], livef[4], livef[5], livef[6], livef[7], livef[8], livef[9], livef[10]);
+                                std::memcpy(reinterpret_cast<uint8_t*>(camMgr) + s_off_camSettings, m_savedCamSettings, 0x4C);
+                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] AFTER:  FOVScale={:.2f} CamOff=({:.1f},{:.1f},{:.1f}) PivotOff=({:.1f},{:.1f},{:.1f}) PivotSmooth={:.2f}\n"),
+                                    livef[0], livef[4], livef[5], livef[6], livef[7], livef[8], livef[9], livef[10]);
+                            }
+                            else
+                            {
+                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] Settings offset NOT RESOLVED ({})\n"), s_off_camSettings);
+                            }
+                            if (s_off_probeType >= 0)
+                            {
+                                uint8_t livePT = *(reinterpret_cast<uint8_t*>(camMgr) + s_off_probeType);
+                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeType BEFORE={} writing={}\n"), livePT, m_savedProbeType);
+                                *(reinterpret_cast<uint8_t*>(camMgr) + s_off_probeType) = m_savedProbeType;
+                            }
+                            else
+                            {
+                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeType offset NOT RESOLVED ({})\n"), s_off_probeType);
+                            }
+                            if (s_off_probeRadius >= 0)
+                            {
+                                float liveR = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(camMgr) + s_off_probeRadius);
+                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeRadius BEFORE={:.1f} writing={:.1f}\n"), liveR, m_savedProbeRadius);
+                                *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(camMgr) + s_off_probeRadius) = m_savedProbeRadius;
+                            }
+                            else
+                            {
+                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeRadius offset NOT RESOLVED ({})\n"), s_off_probeRadius);
+                            }
+                            bool liveDI = getBoolProp(camMgr, L"bProbeDisallowIntersect");
+                            VLOG(STR("[MoriaCppMod] [Camera RESTORE] bProbeDisallowIntersect BEFORE={} writing={}\n"),
+                                liveDI ? 1 : 0, m_savedProbeDisallowIntersect ? 1 : 0);
+                            setBoolProp(camMgr, L"bProbeDisallowIntersect", m_savedProbeDisallowIntersect);
+                        }
+                    }
+
+                    // Tell camera to follow the player character
+                    if (!dwarves.empty())
+                    {
+                        auto* svtFn = pc->GetFunctionByNameInChain(STR("SetViewTargetWithBlend"));
+                        if (svtFn)
+                        {
+                            struct {
+                                UObject* NewViewTarget;
+                                float BlendTime;
+                                uint8_t BlendFunc;  // 0=Linear
+                                float BlendExp;
+                                bool bLockOutgoing;
+                            } svtParams{};
+                            svtParams.NewViewTarget = dwarves[0];
+                            svtParams.BlendTime = 0.0f;
+                            svtParams.BlendFunc = 0;
+                            svtParams.BlendExp = 1.0f;
+                            svtParams.bLockOutgoing = false;
+                            pc->ProcessEvent(svtFn, &svtParams);
+                            VLOG(STR("[MoriaCppMod] [Camera RESTORE] SetViewTargetWithBlend -> dwarf {:p}\n"),
+                                static_cast<void*>(dwarves[0]));
+                        }
+                    }
+                }
+                if (!m_flyMode) m_hasSavedCameraState = false;
+            }
+            */
+
             if (m_flyMode)
-                showOnScreen(L"Fly + Noclip ON", 2.0f, 0.3f, 0.8f, 1.0f);
+                showOnScreen(m_noCollisionWhileFlying ? L"Fly + Noclip ON" : L"Fly ON", 2.0f, 0.3f, 0.8f, 1.0f);
             else
                 showOnScreen(Loc::get("msg.fly_off").c_str(), 2.0f, 0.3f, 1.0f, 0.3f);
-            VLOG(STR("[MoriaCppMod] Fly mode = {}\n"), m_flyMode ? 1 : 0);
+            VLOG(STR("[MoriaCppMod] Fly mode = {}, noCollision = {}\n"), m_flyMode ? 1 : 0, m_noCollisionWhileFlying ? 1 : 0);
         }
 
         void dumpAimedActor()
@@ -2426,7 +2741,7 @@ namespace MoriaMods
             if (isBuildable && !displayName.empty())
             {
                 m_targetBuildName = displayName;
-                VLOG(STR("[MoriaCppMod] [TargetBuild] Stored target: name='{}' recipeRef='{}' row='{}'\n"),
+                QBLOG(STR("[MoriaCppMod] [TargetBuild] Stored target: name='{}' recipeRef='{}' row='{}'\n"),
                                                 m_targetBuildName,
                                                 m_targetBuildRecipeRef,
                                                 m_targetBuildRowName);
@@ -3577,15 +3892,18 @@ namespace MoriaMods
         // bLock offset resolved via s_off_bLock (ForEachProperty on UI_WBP_Build_Item_C)
 
         // Reactive quick-build state machine (replaces frame-counting)
-        enum class QBPhase { Idle, CancelPlacement, CloseMenu, OpenMenu, SelectRecipe };
+        enum class QBPhase { Idle, CancelPlacement, CloseMenu, PrimeOpen, OpenMenu, SelectRecipe };
+        // Result of selectRecipeOnBuildTab — distinguishes "still loading" from "genuinely missing"
+        enum class SelectResult { Found, Loading, NotFound };
         int m_pendingQuickBuildSlot{-1};     // which F1-F8 slot is pending (-1 = none)
         QBPhase m_qbPhase{QBPhase::Idle};    // quickbuild phase
-        int m_qbTimeout{0};                  // safety timeout counter
+        ULONGLONG m_qbStartTime{0};          // timestamp when SM entered non-idle
+        ULONGLONG m_qbRetryTime{0};          // timestamp of last retry/phase change
 
         // Cached widget pointers for cheap state checks (invalidated on world unload)
         UObject* m_cachedBuildHUD{nullptr};  // UI_WBP_BuildHUDv2_C
         UObject* m_cachedBuildTab{nullptr};  // UI_WBP_Build_Tab_C
-        UFunction* m_fnIsShowing{nullptr};   // cached IsShowing() on Build_Tab
+        UFunction* m_fnIsVisible{nullptr};   // cached IsVisible() on Build_Tab (UWidget standard)
 
         // Target-to-build: Shift+F10 — build the last targeted buildable object
         std::wstring m_targetBuildName;      // display name from last F10 target
@@ -3595,7 +3913,8 @@ namespace MoriaMods
         bool m_pendingTargetBuild{false};    // pending build-from-target state machine
         bool m_buildMenuWasOpen{false};      // tracks build menu open/close for ActionBar refresh
         QBPhase m_tbPhase{QBPhase::Idle};    // target-build phase
-        int m_tbTimeout{0};                  // safety timeout counter
+        ULONGLONG m_tbStartTime{0};          // timestamp when SM entered non-idle
+        ULONGLONG m_tbRetryTime{0};          // timestamp of last retry/phase change
 
         std::vector<uint8_t> m_bagHandle; // cached EpicPack bag FItemHandle
 
@@ -3639,6 +3958,14 @@ namespace MoriaMods
         bool m_toolbarsVisible{false};             // toggle state: are builders bar + MC bar visible?
         bool m_characterHidden{false};             // toggle state: is player character hidden?
         bool m_flyMode{false};                     // toggle state: is fly mode active?
+        bool m_noCollisionWhileFlying{true};       // INI setting: disable collision when flying (default ON)
+        bool m_hasSavedCameraState{false};         // true if camera state was captured before fly
+        uint8_t m_savedCamSettings[0x4C]{};        // FFGKCameraStateSettings blob
+        uint8_t m_savedProbeType{0};               // EFGKProbeType
+        float m_savedProbeRadius{0.0f};            // ProbeRadius
+        bool m_savedProbeDisallowIntersect{false}; // bProbeDisallowIntersect
+        bool m_buildMenuPrimed{false};             // true after first build menu open has loaded widgets
+        bool m_buildTabAfterShowFired{false};      // set by OnAfterShow hook, cleared when consumed
 
         // Stash container repair — run once per character load, not on every retry scan
         bool m_repairDone{false};
@@ -3692,7 +4019,9 @@ namespace MoriaMods
         // Tab 0: Optional Mods
         UObject* m_cfgFreeBuildLabel{nullptr};
         UObject* m_cfgFreeBuildCheckImg{nullptr};  // check mark image (shown when ON)
-        UObject* m_cfgUnlockBtnImg{nullptr};       // Unlock All Recipes button bg image
+        UObject* m_cfgNoCollisionLabel{nullptr};
+        UObject* m_cfgNoCollisionCheckImg{nullptr}; // check mark image (shown when ON)
+        UObject* m_cfgUnlockBtnImg{nullptr};        // Unlock All Recipes button bg image
         // Tab 1: Key Mapping
         UObject* m_cfgKeyValueLabels[BIND_COUNT]{};    // old text labels (kept for compat)
         UObject* m_cfgKeyBoxLabels[BIND_COUNT]{};      // key box TextBlocks (new)
@@ -3762,7 +4091,7 @@ namespace MoriaMods
                 if (!isWidgetAlive(m_cachedBuildTab) || safeClassName(m_cachedBuildTab) != L"UI_WBP_Build_Tab_C")
                 {
                     m_cachedBuildTab = nullptr;
-                    m_fnIsShowing = nullptr;
+                    m_fnIsVisible = nullptr;
                 }
             }
             if (!m_cachedBuildTab)
@@ -3771,21 +4100,42 @@ namespace MoriaMods
                 if (m_cachedBuildTab && !isWidgetAlive(m_cachedBuildTab))
                     m_cachedBuildTab = nullptr; // findWidgetByClass returned a dying widget
                 if (m_cachedBuildTab)
-                    m_fnIsShowing = m_cachedBuildTab->GetFunctionByNameInChain(STR("IsShowing"));
+                    m_fnIsVisible = m_cachedBuildTab->GetFunctionByNameInChain(STR("IsVisible"));
             }
             return m_cachedBuildTab;
         }
 
-        // Cheap Build_Tab visibility check via cached IsShowing() — no FindAllOf
+        // Cheap Build_Tab visibility check via cached IsVisible() — standard UWidget check
+        // Uses IsVisible (UMG widget visibility) instead of IsShowing (FGK framework state)
+        // because IsShowing() on UFGKUIScreen may not reflect actual widget visibility
         bool isBuildTabShowing()
         {
             UObject* tab = getCachedBuildTab();
-            if (!tab || !m_fnIsShowing) return false;
+            if (!tab || !m_fnIsVisible) return false;
             struct { bool Ret{false}; } params{};
-            tab->ProcessEvent(m_fnIsShowing, &params);
+            tab->ProcessEvent(m_fnIsVisible, &params);
             return params.Ret;
         }
 
+        // Open build tab via FGK Show() API (no B key toggle)
+        void showBuildTab()
+        {
+            UObject* tab = getCachedBuildTab();
+            if (!tab) return;
+            auto* fn = tab->GetFunctionByNameInChain(STR("Show"));
+            if (fn) tab->ProcessEvent(fn, nullptr);
+        }
+
+        // Close build tab via FGK Hide() API (no B key toggle)
+        void hideBuildTab()
+        {
+            UObject* tab = getCachedBuildTab();
+            if (!tab) return;
+            auto* fn = tab->GetFunctionByNameInChain(STR("Hide"));
+            if (fn) tab->ProcessEvent(fn, nullptr);
+        }
+
+        // Count visible Build_Item_Medium widgets (used to detect cold-start widget creation)
         // Cached BuildHUD lookup
         UObject* getCachedBuildHUD()
         {
@@ -3913,6 +4263,7 @@ namespace MoriaMods
             file << "Verbose = " << (s_verbose ? "true" : "false") << "\n";
             file << "RotationStep = " << s_overlay.rotationStep.load() << "\n";
             file << "Language = " << s_language << "\n";
+            file << "NoCollision = " << (m_noCollisionWhileFlying ? "true" : "false") << "\n";
 
             // Only write [Positions] if user has customized at least one toolbar
             bool hasCustomPos = false;
@@ -4001,6 +4352,10 @@ namespace MoriaMods
                             else if (strEqualCI(kv->key, "Language"))
                             {
                                 if (!kv->value.empty()) s_language = kv->value;
+                            }
+                            else if (strEqualCI(kv->key, "NoCollision"))
+                            {
+                                m_noCollisionWhileFlying = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
                             }
                         }
                         else if (strEqualCI(section, "Positions"))
@@ -4587,7 +4942,7 @@ namespace MoriaMods
                     saveQuickBuildSlots();
                     updateOverlayText();
                     updateBuildersBar();
-                    VLOG(STR("[MoriaCppMod] [QuickBuild] CLEARED F{}\n"), slot + 1);
+                    QBLOG(STR("[MoriaCppMod] [QuickBuild] CLEARED F{}\n"), slot + 1);
                     std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" cleared";
                     showOnScreen(msg.c_str(), 2.0f, 1.0f, 0.5f, 0.0f);
                 }
@@ -4606,7 +4961,7 @@ namespace MoriaMods
                 m_recipeSlots[slot].textureName = extractIconTextureName(itemWidget);
                 if (!m_recipeSlots[slot].textureName.empty())
                 {
-                    VLOG(STR("[MoriaCppMod] [QuickBuild] F{} icon: '{}'\n"), slot + 1, m_recipeSlots[slot].textureName);
+                    QBLOG(STR("[MoriaCppMod] [QuickBuild] F{} icon: '{}'\n"), slot + 1, m_recipeSlots[slot].textureName);
 
                     // Extract and save the icon as PNG for the overlay
                     if (!s_overlay.iconFolder.empty())
@@ -4630,7 +4985,7 @@ namespace MoriaMods
             updateOverlayText();
             updateBuildersBar();
 
-            VLOG(STR("[MoriaCppMod] [QuickBuild] ASSIGN F{} = '{}'\n"), slot + 1, m_lastCapturedName);
+            QBLOG(STR("[MoriaCppMod] [QuickBuild] ASSIGN F{} = '{}'\n"), slot + 1, m_lastCapturedName);
             logBLockDiagnostics(L"ASSIGN", m_lastCapturedName, m_recipeSlots[slot].bLockData);
 
             std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" = " + m_lastCapturedName;
@@ -4657,13 +5012,14 @@ namespace MoriaMods
 
         // Find a Build_Item_Medium widget whose display name matches, then trigger blockSelectedEvent
         // Returns true if recipe was found and selected, false if not found (allows retry)
-        bool selectRecipeOnBuildTab(UObject* buildTab, int slot)
+        SelectResult selectRecipeOnBuildTab(UObject* buildTab, int slot)
         {
             const std::wstring& targetName = m_recipeSlots[slot].displayName;
+            const std::wstring& slotTexture = m_recipeSlots[slot].textureName;
 
-            VLOG(STR("[MoriaCppMod] [QuickBuild] SELECT: searching for '{}' (slot F{})\n"), targetName, slot + 1);
+            QBLOG(STR("[MoriaCppMod] [QuickBuild] SELECT: searching for '{}' tex='{}' (slot F{})\n"), targetName, slotTexture, slot + 1);
 
-            // Find all Build_Item_Medium widgets and match by display name
+            // Find all Build_Item_Medium widgets and match by display name + icon texture
             std::vector<UObject*> widgets;
             UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
 
@@ -4691,24 +5047,37 @@ namespace MoriaMods
                 std::wstring name = readWidgetDisplayName(w);
                 if (!name.empty() && name == targetName)
                 {
+                    // Disambiguate same-name items by icon texture (e.g., "Column Crown" variants)
+                    if (!slotTexture.empty())
+                    {
+                        std::wstring widgetTex = extractIconTextureName(w);
+                        if (widgetTex != slotTexture) continue;
+                    }
                     matchedWidget = w;
                     break;
                 }
             }
 
-            VLOG(STR("[MoriaCppMod] [QuickBuild]   checked {} visible widgets, match: {}\n"), visibleCount, matchedWidget ? L"YES" : L"NO");
+            QBLOG(STR("[MoriaCppMod] [QuickBuild]   checked {} visible widgets, match: {}\n"), visibleCount, matchedWidget ? L"YES" : L"NO");
 
             if (!matchedWidget)
             {
-                VLOG(STR("[MoriaCppMod] [QuickBuild] No match among {} visible widgets\n"), visibleCount);
-                return false;
+                QBLOG(STR("[MoriaCppMod] [QuickBuild] No match among {} visible widgets\n"), visibleCount);
+                return (visibleCount == 0) ? SelectResult::Loading : SelectResult::NotFound;
             }
 
             auto* func = buildTab->GetFunctionByNameInChain(STR("blockSelectedEvent"));
-            if (!func) return false;
+            if (!func) return SelectResult::NotFound;
 
-            // blockSelectedEvent params: bLock@0(120B) + selfRef@120(8B) + Index@128(4B)
-            uint8_t params[132]{};
+            // Resolve blockSelectedEvent param layout via reflection
+            resolveBSEOffsets(func);
+            if (s_bse.bLock < 0 || s_bse.selfRef < 0 || s_bse.Index < 0)
+            {
+                QBLOG(STR("[MoriaCppMod] [QuickBuild] blockSelectedEvent param resolution failed\n"));
+                return SelectResult::NotFound;
+            }
+
+            std::vector<uint8_t> params(s_bse.parmsSize, 0);
             bool gotFreshBLock = false;
 
             // Resolve bLock offset on first quickbuild (walks inheritance chain to UI_WBP_Build_Item_C)
@@ -4719,26 +5088,26 @@ namespace MoriaMods
             if (s_off_bLock >= 0)
             {
                 uint8_t* widgetBase = reinterpret_cast<uint8_t*>(matchedWidget);
-                std::memcpy(params, widgetBase + s_off_bLock, BLOCK_DATA_SIZE);
+                std::memcpy(params.data() + s_bse.bLock, widgetBase + s_off_bLock, BLOCK_DATA_SIZE);
                 gotFreshBLock = true;
-                VLOG(STR("[MoriaCppMod] [QuickBuild]   using FRESH bLock from widget (@0x{:X})\n"), s_off_bLock);
+                QBLOG(STR("[MoriaCppMod] [QuickBuild]   using FRESH bLock from widget (@0x{:X})\n"), s_off_bLock);
             }
 
             // FALLBACK: use captured bLock from assignment (may have stale pointer at +104)
             if (!gotFreshBLock && m_recipeSlots[slot].hasBLockData)
             {
-                std::memcpy(params, m_recipeSlots[slot].bLockData, BLOCK_DATA_SIZE);
-                VLOG(STR("[MoriaCppMod] [QuickBuild]   using SAVED bLock (may be stale)\n"));
+                std::memcpy(params.data() + s_bse.bLock, m_recipeSlots[slot].bLockData, BLOCK_DATA_SIZE);
+                QBLOG(STR("[MoriaCppMod] [QuickBuild]   using SAVED bLock (may be stale)\n"));
             }
             else if (!gotFreshBLock)
             {
-                VLOG(STR("[MoriaCppMod] [QuickBuild]   WARNING: no bLock data at all, using zeros\n"));
+                QBLOG(STR("[MoriaCppMod] [QuickBuild]   WARNING: no bLock data at all, using zeros\n"));
             }
 
-            *reinterpret_cast<UObject**>(params + 120) = matchedWidget;
-            *reinterpret_cast<int32_t*>(params + 128) = 0;
+            *reinterpret_cast<UObject**>(params.data() + s_bse.selfRef) = matchedWidget;
+            *reinterpret_cast<int32_t*>(params.data() + s_bse.Index) = 0;
 
-            VLOG(STR("[MoriaCppMod] [QuickBuild]   calling blockSelectedEvent with selfRef={:p}\n"), static_cast<void*>(matchedWidget));
+            QBLOG(STR("[MoriaCppMod] [QuickBuild]   calling blockSelectedEvent with selfRef={:p}\n"), static_cast<void*>(matchedWidget));
 
             // Suppress post-hook capture during automated selection (RAII guard ensures reset on exception)
             m_isAutoSelecting = true;
@@ -4747,10 +5116,10 @@ namespace MoriaMods
                 bool& flag;
                 ~AutoSelectGuard() { flag = false; }
             } guard{m_isAutoSelecting};
-            buildTab->ProcessEvent(func, params);
+            buildTab->ProcessEvent(func, params.data());
             m_isAutoSelecting = false;
 
-            logBLockDiagnostics(L"BUILD", targetName, params);
+            logBLockDiagnostics(L"BUILD", targetName, params.data());
 
             showOnScreen((L"Build: " + targetName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
             m_buildMenuWasOpen = true;       // track menu so we refresh ActionBar when it closes
@@ -4759,7 +5128,7 @@ namespace MoriaMods
             // Set this slot as Active on the builders bar, all others become Inactive/Empty
             m_activeBuilderSlot = slot;
             updateBuildersBar();
-            return true;
+            return SelectResult::Found;
         }
 
         void quickBuildSlot(int slot)
@@ -4776,25 +5145,38 @@ namespace MoriaMods
             // Guard: if a previous quickbuild is already in progress, skip
             if (m_qbPhase != QBPhase::Idle)
             {
-                VLOG(STR("[MoriaCppMod] [QuickBuild] F{} pressed but phase {} active, ignoring\n"),
+                QBLOG(STR("[MoriaCppMod] [QuickBuild] F{} pressed but phase {} active, ignoring\n"),
                                                 slot + 1, static_cast<int>(m_qbPhase));
                 return;
             }
 
-            VLOG(STR("[MoriaCppMod] [QuickBuild] ACTIVATE F{} -> '{}' (charLoaded={} frameCounter={})\n"),
+            QBLOG(STR("[MoriaCppMod] [QuickBuild] ACTIVATE F{} -> '{}' (charLoaded={} frameCounter={})\n"),
                                             slot + 1,
                                             m_recipeSlots[slot].displayName,
                                             m_characterLoaded,
                                             m_frameCounter);
 
             m_pendingQuickBuildSlot = slot;
-            m_qbTimeout = 0;
+            m_qbStartTime = GetTickCount64();
+            m_qbRetryTime = m_qbStartTime;
 
             // Reactive phase transitions: check live game state and proceed accordingly
-            if (isPlacementActive())
+            if (!m_buildMenuPrimed)
+            {
+                // First quickbuild in session — prime via B key (creates widget) + OnAfterShow
+                QBLOG(STR("[MoriaCppMod] [QuickBuild] Cold start — priming build menu\n"));
+                m_buildTabAfterShowFired = false;
+                if (!isBuildTabShowing())
+                {
+                    keybd_event(0x42, 0, 0, 0);
+                    keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                }
+                m_qbPhase = QBPhase::PrimeOpen;
+            }
+            else if (isPlacementActive())
             {
                 // Player is holding a ghost piece — cancel with ESC first
-                VLOG(STR("[MoriaCppMod] [QuickBuild] Placement active — sending ESC to cancel first\n"));
+                QBLOG(STR("[MoriaCppMod] [QuickBuild] Placement active — sending ESC to cancel first\n"));
                 keybd_event(VK_ESCAPE, 0, 0, 0);
                 keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
                 m_qbPhase = QBPhase::CancelPlacement;
@@ -4802,17 +5184,15 @@ namespace MoriaMods
             else if (isBuildTabShowing())
             {
                 // Build menu is open — close it first, then reopen fresh
-                VLOG(STR("[MoriaCppMod] [QuickBuild] Build tab already open — closing first\n"));
-                keybd_event(0x42, 0, 0, 0);
-                keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                QBLOG(STR("[MoriaCppMod] [QuickBuild] Build tab already open — closing first\n"));
+                hideBuildTab();
                 m_qbPhase = QBPhase::CloseMenu;
             }
             else
             {
-                // Menu not open — open it
-                VLOG(STR("[MoriaCppMod] [QuickBuild] Build tab not open — sending B key\n"));
-                keybd_event(0x42, 0, 0, 0);
-                keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                // Menu not open — open it via FGK Show() API
+                QBLOG(STR("[MoriaCppMod] [QuickBuild] Build tab not open — calling Show()\n"));
+                showBuildTab();
                 m_qbPhase = QBPhase::OpenMenu;
             }
         }
@@ -4832,7 +5212,7 @@ namespace MoriaMods
             // Guard: if a previous target-build is already in progress, skip
             if (m_tbPhase != QBPhase::Idle)
             {
-                VLOG(STR("[MoriaCppMod] [TargetBuild] Already active (phase {}), ignoring\n"), static_cast<int>(m_tbPhase));
+                QBLOG(STR("[MoriaCppMod] [TargetBuild] Already active (phase {}), ignoring\n"), static_cast<int>(m_tbPhase));
                 return;
             }
 
@@ -4843,28 +5223,42 @@ namespace MoriaMods
             }
 
             m_pendingTargetBuild = true;
-            m_tbTimeout = 0;
+            m_tbStartTime = GetTickCount64();
+            m_tbRetryTime = m_tbStartTime;
 
-            // Reactive phase transitions: check live game state
-            if (isPlacementActive())
+            // Reactive phase transitions: check live game state and proceed accordingly
+            if (!m_buildMenuPrimed)
             {
-                VLOG(STR("[MoriaCppMod] [TargetBuild] Placement active — sending ESC to cancel first\n"));
+                // First build in session — prime via B key (creates widget) + OnAfterShow
+                QBLOG(STR("[MoriaCppMod] [TargetBuild] Cold start — priming build menu\n"));
+                m_buildTabAfterShowFired = false;
+                if (!isBuildTabShowing())
+                {
+                    keybd_event(0x42, 0, 0, 0);
+                    keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                }
+                m_tbPhase = QBPhase::PrimeOpen;
+            }
+            else if (isPlacementActive())
+            {
+                // Player is holding a ghost piece — cancel with ESC first
+                QBLOG(STR("[MoriaCppMod] [TargetBuild] Placement active — sending ESC to cancel first\n"));
                 keybd_event(VK_ESCAPE, 0, 0, 0);
                 keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
                 m_tbPhase = QBPhase::CancelPlacement;
             }
             else if (isBuildTabShowing())
             {
-                VLOG(STR("[MoriaCppMod] [TargetBuild] Build tab already open — closing first\n"));
-                keybd_event(0x42, 0, 0, 0);
-                keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                // Build menu is open — close it first, then reopen fresh
+                QBLOG(STR("[MoriaCppMod] [TargetBuild] Build tab already open — closing first\n"));
+                hideBuildTab();
                 m_tbPhase = QBPhase::CloseMenu;
             }
             else
             {
-                VLOG(STR("[MoriaCppMod] [TargetBuild] Build tab not open — sending B key\n"));
-                keybd_event(0x42, 0, 0, 0);
-                keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                // Menu not open — open it via FGK Show() API
+                QBLOG(STR("[MoriaCppMod] [TargetBuild] Build tab not open — calling Show()\n"));
+                showBuildTab();
                 m_tbPhase = QBPhase::OpenMenu;
             }
         }
@@ -4881,9 +5275,9 @@ namespace MoriaMods
             return out;
         }
 
-        void selectRecipeByTargetName(UObject* buildTab)
+        SelectResult selectRecipeByTargetName(UObject* buildTab)
         {
-            VLOG(STR("[MoriaCppMod] [TargetBuild] Searching: name='{}' recipeRef='{}' bLockOffset=0x{:X}\n"),
+            QBLOG(STR("[MoriaCppMod] [TargetBuild] Searching: name='{}' recipeRef='{}' bLockOffset=0x{:X}\n"),
                                             m_targetBuildName,
                                             m_targetBuildRecipeRef,
                                             s_off_bLock);
@@ -4904,7 +5298,7 @@ namespace MoriaMods
                 uint32_t ci2 = *reinterpret_cast<uint32_t*>(&fn2);
                 targetFNames.push_back({noBP, ci2});
 
-                VLOG(STR("[MoriaCppMod] [TargetBuild] FName CIs: full='{}' CI={}, short='{}' CI={}\n"),
+                QBLOG(STR("[MoriaCppMod] [TargetBuild] FName CIs: full='{}' CI={}, short='{}' CI={}\n"),
                                                 m_targetBuildRecipeRef,
                                                 ci1,
                                                 noBP,
@@ -4948,7 +5342,7 @@ namespace MoriaMods
                 if (isFirstFew)
                 {
                     std::wstring objName(w->GetName());
-                    VLOG(STR("[MoriaCppMod] [TargetBuild]   W[{}] obj='{}' display='{}'\n"), visibleCount, objName, name);
+                    QBLOG(STR("[MoriaCppMod] [TargetBuild]   W[{}] obj='{}' display='{}'\n"), visibleCount, objName, name);
                 }
 
                 // Strategy 1: bLock-based matching via Variants->ResultConstructionHandle RowName
@@ -4960,12 +5354,12 @@ namespace MoriaMods
                     if (!isReadableMemory(bLock, BLOCK_DATA_SIZE))
                     {
                         bLockNullCount++;
-                        if (isFirstFew) VLOG(STR("[MoriaCppMod] [TargetBuild]     bLock=NULL\n"));
+                        if (isFirstFew) QBLOG(STR("[MoriaCppMod] [TargetBuild]     bLock=NULL\n"));
                     }
                     else if (!isReadableMemory(bLock + RECIPE_BLOCK_VARIANTS, 16))
                     {
                         bLockMemFailCount++;
-                        if (isFirstFew) VLOG(STR("[MoriaCppMod] [TargetBuild]     bLock+104 not readable\n"));
+                        if (isFirstFew) QBLOG(STR("[MoriaCppMod] [TargetBuild]     bLock+104 not readable\n"));
                     }
                     else
                     {
@@ -4977,7 +5371,7 @@ namespace MoriaMods
                             // Log first 8 bytes of bLock (FGameplayTag FName)
                             uint32_t tagCI = *reinterpret_cast<uint32_t*>(bLock);
                             int32_t tagNum = *reinterpret_cast<int32_t*>(bLock + 4);
-                            VLOG(STR("[MoriaCppMod] [TargetBuild]     bLock tag CI={} Num={} | variants={} ptr={:p}\n"),
+                            QBLOG(STR("[MoriaCppMod] [TargetBuild]     bLock tag CI={} Num={} | variants={} ptr={:p}\n"),
                                                             tagCI,
                                                             tagNum,
                                                             variantsCount,
@@ -4996,7 +5390,7 @@ namespace MoriaMods
 
                             if (isFirstFew)
                             {
-                                VLOG(STR("[MoriaCppMod] [TargetBuild]     RowName CI={} Num={}\n"), rowCI, rowNum);
+                                QBLOG(STR("[MoriaCppMod] [TargetBuild]     RowName CI={} Num={}\n"), rowCI, rowNum);
                             }
 
                             // Check if RowName CI matches any of our target FName CIs
@@ -5006,7 +5400,7 @@ namespace MoriaMods
                                 {
                                     matchedWidget = w;
                                     matchedName = name.empty() ? tName : name;
-                                    VLOG(STR("[MoriaCppMod] [TargetBuild] MATCH (bLock RowName CI={}) on '{}' target='{}'\n"),
+                                    QBLOG(STR("[MoriaCppMod] [TargetBuild] MATCH (bLock RowName CI={}) on '{}' target='{}'\n"),
                                                                     rowCI,
                                                                     matchedName,
                                                                     tName);
@@ -5016,7 +5410,7 @@ namespace MoriaMods
                         }
                         else if (isFirstFew)
                         {
-                            VLOG(STR("[MoriaCppMod] [TargetBuild]     variantsPtr not readable (0xE8 bytes)\n"));
+                            QBLOG(STR("[MoriaCppMod] [TargetBuild]     variantsPtr not readable (0xE8 bytes)\n"));
                         }
                     }
                 }
@@ -5026,7 +5420,7 @@ namespace MoriaMods
                 {
                     matchedWidget = w;
                     matchedName = name;
-                    VLOG(STR("[MoriaCppMod] [TargetBuild] MATCH (exact display name) on '{}'\n"), name);
+                    QBLOG(STR("[MoriaCppMod] [TargetBuild] MATCH (exact display name) on '{}'\n"), name);
                 }
 
                 // Strategy 3: Fuzzy display name match (containment)
@@ -5041,14 +5435,14 @@ namespace MoriaMods
                     {
                         matchedWidget = w;
                         matchedName = name;
-                        VLOG(STR("[MoriaCppMod] [TargetBuild] MATCH (normalized exact) on '{}'\n"), name);
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] MATCH (normalized exact) on '{}'\n"), name);
                     }
                 }
 
                 if (matchedWidget) break;
             }
 
-            VLOG(STR("[MoriaCppMod] [TargetBuild] Result: {} visible, bLockNull={} memFail={} varEmpty={} match={}\n"),
+            QBLOG(STR("[MoriaCppMod] [TargetBuild] Result: {} visible, bLockNull={} memFail={} varEmpty={} match={}\n"),
                                             visibleCount,
                                             bLockNullCount,
                                             bLockMemFailCount,
@@ -5057,30 +5451,35 @@ namespace MoriaMods
 
             if (!matchedWidget)
             {
+                if (visibleCount == 0) return SelectResult::Loading;
                 showOnScreen((L"Recipe '" + m_targetBuildName + L"' not found in build menu").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
-                return;
+                return SelectResult::NotFound;
             }
 
             auto* func = buildTab->GetFunctionByNameInChain(STR("blockSelectedEvent"));
-            if (!func) return;
+            if (!func) return SelectResult::NotFound;
 
-            uint8_t params[132]{};
+            // Resolve blockSelectedEvent param layout via reflection
+            resolveBSEOffsets(func);
+            if (s_bse.bLock < 0 || s_bse.selfRef < 0 || s_bse.Index < 0) return SelectResult::NotFound;
+
+            std::vector<uint8_t> params(s_bse.parmsSize, 0);
 
             // Read fresh bLock data from the matched widget
             bool gotFreshBLock = false;
             if (s_off_bLock >= 0)
             {
                 uint8_t* widgetBase = reinterpret_cast<uint8_t*>(matchedWidget);
-                std::memcpy(params, widgetBase + s_off_bLock, BLOCK_DATA_SIZE);
+                std::memcpy(params.data() + s_bse.bLock, widgetBase + s_off_bLock, BLOCK_DATA_SIZE);
                 gotFreshBLock = true;
             }
 
-            VLOG(STR("[MoriaCppMod] [TargetBuild] Calling blockSelectedEvent: freshBLock={} selfRef={:p}\n"),
+            QBLOG(STR("[MoriaCppMod] [TargetBuild] Calling blockSelectedEvent: freshBLock={} selfRef={:p}\n"),
                                             gotFreshBLock,
                                             static_cast<void*>(matchedWidget));
 
-            *reinterpret_cast<UObject**>(params + 120) = matchedWidget;
-            *reinterpret_cast<int32_t*>(params + 128) = 0;
+            *reinterpret_cast<UObject**>(params.data() + s_bse.selfRef) = matchedWidget;
+            *reinterpret_cast<int32_t*>(params.data() + s_bse.Index) = 0;
 
             // Suppress post-hook capture during automated selection (RAII guard ensures reset on exception)
             m_isAutoSelecting = true;
@@ -5089,14 +5488,15 @@ namespace MoriaMods
                 bool& flag;
                 ~AutoSelectGuard() { flag = false; }
             } guard{m_isAutoSelecting};
-            buildTab->ProcessEvent(func, params);
+            buildTab->ProcessEvent(func, params.data());
             m_isAutoSelecting = false;
 
-            logBLockDiagnostics(L"TARGET-BUILD", matchedName, params);
+            logBLockDiagnostics(L"TARGET-BUILD", matchedName, params.data());
 
             showOnScreen((L"Build: " + matchedName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
             m_buildMenuWasOpen = true;       // track menu so we refresh ActionBar when it closes
             refreshActionBar();              // also refresh immediately after recipe selection
+            return SelectResult::Found;
         }
 
         // ── 6I: UMG Widget System ────────────────────────────────────────────
@@ -7094,6 +7494,8 @@ namespace MoriaMods
             for (auto& s : m_cfgScrollBoxes) s = nullptr;
             m_cfgFreeBuildLabel = nullptr;
             m_cfgFreeBuildCheckImg = nullptr;
+            m_cfgNoCollisionLabel = nullptr;
+            m_cfgNoCollisionCheckImg = nullptr;
             m_cfgUnlockBtnImg = nullptr;
             for (auto& k : m_cfgKeyValueLabels) k = nullptr;
             for (auto& k : m_cfgKeyBoxLabels) k = nullptr;
@@ -7201,6 +7603,21 @@ namespace MoriaMods
             {
                 auto* visFn = m_cfgFreeBuildCheckImg->GetFunctionByNameInChain(STR("SetVisibility"));
                 if (visFn) { uint8_t p[8]{}; p[0] = on ? 0 : 1; m_cfgFreeBuildCheckImg->ProcessEvent(visFn, p); }
+            }
+        }
+
+        void updateConfigNoCollision()
+        {
+            bool on = m_noCollisionWhileFlying;
+            if (m_cfgNoCollisionLabel)
+            {
+                umgSetText(m_cfgNoCollisionLabel, on ? Loc::get("ui.no_collision_on") : Loc::get("ui.no_collision"));
+                umgSetTextColor(m_cfgNoCollisionLabel, on ? 0.31f : 0.55f, on ? 0.86f : 0.55f, on ? 0.47f : 0.55f, 1.0f);
+            }
+            if (m_cfgNoCollisionCheckImg)
+            {
+                auto* visFn = m_cfgNoCollisionCheckImg->GetFunctionByNameInChain(STR("SetVisibility"));
+                if (visFn) { uint8_t p[8]{}; p[0] = on ? 0 : 1; m_cfgNoCollisionCheckImg->ProcessEvent(visFn, p); }
             }
         }
 
@@ -7370,10 +7787,8 @@ namespace MoriaMods
             UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
-            // Make widget focusable for modal input mode
-            uint8_t* uwRaw = reinterpret_cast<uint8_t*>(userWidget);
-            int focOff = resolveOffset(userWidget, L"bIsFocusable", s_off_bIsFocusable);
-            if (focOff >= 0) uwRaw[focOff] |= 0x02;
+            // Make widget focusable for modal input mode (via FBoolProperty API)
+            setBoolProp(userWidget, L"bIsFocusable", true);
 
             // Root SizeBox to enforce fixed 1400x450 size
             FStaticConstructObjectParameters rootSbP(sizeBoxClass, outer);
@@ -7731,6 +8146,85 @@ namespace MoriaMods
                     }
 
                     addTB(tab0VBox, Loc::get("ui.free_build_desc"), 0.47f, 0.55f, 0.71f, 0.6f, 24);
+                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 12);
+
+                    // No Collision (Flying) checkbox row: HBox { Overlay{checkbox+check} + TextBlock }
+                    {
+                        FStaticConstructObjectParameters hbP(hboxClass, outer);
+                        UObject* ncRow = UObjectGlobals::StaticConstructObject(hbP);
+                        if (ncRow)
+                        {
+                            addToVBox(tab0VBox, ncRow);
+                            auto* addToHFn = ncRow->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
+
+                            // Checkbox overlay: background + check mark
+                            FStaticConstructObjectParameters olP(overlayClass, outer);
+                            UObject* ncOl = UObjectGlobals::StaticConstructObject(olP);
+                            if (ncOl && addToHFn)
+                            {
+                                auto* addToOlFn = ncOl->GetFunctionByNameInChain(STR("AddChildToOverlay"));
+                                // Layer 0: checkbox background (always visible)
+                                UObject* texCB = findTexture2DByName(L"T_UI_Icon_Checkbox_DiamondBG");
+                                if (texCB && addToOlFn)
+                                {
+                                    FStaticConstructObjectParameters imgP2(imageClass, outer);
+                                    UObject* cbBgImg = UObjectGlobals::StaticConstructObject(imgP2);
+                                    if (cbBgImg)
+                                    {
+                                        umgSetBrushNoMatch(cbBgImg, texCB, setBrushFn);
+                                        umgSetBrushSize(cbBgImg, 48.0f, 48.0f);
+                                        auto* pCC = findParam(addToOlFn, STR("Content"));
+                                        int sz = addToOlFn->GetParmsSize();
+                                        std::vector<uint8_t> ap(sz, 0);
+                                        if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = cbBgImg;
+                                        ncOl->ProcessEvent(addToOlFn, ap.data());
+                                    }
+                                }
+                                // Layer 1: check mark (shown/hidden based on state)
+                                UObject* texCheck = findTexture2DByName(L"T_UI_Icon_Check");
+                                if (texCheck && addToOlFn)
+                                {
+                                    FStaticConstructObjectParameters imgP2(imageClass, outer);
+                                    UObject* checkImg = UObjectGlobals::StaticConstructObject(imgP2);
+                                    if (checkImg)
+                                    {
+                                        umgSetBrushNoMatch(checkImg, texCheck, setBrushFn);
+                                        umgSetBrushSize(checkImg, 48.0f, 48.0f);
+                                        auto* pCC = findParam(addToOlFn, STR("Content"));
+                                        int sz = addToOlFn->GetParmsSize();
+                                        std::vector<uint8_t> ap(sz, 0);
+                                        if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = checkImg;
+                                        ncOl->ProcessEvent(addToOlFn, ap.data());
+                                        m_cfgNoCollisionCheckImg = checkImg;
+                                        // Start hidden (will be shown by updateConfigNoCollision)
+                                        auto* visFn = checkImg->GetFunctionByNameInChain(STR("SetVisibility"));
+                                        if (visFn) { uint8_t p[8]{}; p[0] = 1; checkImg->ProcessEvent(visFn, p); }
+                                    }
+                                }
+
+                                // Add checkbox overlay to HBox
+                                auto* hbC = findParam(addToHFn, STR("Content"));
+                                int sz = addToHFn->GetParmsSize();
+                                std::vector<uint8_t> ap(sz, 0);
+                                if (hbC) *reinterpret_cast<UObject**>(ap.data() + hbC->GetOffset_Internal()) = ncOl;
+                                ncRow->ProcessEvent(addToHFn, ap.data());
+                            }
+
+                            // Label: "No Collision (Flying)" text next to checkbox
+                            UObject* ncLabel = makeTB(Loc::get("ui.no_collision"), 0.55f, 0.55f, 0.55f, 1.0f, 26);
+                            m_cfgNoCollisionLabel = ncLabel;
+                            if (ncLabel && addToHFn)
+                            {
+                                auto* hbC = findParam(addToHFn, STR("Content"));
+                                int sz = addToHFn->GetParmsSize();
+                                std::vector<uint8_t> ap(sz, 0);
+                                if (hbC) *reinterpret_cast<UObject**>(ap.data() + hbC->GetOffset_Internal()) = ncLabel;
+                                ncRow->ProcessEvent(addToHFn, ap.data());
+                            }
+                        }
+                    }
+
+                    addTB(tab0VBox, Loc::get("ui.no_collision_desc"), 0.47f, 0.55f, 0.71f, 0.6f, 24);
                     addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 12);
 
                     // "Unlock All Recipes" button with T_UI_Btn_P2_Active texture
@@ -8175,6 +8669,7 @@ namespace MoriaMods
 
             m_configWidget = userWidget;
             updateConfigFreeBuild();
+            updateConfigNoCollision();
             VLOG(STR("[MoriaCppMod] [CFG] Config UMG widget created\n"));
         }
 
@@ -9036,17 +9531,19 @@ namespace MoriaMods
                 return;
             }
 
-            // Params: PlayerController@0, InWidgetToFocus@8, InMouseLockMode@16 (byte)
-            uint8_t params[24]{};
-            std::memcpy(params + 0, &pc, 8);
-            std::memcpy(params + 8, &focusWidget, 8);
-            params[16] = 0; // EMouseLockMode::DoNotLock
-            wblCDO->ProcessEvent(uiFunc, params);
+            // Resolve param offsets via reflection
+            resolveSIMUIOffsets(uiFunc);
+            if (s_simui.PlayerController < 0) return;
+            std::vector<uint8_t> params(s_simui.parmsSize, 0);
+            std::memcpy(params.data() + s_simui.PlayerController, &pc, 8);
+            if (s_simui.InWidgetToFocus >= 0)
+                std::memcpy(params.data() + s_simui.InWidgetToFocus, &focusWidget, 8);
+            if (s_simui.InMouseLockMode >= 0)
+                params[s_simui.InMouseLockMode] = 0; // EMouseLockMode::DoNotLock
+            wblCDO->ProcessEvent(uiFunc, params.data());
 
-            // Set bShowMouseCursor bit
-            int mcOff = resolveOffset(pc, L"bShowMouseCursor", s_off_showMouseCursor);
-            uint8_t* pcRaw = reinterpret_cast<uint8_t*>(pc);
-            if (mcOff >= 0) pcRaw[mcOff] |= 0x01;
+            // Set bShowMouseCursor via FBoolProperty API
+            setBoolProp(pc, L"bShowMouseCursor", true);
 
             VLOG(STR("[MoriaCppMod] Input mode → UI Only (mouse cursor ON)\n"));
         }
@@ -9066,15 +9563,15 @@ namespace MoriaMods
                 return;
             }
 
-            // Params: PlayerController@0
-            uint8_t params[8]{};
-            std::memcpy(params + 0, &pc, 8);
-            wblCDO->ProcessEvent(gameFunc, params);
+            // Resolve param offsets via reflection
+            resolveSIMGOffsets(gameFunc);
+            if (s_simg.PlayerController < 0) return;
+            std::vector<uint8_t> params(s_simg.parmsSize, 0);
+            std::memcpy(params.data() + s_simg.PlayerController, &pc, 8);
+            wblCDO->ProcessEvent(gameFunc, params.data());
 
-            // Clear bShowMouseCursor bit
-            int mcOff = resolveOffset(pc, L"bShowMouseCursor", s_off_showMouseCursor);
-            uint8_t* pcRaw = reinterpret_cast<uint8_t*>(pc);
-            if (mcOff >= 0) pcRaw[mcOff] &= ~0x01;
+            // Clear bShowMouseCursor via FBoolProperty API
+            setBoolProp(pc, L"bShowMouseCursor", false);
 
             VLOG(STR("[MoriaCppMod] Input mode → Game Only (mouse cursor OFF)\n"));
         }
@@ -9090,6 +9587,7 @@ namespace MoriaMods
             {
                 updateConfigKeyLabels();
                 updateConfigFreeBuild();
+                updateConfigNoCollision();
                 updateConfigRemovalCount();
                 setInputModeUI();
             }
@@ -9536,14 +10034,14 @@ namespace MoriaMods
         // on_update (per-frame tick: state machines, replay, UMG config, keybinds)
         MoriaCppMod()
         {
-            ModVersion = STR("2.0");
+            ModVersion = STR("2.1");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
             // Init removal list CS before loadSaveFile can be called
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v2.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v2.1\n"));
         }
 
         ~MoriaCppMod() override
@@ -9703,15 +10201,28 @@ namespace MoriaMods
                 // (Quick-build capture moved to post-hook below)
             });
 
-            // Post-hook: capture recipe display name from blockSelectedEvent
+            // Post-hook: capture recipe display name from blockSelectedEvent + OnAfterShow signal
             // Only captures from MANUAL clicks — automated quickbuild selections are suppressed
             Unreal::Hook::RegisterProcessEventPostCallback([](UObject* context, UFunction* func, void* parms) {
                 if (!s_instance || !func) return;
 
+                std::wstring fn(func->GetName());
+
+                // OnAfterShow on Build_Tab: signal that menu is fully initialized
+                if (fn == STR("OnAfterShow"))
+                {
+                    std::wstring cls = safeClassName(context);
+                    if (cls == STR("UI_WBP_Build_Tab_C"))
+                    {
+                        s_instance->m_buildTabAfterShowFired = true;
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] OnAfterShow fired on Build_Tab\n"));
+                    }
+                    return;
+                }
+
                 // Skip capture during automated quickbuild activation
                 if (s_instance->m_isAutoSelecting) return;
 
-                std::wstring fn(func->GetName());
                 if (fn != STR("blockSelectedEvent")) return;
                 std::wstring cls = safeClassName(context);
                 if (cls != STR("UI_WBP_Build_Tab_C")) return;
@@ -9730,7 +10241,7 @@ namespace MoriaMods
                 s_instance->m_lastCapturedName = displayName;
                 std::memcpy(s_instance->m_lastCapturedBLock, p, BLOCK_DATA_SIZE);
                 s_instance->m_hasLastCapture = true;
-                VLOG(STR("[MoriaCppMod] [QuickBuild] Captured: '{}' (with bLock data)\n"), displayName);
+                QBLOG(STR("[MoriaCppMod] [QuickBuild] Captured: '{}' (with bLock data)\n"), displayName);
                 s_instance->logBLockDiagnostics(L"CAPTURE", displayName, p);
 
                 // Reset total rotation for new build piece selection
@@ -9745,7 +10256,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v2.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v2.1: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
         }
 
         // Per-frame tick. Drives all state machines and periodic tasks:
@@ -10082,8 +10593,17 @@ namespace MoriaMods
                                 s_config.pendingToggleFreeBuild = true;
                                 VLOG(STR("[MoriaCppMod] [CFG] Free Build toggle via mouse click\n"));
                             }
-                            // Unlock All Recipes button: centered, 420px wide, ~340px from top
-                            int ubY0 = static_cast<int>(wTop + 330 * uis), ubY1 = static_cast<int>(ubY0 + 68 * uis);
+                            // No Collision (Flying) checkbox click — entire row
+                            int ncY0 = static_cast<int>(wTop + 330 * uis), ncY1 = static_cast<int>(ncY0 + 52 * uis);
+                            if (cursor.x >= cbX0 && cursor.x <= cbX1 && cursor.y >= ncY0 && cursor.y <= ncY1)
+                            {
+                                m_noCollisionWhileFlying = !m_noCollisionWhileFlying;
+                                saveConfig();
+                                updateConfigNoCollision();
+                                VLOG(STR("[MoriaCppMod] [CFG] No Collision toggle: {}\n"), m_noCollisionWhileFlying ? 1 : 0);
+                            }
+                            // Unlock All Recipes button: centered, 420px wide
+                            int ubY0 = static_cast<int>(wTop + 430 * uis), ubY1 = static_cast<int>(ubY0 + 68 * uis);
                             int ubX0 = static_cast<int>(wLeft + (1400 - 420) / 2 * uis), ubX1 = static_cast<int>(ubX0 + 420 * uis);
                             if (cursor.x >= ubX0 && cursor.x <= ubX1 && cursor.y >= ubY0 && cursor.y <= ubY1)
                             {
@@ -10327,7 +10847,7 @@ namespace MoriaMods
                             s_config.pendingToggleFreeBuild = false;
                             syncDebugToggleState(); // read actual state instead of blind flip
                             showDebugMenuState();
-                            if (m_cfgVisible) updateConfigFreeBuild();
+                            if (m_cfgVisible) { updateConfigFreeBuild(); updateConfigNoCollision(); }
                             s_freeBuildRetries = 0;
                         }
                         else if (++s_freeBuildRetries > MAX_RETRIES)
@@ -10410,7 +10930,7 @@ namespace MoriaMods
                 // Clear cached pointers — Build_Tab widget may be getting destroyed
                 m_cachedBuildTab = nullptr;
                 m_cachedBuildHUD = nullptr;
-                m_fnIsShowing = nullptr;
+                m_fnIsVisible = nullptr;
                 refreshActionBar();
             }
 
@@ -10418,36 +10938,38 @@ namespace MoriaMods
             // Polls cheap widget booleans each tick, proceeds the instant game state transitions
             if (m_qbPhase != QBPhase::Idle)
             {
-                m_qbTimeout++;
+                ULONGLONG now = GetTickCount64();
+                ULONGLONG elapsed = now - m_qbStartTime;
+                ULONGLONG sinceLast = now - m_qbRetryTime;
 
-                // Global safety timeout
-                if (m_qbTimeout > 150)
+                // Global safety timeout (5s during prime, 2.5s normal)
+                ULONGLONG maxTime = m_buildMenuPrimed ? 2500 : 5000;
+                if (elapsed > maxTime)
                 {
-                    VLOG(STR("[MoriaCppMod] [QuickBuild] SM: TIMEOUT at tick {} phase {}\n"),
-                                                    m_qbTimeout, static_cast<int>(m_qbPhase));
+                    QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: TIMEOUT at {}ms phase {}\n"),
+                                                    elapsed, static_cast<int>(m_qbPhase));
                     showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
+                    hideBuildTab();
                     m_pendingQuickBuildSlot = -1;
                     m_qbPhase = QBPhase::Idle;
-                    m_qbTimeout = 0;
                 }
                 else if (m_qbPhase == QBPhase::CancelPlacement)
                 {
                     // Wait for ESC to take effect — placement deactivates
                     if (!isPlacementActive())
                     {
-                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: placement cancelled (tick {})\n"), m_qbTimeout);
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: placement cancelled ({}ms)\n"), elapsed);
+                        m_qbRetryTime = now;
                         if (isBuildTabShowing())
                         {
                             // Build menu still showing after ESC — close it first
-                            keybd_event(0x42, 0, 0, 0);
-                            keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                            hideBuildTab();
                             m_qbPhase = QBPhase::CloseMenu;
                         }
                         else
                         {
                             // Menu already closed — open fresh
-                            keybd_event(0x42, 0, 0, 0);
-                            keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                            showBuildTab();
                             m_qbPhase = QBPhase::OpenMenu;
                         }
                     }
@@ -10457,54 +10979,89 @@ namespace MoriaMods
                     // Wait for build tab to close
                     if (!isBuildTabShowing())
                     {
-                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu closed (tick {}) — opening fresh\n"), m_qbTimeout);
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu closed ({}ms) — opening fresh\n"), elapsed);
+                        m_qbRetryTime = now;
+                        showBuildTab();
+                        m_qbPhase = QBPhase::OpenMenu;
+                    }
+                }
+                else if (m_qbPhase == QBPhase::PrimeOpen)
+                {
+                    // Wait for OnAfterShow signal (definitive "ready" from FGK lifecycle)
+                    if (m_buildTabAfterShowFired)
+                    {
+                        // Menu is already open and widgets are ready — go straight to select
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: prime complete via OnAfterShow ({}ms) — selecting recipe\n"), elapsed);
+                        m_buildTabAfterShowFired = false;
+                        m_buildMenuPrimed = true;
+                        m_qbRetryTime = now;
+                        m_qbPhase = QBPhase::SelectRecipe;
+                    }
+                    else if (isBuildTabShowing() && sinceLast > 2000)
+                    {
+                        // Fallback: 2s elapsed since B key with tab showing but no OnAfterShow
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: prime complete via fallback ({}ms) — selecting recipe\n"), elapsed);
+                        m_buildMenuPrimed = true;
+                        m_qbRetryTime = now;
+                        m_qbPhase = QBPhase::SelectRecipe;
+                    }
+                    else if (!isBuildTabShowing() && sinceLast > 417)
+                    {
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: prime retrying B key ({}ms since last)\n"), sinceLast);
                         keybd_event(0x42, 0, 0, 0);
                         keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                        m_qbPhase = QBPhase::OpenMenu;
+                        m_qbRetryTime = now;
                     }
                 }
                 else if (m_qbPhase == QBPhase::OpenMenu)
                 {
                     if (isBuildTabShowing())
                     {
-                        // Menu opened — proceed to recipe selection
-                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu opened (tick {}) — selecting recipe\n"), m_qbTimeout);
+                        // Menu visible — advance to recipe selection
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu visible ({}ms) — selecting recipe\n"), elapsed);
+                        m_qbRetryTime = now;
                         m_qbPhase = QBPhase::SelectRecipe;
                         // Fall through to SelectRecipe on same tick
                     }
-                    else if (m_qbTimeout == 25)
+                    else if (sinceLast > 417)
                     {
-                        // Retry B key if menu hasn't appeared yet
-                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: tick 25 — retrying B key\n"));
-                        keybd_event(0x42, 0, 0, 0);
-                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                        // Retry Show() if menu hasn't appeared yet
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: retrying Show() ({}ms since last)\n"), sinceLast);
+                        showBuildTab();
+                        m_qbRetryTime = now;
                     }
                 }
 
                 if (m_qbPhase == QBPhase::SelectRecipe)
                 {
                     UObject* buildTab = getCachedBuildTab();
-                    if (buildTab && selectRecipeOnBuildTab(buildTab, m_pendingQuickBuildSlot))
+                    if (!buildTab)
                     {
-                        // Success — reset total rotation for new build placement
-                        s_overlay.totalRotation = 0;
-                        s_overlay.needsUpdate = true;
-                        updateMcRotationLabel();
-                        m_pendingQuickBuildSlot = -1;
-                        m_qbPhase = QBPhase::Idle;
-                        m_qbTimeout = 0;
+                        // Build tab lost — keep waiting (global timeout handles failure)
                     }
-                    else if (m_qbTimeout > 100)
+                    else
                     {
-                        // Items never loaded — show error
-                        VLOG(STR("[MoriaCppMod] [QuickBuild] SM: recipe not found after {} ticks\n"), m_qbTimeout);
-                        const std::wstring& targetName = m_recipeSlots[m_pendingQuickBuildSlot].displayName;
-                        showOnScreen((L"Recipe '" + targetName + L"' not found in menu!").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
-                        m_pendingQuickBuildSlot = -1;
-                        m_qbPhase = QBPhase::Idle;
-                        m_qbTimeout = 0;
+                        SelectResult result = selectRecipeOnBuildTab(buildTab, m_pendingQuickBuildSlot);
+                        if (result == SelectResult::Found)
+                        {
+                            // Success — reset total rotation for new build placement
+                            s_overlay.totalRotation = 0;
+                            s_overlay.needsUpdate = true;
+                            updateMcRotationLabel();
+                            m_pendingQuickBuildSlot = -1;
+                            m_qbPhase = QBPhase::Idle;
+                        }
+                        else if (result == SelectResult::NotFound)
+                        {
+                            // Widgets loaded but recipe not in menu — fail immediately
+                            QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: recipe not found ({}ms)\n"), elapsed);
+                            const std::wstring& targetName = m_recipeSlots[m_pendingQuickBuildSlot].displayName;
+                            showOnScreen((L"Recipe '" + targetName + L"' not found in menu!").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
+                            m_pendingQuickBuildSlot = -1;
+                            m_qbPhase = QBPhase::Idle;
+                        }
+                        // else Loading: widgets not yet created, keep retrying (global timeout handles failure)
                     }
-                    // else: stay in SelectRecipe, items may still be loading
                 }
             }
 
@@ -10514,93 +11071,136 @@ namespace MoriaMods
             // ── Reactive target-build state machine (Shift+F10 → build from targeted actor) ──
             if (m_tbPhase != QBPhase::Idle)
             {
-                m_tbTimeout++;
+                ULONGLONG now = GetTickCount64();
+                ULONGLONG elapsed = now - m_tbStartTime;
+                ULONGLONG sinceLast = now - m_tbRetryTime;
 
-                // Global safety timeout
-                if (m_tbTimeout > 150)
+                // Global safety timeout (5s during prime, 2.5s normal)
+                ULONGLONG tbMaxTime = m_buildMenuPrimed ? 2500 : 5000;
+                if (elapsed > tbMaxTime)
                 {
-                    VLOG(STR("[MoriaCppMod] [TargetBuild] SM: TIMEOUT at tick {} phase {}\n"),
-                                                    m_tbTimeout, static_cast<int>(m_tbPhase));
+                    QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: TIMEOUT at {}ms phase {}\n"),
+                                                    elapsed, static_cast<int>(m_tbPhase));
                     showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
+                    hideBuildTab();
                     m_pendingTargetBuild = false;
                     m_tbPhase = QBPhase::Idle;
-                    m_tbTimeout = 0;
                 }
                 else if (m_tbPhase == QBPhase::CancelPlacement)
                 {
+                    // Wait for ESC to take effect — placement deactivates
                     if (!isPlacementActive())
                     {
-                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: placement cancelled (tick {})\n"), m_tbTimeout);
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: placement cancelled ({}ms)\n"), elapsed);
+                        m_tbRetryTime = now;
                         if (isBuildTabShowing())
                         {
-                            keybd_event(0x42, 0, 0, 0);
-                            keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                            // Build menu still showing after ESC — close it first
+                            hideBuildTab();
                             m_tbPhase = QBPhase::CloseMenu;
                         }
                         else
                         {
-                            keybd_event(0x42, 0, 0, 0);
-                            keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                            // Menu already closed — open fresh
+                            showBuildTab();
                             m_tbPhase = QBPhase::OpenMenu;
                         }
                     }
                 }
                 else if (m_tbPhase == QBPhase::CloseMenu)
                 {
+                    // Wait for build tab to close
                     if (!isBuildTabShowing())
                     {
-                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu closed (tick {}) — opening fresh\n"), m_tbTimeout);
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu closed ({}ms) — opening fresh\n"), elapsed);
+                        m_tbRetryTime = now;
+                        showBuildTab();
+                        m_tbPhase = QBPhase::OpenMenu;
+                    }
+                }
+                else if (m_tbPhase == QBPhase::PrimeOpen)
+                {
+                    // Wait for OnAfterShow signal (definitive "ready" from FGK lifecycle)
+                    if (m_buildTabAfterShowFired)
+                    {
+                        // Menu is already open and widgets are ready — go straight to select
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: prime complete via OnAfterShow ({}ms) — selecting recipe\n"), elapsed);
+                        m_buildTabAfterShowFired = false;
+                        m_buildMenuPrimed = true;
+                        m_tbRetryTime = now;
+                        m_tbPhase = QBPhase::SelectRecipe;
+                    }
+                    else if (isBuildTabShowing() && sinceLast > 2000)
+                    {
+                        // Fallback: 2s elapsed since B key with tab showing but no OnAfterShow
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: prime complete via fallback ({}ms) — selecting recipe\n"), elapsed);
+                        m_buildMenuPrimed = true;
+                        m_tbRetryTime = now;
+                        m_tbPhase = QBPhase::SelectRecipe;
+                    }
+                    else if (!isBuildTabShowing() && sinceLast > 417)
+                    {
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: prime retrying B key ({}ms since last)\n"), sinceLast);
                         keybd_event(0x42, 0, 0, 0);
                         keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                        m_tbPhase = QBPhase::OpenMenu;
+                        m_tbRetryTime = now;
                     }
                 }
                 else if (m_tbPhase == QBPhase::OpenMenu)
                 {
                     if (isBuildTabShowing())
                     {
-                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu opened (tick {}) — selecting recipe\n"), m_tbTimeout);
+                        // Menu visible — advance to recipe selection
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu visible ({}ms) — selecting recipe\n"), elapsed);
+                        m_tbRetryTime = now;
                         m_tbPhase = QBPhase::SelectRecipe;
+                        // Fall through to SelectRecipe on same tick
                     }
-                    else if (m_tbTimeout == 25)
+                    else if (sinceLast > 417)
                     {
-                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: tick 25 — retrying B key\n"));
-                        keybd_event(0x42, 0, 0, 0);
-                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                        // Retry Show() if menu hasn't appeared yet
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: retrying Show() ({}ms since last)\n"), sinceLast);
+                        showBuildTab();
+                        m_tbRetryTime = now;
                     }
                 }
 
                 if (m_tbPhase == QBPhase::SelectRecipe)
                 {
                     UObject* buildTab = getCachedBuildTab();
-                    if (buildTab)
+                    if (!buildTab)
                     {
-                        selectRecipeByTargetName(buildTab);
-                        // Reset total rotation for new build placement
-                        s_overlay.totalRotation = 0;
-                        s_overlay.needsUpdate = true;
-                        updateMcRotationLabel();
-                        m_pendingTargetBuild = false;
-                        m_tbPhase = QBPhase::Idle;
-                        m_tbTimeout = 0;
+                        // Build tab lost — keep waiting (global timeout handles failure)
                     }
-                    else if (m_tbTimeout > 100)
+                    else
                     {
-                        VLOG(STR("[MoriaCppMod] [TargetBuild] SM: build tab lost after {} ticks\n"), m_tbTimeout);
-                        showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
-                        m_pendingTargetBuild = false;
-                        m_tbPhase = QBPhase::Idle;
-                        m_tbTimeout = 0;
+                        SelectResult result = selectRecipeByTargetName(buildTab);
+                        if (result == SelectResult::Found)
+                        {
+                            // Reset total rotation for new build placement
+                            s_overlay.totalRotation = 0;
+                            s_overlay.needsUpdate = true;
+                            updateMcRotationLabel();
+                            m_pendingTargetBuild = false;
+                            m_tbPhase = QBPhase::Idle;
+                        }
+                        else if (result == SelectResult::NotFound)
+                        {
+                            // Widgets loaded but target recipe not in menu — fail immediately
+                            QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: recipe not found ({}ms)\n"), elapsed);
+                            m_pendingTargetBuild = false;
+                            m_tbPhase = QBPhase::Idle;
+                        }
+                        // else Loading: widgets not yet created, keep retrying (global timeout handles failure)
                     }
                 }
             }
 
             if (!m_replayActive) return;
             m_frameCounter++;
-            m_rescanCounter++;
 
             // Detect world switch: if character was loaded but disappears, reset for new world
-            if (m_characterLoaded && m_frameCounter % 60 == 0)
+            if (m_characterLoaded && intervalElapsed(m_lastWorldCheck, 1000))
             {
                 std::vector<UObject*> dwarves;
                 UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
@@ -10610,14 +11210,13 @@ namespace MoriaMods
                     m_characterLoaded = false;
                     m_characterHidden = false;       // reset hide toggle for new world
                     m_flyMode = false;               // reset fly toggle for new world
+                    m_buildMenuPrimed = false;       // force re-prime on next quickbuild
                     // Reset reactive state machine — cached pointers are stale in new world
                     m_cachedBuildHUD = nullptr;
                     m_cachedBuildTab = nullptr;
-                    m_fnIsShowing = nullptr;
+                    m_fnIsVisible = nullptr;
                     m_qbPhase = QBPhase::Idle;
-                    m_qbTimeout = 0;
                     m_tbPhase = QBPhase::Idle;
-                    m_tbTimeout = 0;
                     m_pendingQuickBuildSlot = -1;
                     m_pendingTargetBuild = false;
                     s_overlay.visible = false; // hide overlay until character reloads
@@ -10625,7 +11224,10 @@ namespace MoriaMods
                     m_processedComps.clear();
                     m_undoStack.clear();
                     m_stuckLogCount = 0;
-                    m_rescanCounter = 0;
+                    m_lastRescanTime = 0;
+                    m_lastStreamCheck = 0;
+                    m_lastContainerScan = 0;
+                    m_containerTimeoutLogged = false;
                     m_chatWidget = nullptr;
                     m_sysMessages = nullptr;
                     m_replay = {}; // stop any active replay
@@ -10728,24 +11330,24 @@ namespace MoriaMods
 
             if (!m_characterLoaded)
             {
-                if (m_frameCounter % 30 == 0)
-                { // check every ~0.5s
+                if (intervalElapsed(m_lastCharPoll, 500))
+                { // check every 0.5s
                     std::vector<UObject*> dwarves;
                     UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
                     if (!dwarves.empty())
                     {
                         m_characterLoaded = true;
-                        m_charLoadFrame = m_frameCounter;
-                        VLOG(STR("[MoriaCppMod] Character loaded at frame {} — waiting 15s before replay\n"), m_frameCounter);
+                        m_charLoadTime = GetTickCount64();
+                        VLOG(STR("[MoriaCppMod] Character loaded — waiting 15s before replay\n"));
                     }
                 }
                 return; // don't do anything until character exists
             }
 
-            int framesSinceChar = m_frameCounter - m_charLoadFrame;
+            ULONGLONG msSinceChar = GetTickCount64() - m_charLoadTime;
 
-            // Auto-scan containers: retry every ~2s after initial 5s delay, give up after ~60s
-            if (m_bodyInvHandle.empty() && framesSinceChar > 300 && framesSinceChar < 3900 && framesSinceChar % 120 == 0)
+            // Auto-scan containers: retry every 2s after initial 5s delay, give up after 65s
+            if (m_bodyInvHandle.empty() && msSinceChar > 5000 && msSinceChar < 65000 && intervalElapsed(m_lastContainerScan, 2000))
             {
                 VLOG(STR("[MoriaCppMod] [Swap] Container scan attempt (frame {}). bodyInvHandle.empty={} handles.size={}\n"),
                                                 m_frameCounter,
@@ -10779,17 +11381,17 @@ namespace MoriaMods
                 }
             }
 
-            // Log failure if container scan times out after ~60s
-            if (m_bodyInvHandle.empty() && framesSinceChar == 3900)
+            // Log failure if container scan times out after 65s (one-shot via flag)
+            if (m_bodyInvHandle.empty() && msSinceChar >= 65000 && !m_containerTimeoutLogged)
             {
-                VLOG(STR("[MoriaCppMod] [Swap] Container discovery FAILED after 60s — toolbar swap unavailable this session\n"));
+                m_containerTimeoutLogged = true;
+                VLOG(STR("[MoriaCppMod] [Swap] Container discovery FAILED after 65s — toolbar swap unavailable this session\n"));
                 showOnScreen(Loc::get("msg.container_discovery_failed").c_str(), 5.0f, 1.0f, 0.3f, 0.0f);
             }
 
-            // Initial replay 15 seconds after character load (~900 frames at 60fps)
+            // Initial replay 15 seconds after character load
             // Extra delay to let streaming settle before modifying instance buffers
-            static constexpr int INITIAL_DELAY = 900;
-            if (!m_initialReplayDone && framesSinceChar == INITIAL_DELAY)
+            if (!m_initialReplayDone && msSinceChar >= 15000)
             {
                 m_initialReplayDone = true;
                 if (!m_savedRemovals.empty() || !m_typeRemovals.empty())
@@ -10808,17 +11410,15 @@ namespace MoriaMods
                 processReplayBatch();
             }
 
-            // Check for newly-streamed components every ~3s (after initial replay, when not already replaying)
-            if (m_initialReplayDone && !m_replay.active && m_frameCounter % STREAM_CHECK_INTERVAL == 0)
+            // Check for newly-streamed components every 3s (after initial replay, when not already replaying)
+            if (m_initialReplayDone && !m_replay.active && intervalElapsed(m_lastStreamCheck, 3000))
             {
                 checkForNewComponents();
             }
 
-            // Periodic full rescan every ~60s while there are pending removals
-            static constexpr int RESCAN_INTERVAL = 3600; // ~60s at 60fps
-            if (m_initialReplayDone && !m_replay.active && m_rescanCounter >= RESCAN_INTERVAL && hasPendingRemovals())
+            // Periodic full rescan every 60s while there are pending removals
+            if (m_initialReplayDone && !m_replay.active && intervalElapsed(m_lastRescanTime, 60000) && hasPendingRemovals())
             {
-                m_rescanCounter = 0;
                 int pending = pendingCount();
                 VLOG(STR("[MoriaCppMod] Periodic rescan ({} pending)...\n"), pending);
                 m_processedComps.clear();
