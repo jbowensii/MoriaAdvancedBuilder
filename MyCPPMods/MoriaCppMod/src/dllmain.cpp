@@ -1,5 +1,5 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  MoriaCppMod v2.1 — Advanced Builder & HISM Removal for Return to Moria   ║
+// ║  MoriaCppMod v2.2 — Advanced Builder & HISM Removal for Return to Moria   ║
 // ║                                                                            ║
 // ║  A UE4SS C++ mod for Return to Moria (UE4.27) providing:                  ║
 // ║    - HISM instance hiding with persistence across sessions/worlds          ║
@@ -6358,9 +6358,10 @@ namespace MoriaMods
             float uiScale = static_cast<float>(viewH) / 2160.0f;
             if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
-            // SetRenderScale: uniform 0.81 scaled by uiScale (matches AB/MC)
-            float bbScale = 0.81f * uiScale;
-            umgSetRenderScale(outerBorder, bbScale, bbScale);
+            // SetRenderScale: horizontal 0.825, vertical 0.75 — scaled by uiScale
+            float umgScaleX = 0.825f * uiScale;
+            float umgScaleY = 0.75f * uiScale;
+            umgSetRenderScale(outerBorder, umgScaleX, umgScaleY);
 
             // Use the larger of frame/state width for column width
             float iconW = (frameW > stateW) ? frameW : stateW;
@@ -6371,8 +6372,8 @@ namespace MoriaMods
             float vOverlap = stateH * 0.15f;                   // 15% vertical overlap
             float hOverlapPerSlot = iconW * 0.20f;             // 20% horizontal overlap (10% each side)
             // Viewport size matches render scale so invisible frame fits the visual
-            float totalW = (8.0f * iconW - 7.0f * hOverlapPerSlot) * bbScale;
-            float totalH = (frameH + stateH - vOverlap) * bbScale;
+            float totalW = (8.0f * iconW - 7.0f * hOverlapPerSlot) * umgScaleX;
+            float totalH = (frameH + stateH - vOverlap) * umgScaleY;
             VLOG(STR("[MoriaCppMod] [UMG] Frame size: {}x{} (iconW={} frameH={} stateH={})\n"),
                                             totalW, totalH, iconW, frameH, stateH);
 
@@ -10034,14 +10035,14 @@ namespace MoriaMods
         // on_update (per-frame tick: state machines, replay, UMG config, keybinds)
         MoriaCppMod()
         {
-            ModVersion = STR("2.1");
+            ModVersion = STR("2.2");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
             // Init removal list CS before loadSaveFile can be called
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v2.1\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v2.2\n"));
         }
 
         ~MoriaCppMod() override
@@ -10256,7 +10257,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v2.1: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v2.2: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
         }
 
         // Per-frame tick. Drives all state machines and periodic tasks:
