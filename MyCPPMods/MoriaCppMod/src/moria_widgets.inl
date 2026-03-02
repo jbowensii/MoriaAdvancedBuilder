@@ -1729,7 +1729,7 @@
             // Title
             m_tiTitleLabel = makeTextBlock(Loc::get("ui.target_info_title"), 0.78f, 0.86f, 1.0f, 1.0f);
             // Separator (thin text line)
-            makeTextBlock(L"Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬", 0.31f, 0.51f, 0.78f, 0.5f);
+            makeTextBlock(L"--------------------------------", 0.31f, 0.51f, 0.78f, 0.5f);
             // Data rows
             m_tiClassLabel   = makeTextBlock(Loc::get("ui.label_class"), 0.86f, 0.90f, 0.96f, 0.9f);
             m_tiNameLabel    = makeTextBlock(Loc::get("ui.label_name"), 0.86f, 0.90f, 0.96f, 0.9f);
@@ -1766,10 +1766,10 @@
             float uiScale = static_cast<float>(viewH) / 2160.0f;
             if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
-            // Render scale 1.0 Ã¢â‚¬â€ engine DPI handles resolution scaling
+            // Render scale 1.0 -- engine DPI handles resolution scaling via Slate
             if (rootSizeBox) umgSetRenderScale(rootSizeBox, 1.0f, 1.0f);
 
-            // Set desired size (scaled)
+            // Set desired size in Slate units (engine DPI scales to physical pixels)
             auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
             if (setDesiredSizeFn)
             {
@@ -1779,7 +1779,7 @@
                     int sz = setDesiredSizeFn->GetParmsSize();
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
-                    v[0] = 1100.0f * uiScale; v[1] = 320.0f * uiScale;
+                    v[0] = 1100.0f; v[1] = 320.0f;
                     userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
                 }
             }
@@ -2616,7 +2616,7 @@
 
             // Title
             addTB(mainVBox, Loc::get("ui.config_title"), 0.78f, 0.86f, 1.0f, 1.0f, 36);
-            addTB(mainVBox, L"Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬", 0.31f, 0.51f, 0.78f, 0.4f, 20);
+            addTB(mainVBox, L"--------------------------------------------", 0.31f, 0.51f, 0.78f, 0.4f, 20);
 
             // Tab bar: HBox with texture-backed tabs
             UObject* texP1 = findTexture2DByName(L"T_UI_Btn_P1_Up");
@@ -2699,7 +2699,7 @@
                 }
             }
 
-            addTB(mainVBox, L"Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬", 0.31f, 0.51f, 0.78f, 0.4f, 20);
+            addTB(mainVBox, L"-------------------------------------------------------------", 0.31f, 0.51f, 0.78f, 0.4f, 20);
 
             // Helper: configure ScrollBox to always show scrollbar
             auto configureScrollBox = [&](UObject* scrollBox) {
@@ -3288,9 +3288,10 @@
             float uiScale = static_cast<float>(viewH) / 2160.0f;
             if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
-            // Render scale 1.0 Ã¢â‚¬â€ engine DPI handles resolution scaling
+            // Render scale 1.0 -- engine DPI handles resolution scaling via Slate
             if (rootSizeBox) umgSetRenderScale(rootSizeBox, 1.0f, 1.0f);
 
+            // Set desired size in Slate units (engine DPI scales to physical pixels)
             auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
             if (setDesiredSizeFn)
             {
@@ -3300,7 +3301,7 @@
                     int sz = setDesiredSizeFn->GetParmsSize();
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
-                    v[0] = 1400.0f * uiScale; v[1] = 900.0f * uiScale;
+                    v[0] = 1400.0f; v[1] = 900.0f;
                     userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
                 }
             }
@@ -3319,10 +3320,10 @@
                 }
             }
 
-            // Position: centered, scaled Y offset
+            // Position: centered, slight Y offset
             {
                 float posX = static_cast<float>(viewW) / 2.0f;
-                float posY = static_cast<float>(viewH) / 2.0f - 100.0f * uiScale;
+                float posY = static_cast<float>(viewH) / 2.0f - 100.0f;
                 setWidgetPosition(userWidget, posX, posY, true);
             }
 

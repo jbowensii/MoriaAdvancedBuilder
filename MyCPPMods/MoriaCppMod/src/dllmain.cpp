@@ -302,13 +302,15 @@ namespace MoriaMods
         // bLock offset resolved via s_off_bLock (ForEachProperty on UI_WBP_Build_Item_C)
 
         // Reactive quick-build state machine (replaces frame-counting)
-        enum class QBPhase { Idle, CancelPlacement, CloseMenu, PrimeOpen, OpenMenu, SelectRecipe };
+        enum class QBPhase { Idle, CancelPlacement, CloseMenu, WaitReopen, PrimeOpen, OpenMenu, SelectRecipe };
+        int m_quickBuildSwapDelay{5};  // frames to wait between close and reopen (Slate cleanup)
         // Result of selectRecipeOnBuildTab Ã¢â‚¬â€ distinguishes "still loading" from "genuinely missing"
         enum class SelectResult { Found, Loading, NotFound };
         int m_pendingQuickBuildSlot{-1};     // which F1-F8 slot is pending (-1 = none)
         QBPhase m_qbPhase{QBPhase::Idle};    // quickbuild phase
         ULONGLONG m_qbStartTime{0};          // timestamp when SM entered non-idle
         ULONGLONG m_qbRetryTime{0};          // timestamp of last retry/phase change
+        int m_qbWaitCount{0};                // WaitReopen frame countdown
 
         // Cached widget pointers for cheap state checks (invalidated on world unload)
         UObject* m_cachedBuildHUD{nullptr};  // UI_WBP_BuildHUDv2_C
@@ -325,6 +327,7 @@ namespace MoriaMods
         QBPhase m_tbPhase{QBPhase::Idle};    // target-build phase
         ULONGLONG m_tbStartTime{0};          // timestamp when SM entered non-idle
         ULONGLONG m_tbRetryTime{0};          // timestamp of last retry/phase change
+        int m_tbWaitCount{0};                // WaitReopen frame countdown
 
         std::vector<uint8_t> m_bagHandle; // cached EpicPack bag FItemHandle
 
@@ -1016,7 +1019,20 @@ namespace MoriaMods
                 }
             }
 
-            // Ã¢â€â‚¬Ã¢â€â‚¬ UMG Config keyboard interaction Ã¢â€â‚¬Ã¢â€â‚¬
+            // Re-apply UI input mode after Alt-Tab (engine resets to Game on focus regain)
+            {
+                HWND gameWnd = findGameWindow();
+                static bool s_lastGameFocused = true;
+                bool gameFocused = gameWnd && (GetForegroundWindow() == gameWnd);
+                if (gameFocused && !s_lastGameFocused && m_cfgVisible)
+                {
+                    setInputModeUI();
+                    VLOG(STR("[MoriaCppMod] [CFG] Focus regained -- re-applied UI input mode\n"));
+                }
+                s_lastGameFocused = gameFocused;
+            }
+
+            // UMG Config keyboard interaction
             if (m_cfgVisible && m_configWidget)
             {
                 // Tab switching: 1/2/3 keys
@@ -1046,9 +1062,9 @@ namespace MoriaMods
                         int viewW = cr.right; int viewH = cr.bottom;
                         float uis = static_cast<float>(viewH) / 2160.0f; // uiScale for hit-test
                         if (uis < 0.5f) uis = 0.5f;
-                        // Config widget: pos (viewW/2, viewH/2 - 100*uis), size 1400*uis x 900*uis, alignment (0.5,0.5)
+                        // Config widget: pos (viewW/2, viewH/2 - 100), size 1400x900 Slate, alignment (0.5,0.5)
                         int wLeft = static_cast<int>(viewW / 2 - 700 * uis);
-                        int wTop  = static_cast<int>(viewH / 2 - 100 * uis - 450 * uis);
+                        int wTop  = static_cast<int>(viewH / 2 - 100 - 450 * uis);
                         // Tab bar: ~98px from top, each tab 420x66, 40px left padding (all scaled)
                         int tabY0 = static_cast<int>(wTop + 98 * uis), tabY1 = static_cast<int>(tabY0 + 66 * uis);
                         if (cursor.y >= tabY0 && cursor.y <= tabY1)
@@ -1067,15 +1083,16 @@ namespace MoriaMods
                         // Tab 0: Free Build checkbox click Ã¢â‚¬â€ entire row
                         if (m_cfgActiveTab == 0)
                         {
-                            int cbY0 = static_cast<int>(wTop + 230 * uis), cbY1 = static_cast<int>(cbY0 + 52 * uis);
-                            int cbX0 = static_cast<int>(wLeft + 40 * uis), cbX1 = static_cast<int>(wLeft + (1400 - 40) * uis);
+                            int cbX0 = static_cast<int>(wLeft + 20 * uis), cbX1 = static_cast<int>(wLeft + (1400 - 20) * uis);
+                            // Free Build: checkbox row + description text (generous Y range)
+                            int cbY0 = static_cast<int>(wTop + 210 * uis), cbY1 = static_cast<int>(wTop + 310 * uis);
                             if (cursor.x >= cbX0 && cursor.x <= cbX1 && cursor.y >= cbY0 && cursor.y <= cbY1)
                             {
                                 s_config.pendingToggleFreeBuild = true;
                                 VLOG(STR("[MoriaCppMod] [CFG] Free Build toggle via mouse click\n"));
                             }
-                            // No Collision (Flying) checkbox click Ã¢â‚¬â€ entire row
-                            int ncY0 = static_cast<int>(wTop + 330 * uis), ncY1 = static_cast<int>(ncY0 + 52 * uis);
+                            // No Collision: checkbox row + description text (generous Y range)
+                            int ncY0 = static_cast<int>(wTop + 310 * uis), ncY1 = static_cast<int>(wTop + 410 * uis);
                             if (cursor.x >= cbX0 && cursor.x <= cbX1 && cursor.y >= ncY0 && cursor.y <= ncY1)
                             {
                                 m_noCollisionWhileFlying = !m_noCollisionWhileFlying;
@@ -1095,9 +1112,9 @@ namespace MoriaMods
                         // Tab 1: Key box click for rebinding
                         if (m_cfgActiveTab == 1)
                         {
-                            // Key boxes are right-aligned, ~220px wide, in the right portion of the widget
-                            int kbX0 = static_cast<int>(wLeft + (1400 - 40 - 280) * uis);
-                            int kbX1 = static_cast<int>(wLeft + (1400 - 10) * uis);
+                            // Key boxes are right-aligned within the uis-scaled widget
+                            int kbX0 = static_cast<int>(wLeft + 1050 * uis);
+                            int kbX1 = static_cast<int>(wLeft + 1400 * uis);
                             // First key row starts after tabs+seps (~190px from top)
                             int contentY = static_cast<int>(wTop + 190 * uis);
                             int rowHeight = static_cast<int>(44 * uis);
@@ -1119,7 +1136,7 @@ namespace MoriaMods
                             if (cursor.x >= kbX0 && cursor.x <= kbX1)
                             {
                                 // Add scroll offset: screen click maps to content position + scroll
-                                int y = cursor.y - contentY + static_cast<int>(scrollOff);
+                                int y = cursor.y - contentY + static_cast<int>(scrollOff * uis);
                                 if (y >= 0)
                                 {
                                     // Walk through bindings to find which row was clicked
@@ -1138,6 +1155,7 @@ namespace MoriaMods
                                             s_capturingBind = b;
                                             s_captureSkipTick = true; // skip scan this frame
                                             bindMatched = true;
+                                            updateConfigKeyLabels(); // show "[Press key...]" in yellow
                                             VLOG(STR("[MoriaCppMod] [CFG] Capturing key for bind {}\n"), b);
                                             break;
                                         }
@@ -1456,10 +1474,20 @@ namespace MoriaMods
                 }
                 else if (m_qbPhase == QBPhase::CloseMenu)
                 {
-                    // Wait for build tab to close
+                    // Wait for build tab to close, then pause for Slate cleanup
                     if (!isBuildTabShowing())
                     {
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu closed ({}ms) Ã¢â‚¬â€ opening fresh\n"), elapsed);
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu closed ({}ms) -- waiting {} frames\n"), elapsed, m_quickBuildSwapDelay);
+                        m_qbRetryTime = now;
+                        m_qbWaitCount = m_quickBuildSwapDelay;
+                        m_qbPhase = QBPhase::WaitReopen;
+                    }
+                }
+                else if (m_qbPhase == QBPhase::WaitReopen)
+                {
+                    if (--m_qbWaitCount <= 0)
+                    {
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: wait complete ({}ms) -- opening fresh\n"), elapsed);
                         m_qbRetryTime = now;
                         showBuildTab();
                         m_qbPhase = QBPhase::OpenMenu;
@@ -1589,10 +1617,20 @@ namespace MoriaMods
                 }
                 else if (m_tbPhase == QBPhase::CloseMenu)
                 {
-                    // Wait for build tab to close
+                    // Wait for build tab to close, then pause for Slate cleanup
                     if (!isBuildTabShowing())
                     {
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu closed ({}ms) Ã¢â‚¬â€ opening fresh\n"), elapsed);
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu closed ({}ms) -- waiting {} frames\n"), elapsed, m_quickBuildSwapDelay);
+                        m_tbRetryTime = now;
+                        m_tbWaitCount = m_quickBuildSwapDelay;
+                        m_tbPhase = QBPhase::WaitReopen;
+                    }
+                }
+                else if (m_tbPhase == QBPhase::WaitReopen)
+                {
+                    if (--m_tbWaitCount <= 0)
+                    {
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: wait complete ({}ms) -- opening fresh\n"), elapsed);
                         m_tbRetryTime = now;
                         showBuildTab();
                         m_tbPhase = QBPhase::OpenMenu;

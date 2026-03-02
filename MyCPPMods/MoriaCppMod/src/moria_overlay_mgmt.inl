@@ -489,10 +489,10 @@
             float uiScale = static_cast<float>(viewH) / 2160.0f;
             if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
-            // Render scale 1.0 -- engine DPI handles resolution scaling
+            // Render scale 1.0 -- engine DPI handles resolution scaling via Slate
             if (rootSizeBox) umgSetRenderScale(rootSizeBox, 1.0f, 1.0f);
 
-            // Desired size -- matches real Target Info widget (1100x320 at 4K)
+            // Desired size in Slate units -- matches real Target Info widget
             auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
             if (setDesiredSizeFn)
             {
@@ -502,7 +502,7 @@
                     int sz = setDesiredSizeFn->GetParmsSize();
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
-                    v[0] = 1100.0f * uiScale; v[1] = 320.0f * uiScale;
+                    v[0] = 1100.0f; v[1] = 320.0f;
                     userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
                 }
             }
