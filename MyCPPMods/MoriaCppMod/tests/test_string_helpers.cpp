@@ -1,4 +1,5 @@
-// Unit tests for extractFriendlyName and componentNameToMeshId
+// Unit tests for string helper functions:
+// extractFriendlyName, componentNameToMeshId, wrapText, trimStr, strEqualCI, wstrEqualCI
 
 #include <gtest/gtest.h>
 #include "moria_testable.h"
@@ -210,4 +211,150 @@ TEST(WrapText, RealWorldPath)
     for (wchar_t c : result)
         if (c != L'\n') stripped += c;
     EXPECT_EQ(stripped, prefix + value);
+}
+
+TEST(WrapText, PrefixLongerThanMaxLine)
+{
+    // Prefix alone exceeds maxLine — should still work, just produces long first line
+    std::wstring prefix(80, L'P');
+    std::wstring value = L"short";
+    std::wstring result = wrapText(prefix, value, 70);
+    // Content preserved
+    std::wstring stripped;
+    for (wchar_t c : result) if (c != L'\n') stripped += c;
+    EXPECT_EQ(stripped, prefix + value);
+}
+
+TEST(WrapText, MaxLineOne)
+{
+    // Extreme: maxLine=1 forces break after every character
+    std::wstring result = wrapText(L"", L"ABC", 1);
+    // Each character on its own line
+    EXPECT_EQ(result, L"A\nB\nC");
+}
+
+// ── trimStr tests ──
+
+TEST(TrimStr, Empty)
+{
+    EXPECT_EQ(trimStr(""), "");
+}
+
+TEST(TrimStr, WhitespaceOnly)
+{
+    EXPECT_EQ(trimStr("   "), "");
+    EXPECT_EQ(trimStr("\t\t"), "");
+    EXPECT_EQ(trimStr("\r\n"), "");
+}
+
+TEST(TrimStr, NoWhitespace)
+{
+    EXPECT_EQ(trimStr("hello"), "hello");
+}
+
+TEST(TrimStr, LeadingWhitespace)
+{
+    EXPECT_EQ(trimStr("  hello"), "hello");
+}
+
+TEST(TrimStr, TrailingWhitespace)
+{
+    EXPECT_EQ(trimStr("hello  "), "hello");
+}
+
+TEST(TrimStr, BothEnds)
+{
+    EXPECT_EQ(trimStr("  hello  "), "hello");
+}
+
+TEST(TrimStr, InternalWhitespacePreserved)
+{
+    EXPECT_EQ(trimStr("  hello world  "), "hello world");
+}
+
+TEST(TrimStr, MixedWhitespace)
+{
+    EXPECT_EQ(trimStr("\t\r\n hello \t\r\n"), "hello");
+}
+
+TEST(TrimStr, SingleChar)
+{
+    EXPECT_EQ(trimStr(" x "), "x");
+}
+
+// ── strEqualCI tests ──
+
+TEST(StrEqualCI, Equal)
+{
+    EXPECT_TRUE(strEqualCI("hello", "hello"));
+}
+
+TEST(StrEqualCI, DifferentCase)
+{
+    EXPECT_TRUE(strEqualCI("Hello", "hELLO"));
+    EXPECT_TRUE(strEqualCI("SHIFT", "shift"));
+    EXPECT_TRUE(strEqualCI("QuickBuild1", "quickbuild1"));
+}
+
+TEST(StrEqualCI, NotEqual)
+{
+    EXPECT_FALSE(strEqualCI("hello", "world"));
+}
+
+TEST(StrEqualCI, DifferentLength)
+{
+    EXPECT_FALSE(strEqualCI("hello", "hell"));
+    EXPECT_FALSE(strEqualCI("hi", "his"));
+}
+
+TEST(StrEqualCI, BothEmpty)
+{
+    EXPECT_TRUE(strEqualCI("", ""));
+}
+
+TEST(StrEqualCI, OneEmpty)
+{
+    EXPECT_FALSE(strEqualCI("a", ""));
+    EXPECT_FALSE(strEqualCI("", "b"));
+}
+
+TEST(StrEqualCI, Digits)
+{
+    // Digits are case-insensitive by default (no change)
+    EXPECT_TRUE(strEqualCI("abc123", "ABC123"));
+}
+
+// ── wstrEqualCI tests ──
+
+TEST(WstrEqualCI, Equal)
+{
+    EXPECT_TRUE(wstrEqualCI(L"hello", L"hello"));
+}
+
+TEST(WstrEqualCI, DifferentCase)
+{
+    EXPECT_TRUE(wstrEqualCI(L"Hello", L"hELLO"));
+    EXPECT_TRUE(wstrEqualCI(L"SPACE", L"space"));
+    EXPECT_TRUE(wstrEqualCI(L"Num+", L"NUM+"));
+}
+
+TEST(WstrEqualCI, NotEqual)
+{
+    EXPECT_FALSE(wstrEqualCI(L"hello", L"world"));
+}
+
+TEST(WstrEqualCI, DifferentLength)
+{
+    EXPECT_FALSE(wstrEqualCI(L"hello", L"hell"));
+}
+
+TEST(WstrEqualCI, BothEmpty)
+{
+    EXPECT_TRUE(wstrEqualCI(L"", L""));
+}
+
+TEST(WstrEqualCI, OneEmpty)
+{
+    EXPECT_FALSE(wstrEqualCI(L"a", L""));
+    EXPECT_FALSE(wstrEqualCI(L"", L"b"));
 }

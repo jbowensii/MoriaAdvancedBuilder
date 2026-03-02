@@ -57,3 +57,27 @@ TEST(IsReadableMemory, FunctionPointer)
     auto fn = &isReadableMemory;
     EXPECT_TRUE(isReadableMemory(reinterpret_cast<const void*>(fn), 1));
 }
+
+TEST(IsReadableMemory, SizeOne)
+{
+    int x = 42;
+    EXPECT_TRUE(isReadableMemory(&x, 1));
+}
+
+TEST(IsReadableMemory, StringLiteral)
+{
+    const char* lit = "hello world";
+    EXPECT_TRUE(isReadableMemory(lit, 12));
+}
+
+TEST(IsReadableMemory, LowAddress)
+{
+    // Address 1 (not null but not valid)
+    EXPECT_FALSE(isReadableMemory(reinterpret_cast<void*>(1)));
+}
+
+TEST(IsReadableMemory, AlignedInvalidPage)
+{
+    // Page-aligned address in typically unmapped region
+    EXPECT_FALSE(isReadableMemory(reinterpret_cast<void*>(0x10000000000ULL)));
+}

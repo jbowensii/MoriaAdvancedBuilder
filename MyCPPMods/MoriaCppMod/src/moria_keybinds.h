@@ -1,0 +1,123 @@
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║  moria_keybinds.h — Keybinding system & window discovery                  ║
+// ║  Rebindable F-key assignments, VK code → string conversion,               ║
+// ║  findGameWindow() for overlay positioning                                 ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+#pragma once
+
+#include "moria_common.h"
+
+namespace MoriaMods
+{
+    // ════════════════════════════════════════════════════════════════════════════
+    // Keybinding Constants & Data
+    // ════════════════════════════════════════════════════════════════════════════
+
+    // BIND_COUNT defined in moria_testable.h
+    static constexpr int MC_BIND_BASE = 8;     // s_bindings[8..15] = MC slots 0..7
+    static constexpr int BIND_ROTATION = 8;    // "Rotation" — MC slot 0
+    static constexpr int BIND_TARGET   = 9;    // "Target" — MC slot 1
+    static constexpr int BIND_SWAP     = 10;   // "Toolbar Swap" — MC slot 2
+    static constexpr int BIND_CONFIG   = 15;   // "Configuration" — MC slot 7
+    static constexpr int BIND_AB_OPEN  = 16;   // "Advanced Builder Open"
+
+    struct KeyBind
+    {
+        const wchar_t* label;
+        const wchar_t* section;
+        uint8_t key; // Input::Key value (same as VK code)
+    };
+
+    inline KeyBind s_bindings[BIND_COUNT] = {
+            {L"Quick Build 1", L"Quick Building", Input::Key::F1},                     // 0
+            {L"Quick Build 2", L"Quick Building", Input::Key::F2},                     // 1
+            {L"Quick Build 3", L"Quick Building", Input::Key::F3},                     // 2
+            {L"Quick Build 4", L"Quick Building", Input::Key::F4},                     // 3
+            {L"Quick Build 5", L"Quick Building", Input::Key::F5},                     // 4
+            {L"Quick Build 6", L"Quick Building", Input::Key::F6},                     // 5
+            {L"Quick Build 7", L"Quick Building", Input::Key::F7},                     // 6
+            {L"Quick Build 8", L"Quick Building", Input::Key::F8},                     // 7
+            {L"Rotation", L"Mod Controller", Input::Key::F9},                          // 8  (BIND_ROTATION, MC slot 0)
+            {L"Target", L"Mod Controller", Input::Key::OEM_SIX},                       // 9  (BIND_TARGET, MC slot 1)
+            {L"Toolbar Swap", L"Mod Controller", Input::Key::PAGE_DOWN},               // 10 (BIND_SWAP, MC slot 2)
+            {L"Super Dwarf", L"Mod Controller", Input::Key::OEM_FIVE},                   // 11 (MC slot 3)
+            {L"Remove Target", L"Mod Controller", Input::Key::NUM_ONE},                // 12 (MC slot 4)
+            {L"Undo Last", L"Mod Controller", Input::Key::NUM_TWO},                    // 13 (MC slot 5)
+            {L"Remove All", L"Mod Controller", Input::Key::NUM_THREE},                 // 14 (MC slot 6)
+            {L"Configuration", L"Mod Controller", Input::Key::F12},                    // 15 (BIND_CONFIG, MC slot 7)
+            {L"Advanced Builder Open", L"Advanced Builder", Input::Key::ADD},             // 16 (BIND_AB_OPEN)
+    };
+
+    inline std::atomic<int> s_capturingBind{-1};
+
+    // Modifier key choice: VK_SHIFT (0x10), VK_CONTROL (0x11), VK_MENU (0x12 = ALT), or VK_RMENU (0xA5 = RALT)
+    inline std::atomic<uint8_t> s_modifierVK{VK_SHIFT};
+
+    // Config file paths
+    inline const char* INI_PATH = "Mods/MoriaCppMod/MoriaCppMod.ini";
+    inline const char* OLD_KEYBIND_PATH = "Mods/MoriaCppMod/keybindings.txt";
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // Keybinding Helper Functions
+    // ════════════════════════════════════════════════════════════════════════════
+
+    inline bool isModifierDown()
+    {
+        return (GetAsyncKeyState(s_modifierVK.load()) & 0x8000) != 0;
+    }
+
+    // When SHIFT is held with NumLock on, Windows reverses numpad keys:
+    // VK_NUMPAD0-9 become their navigation equivalents (Insert, End, Down, etc.)
+    // Returns the alternate VK code for a numpad key, or 0 if not a numpad key.
+    inline uint8_t numpadShiftAlternate(uint8_t vk)
+    {
+        switch (vk)
+        {
+        case VK_NUMPAD0: return VK_INSERT;
+        case VK_NUMPAD1: return VK_END;
+        case VK_NUMPAD2: return VK_DOWN;
+        case VK_NUMPAD3: return VK_NEXT;
+        case VK_NUMPAD4: return VK_LEFT;
+        case VK_NUMPAD5: return VK_CLEAR;
+        case VK_NUMPAD6: return VK_RIGHT;
+        case VK_NUMPAD7: return VK_HOME;
+        case VK_NUMPAD8: return VK_UP;
+        case VK_NUMPAD9: return VK_PRIOR;
+        default: return 0;
+        }
+    }
+
+    // modifierName, nextModifier, keyName — defined in moria_testable.h
+
+    inline HWND findGameWindow()
+    {
+        // UE4 games use "UnrealWindow" window class
+        // Pick the LARGEST one in case there are multiple
+        struct FindData
+        {
+            HWND best;
+            int bestArea;
+        };
+        FindData fd{nullptr, 0};
+        EnumWindows(
+                [](HWND hwnd, LPARAM lp) -> BOOL {
+                    wchar_t cls[64]{};
+                    GetClassNameW(hwnd, cls, 64);
+                    if (wcscmp(cls, L"UnrealWindow") != 0) return TRUE;
+                    if (!IsWindowVisible(hwnd)) return TRUE;
+                    RECT r;
+                    GetWindowRect(hwnd, &r);
+                    int area = (r.right - r.left) * (r.bottom - r.top);
+                    auto* fd = reinterpret_cast<FindData*>(lp);
+                    if (area > fd->bestArea)
+                    {
+                        fd->best = hwnd;
+                        fd->bestArea = area;
+                    }
+                    return TRUE;
+                },
+                reinterpret_cast<LPARAM>(&fd));
+        return fd.best;
+    }
+
+} // namespace MoriaMods

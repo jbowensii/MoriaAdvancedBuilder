@@ -77,6 +77,41 @@ TEST(ParseRemovalLine, PipeOnlyLine)
     EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
 }
 
+TEST(ParseRemovalLine, LargeCoordinates)
+{
+    auto result = parseRemovalLine("mesh|999999.5|-888888.25|777777.75");
+    auto* pos = std::get_if<ParsedRemovalPosition>(&result);
+    ASSERT_NE(pos, nullptr);
+    EXPECT_FLOAT_EQ(pos->posX, 999999.5f);
+    EXPECT_FLOAT_EQ(pos->posY, -888888.25f);
+    EXPECT_FLOAT_EQ(pos->posZ, 777777.75f);
+}
+
+TEST(ParseRemovalLine, WhitespaceOnly)
+{
+    auto result = parseRemovalLine("   ");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}
+
+TEST(ParseRemovalLine, ExtraFields)
+{
+    // Extra fields after the 4 expected — should still parse the first 4
+    auto result = parseRemovalLine("mesh|1.0|2.0|3.0|extra");
+    auto* pos = std::get_if<ParsedRemovalPosition>(&result);
+    ASSERT_NE(pos, nullptr);
+    EXPECT_FLOAT_EQ(pos->posX, 1.0f);
+}
+
+TEST(ParseRemovalLine, ZeroCoordinates)
+{
+    auto result = parseRemovalLine("mesh|0|0|0");
+    auto* pos = std::get_if<ParsedRemovalPosition>(&result);
+    ASSERT_NE(pos, nullptr);
+    EXPECT_FLOAT_EQ(pos->posX, 0.0f);
+    EXPECT_FLOAT_EQ(pos->posY, 0.0f);
+    EXPECT_FLOAT_EQ(pos->posZ, 0.0f);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // parseSlotLine tests
 // ════════════════════════════════════════════════════════════════════════════
@@ -181,6 +216,32 @@ TEST(ParseSlotLine, AllSlotsValid)
     }
 }
 
+TEST(ParseSlotLine, SlotBoundary)
+{
+    // Slot 7 = last valid, slot 8 = first invalid
+    auto valid = parseSlotLine("7|name|tex");
+    EXPECT_NE(std::get_if<ParsedSlot>(&valid), nullptr);
+
+    auto invalid = parseSlotLine("8|name|tex");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(invalid));
+}
+
+TEST(ParseSlotLine, WhitespaceOnly)
+{
+    auto result = parseSlotLine("   ");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}
+
+TEST(ParseSlotLine, DisplayNameWithPipes)
+{
+    // Display name with embedded pipe — third field is texture
+    auto result = parseSlotLine("0|Name With Spaces|TextureName");
+    auto* slot = std::get_if<ParsedSlot>(&result);
+    ASSERT_NE(slot, nullptr);
+    EXPECT_EQ(slot->displayName, "Name With Spaces");
+    EXPECT_EQ(slot->textureName, "TextureName");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // parseKeybindLine tests
 // ════════════════════════════════════════════════════════════════════════════
@@ -283,6 +344,30 @@ TEST(ParseKeybindLine, EmptyLine)
 TEST(ParseKeybindLine, NoPipe)
 {
     auto result = parseKeybindLine("invalid");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}
+
+TEST(ParseKeybindLine, VKBoundaryMin)
+{
+    // VK 1 = minimum valid
+    auto result = parseKeybindLine("0|1");
+    auto* kb = std::get_if<ParsedKeybind>(&result);
+    ASSERT_NE(kb, nullptr);
+    EXPECT_EQ(kb->vkCode, 1);
+}
+
+TEST(ParseKeybindLine, VKBoundaryMax)
+{
+    // VK 255 = maximum valid
+    auto result = parseKeybindLine("0|255");
+    auto* kb = std::get_if<ParsedKeybind>(&result);
+    ASSERT_NE(kb, nullptr);
+    EXPECT_EQ(kb->vkCode, 255);
+}
+
+TEST(ParseKeybindLine, WhitespaceOnly)
+{
+    auto result = parseKeybindLine("   ");
     EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
 }
 
@@ -510,6 +595,49 @@ TEST(ParseIniLine, EmptyLine)
 TEST(ParseIniLine, WhitespaceOnly)
 {
     EXPECT_TRUE(std::holds_alternative<std::monostate>(parseIniLine("   ")));
+}
+
+TEST(ParseIniLine, EmptySectionBrackets)
+{
+    // [] — empty section name should be rejected
+    auto r = parseIniLine("[]");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(r));
+}
+
+TEST(ParseIniLine, KeyNoValue)
+{
+    // "Key=" — empty value is valid
+    auto r = parseIniLine("Key=");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->key, "Key");
+    EXPECT_EQ(kv->value, "");
+}
+
+TEST(ParseIniLine, MultipleEquals)
+{
+    // "Key=Value=Extra" — only splits at first '='
+    auto r = parseIniLine("Key=Value=Extra");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->key, "Key");
+    EXPECT_EQ(kv->value, "Value=Extra");
+}
+
+TEST(ParseIniLine, TabIndented)
+{
+    auto r = parseIniLine("\tKey = Value");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->key, "Key");
+    EXPECT_EQ(kv->value, "Value");
+}
+
+TEST(ParseIniLine, NoKey)
+{
+    // "= value" — empty key should be rejected
+    auto r = parseIniLine("= value");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(r));
 }
 
 // ════════════════════════════════════════════════════════════════════════════

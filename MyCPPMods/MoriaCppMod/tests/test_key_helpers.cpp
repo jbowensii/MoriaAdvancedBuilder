@@ -140,3 +140,107 @@ TEST_F(KeyHelperTest, NextModifier_Default)
     EXPECT_EQ(nextModifier(0x00), VK_SHIFT);
     EXPECT_EQ(nextModifier(0xFF), VK_SHIFT);
 }
+
+// ── modifierToIniName tests ──
+
+TEST_F(KeyHelperTest, ModifierToIniName_AllValues)
+{
+    EXPECT_EQ(modifierToIniName(VK_SHIFT), "SHIFT");
+    EXPECT_EQ(modifierToIniName(VK_CONTROL), "CTRL");
+    EXPECT_EQ(modifierToIniName(VK_MENU), "ALT");
+    EXPECT_EQ(modifierToIniName(VK_RMENU), "RALT");
+}
+
+TEST_F(KeyHelperTest, ModifierToIniName_UnknownDefaultsToShift)
+{
+    EXPECT_EQ(modifierToIniName(0x00), "SHIFT");
+    EXPECT_EQ(modifierToIniName(0xFF), "SHIFT");
+    EXPECT_EQ(modifierToIniName(0x41), "SHIFT"); // 'A' key
+}
+
+// ── modifierNameToVK tests ──
+
+TEST_F(KeyHelperTest, ModifierNameToVK_AllValues)
+{
+    EXPECT_EQ(modifierNameToVK(L"SHIFT"), VK_SHIFT);
+    EXPECT_EQ(modifierNameToVK(L"CTRL"), VK_CONTROL);
+    EXPECT_EQ(modifierNameToVK(L"ALT"), VK_MENU);
+    EXPECT_EQ(modifierNameToVK(L"RALT"), VK_RMENU);
+}
+
+TEST_F(KeyHelperTest, ModifierNameToVK_CaseInsensitive)
+{
+    EXPECT_EQ(modifierNameToVK(L"shift"), VK_SHIFT);
+    EXPECT_EQ(modifierNameToVK(L"Ctrl"), VK_CONTROL);
+    EXPECT_EQ(modifierNameToVK(L"alt"), VK_MENU);
+    EXPECT_EQ(modifierNameToVK(L"rAlt"), VK_RMENU);
+}
+
+TEST_F(KeyHelperTest, ModifierNameToVK_Unknown)
+{
+    EXPECT_EQ(modifierNameToVK(L""), std::nullopt);
+    EXPECT_EQ(modifierNameToVK(L"SPACE"), std::nullopt);
+    EXPECT_EQ(modifierNameToVK(L"LALT"), std::nullopt);
+}
+
+// ── iniKeyToBindIndex tests ──
+
+TEST_F(KeyHelperTest, IniKeyToBindIndex_AllKeys)
+{
+    EXPECT_EQ(iniKeyToBindIndex("QuickBuild1"), 0);
+    EXPECT_EQ(iniKeyToBindIndex("QuickBuild2"), 1);
+    EXPECT_EQ(iniKeyToBindIndex("QuickBuild3"), 2);
+    EXPECT_EQ(iniKeyToBindIndex("QuickBuild4"), 3);
+    EXPECT_EQ(iniKeyToBindIndex("QuickBuild5"), 4);
+    EXPECT_EQ(iniKeyToBindIndex("QuickBuild6"), 5);
+    EXPECT_EQ(iniKeyToBindIndex("QuickBuild7"), 6);
+    EXPECT_EQ(iniKeyToBindIndex("QuickBuild8"), 7);
+    EXPECT_EQ(iniKeyToBindIndex("Rotation"), 8);
+    EXPECT_EQ(iniKeyToBindIndex("Target"), 9);
+    EXPECT_EQ(iniKeyToBindIndex("ToolbarSwap"), 10);
+    EXPECT_EQ(iniKeyToBindIndex("SuperDwarf"), 11);
+    EXPECT_EQ(iniKeyToBindIndex("RemoveTarget"), 12);
+    EXPECT_EQ(iniKeyToBindIndex("UndoLast"), 13);
+    EXPECT_EQ(iniKeyToBindIndex("RemoveAll"), 14);
+    EXPECT_EQ(iniKeyToBindIndex("Configuration"), 15);
+    EXPECT_EQ(iniKeyToBindIndex("AdvancedBuilderOpen"), 16);
+}
+
+TEST_F(KeyHelperTest, IniKeyToBindIndex_CaseInsensitive)
+{
+    EXPECT_EQ(iniKeyToBindIndex("quickbuild1"), 0);
+    EXPECT_EQ(iniKeyToBindIndex("ROTATION"), 8);
+    EXPECT_EQ(iniKeyToBindIndex("toolbarswap"), 10);
+}
+
+TEST_F(KeyHelperTest, IniKeyToBindIndex_NotFound)
+{
+    EXPECT_EQ(iniKeyToBindIndex(""), -1);
+    EXPECT_EQ(iniKeyToBindIndex("UnknownKey"), -1);
+    EXPECT_EQ(iniKeyToBindIndex("QuickBuild9"), -1);
+}
+
+// ── bindIndexToIniKey tests ──
+
+TEST_F(KeyHelperTest, BindIndexToIniKey_ValidRange)
+{
+    EXPECT_STREQ(bindIndexToIniKey(0), "QuickBuild1");
+    EXPECT_STREQ(bindIndexToIniKey(7), "QuickBuild8");
+    EXPECT_STREQ(bindIndexToIniKey(8), "Rotation");
+    EXPECT_STREQ(bindIndexToIniKey(16), "AdvancedBuilderOpen");
+}
+
+TEST_F(KeyHelperTest, BindIndexToIniKey_OutOfRange)
+{
+    EXPECT_EQ(bindIndexToIniKey(-1), nullptr);
+    EXPECT_EQ(bindIndexToIniKey(17), nullptr);
+    EXPECT_EQ(bindIndexToIniKey(100), nullptr);
+}
+
+// ── keyName edge cases ──
+
+TEST_F(KeyHelperTest, KeyName_ZeroVK)
+{
+    // VK 0x00 should fall through to hex format
+    EXPECT_EQ(keyName(0x00), L"0x00");
+}
