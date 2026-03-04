@@ -187,6 +187,7 @@ namespace MoriaMods
             s_table["bind.toolbar_swap"] = L"Toolbar Swap";
             s_table["bind.mod_menu_4"] = L"Super Dwarf";
             s_table["bind.integrity_check"] = L"Integrity Check";
+            s_table["bind.snap_off"] = L"Snap Off";
             s_table["bind.empty"] = L"Empty";
             s_table["bind.remove_single"] = L"Remove Single";
             s_table["bind.undo_last"] = L"Undo Last";
@@ -720,7 +721,7 @@ namespace MoriaMods
             "StabilityCheck",     // 10 (MC slot 2)
             "SuperDwarf",         // 11 (MC slot 3)
             "ToolbarSwap",        // 12 (MC slot 4)
-            "Empty5",             // 13 (MC slot 5 — empty)
+            "SnapToggle",         // 13 (MC slot 5 — Snap Toggle)
             "Empty6",             // 14 (MC slot 6 — empty)
             "Empty7",             // 15 (MC slot 7 — empty)
             "RemoveTarget",       // 16 (MC slot 8)
