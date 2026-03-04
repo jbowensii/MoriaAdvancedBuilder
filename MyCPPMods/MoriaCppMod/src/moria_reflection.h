@@ -339,11 +339,6 @@ namespace MoriaMods
                 if (prop->GetName() == std::wstring_view(propName))
                 {
                     auto* bp = CastField<FBoolProperty>(prop);
-                    if (bp)
-                    {
-                        VLOG(STR("[MoriaCppMod] Resolved FBoolProperty '{}' (native={}) on {}\n"),
-                             std::wstring(propName), bp->IsNativeBool() ? 1 : 0, strct->GetName());
-                    }
                     return bp;
                 }
             }

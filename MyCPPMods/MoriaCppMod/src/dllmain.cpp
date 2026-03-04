@@ -268,6 +268,8 @@ namespace MoriaMods
             return loc;
         }
 
+        #include "moria_common.inl"    // Coordinate system (ScreenCoords) — must be first
+
         #include "moria_debug.inl"    // 6C + 6F: Display, debug, cheat commands
 
         #include "moria_hism.inl"       // 6D: HISM removal system
@@ -407,8 +409,8 @@ namespace MoriaMods
         // Stash container repair Ã¢â‚¬â€ run once per character load, not on every retry scan
         bool m_repairDone{false};
 
-        // Engine DPI scale (cached at widget creation; slate units * m_dpiScale = raw pixels)
-        float m_dpiScale{1.0f};
+        // Centralized viewport / cursor / scale state (see moria_common.inl)
+        ScreenCoords m_screen;
 
         // Toolbar repositioning mode
         bool m_repositionMode{false};
@@ -416,7 +418,6 @@ namespace MoriaMods
         float m_dragOffsetX{0}, m_dragOffsetY{0};
         bool m_hitDebugDone{false};
         UClass* m_wllClass{nullptr};
-        int32_t m_cachedVW{2560}, m_cachedVH{1440}; // updated every widget creation, used in drag loop
         UObject* m_repositionMsgWidget{nullptr};   // centered instruction message
         UObject* m_repositionInfoBoxWidget{nullptr}; // placeholder info box during reposition
         // Toolbar positions as viewport coordinates (0.0-1.0); -1 = use default
@@ -437,6 +438,7 @@ namespace MoriaMods
         int m_hoveredToolbar{-1};                  // -1=none, 0=BB, 1=AB, 2=MC
         int m_hoveredSlot{-1};                     // slot index within hovered toolbar
         bool m_lastClickLMB{false};                // previous frame LMB for edge detection
+        FBoolProperty* m_bpShowMouseCursor{nullptr}; // cached FBoolProperty for bShowMouseCursor
         // UMG Target Info popup
         UObject* m_targetInfoWidget{nullptr};      // root UUserWidget
         UObject* m_tiTitleLabel{nullptr};           // "Target Info" title
@@ -954,32 +956,23 @@ namespace MoriaMods
                 // Avoids coordinate space mismatches between Win32 and UMG entirely.
                 bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
 
-                // Get cursor as fraction of Win32 client rect
+                // Get cursor as fraction of viewport
                 float curFracX = 0.5f, curFracY = 0.5f;
-                {
-                    HWND gw = findGameWindow();
-                    if (gw) {
-                        POINT cur; GetCursorPos(&cur); ScreenToClient(gw, &cur);
-                        RECT cr; GetClientRect(gw, &cr);
-                        float cw = static_cast<float>(cr.right), ch = static_cast<float>(cr.bottom);
-                        if (cw > 0 && ch > 0) { curFracX = cur.x / cw; curFracY = cur.y / ch; }
-                    }
-                }
+                m_screen.getCursorFraction(curFracX, curFracY);
 
                 // Get viewport size Ã¢â‚¬â€ use cached value from widget creation (reliable)
-                int32_t rawVW = m_cachedVW, rawVH = m_cachedVH;
+                int32_t rawVW = m_screen.viewW, rawVH = m_screen.viewH;
 
                 // Get cursor in UMG slate units via GetMousePositionOnViewport
                 float slateCursorX = 0.0f, slateCursorY = 0.0f;
                 bool gotMouse = getMousePositionSlate(slateCursorX, slateCursorY);
                 if (!gotMouse)
                 {
-                    // Fallback: Win32 converted by dpiScale
-                    HWND gw2 = findGameWindow();
-                    if (gw2) {
-                        POINT cur2; GetCursorPos(&cur2); ScreenToClient(gw2, &cur2);
-                        slateCursorX = cur2.x / m_dpiScale;
-                        slateCursorY = cur2.y / m_dpiScale;
+                    // Fallback: Win32 client pixels converted to slate units
+                    int cx, cy, cw, ch;
+                    if (m_screen.getCursorClientPixels(cx, cy, cw, ch)) {
+                        slateCursorX = m_screen.pixelToSlateX(static_cast<float>(cx));
+                        slateCursorY = m_screen.pixelToSlateY(static_cast<float>(cy));
                     }
                 }
 
@@ -1036,8 +1029,8 @@ namespace MoriaMods
                     m_toolbarPosX[m_dragToolbar] = fx;
                     m_toolbarPosY[m_dragToolbar] = fy;
                     UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget, m_repositionInfoBoxWidget};
-                    float px = fx * static_cast<float>(rawVW);
-                    float py = fy * static_cast<float>(rawVH);
+                    float px = m_screen.fracToPixelX(fx);
+                    float py = m_screen.fracToPixelY(fy);
                     static int s_dragLog = 0;
                     if (++s_dragLog % 30 == 1) // log every 30 ticks (~0.5s)
                         VLOG(STR("[MoriaCppMod] [Drag] tb={} curFrac=({:.3f},{:.3f}) -> frac=({:.3f},{:.3f}) pos=({:.0f},{:.0f}) vp={}x{}\n"),
@@ -1113,21 +1106,16 @@ namespace MoriaMods
             if (m_toolbarsVisible && !m_repositionMode && !m_cfgVisible)
             {
                 auto* pc = findPlayerController();
-                bool cursorVisible = pc ? getBoolProp(pc, L"bShowMouseCursor") : false;
+                if (pc && !m_bpShowMouseCursor)
+                    m_bpShowMouseCursor = resolveBoolProperty(pc, L"bShowMouseCursor");
+                bool cursorVisible = (pc && m_bpShowMouseCursor)
+                                     ? m_bpShowMouseCursor->GetPropertyValueInContainer(pc)
+                                     : false;
 
                 if (cursorVisible)
                 {
-                    // Get cursor as fraction of viewport
-                    HWND gw = findGameWindow();
                     float curFracX = -1, curFracY = -1;
-                    if (gw) {
-                        POINT cur; GetCursorPos(&cur); ScreenToClient(gw, &cur);
-                        RECT cr; GetClientRect(gw, &cr);
-                        if (cr.right > 0 && cr.bottom > 0) {
-                            curFracX = static_cast<float>(cur.x) / cr.right;
-                            curFracY = static_cast<float>(cur.y) / cr.bottom;
-                        }
-                    }
+                    m_screen.getCursorFraction(curFracX, curFracY);
 
                     int hitTB = -1, hitSlot = -1;
                     if (curFracX >= 0)
@@ -1212,17 +1200,11 @@ namespace MoriaMods
                 bool lmbDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
                 if (lmbDown && !s_lastLMB)
                 {
-                    HWND gw = findGameWindow();
-                    if (gw)
+                    int curX, curY, viewW, viewH;
+                    if (m_screen.getCursorClientPixels(curX, curY, viewW, viewH))
                     {
-                        POINT cursor;
-                        GetCursorPos(&cursor);
-                        ScreenToClient(gw, &cursor);
-                        RECT cr;
-                        GetClientRect(gw, &cr);
-                        int viewW = cr.right; int viewH = cr.bottom;
-                        float uis = static_cast<float>(viewH) / 2160.0f; // uiScale for hit-test
-                        if (uis < 0.5f) uis = 0.5f;
+                        POINT cursor{curX, curY};
+                        float uis = m_screen.uiScale;
                         // Config widget: pos (viewW/2, viewH/2 - 100), size 1400x900 Slate, alignment (0.5,0.5)
                         int wLeft = static_cast<int>(viewW / 2 - 700 * uis);
                         int wTop  = static_cast<int>(viewH / 2 - 100 - 450 * uis);
@@ -1586,7 +1568,7 @@ namespace MoriaMods
 
             // ── Eager handle resolution state machine ──
             // Runs once after toolbar creation to batch-resolve recipe handles for all
-            // populated slots loaded from disk, so every F-key uses the DIRECT path.
+            // populated slots loaded from disk, so every F-key uses the SelectRecipe API.
             if (m_handleResolvePhase == HandleResolvePhase::Priming)
             {
                 ULONGLONG now = GetTickCount64();
@@ -1626,8 +1608,6 @@ namespace MoriaMods
             else if (m_handleResolvePhase == HandleResolvePhase::Resolving)
             {
                 // Resolve ONE slot per frame to avoid Slate invalidation crashes.
-                // SelectRecipe triggers internal widget changes; spreading across frames
-                // lets Slate process invalidation between each call.
                 UObject* buildHUD = getCachedBuildHUD();
                 if (!buildHUD)
                 {
@@ -1637,18 +1617,16 @@ namespace MoriaMods
                 }
                 else
                 {
-                    // Advance to next slot that needs resolution
                     while (m_handleResolveSlotIdx < QUICK_BUILD_SLOTS)
                     {
                         auto& slot = m_recipeSlots[m_handleResolveSlotIdx];
                         if (slot.used && !slot.hasHandle && !slot.rowName.empty())
-                            break; // found one to resolve
+                            break;
                         m_handleResolveSlotIdx++;
                     }
 
                     if (m_handleResolveSlotIdx >= QUICK_BUILD_SLOTS)
                     {
-                        // All slots processed — hide build tab and mark done
                         hideBuildTab();
                         m_handleResolvePhase = HandleResolvePhase::Done;
                         ULONGLONG totalMs = GetTickCount64() - m_handleResolveStartTime;
@@ -1657,7 +1635,6 @@ namespace MoriaMods
                     else
                     {
                         int i = m_handleResolveSlotIdx;
-                        // Construct FName from persisted rowName string
                         RC::Unreal::FName fn(m_recipeSlots[i].rowName.c_str(), RC::Unreal::FNAME_Add);
                         uint32_t ci = fn.GetComparisonIndex();
                         uint32_t num = fn.GetNumber();
@@ -1669,7 +1646,6 @@ namespace MoriaMods
                         }
                         else
                         {
-                            // Build 16-byte handle: [8 zero bytes | CI(4) | Num(4)]
                             uint8_t handle[RECIPE_HANDLE_SIZE]{};
                             std::memcpy(handle + 8, &ci, 4);
                             std::memcpy(handle + 12, &num, 4);
@@ -2025,6 +2001,7 @@ namespace MoriaMods
                     m_cachedBuildHUD = nullptr;
                     m_cachedBuildTab = nullptr;
                     m_fnIsVisible = nullptr;
+                    m_bpShowMouseCursor = nullptr;
                     m_qbPhase = QBPhase::Idle;
                     m_tbPhase = QBPhase::Idle;
                     m_handleResolvePhase = HandleResolvePhase::None; // re-resolve after next load
