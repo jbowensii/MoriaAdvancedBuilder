@@ -86,9 +86,47 @@
             return params.Ret;
         }
 
-        // Open build tab via FGK Show() API (no B key toggle)
-        // Rate-limited: UMG animations triggered by Show()/Hide() need ~250ms to settle;
-        // rapid calls corrupt MovieScene entity state (StopAnimation access violation).
+        // Check if the build tab has any UMG animation currently playing.
+        // Uses reflected BlueprintCallable UUserWidget::IsAnyAnimationPlaying().
+        //
+        // HISTORY (v2.8 debugging):
+        //   - Initially added to guard WaitReopen B-key send (replace 250ms cooldown).
+        //   - FAILED as WaitReopen guard: Hide() animation keeps playing indefinitely,
+        //     blocking the B-key send and causing the SM to timeout at 2.5s. The user
+        //     had to press F-keys 3-4 times before one would land outside the animation window.
+        //   - Also tried as replacement for 250ms cooldown on showBuildTab/hideBuildTab:
+        //     caused deadlock — Show() starts animation, Hide() blocked because animation
+        //     playing, animation never ends, isBuildTabShowing spams in log.
+        //   - CURRENT: helper retained for potential future use but NOT used in any guards.
+        //     The 250ms cooldown is the proven mechanism for preventing MovieScene crashes.
+        bool isBuildTabAnimating()
+        {
+            UObject* tab = getCachedBuildTab();
+            if (!tab) return false;
+            auto* fn = tab->GetFunctionByNameInChain(STR("IsAnyAnimationPlaying"));
+            if (!fn) return false;
+            struct { bool Ret{false}; } params{};
+            tab->ProcessEvent(fn, &params);
+            return params.Ret;
+        }
+
+        // Open build tab via FGK Show() API (no B key toggle).
+        // Rate-limited: 250ms cooldown prevents rapid Show/Hide cycling that causes
+        // MovieScene re-entrancy crashes (UUMGSequenceTickManager::TickWidgetAnimations
+        // → SavePreAnimatedState → null UObject access).
+        //
+        // IMPORTANT: This function calls ONLY Show() — no SetVisibility() afterwards.
+        //
+        // HISTORY (v2.8 debugging):
+        //   v2.6 added SetVisibility(SelfHitTestInvisible) after Show() to "restore Slate
+        //   visibility in case it was Collapsed by quickbuild recipe selection." This caused
+        //   EXCEPTION_ACCESS_VIOLATION in FHittestGrid::RemoveWidget() — the crash chain was:
+        //     Show() → SetVisibility() → SWidget::Invalidate() → UpdateFastPathVisibility()
+        //     → FHittestGrid::RemoveWidget() → null deref
+        //   Show() already sets visibility internally via UFGKUIScreen::Show(). Calling
+        //   SetVisibility immediately after corrupted Slate's hittest grid because the widget
+        //   tree was still being modified from the Show() call. v2.5 never had this call and
+        //   worked correctly. Removed in v2.8 fix.
         void showBuildTab()
         {
             ULONGLONG now = GetTickCount64();
@@ -104,17 +142,20 @@
             QBLOG(STR("[MoriaCppMod] [QB] showBuildTab: calling Show() fn={}\n"), fn ? STR("YES") : STR("NO"));
             if (fn) tab->ProcessEvent(fn, nullptr);
             m_lastShowHideTime = now;
-            // Restore Slate visibility in case it was Collapsed by quickbuild recipe selection
-            auto* visFn = tab->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (visFn)
-            {
-                struct { uint8_t InVisibility; } vp{4}; // ESlateVisibility::SelfHitTestInvisible (UMG default)
-                tab->ProcessEvent(visFn, &vp);
-            }
         }
 
-        // Close build tab via FGK Hide() API (no B key toggle)
-        // Rate-limited: same UMG animation safety as showBuildTab() above.
+        // Close build tab via FGK Hide() API (no B key toggle).
+        // Rate-limited: 250ms cooldown prevents rapid Show/Hide cycling that causes
+        // MovieScene re-entrancy crashes. See showBuildTab() for full crash history.
+        //
+        // IMPORTANT: The 250ms cooldown is shared between Show and Hide via m_lastShowHideTime.
+        // This means a Hide cannot fire within 250ms of a Show (and vice versa), which gives
+        // UMG animations time to settle before the next visibility change.
+        //
+        // HISTORY (v2.8 debugging):
+        //   v2.6 added hideBuildTab(force=true) to bypass the cooldown in the state machine
+        //   path. This was a dead end — force-bypassing caused the same MovieScene crashes.
+        //   The force parameter was removed. The 250ms cooldown is always respected.
         void hideBuildTab()
         {
             ULONGLONG now = GetTickCount64();
@@ -1225,7 +1266,32 @@
             QBLOG(STR("[MoriaCppMod] [QB] Cached recipe handle for F{}: CI={}\n"), slot + 1, ci);
         }
 
-        // Select recipe for quickbuild slot — tries SelectRecipe API first, falls back to blockSelectedEvent
+        // Select recipe for quickbuild slot — uses blockSelectedEvent ONLY.
+        //
+        // This function is called exclusively from the state machine path (after Show() or
+        // B-key opens the build menu). It uses blockSelectedEvent on the Build_Tab widget to
+        // simulate a recipe click, which works reliably even without full build system activation.
+        //
+        // HISTORY (v2.8 debugging):
+        //   v2.6 added a "fast path" at the top of this function that tried SelectRecipe API
+        //   on the BuildHUD before falling through to blockSelectedEvent. This was the root
+        //   cause of the F-key quickbuild regression:
+        //     - SelectRecipe requires the build system to be FULLY ACTIVE (player has a ghost
+        //       piece or the build HUD is genuinely running). Programmatic Show() on the Build
+        //       Tab widget only shows the tab UI — it does NOT activate the build pipeline.
+        //     - getCachedBuildHUD() found the BuildHUD widget via FindAllOf even when it was
+        //       DORMANT (not actively managing placement). SelectRecipe on a dormant BuildHUD
+        //       is a silent no-op — ProcessEvent returns, "Build: ..." message appears, but
+        //       no ghost piece materializes.
+        //     - The fast path was ALWAYS taken because getCachedBuildHUD() always found the
+        //       widget, so blockSelectedEvent was never reached.
+        //   Fix: Removed the SelectRecipe fast path entirely from this function. SelectRecipe
+        //   is now used ONLY in the direct path (quickBuildSlot), which has a pre-guard using
+        //   GetActiveBuildingWidget() to verify the build system is genuinely active.
+        //
+        //   v2.6 also added hideBuildTab() calls after blockSelectedEvent. v2.5 never had
+        //   these. The game needs the Build Tab open to finalize placement mode — hiding it
+        //   immediately after selection prevented the ghost piece from appearing. Removed.
         SelectResult selectRecipeOnBuildTab(UObject* buildTab, int slot)
         {
             const std::wstring& targetName = m_recipeSlots[slot].displayName;
@@ -1236,33 +1302,7 @@
 
             UObject* buildHUD = getCachedBuildHUD();
 
-            // === FAST PATH: SelectRecipe with cached handle ===
-            if (m_recipeSlots[slot].hasHandle && buildHUD)
-            {
-                QBLOG(STR("[MoriaCppMod] [QuickBuild] Trying SelectRecipe fast path for F{}\n"), slot + 1);
-                m_isAutoSelecting = true;
-                struct AutoSelectGuard
-                {
-                    bool& flag;
-                    ~AutoSelectGuard() { flag = false; }
-                } guard{m_isAutoSelecting};
-
-                if (trySelectRecipeByHandle(buildHUD, m_recipeSlots[slot].recipeHandle))
-                {
-                    m_isAutoSelecting = false;
-                    hideBuildTab();
-                    showOnScreen((L"Build: " + targetName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
-                    m_buildMenuWasOpen = true;
-                    refreshActionBar();
-                    m_activeBuilderSlot = slot;
-                    updateBuildersBar();
-                    return SelectResult::Found;
-                }
-                m_isAutoSelecting = false;
-                QBLOG(STR("[MoriaCppMod] [QuickBuild] SelectRecipe fast path failed, falling back\n"));
-            }
-
-            // === FALLBACK: Widget search + blockSelectedEvent ===
+            // === blockSelectedEvent path (reliable after Show — SelectRecipe needs full build system) ===
             std::vector<UObject*> widgets;
             UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
 
@@ -1362,9 +1402,6 @@
             buildTab->ProcessEvent(func, params.data());
             m_isAutoSelecting = false;
 
-            // Hide build tab via FGK API for proper game state cleanup
-            hideBuildTab();
-
             // Cache recipe handle from build HUD for future SelectRecipe fast path
             if (buildHUD)
                 cacheRecipeHandleForSlot(buildHUD, slot);
@@ -1416,9 +1453,28 @@
                                             m_recipeSlots[slot].hasHandle);
 
             // === DIRECT PATH: SelectRecipe without opening build menu ===
-            // Bypasses the entire state machine (and showBuildTab) when we have a cached handle.
-            // Rate-limited to prevent Slate crashes: SelectRecipe triggers internal widget/text updates
-            // on the BuildHUD, and rapid calls corrupt Slate's element batcher state.
+            // Bypasses the entire state machine (and showBuildTab) when we have a cached handle
+            // AND the build system is genuinely active (player already has a ghost piece).
+            // This path is fast (~0ms) and ideal for switching between recipes mid-placement.
+            // Rate-limited to 150ms to prevent Slate crashes: SelectRecipe triggers internal
+            // widget/text updates on the BuildHUD, and rapid calls corrupt Slate's batcher.
+            //
+            // PRE-GUARD: GetActiveBuildingWidget() on MorBuildingComponent.
+            //   - Returns non-null ONLY when the build system is actively running (ghost piece
+            //     visible, placement mode engaged).
+            //   - Returns null when the build system is dormant — even though the BuildHUD
+            //     widget exists in memory (findable via FindAllOf), it's not actively managing
+            //     placement. SelectRecipe on a dormant BuildHUD is a silent no-op.
+            //   - Without this guard (v2.6), the direct path would always fire (getCachedBuildHUD
+            //     found the widget via FindAllOf), SelectRecipe would silently no-op, and the
+            //     state machine (which uses blockSelectedEvent) was never reached.
+            //
+            // HISTORY (v2.8 debugging):
+            //   v2.6 used getCachedBuildHUD() (FindAllOf fallback) as the pre-guard. This found
+            //   the BuildHUD even when dormant, so SelectRecipe silently failed and the state
+            //   machine was never entered. Fix: replaced with GetActiveBuildingWidget() which
+            //   returns null when dormant, causing the direct path to fall through to the state
+            //   machine where blockSelectedEvent handles the cold-start case reliably.
             if (m_recipeSlots[slot].hasHandle && m_buildMenuPrimed)
             {
                 ULONGLONG now = GetTickCount64();
@@ -1429,7 +1485,21 @@
                     return;
                 }
 
-                UObject* buildHUD = getCachedBuildHUD();
+                // Only use direct path when build system is actively running.
+                // GetActiveBuildingWidget() returns null when dormant — falls through to SM.
+                UObject* buildHUD = nullptr;
+                UObject* comp = getCachedBuildComp();
+                if (comp)
+                {
+                    auto* fn = comp->GetFunctionByNameInChain(STR("GetActiveBuildingWidget"));
+                    if (fn)
+                    {
+                        struct { UObject* Ret{nullptr}; } gabwParams{};
+                        comp->ProcessEvent(fn, &gabwParams);
+                        if (gabwParams.Ret && isWidgetAlive(gabwParams.Ret))
+                            buildHUD = gabwParams.Ret;
+                    }
+                }
                 if (buildHUD)
                 {
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT SelectRecipe for F{} (skipping state machine)\n"), slot + 1);
@@ -1452,6 +1522,10 @@
                     // Handle didn't work — invalidate and fall through to state machine
                     m_recipeSlots[slot].hasHandle = false;
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path failed, falling through to state machine\n"));
+                }
+                else
+                {
+                    QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path skipped: GetActiveBuildingWidget() returned null\n"));
                 }
             }
 
@@ -1797,9 +1871,6 @@
             } guardTB{m_isAutoSelecting};
             buildTab->ProcessEvent(func, params.data());
             m_isAutoSelecting = false;
-
-            // Hide build tab via FGK API for proper game state cleanup
-            hideBuildTab();
 
             logBLockDiagnostics(L"TARGET-BUILD", matchedName, params.data());
 

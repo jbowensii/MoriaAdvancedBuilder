@@ -1714,10 +1714,28 @@ namespace MoriaMods
                 }
                 else if (m_qbPhase == QBPhase::WaitReopen)
                 {
-                    if (--m_qbWaitCount <= 0)
+                    // Wait for both: (1) frame countdown to expire AND (2) 250ms since last
+                    // Show/Hide to prevent MovieScene re-entrancy crashes.
+                    //
+                    // The B key bypasses showBuildTab()'s cooldown (it goes through the game's
+                    // input system, not our API wrapper). Without this cooldown check, the gap
+                    // between hideBuildTab() and the B-key Show was only ~156ms — well under
+                    // 250ms — causing UUMGSequenceTickManager::TickWidgetAnimations() to crash
+                    // with a null UObject access in SavePreAnimatedState().
+                    //
+                    // We also update m_lastShowHideTime here so that subsequent Show/Hide calls
+                    // from other code paths respect the cooldown relative to this B-key open.
+                    //
+                    // HISTORY (v2.8 debugging):
+                    //   Initially used isBuildTabAnimating() instead of the 250ms check. This
+                    //   caused the SM to timeout at 2.5s because Hide()'s animation keeps
+                    //   playing and isBuildTabAnimating() never returned false. The user had
+                    //   to press F-keys 3-4 times before one would succeed.
+                    if (--m_qbWaitCount <= 0 && (now - m_lastShowHideTime >= 250))
                     {
                         QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: wait complete ({}ms) -- opening fresh via B key\n"), elapsed);
                         m_qbRetryTime = now;
+                        m_lastShowHideTime = now; // B key triggers Show — update cooldown
                         m_buildTabAfterShowFired = false;
                         keybd_event(0x42, 0, 0, 0);
                         keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
@@ -1864,10 +1882,12 @@ namespace MoriaMods
                 }
                 else if (m_tbPhase == QBPhase::WaitReopen)
                 {
-                    if (--m_tbWaitCount <= 0)
+                    // Same 250ms cooldown guard as QB WaitReopen — see comments there.
+                    if (--m_tbWaitCount <= 0 && (now - m_lastShowHideTime >= 250))
                     {
                         QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: wait complete ({}ms) -- opening fresh\n"), elapsed);
                         m_tbRetryTime = now;
+                        m_lastShowHideTime = now; // B key triggers Show — update cooldown
                         m_buildTabAfterShowFired = false;
                         keybd_event(0x42, 0, 0, 0);
                         keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
