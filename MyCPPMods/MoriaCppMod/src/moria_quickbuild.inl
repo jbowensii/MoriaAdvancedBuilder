@@ -1250,7 +1250,7 @@
                 if (trySelectRecipeByHandle(buildHUD, m_recipeSlots[slot].recipeHandle))
                 {
                     m_isAutoSelecting = false;
-                    hideBuildTab(); // cooldown will skip this (~68ms < 250ms), matching v2.6 behavior
+                    hideBuildTab();
                     showOnScreen((L"Build: " + targetName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
                     m_buildMenuWasOpen = true;
                     refreshActionBar();
@@ -1362,7 +1362,8 @@
             buildTab->ProcessEvent(func, params.data());
             m_isAutoSelecting = false;
 
-            hideBuildTab(); // cooldown will skip this, matching v2.6 behavior
+            // Hide build tab via FGK API for proper game state cleanup
+            hideBuildTab();
 
             // Cache recipe handle from build HUD for future SelectRecipe fast path
             if (buildHUD)
@@ -1416,8 +1417,6 @@
 
             // === DIRECT PATH: SelectRecipe without opening build menu ===
             // Bypasses the entire state machine (and showBuildTab) when we have a cached handle.
-            // Uses GetActiveBuildingWidget() as pre-guard: returns null when build system is
-            // inactive/dormant, preventing silent SelectRecipe failures on dormant widgets.
             // Rate-limited to prevent Slate crashes: SelectRecipe triggers internal widget/text updates
             // on the BuildHUD, and rapid calls corrupt Slate's element batcher state.
             if (m_recipeSlots[slot].hasHandle && m_buildMenuPrimed)
@@ -1430,21 +1429,7 @@
                     return;
                 }
 
-                // Only use the direct path when the build system is actively running.
-                // GetActiveBuildingWidget() returns null when dormant — prevents silent failures.
-                UObject* buildHUD = nullptr;
-                UObject* comp = getCachedBuildComp();
-                if (comp)
-                {
-                    auto* fn = comp->GetFunctionByNameInChain(STR("GetActiveBuildingWidget"));
-                    if (fn)
-                    {
-                        struct { UObject* Ret{nullptr}; } params{};
-                        comp->ProcessEvent(fn, &params);
-                        if (params.Ret && isWidgetAlive(params.Ret))
-                            buildHUD = params.Ret;
-                    }
-                }
+                UObject* buildHUD = getCachedBuildHUD();
                 if (buildHUD)
                 {
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT SelectRecipe for F{} (skipping state machine)\n"), slot + 1);
@@ -1467,10 +1452,6 @@
                     // Handle didn't work — invalidate and fall through to state machine
                     m_recipeSlots[slot].hasHandle = false;
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path failed, falling through to state machine\n"));
-                }
-                else
-                {
-                    QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path skipped: GetActiveBuildingWidget() returned null\n"));
                 }
             }
 
@@ -1817,7 +1798,8 @@
             buildTab->ProcessEvent(func, params.data());
             m_isAutoSelecting = false;
 
-            hideBuildTab(); // cooldown will skip this, matching v2.6 behavior
+            // Hide build tab via FGK API for proper game state cleanup
+            hideBuildTab();
 
             logBLockDiagnostics(L"TARGET-BUILD", matchedName, params.data());
 

@@ -18,10 +18,16 @@
             auto* pc = findPlayerController();
             if (!pc) return false;
 
-            // Get viewport center for screen-space ray
-            m_screen.refresh(pc);
-            float centerX = m_screen.fracToPixelX(0.5f);
-            float centerY = m_screen.fracToPixelY(0.5f);
+            // Get viewport size
+            auto* vpFunc = pc->GetFunctionByNameInChain(STR("GetViewportSize"));
+            if (!vpFunc) return false;
+            struct
+            {
+                int32_t SizeX{0}, SizeY{0};
+            } vpParams{};
+            pc->ProcessEvent(vpFunc, &vpParams);
+            float centerX = vpParams.SizeX / 2.0f;
+            float centerY = vpParams.SizeY / 2.0f;
 
             // Deproject screen center to world ray (offsets resolved via reflection)
             auto* deprojFunc = pc->GetFunctionByNameInChain(STR("DeprojectScreenPositionToWorld"));

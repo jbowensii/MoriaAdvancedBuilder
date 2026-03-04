@@ -206,72 +206,6 @@
             widget->ProcessEvent(fn, buf.data());
         }
 
-        // Helper: set color multiplier on a UImage via SetColorAndOpacity(FLinearColor)
-        void umgSetImageColor(UObject* img, float r, float g, float b, float a)
-        {
-            if (!img) return;
-            auto* fn = img->GetFunctionByNameInChain(STR("SetColorAndOpacity"));
-            if (!fn) return;
-            auto* p = findParam(fn, STR("InColorAndOpacity"));
-            if (!p) return;
-            int sz = fn->GetParmsSize();
-            std::vector<uint8_t> buf(sz, 0);
-            auto* c = reinterpret_cast<float*>(buf.data() + p->GetOffset_Internal());
-            c[0] = r; c[1] = g; c[2] = b; c[3] = a;
-            img->ProcessEvent(fn, buf.data());
-        }
-
-        // Get the state image UObject for a given toolbar + slot (for hover highlight)
-        UObject* getSlotStateImage(int tb, int slot)
-        {
-            switch (tb)
-            {
-            case 0: return (slot >= 0 && slot < 8) ? m_umgStateImages[slot] : nullptr;
-            case 1: return (slot == 0) ? m_abStateImage : nullptr;
-            case 2: return (slot >= 0 && slot < MC_SLOTS) ? m_mcStateImages[slot] : nullptr;
-            default: return nullptr;
-            }
-        }
-
-        // Hit-test cursor (fractional viewport coords) against all visible toolbars
-        // Returns true if a slot was hit, sets outTB (0=BB,1=AB,2=MC) and outSlot
-        // Canvas slot sizes (m_toolbarSizeW/H) include umgScale once, but visual content
-        // is rendered at an additional 0.81x via SetRenderScale, centered by pivot (0.5, 0.5).
-        // Multiply by kRenderScale so hit zone matches the visible icons, not the larger canvas slot.
-        bool hitTestToolbarSlot(float curFracX, float curFracY, int& outTB, int& outSlot)
-        {
-            outTB = -1; outSlot = -1;
-            constexpr float kRenderScale = 0.81f;  // matches umgScale/mcScale/abScale
-            struct TBInfo { int idx; int cols; int rows; UObject* widget; };
-            TBInfo bars[] = {
-                {2, 4, 3, m_mcBarWidget},
-                {0, 8, 1, m_umgBarWidget},
-                {1, 1, 1, m_abBarWidget},
-            };
-            for (auto& b : bars)
-            {
-                if (!b.widget) continue;
-                float posX = (m_toolbarPosX[b.idx] >= 0) ? m_toolbarPosX[b.idx] : TB_DEF_X[b.idx];
-                float posY = (m_toolbarPosY[b.idx] >= 0) ? m_toolbarPosY[b.idx] : TB_DEF_Y[b.idx];
-                // Visual content is kRenderScale of canvas slot, centered at pivot
-                float halfW = m_toolbarSizeW[b.idx] * kRenderScale * 0.5f;
-                float halfH = m_toolbarSizeH[b.idx] * kRenderScale * 0.5f;
-                if (halfW <= 0 || halfH <= 0) continue;
-                float relX = curFracX - (posX - halfW);
-                float relY = curFracY - (posY - halfH);
-                float fullW = halfW * 2.0f, fullH = halfH * 2.0f;
-                if (relX < 0 || relX >= fullW || relY < 0 || relY >= fullH) continue;
-                int col = static_cast<int>(relX / (fullW / b.cols));
-                int row = static_cast<int>(relY / (fullH / b.rows));
-                col = std::clamp(col, 0, b.cols - 1);
-                row = std::clamp(row, 0, b.rows - 1);
-                outTB = b.idx;
-                outSlot = row * b.cols + col;
-                return true;
-            }
-            return false;
-        }
-
         // Helper: set text on a UTextBlock via SetText(FText)
         void umgSetText(UObject* textBlock, const std::wstring& text)
         {
@@ -993,8 +927,20 @@
 
             // --- Phase D: Size frame from icon dimensions and center on screen ---
             // Get viewport size early for uiScale computation
-            m_screen.refresh(findPlayerController());
-            int32_t viewW = m_screen.viewW, viewH = m_screen.viewH;
+            int32_t viewW = 1920, viewH = 1080; // fallback
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            m_cachedVW = viewW; m_cachedVH = viewH; // cache for drag loop
             VLOG(STR("[MoriaCppMod] [UMG] Viewport: {}x{}\n"), viewW, viewH);
 
             // --- DEBUG: Query engine DPI scale via GetViewportScale and WidgetLayoutLibrary ---
@@ -1060,18 +1006,18 @@
             }
             // Compute dpiScale from slate vs raw pixels; fall back to GetViewportScale results
             if (wllSlateW > 0.0f && viewW > 0)
-                m_screen.dpiScale = static_cast<float>(viewW) / wllSlateW;
+                m_dpiScale = static_cast<float>(viewW) / wllSlateW;
             else if (engineDpiScale > 0.0f)
-                m_screen.dpiScale = engineDpiScale;
+                m_dpiScale = engineDpiScale;
             else if (wllDpiScale > 0.0f)
-                m_screen.dpiScale = wllDpiScale;
+                m_dpiScale = wllDpiScale;
             else
-                m_screen.dpiScale = 1.0f; // fallback
+                m_dpiScale = 1.0f; // fallback
 
             VLOG(STR("[MoriaCppMod] [UMG] DPI: slateVP={:.1f}x{:.1f} rawVP={}x{} dpiScale={:.4f}\n"),
-                wllSlateW, wllSlateH, viewW, viewH, m_screen.dpiScale);
+                wllSlateW, wllSlateH, viewW, viewH, m_dpiScale);
             showOnScreen(std::format(L"DPI scale={:.3f}  slate={:.0f}x{:.0f}  raw={}x{}",
-                m_screen.dpiScale, wllSlateW, wllSlateH, viewW, viewH).c_str(), 8.0f, 1.0f, 1.0f, 0.0f);
+                m_dpiScale, wllSlateW, wllSlateH, viewW, viewH).c_str(), 8.0f, 1.0f, 1.0f, 0.0f);
 
             // SetRenderScale: constant uniform scale Ã¢â‚¬â€ engine DPI handles resolution differences
             // Do NOT multiply by uiScale here Ã¢â‚¬â€ the engine already scales slate units to pixels
@@ -1136,13 +1082,13 @@
             {
                 float fracX = (m_toolbarPosX[0] >= 0) ? m_toolbarPosX[0] : TB_DEF_X[0];
                 float fracY = (m_toolbarPosY[0] >= 0) ? m_toolbarPosY[0] : TB_DEF_Y[0];
-                setWidgetPosition(userWidget, m_screen.fracToPixelX(fracX),
-                                              m_screen.fracToPixelY(fracY), true);
+                setWidgetPosition(userWidget, fracX * static_cast<float>(viewW),
+                                              fracY * static_cast<float>(viewH), true);
             }
 
             // Cache size as FRACTION of viewport for resolution-independent hit-testing
-            m_toolbarSizeW[0] = m_screen.pixelToFracX(totalW);
-            m_toolbarSizeH[0] = m_screen.pixelToFracY(totalH);
+            m_toolbarSizeW[0] = totalW / static_cast<float>(viewW);
+            m_toolbarSizeH[0] = totalH / static_cast<float>(viewH);
             m_umgBarWidget = userWidget;
             showOnScreen(Loc::get("msg.builders_bar_created").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [UMG] === Builders bar creation complete ===\n"));
@@ -1161,7 +1107,6 @@
                 m_abBarWidget->ProcessEvent(removeFn, nullptr);
             m_abBarWidget = nullptr;
             m_abKeyLabel = nullptr;
-            m_abStateImage = nullptr;
             VLOG(STR("[MoriaCppMod] [AB] Advanced Builder toolbar removed\n"));
         }
 
@@ -1307,9 +1252,6 @@
             FStaticConstructObjectParameters fiP(imageClass, outer);
             UObject* frameImg = UObjectGlobals::StaticConstructObject(fiP);
             if (!stateImg || !iconImg || !frameImg) return;
-
-            // Cache state image for hover highlight
-            m_abStateImage = stateImg;
 
             // Set textures
             umgSetBrush(stateImg, texActive, setBrushFn);  // active state (always active)
@@ -1535,9 +1477,21 @@
 
             // --- Phase D: Size and position (lower-right, 25px from edges) ---
             // Get viewport size for uiScale
-            m_screen.refresh(findPlayerController());
-            int32_t viewW = m_screen.viewW, viewH = m_screen.viewH;
-            float uiScale = m_screen.uiScale; // minimum scale for readability at sub-1080p
+            int32_t viewW = 1920, viewH = 1080;
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // Constant render scale Ã¢â‚¬â€ engine DPI system handles resolution differences
             float abScale = 0.81f;
@@ -1596,13 +1550,13 @@
             {
                 float fracX = (m_toolbarPosX[1] >= 0) ? m_toolbarPosX[1] : TB_DEF_X[1];
                 float fracY = (m_toolbarPosY[1] >= 0) ? m_toolbarPosY[1] : TB_DEF_Y[1];
-                setWidgetPosition(userWidget, m_screen.fracToPixelX(fracX),
-                                              m_screen.fracToPixelY(fracY), true);
+                setWidgetPosition(userWidget, fracX * static_cast<float>(viewW),
+                                              fracY * static_cast<float>(viewH), true);
             }
 
             // Cache size for repositioning hit-test
-            m_toolbarSizeW[1] = m_screen.pixelToFracX(abTotalW);
-            m_toolbarSizeH[1] = m_screen.pixelToFracY(abTotalH);
+            m_toolbarSizeW[1] = abTotalW / static_cast<float>(viewW);
+            m_toolbarSizeH[1] = abTotalH / static_cast<float>(viewH);
             m_abBarWidget = userWidget;
             showOnScreen(L"Advanced Builder toolbar created!", 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [AB] === Advanced Builder toolbar created ({}x{}) ===\n"),
@@ -1797,9 +1751,21 @@
             }
 
             // Get viewport size for uiScale
-            m_screen.refresh(findPlayerController());
-            int32_t viewW = m_screen.viewW, viewH = m_screen.viewH;
-            float uiScale = m_screen.uiScale; // minimum scale for readability at sub-1080p
+            int32_t viewW = 1920, viewH = 1080;
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // Render scale 1.0 -- engine DPI handles resolution scaling via Slate
             if (rootSizeBox) umgSetRenderScale(rootSizeBox, 1.0f, 1.0f);
@@ -1838,8 +1804,8 @@
             {
                 float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
                 float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
-                setWidgetPosition(userWidget, m_screen.fracToPixelX(fracX),
-                                              m_screen.fracToPixelY(fracY), true);
+                setWidgetPosition(userWidget, fracX * static_cast<float>(viewW),
+                                              fracY * static_cast<float>(viewH), true);
             }
 
             // Start hidden
@@ -1885,12 +1851,23 @@
 
             // Reposition to current saved position (may have changed via drag)
             {
-                m_screen.refresh(findPlayerController());
-                int32_t viewW = m_screen.viewW, viewH = m_screen.viewH;
+                int32_t viewW = 1920, viewH = 1080;
+                auto* pcVp = findPlayerController();
+                if (pcVp)
+                {
+                    auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                    if (vpFunc)
+                    {
+                        struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                        pcVp->ProcessEvent(vpFunc, &vpParams);
+                        if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                        if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                    }
+                }
                 float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
                 float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
-                setWidgetPosition(m_targetInfoWidget, m_screen.fracToPixelX(fracX),
-                                                      m_screen.fracToPixelY(fracY), true);
+                setWidgetPosition(m_targetInfoWidget, fracX * static_cast<float>(viewW),
+                                                      fracY * static_cast<float>(viewH), true);
             }
 
             // Show widget
@@ -2051,9 +2028,21 @@
             }
 
             // Get viewport size for uiScale
-            m_screen.refresh(findPlayerController());
-            int32_t viewW = m_screen.viewW, viewH = m_screen.viewH;
-            float uiScale = m_screen.uiScale; // minimum scale for readability at sub-1080p
+            int32_t viewW = 1920, viewH = 1080;
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // Render scale 1.0 Ã¢â‚¬â€ engine DPI handles resolution scaling
             if (vbox) umgSetRenderScale(vbox, 1.0f, 1.0f);
@@ -2090,13 +2079,13 @@
             {
                 float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
                 float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
-                setWidgetPosition(userWidget, m_screen.fracToPixelX(fracX),
-                                              m_screen.fracToPixelY(fracY), true);
+                setWidgetPosition(userWidget, fracX * static_cast<float>(viewW),
+                                              fracY * static_cast<float>(viewH), true);
             }
 
             // Cache size for repositioning hit-test
-            m_toolbarSizeW[3] = m_screen.pixelToFracX((400.0f * uiScale));
-            m_toolbarSizeH[3] = m_screen.pixelToFracY((80.0f * uiScale));
+            m_toolbarSizeW[3] = (400.0f * uiScale) / static_cast<float>(viewW);
+            m_toolbarSizeH[3] = (80.0f * uiScale) / static_cast<float>(viewH);
 
             // Start hidden
             auto* setVisFn = userWidget->GetFunctionByNameInChain(STR("SetVisibility"));
@@ -2126,12 +2115,23 @@
 
             // Reposition to current saved position (may have changed via drag)
             {
-                m_screen.refresh(findPlayerController());
-                int32_t viewW = m_screen.viewW, viewH = m_screen.viewH;
+                int32_t viewW = 1920, viewH = 1080;
+                auto* pcVp = findPlayerController();
+                if (pcVp)
+                {
+                    auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                    if (vpFunc)
+                    {
+                        struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                        pcVp->ProcessEvent(vpFunc, &vpParams);
+                        if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                        if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                    }
+                }
                 float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
                 float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
-                setWidgetPosition(m_infoBoxWidget, m_screen.fracToPixelX(fracX),
-                                                   m_screen.fracToPixelY(fracY), true);
+                setWidgetPosition(m_infoBoxWidget, fracX * static_cast<float>(viewW),
+                                                   fracY * static_cast<float>(viewH), true);
             }
 
             auto* fn = m_infoBoxWidget->GetFunctionByNameInChain(STR("SetVisibility"));
@@ -3276,9 +3276,21 @@
             }
 
             // Get viewport size for uiScale
-            m_screen.refresh(findPlayerController());
-            int32_t viewW = m_screen.viewW, viewH = m_screen.viewH;
-            float uiScale = m_screen.uiScale; // minimum scale for readability at sub-1080p
+            int32_t viewW = 1920, viewH = 1080;
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // Render scale 1.0 -- engine DPI handles resolution scaling via Slate
             if (rootSizeBox) umgSetRenderScale(rootSizeBox, 1.0f, 1.0f);
@@ -3314,8 +3326,8 @@
 
             // Position: centered, slight Y offset
             {
-                float posX = m_screen.fracToPixelX(0.5f);
-                float posY = m_screen.fracToPixelY(0.5f) - 100.0f;
+                float posX = static_cast<float>(viewW) / 2.0f;
+                float posY = static_cast<float>(viewH) / 2.0f - 100.0f;
                 setWidgetPosition(userWidget, posX, posY, true);
             }
 
@@ -3377,7 +3389,6 @@
             UObject* texUndoLast = nullptr;     // T_UI_Alert_BakedIcon Ã¢â‚¬â€ MC slot 9 (Undo Last)
             UObject* texRemoveAll = nullptr;    // T_UI_Icon_Filled_GoodPlace2 Ã¢â‚¬â€ MC slot 10 (Remove All)
             UObject* texSettings = nullptr;     // T_UI_Icon_Settings Ã¢â‚¬â€ MC slot 11 (Configuration)
-            UObject* texSnapToggle = nullptr;   // T_UI_Icon_Build — MC slot 5 (Snap Toggle)
             UObject* texStability = nullptr;     // T_UI_Icon_Craft — MC slot 2 (Stability Check)
             UObject* texHideChar = nullptr;     // T_UI_Eye_Open Ã¢â‚¬â€ MC slot 3 (Hide Character)
             {
@@ -3401,7 +3412,6 @@
                     else if (name == STR("T_UI_Icon_Settings")) texSettings = t;
                     else if (name == STR("T_UI_Icon_Craft")) texStability = t;
                     else if (name == STR("T_UI_Eye_Open")) texHideChar = t;
-                    else if (name == STR("T_UI_Icon_Build")) texSnapToggle = t;
                 }
             }
             if (!texFrame || !texEmpty)
@@ -3424,7 +3434,6 @@
                 {texTarget, STR("/Game/UI/textures/_Icons/Menus/T_UI_Search.T_UI_Search"), L"T_UI_Search"},
                 {texHideChar, STR("/Game/UI/textures/_Icons/Waypoints/T_UI_Eye_Open.T_UI_Eye_Open"), L"T_UI_Eye_Open"},
                 {texStability, STR("/Game/UI/textures/_Shared/Icons/T_UI_Icon_Craft.T_UI_Icon_Craft"), L"T_UI_Icon_Craft"},
-                {texSnapToggle, STR("/Game/UI/textures/_Shared/Icons/T_UI_Icon_Build.T_UI_Icon_Build"), L"T_UI_Icon_Build"},
             };
             for (auto& fb : fallbacks)
             {
@@ -3821,12 +3830,12 @@
             {
                 UObject* mcSlotTextures[MC_SLOTS] = {
                     texRotation, texTarget, texStability, texHideChar,         // row 0: Rotation, Target, StabilityCheck, SuperDwarf
-                    texToolbarSwap, texSnapToggle, nullptr, nullptr,        // row 1: ToolbarSwap, SnapToggle, Empty6, Empty7
+                    texToolbarSwap, nullptr, nullptr, nullptr,               // row 1: ToolbarSwap, Empty5, Empty6, Empty7
                     texRemoveTarget, texUndoLast, texRemoveAll, texSettings  // row 2: RemoveTarget, UndoLast, RemoveAll, Config
                 };
                 const wchar_t* mcSlotNames[MC_SLOTS] = {
                     L"T_UI_Refresh", L"T_UI_Search", L"T_UI_Icon_Craft", L"T_UI_Eye_Open",
-                    L"Swap-Bag_Icon", L"T_UI_Icon_Build", L"Empty6", L"Empty7",
+                    L"Swap-Bag_Icon", L"Empty5", L"Empty6", L"Empty7",
                     L"T_UI_Icon_GoodPlace2", L"T_UI_Alert_BakedIcon", L"T_UI_Icon_Filled_GoodPlace2", L"T_UI_Icon_Settings"
                 };
                 for (int i = 0; i < MC_SLOTS; i++)
@@ -3974,9 +3983,21 @@
 
             // --- Size and position: lower-right of screen ---
             // Get viewport size for uiScale
-            m_screen.refresh(findPlayerController());
-            int32_t viewW = m_screen.viewW, viewH = m_screen.viewH;
-            float uiScale = m_screen.uiScale; // minimum scale for readability at sub-1080p
+            int32_t viewW = 1920, viewH = 1080;
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // SetRenderScale 0.81 * uiScale
             // Constant render scale Ã¢â‚¬â€ engine DPI system handles resolution differences
@@ -3992,7 +4013,7 @@
             float mcHOverlapPerSlot = mcIconW * 0.20f;             // 20% horizontal overlap (10% each side, reduced from 40%)
             float mcTotalW = (4.0f * mcIconW - 3.0f * mcHOverlapPerSlot) * mcScale * 1.2f;  // 4 cols, 3 gaps, +20% wider for spacing
             float mcSlotH = (frameH + stateH - mcVOverlap);
-            float mcTotalH = (3.0f * mcSlotH) * mcScale;           // 3 rows (4x3 grid)
+            float mcTotalH = (2.0f * mcSlotH) * mcScale;           // 2 rows
 
             auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
             if (setDesiredSizeFn)
@@ -4038,8 +4059,8 @@
             {
                 float fracX = (m_toolbarPosX[2] >= 0) ? m_toolbarPosX[2] : TB_DEF_X[2];
                 float fracY = (m_toolbarPosY[2] >= 0) ? m_toolbarPosY[2] : TB_DEF_Y[2];
-                float setPosX = m_screen.fracToPixelX(fracX);
-                float setPosY = m_screen.fracToPixelY(fracY);
+                float setPosX = fracX * static_cast<float>(viewW);
+                float setPosY = fracY * static_cast<float>(viewH);
                 setWidgetPosition(userWidget, setPosX, setPosY, true);
                 // DEBUG: read back actual position to verify coordinate space
                 auto* getPosF = userWidget->GetFunctionByNameInChain(STR("GetPositionInViewport"));
@@ -4061,8 +4082,8 @@
             }
 
             // Cache size for repositioning hit-test
-            m_toolbarSizeW[2] = m_screen.pixelToFracX(mcTotalW);
-            m_toolbarSizeH[2] = m_screen.pixelToFracY(mcTotalH);
+            m_toolbarSizeW[2] = mcTotalW / static_cast<float>(viewW);
+            m_toolbarSizeH[2] = mcTotalH / static_cast<float>(viewH);
             m_mcBarWidget = userWidget;
             showOnScreen(Loc::get("msg.mod_controller_created").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [MC] === Mod Controller bar creation complete ({}x{}) ===\n"),

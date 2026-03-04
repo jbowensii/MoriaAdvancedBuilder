@@ -263,8 +263,21 @@
             }
 
             // Get viewport and position centered
-            m_screen.refresh(findPlayerController());
-            float uiScale = m_screen.uiScale;
+            int32_t viewW = 1920, viewH = 1080;
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // Set desired size and alignment
             auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
@@ -293,7 +306,7 @@
                     userWidget->ProcessEvent(setAlignFn, al.data());
                 }
             }
-            setWidgetPosition(userWidget, m_screen.fracToPixelX(0.5f), m_screen.fracToPixelY(0.5f), true);
+            setWidgetPosition(userWidget, static_cast<float>(viewW) / 2.0f, static_cast<float>(viewH) / 2.0f, true);
 
             m_repositionMsgWidget = userWidget;
         }
@@ -460,9 +473,21 @@
             }
 
             // Get viewport size for uiScale + positioning
-            m_screen.refresh(findPlayerController());
-            int32_t viewW = m_screen.viewW, viewH = m_screen.viewH;
-            float uiScale = m_screen.uiScale;
+            int32_t viewW = 1920, viewH = 1080;
+            auto* pcVp = findPlayerController();
+            if (pcVp)
+            {
+                auto* vpFunc = pcVp->GetFunctionByNameInChain(STR("GetViewportSize"));
+                if (vpFunc)
+                {
+                    struct { int32_t SizeX{0}, SizeY{0}; } vpParams{};
+                    pcVp->ProcessEvent(vpFunc, &vpParams);
+                    if (vpParams.SizeX > 0) viewW = vpParams.SizeX;
+                    if (vpParams.SizeY > 0) viewH = vpParams.SizeY;
+                }
+            }
+            float uiScale = static_cast<float>(viewH) / 2160.0f;
+            if (uiScale < 0.5f) uiScale = 0.5f; // minimum scale for readability at sub-1080p
 
             // Render scale 1.0 -- engine DPI handles resolution scaling via Slate
             if (rootSizeBox) umgSetRenderScale(rootSizeBox, 1.0f, 1.0f);
@@ -500,12 +525,12 @@
             // Position from saved or default
             float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
             float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
-            setWidgetPosition(userWidget, m_screen.fracToPixelX(fracX),
-                                          m_screen.fracToPixelY(fracY), true);
+            setWidgetPosition(userWidget, fracX * static_cast<float>(viewW),
+                                          fracY * static_cast<float>(viewH), true);
 
             // Cache size for hit-test -- matches real Target Info dimensions
-            m_toolbarSizeW[3] = m_screen.pixelToFracX(1100.0f * uiScale);
-            m_toolbarSizeH[3] = m_screen.pixelToFracY(320.0f * uiScale);
+            m_toolbarSizeW[3] = (1100.0f * uiScale) / static_cast<float>(viewW);
+            m_toolbarSizeH[3] = (320.0f * uiScale) / static_cast<float>(viewH);
 
             m_repositionInfoBoxWidget = userWidget;
             VLOG(STR("[MoriaCppMod] Created placeholder Info Box for repositioning\n"));
