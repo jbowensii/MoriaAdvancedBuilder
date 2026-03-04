@@ -3386,7 +3386,7 @@
             UObject* texUndoLast = nullptr;     // T_UI_Alert_BakedIcon Ã¢â‚¬â€ MC slot 9 (Undo Last)
             UObject* texRemoveAll = nullptr;    // T_UI_Icon_Filled_GoodPlace2 Ã¢â‚¬â€ MC slot 10 (Remove All)
             UObject* texSettings = nullptr;     // T_UI_Icon_Settings Ã¢â‚¬â€ MC slot 11 (Configuration)
-            UObject* texStability = nullptr;     // HammerBreak_Icon — MC slot 2 (Stability Check)
+            UObject* texStability = nullptr;     // T_UI_Icon_Craft — MC slot 2 (Stability Check)
             UObject* texHideChar = nullptr;     // T_UI_Eye_Open Ã¢â‚¬â€ MC slot 3 (Hide Character)
             {
                 std::vector<UObject*> textures;
@@ -3407,7 +3407,7 @@
                     else if (name == STR("T_UI_Alert_BakedIcon")) texUndoLast = t;
                     else if (name == STR("T_UI_Icon_Filled_GoodPlace2")) texRemoveAll = t;
                     else if (name == STR("T_UI_Icon_Settings")) texSettings = t;
-                    else if (name == STR("HammerBreak_Icon")) texStability = t;
+                    else if (name == STR("T_UI_Icon_Craft")) texStability = t;
                     else if (name == STR("T_UI_Eye_Open")) texHideChar = t;
                 }
             }
@@ -3430,7 +3430,7 @@
                 {texRotation, STR("/Game/UI/textures/_Shared/Icons/T_UI_Refresh.T_UI_Refresh"), L"T_UI_Refresh"},
                 {texTarget, STR("/Game/UI/textures/_Icons/Menus/T_UI_Search.T_UI_Search"), L"T_UI_Search"},
                 {texHideChar, STR("/Game/UI/textures/_Icons/Waypoints/T_UI_Eye_Open.T_UI_Eye_Open"), L"T_UI_Eye_Open"},
-                {texStability, STR("/Game/UI/textures/CommunicationIcons/HammerBreak_Icon.HammerBreak_Icon"), L"HammerBreak_Icon"},
+                {texStability, STR("/Game/UI/textures/_Shared/Icons/T_UI_Icon_Craft.T_UI_Icon_Craft"), L"T_UI_Icon_Craft"},
             };
             for (auto& fb : fallbacks)
             {
@@ -3831,7 +3831,7 @@
                     texRemoveTarget, texUndoLast, texRemoveAll, texSettings  // row 2: RemoveTarget, UndoLast, RemoveAll, Config
                 };
                 const wchar_t* mcSlotNames[MC_SLOTS] = {
-                    L"T_UI_Refresh", L"T_UI_Search", L"HammerBreak_Icon", L"T_UI_Eye_Open",
+                    L"T_UI_Refresh", L"T_UI_Search", L"T_UI_Icon_Craft", L"T_UI_Eye_Open",
                     L"Swap-Bag_Icon", L"Empty5", L"Empty6", L"Empty7",
                     L"T_UI_Icon_GoodPlace2", L"T_UI_Alert_BakedIcon", L"T_UI_Icon_Filled_GoodPlace2", L"T_UI_Icon_Settings"
                 };
