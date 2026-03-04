@@ -700,11 +700,15 @@
                             m_hasSavedCameraState = true;
                             VLOG(STR("[MoriaCppMod] [Camera SAVE] camMgr={:p} class={}\n"),
                                 static_cast<void*>(camMgr), safeClassName(camMgr));
-                            int setOff = resolveOffset(camMgr, L"Settings", s_off_camSettings);
+                            int camSettingsSize = 0;
+                            int setOff = resolveOffsetAndSize(camMgr, L"Settings", s_off_camSettings, camSettingsSize);
+                            if (camSettingsSize > 0 && camSettingsSize != CAM_SETTINGS_BLOB_SIZE)
+                                VLOG(STR("[MoriaCppMod] WARNING: Settings property size {} != CAM_SETTINGS_BLOB_SIZE {} — struct layout may have changed!\n"),
+                                     camSettingsSize, CAM_SETTINGS_BLOB_SIZE);
                             VLOG(STR("[MoriaCppMod] [Camera SAVE] Settings offset={}\n"), setOff);
                             if (setOff >= 0)
                             {
-                                std::memcpy(m_savedCamSettings, reinterpret_cast<uint8_t*>(camMgr) + setOff, 0x4C);
+                                std::memcpy(m_savedCamSettings, reinterpret_cast<uint8_t*>(camMgr) + setOff, CAM_SETTINGS_BLOB_SIZE);
                                 auto* f = reinterpret_cast<float*>(m_savedCamSettings);
                                 VLOG(STR("[MoriaCppMod] [Camera SAVE] Settings: FOVScale={:.2f} CamOff=({:.1f},{:.1f},{:.1f}) PivotOff=({:.1f},{:.1f},{:.1f}) PivotSmooth={:.2f}\n"),
                                     f[0], f[4], f[5], f[6], f[7], f[8], f[9], f[10]);
@@ -801,7 +805,7 @@
                                 auto* livef = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(camMgr) + s_off_camSettings);
                                 VLOG(STR("[MoriaCppMod] [Camera RESTORE] BEFORE: FOVScale={:.2f} CamOff=({:.1f},{:.1f},{:.1f}) PivotOff=({:.1f},{:.1f},{:.1f}) PivotSmooth={:.2f}\n"),
                                     livef[0], livef[4], livef[5], livef[6], livef[7], livef[8], livef[9], livef[10]);
-                                std::memcpy(reinterpret_cast<uint8_t*>(camMgr) + s_off_camSettings, m_savedCamSettings, 0x4C);
+                                std::memcpy(reinterpret_cast<uint8_t*>(camMgr) + s_off_camSettings, m_savedCamSettings, CAM_SETTINGS_BLOB_SIZE);
                                 VLOG(STR("[MoriaCppMod] [Camera RESTORE] AFTER:  FOVScale={:.2f} CamOff=({:.1f},{:.1f},{:.1f}) PivotOff=({:.1f},{:.1f},{:.1f}) PivotSmooth={:.2f}\n"),
                                     livef[0], livef[4], livef[5], livef[6], livef[7], livef[8], livef[9], livef[10]);
                             }
@@ -1103,6 +1107,29 @@
                         constexpr int SET_ELEMENT_SIZE = 24;
                         constexpr int FNAME_SIZE = 8;
 
+                        // Resolve row struct field offsets dynamically (replaces hardcoded constants)
+                        if (s_off_dtRowActor == -2)
+                        {
+                            resolveOffset(dtConst, L"RowStruct", s_off_dtRowStruct);
+                            if (s_off_dtRowStruct >= 0)
+                            {
+                                auto* rowStruct = *reinterpret_cast<UStruct**>(dtBase + s_off_dtRowStruct);
+                                if (rowStruct)
+                                {
+                                    resolveStructFieldOffset(rowStruct, L"Actor", s_off_dtRowActor);
+                                    resolveStructFieldOffset(rowStruct, L"DisplayName", s_off_dtRowDisplayName);
+                                }
+                            }
+                        }
+                        // Actor field offset + FName AssetPathName at +0x10 within TSoftClassPtr
+                        constexpr int SOFTCLASSPTR_ASSETPATH_FNAME = 0x10;
+                        int actorFNameOff = (s_off_dtRowActor >= 0)
+                            ? s_off_dtRowActor + SOFTCLASSPTR_ASSETPATH_FNAME
+                            : DT_ROW_ACTOR_FNAME;
+                        int displayNameOff = (s_off_dtRowDisplayName >= 0)
+                            ? s_off_dtRowDisplayName
+                            : CONSTRUCTION_DISPLAY_NAME;
+
                         struct
                         {
                             uint8_t* Data;
@@ -1131,9 +1158,9 @@
                             uint8_t* rowData = *reinterpret_cast<uint8_t**>(elem + FNAME_SIZE);
                             if (!rowData || !isReadableMemory(rowData, 0x78)) continue;
 
-                            // Read Actor AssetPathName FName at row+0x60
+                            // Read Actor AssetPathName FName (resolved dynamically, fallback 0x60)
                             FName assetFName;
-                            std::memcpy(&assetFName, rowData + DT_ROW_ACTOR_FNAME, FNAME_SIZE);
+                            std::memcpy(&assetFName, rowData + actorFNameOff, FNAME_SIZE);
                             std::wstring rowAssetPath;
                             try
                             {
@@ -1176,7 +1203,7 @@
                                 std::wstring dispName;
                                 try
                                 {
-                                    FText* txt = reinterpret_cast<FText*>(rowData + CONSTRUCTION_DISPLAY_NAME);
+                                    FText* txt = reinterpret_cast<FText*>(rowData + displayNameOff);
                                     if (txt && txt->Data && isReadableMemory(txt->Data, 8)) dispName = txt->ToString();
                                 }
                                 catch (...)

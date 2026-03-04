@@ -18,6 +18,7 @@
 #include <set>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <string>
 
@@ -71,7 +72,7 @@ namespace MoriaMods
     #define VLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
 
     // QuickBuild/TargetBuild logging — compile-time switch (0=off, 1=on)
-    #define QUICKBUILD_LOGGING 0
+    #define QUICKBUILD_LOGGING 1
     // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
     #if QUICKBUILD_LOGGING
         #define QBLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
@@ -104,6 +105,7 @@ namespace MoriaMods
     static constexpr int TEX_PARAM_VALUE_PTR = 0x10;     // FTextureParameterValue::ParameterValue (UTexture*)
     static constexpr int DT_ROWMAP_OFFSET = 0x30;       // UDataTable internal RowMap offset
     static constexpr int DT_ROW_ACTOR_FNAME = 0x60;     // FSoftObjectPath.AssetPathName within construction row
+    static constexpr int CAM_SETTINGS_BLOB_SIZE = 0x4C; // sizeof(FFGKCameraStateSettings) — 18 floats + FVector2D
 
     // ════════════════════════════════════════════════════════════════════════════
     // Raw UE4.27 Types (floats, not doubles)

@@ -8,6 +8,7 @@
 #pragma once
 
 #include "moria_common.h"
+#include <Unreal/Property/FArrayProperty.hpp>
 
 namespace MoriaMods
 {
@@ -35,6 +36,16 @@ namespace MoriaMods
     inline int s_off_camSettings = -2;         // AFGKPlayerCameraManager::Settings
     inline int s_off_probeType = -2;           // AFGKPlayerCameraManager::ProbeType
     inline int s_off_probeRadius = -2;         // AFGKPlayerCameraManager::ProbeRadius
+    inline int s_off_dtRowStruct = -2;         // UDataTable::RowStruct (UScriptStruct*)
+    inline int s_off_dtRowActor = -2;          // FMorConstructionDefinition::Actor (TSoftClassPtr)
+    inline int s_off_dtRowDisplayName = -2;    // FMorConstructionDefinition::DisplayName (FText)
+
+    // Validated struct-internal offsets (resolved from native struct reflection, fallback to constants)
+    inline int s_off_brushImageSize = -2;      // FSlateBrush::ImageSize (probed)
+    inline int s_off_brushResourceObj = -2;    // FSlateBrush::ResourceObject (probed)
+    inline int s_off_fontTypefaceName = -2;    // FSlateFontInfo::TypefaceFontName (probed)
+    inline int s_off_fontSize = -2;            // FSlateFontInfo::Size (probed)
+    inline int s_off_texParamValue = -2;       // FTextureParameterValue::ParameterValue (probed)
 
     // ════════════════════════════════════════════════════════════════════════════
     // Property Offset Resolution
@@ -67,11 +78,214 @@ namespace MoriaMods
         return cache;
     }
 
-    // Ensure s_off_brush is resolved (call with any UImage* before reading Brush fields)
+    // Resolve a UProperty offset by name, also returning the property size.
+    // Used for runtime validation of hardcoded struct sizes.
+    inline int resolveOffsetAndSize(UObject* obj, const wchar_t* propName, int& cache, int& sizeOut)
+    {
+        if (cache != -2) return cache;
+        cache = -1;
+        sizeOut = 0;
+        if (!obj) return -1;
+        for (auto* strct = static_cast<UStruct*>(obj->GetClassPrivate());
+             strct;
+             strct = strct->GetSuperStruct())
+        {
+            for (auto* prop : strct->ForEachProperty())
+            {
+                if (prop->GetName() == std::wstring_view(propName))
+                {
+                    cache = prop->GetOffset_Internal();
+                    sizeOut = prop->GetSize();
+                    VLOG(STR("[MoriaCppMod] Resolved '{}' at offset 0x{:04X} size {} (on {})\n"),
+                         std::wstring(propName), cache, sizeOut, strct->GetName());
+                    return cache;
+                }
+            }
+        }
+        VLOG(STR("[MoriaCppMod] WARNING: property '{}' not found on {} (full chain)\n"),
+                                        std::wstring(propName), obj->GetClassPrivate()->GetName());
+        return cache;
+    }
+
+    // Resolve a property offset by name on a UStruct directly (for DataTable row structs, etc.)
+    // Same sentinel values as resolveOffset: -2 = unresolved, -1 = not found.
+    inline int resolveStructFieldOffset(UStruct* strct, const wchar_t* propName, int& cache)
+    {
+        if (cache != -2) return cache;
+        cache = -1;
+        if (!strct) return -1;
+        for (auto* s = strct; s; s = s->GetSuperStruct())
+        {
+            for (auto* prop : s->ForEachProperty())
+            {
+                if (prop->GetName() == std::wstring_view(propName))
+                {
+                    cache = prop->GetOffset_Internal();
+                    VLOG(STR("[MoriaCppMod] Resolved struct field '{}' at offset 0x{:04X} (on {})\n"),
+                         std::wstring(propName), cache, s->GetName());
+                    return cache;
+                }
+            }
+        }
+        VLOG(STR("[MoriaCppMod] WARNING: struct field '{}' not found on {}\n"),
+             std::wstring(propName), strct->GetName());
+        return cache;
+    }
+
+    // Validate a hardcoded offset against runtime reflection.
+    // Returns true if the property exists at the expected offset, false otherwise.
+    // If the property is found at a different offset, logs a WARNING with both values.
+    inline bool validateOffset(UObject* obj, const wchar_t* propName, int expectedOffset, const char* label)
+    {
+        if (!obj) return false;
+        for (auto* strct = static_cast<UStruct*>(obj->GetClassPrivate());
+             strct;
+             strct = strct->GetSuperStruct())
+        {
+            for (auto* prop : strct->ForEachProperty())
+            {
+                if (prop->GetName() == std::wstring_view(propName))
+                {
+                    int actual = prop->GetOffset_Internal();
+                    int size = prop->GetSize();
+                    if (actual == expectedOffset)
+                    {
+                        VLOG(STR("[MoriaCppMod] [Validate] {} OK: '{}' at 0x{:04X} (size {})\n"),
+                             std::wstring(label, label + strlen(label)),
+                             std::wstring(propName), actual, size);
+                        return true;
+                    }
+                    else
+                    {
+                        VLOG(STR("[MoriaCppMod] [Validate] {} MISMATCH: '{}' expected 0x{:04X} but found 0x{:04X} (size {})\n"),
+                             std::wstring(label, label + strlen(label)),
+                             std::wstring(propName), expectedOffset, actual, size);
+                        return false;
+                    }
+                }
+            }
+        }
+        VLOG(STR("[MoriaCppMod] [Validate] {} NOT FOUND: '{}' (expected 0x{:04X})\n"),
+             std::wstring(label, label + strlen(label)),
+             std::wstring(propName), expectedOffset);
+        return false;
+    }
+
+    // Helper: find a named property on obj's class chain, return it if it's an FStructProperty.
+    inline FStructProperty* findStructProperty(UObject* obj, const wchar_t* propName)
+    {
+        if (!obj) return nullptr;
+        for (auto* strct = static_cast<UStruct*>(obj->GetClassPrivate());
+             strct;
+             strct = strct->GetSuperStruct())
+        {
+            for (auto* prop : strct->ForEachProperty())
+            {
+                if (prop->GetName() == std::wstring_view(propName))
+                    return static_cast<FStructProperty*>(prop);
+            }
+        }
+        return nullptr;
+    }
+
+    // Ensure s_off_brush is resolved + probe FSlateBrush struct fields for validation
     inline void ensureBrushOffset(UObject* imageWidget)
     {
         if (s_off_brush == -2 && imageWidget)
+        {
             resolveOffset(imageWidget, L"Brush", s_off_brush);
+            // One-time probe of FSlateBrush struct fields
+            if (s_off_brush >= 0 && s_off_brushImageSize == -2)
+            {
+                auto* structProp = findStructProperty(imageWidget, L"Brush");
+                if (structProp)
+                {
+                    UScriptStruct* brushStruct = structProp->GetStruct();
+                    if (brushStruct)
+                    {
+                        resolveStructFieldOffset(brushStruct, L"ImageSize", s_off_brushImageSize);
+                        resolveStructFieldOffset(brushStruct, L"ResourceObject", s_off_brushResourceObj);
+                        int structSize = brushStruct->GetPropertiesSize();
+                        if (s_off_brushImageSize >= 0 && s_off_brushImageSize != BRUSH_IMAGE_SIZE_X)
+                            VLOG(STR("[MoriaCppMod] [Validate] FSlateBrush::ImageSize MISMATCH: expected 0x{:02X}, got 0x{:02X}\n"),
+                                 BRUSH_IMAGE_SIZE_X, s_off_brushImageSize);
+                        if (s_off_brushResourceObj >= 0 && s_off_brushResourceObj != BRUSH_RESOURCE_OBJECT)
+                            VLOG(STR("[MoriaCppMod] [Validate] FSlateBrush::ResourceObject MISMATCH: expected 0x{:02X}, got 0x{:02X}\n"),
+                                 BRUSH_RESOURCE_OBJECT, s_off_brushResourceObj);
+                        VLOG(STR("[MoriaCppMod] [Validate] FSlateBrush: PropertiesSize={} ImageSize@0x{:02X} ResourceObject@0x{:02X}\n"),
+                             structSize,
+                             s_off_brushImageSize >= 0 ? s_off_brushImageSize : BRUSH_IMAGE_SIZE_X,
+                             s_off_brushResourceObj >= 0 ? s_off_brushResourceObj : BRUSH_RESOURCE_OBJECT);
+                    }
+                }
+            }
+        }
+    }
+
+    // Probe FSlateFontInfo struct fields (called once when s_off_font is first resolved)
+    inline void probeFontStruct(UObject* textBlock)
+    {
+        if (s_off_fontTypefaceName != -2) return; // already probed
+        auto* structProp = findStructProperty(textBlock, L"Font");
+        if (!structProp) { s_off_fontTypefaceName = -1; s_off_fontSize = -1; return; }
+        UScriptStruct* fontStruct = structProp->GetStruct();
+        if (!fontStruct) { s_off_fontTypefaceName = -1; s_off_fontSize = -1; return; }
+        resolveStructFieldOffset(fontStruct, L"TypefaceFontName", s_off_fontTypefaceName);
+        resolveStructFieldOffset(fontStruct, L"Size", s_off_fontSize);
+        int structSize = fontStruct->GetPropertiesSize();
+        if (s_off_fontTypefaceName >= 0 && s_off_fontTypefaceName != FONT_TYPEFACE_NAME)
+            VLOG(STR("[MoriaCppMod] [Validate] FSlateFontInfo::TypefaceFontName MISMATCH: expected 0x{:02X}, got 0x{:02X}\n"),
+                 FONT_TYPEFACE_NAME, s_off_fontTypefaceName);
+        if (s_off_fontSize >= 0 && s_off_fontSize != FONT_SIZE)
+            VLOG(STR("[MoriaCppMod] [Validate] FSlateFontInfo::Size MISMATCH: expected 0x{:02X}, got 0x{:02X}\n"),
+                 FONT_SIZE, s_off_fontSize);
+        if (structSize > 0 && structSize != FONT_STRUCT_SIZE)
+            VLOG(STR("[MoriaCppMod] [Validate] FSlateFontInfo size MISMATCH: expected 0x{:02X}, got 0x{:02X}\n"),
+                 FONT_STRUCT_SIZE, structSize);
+        VLOG(STR("[MoriaCppMod] [Validate] FSlateFontInfo: PropertiesSize={} TypefaceFontName@0x{:02X} Size@0x{:02X}\n"),
+             structSize,
+             s_off_fontTypefaceName >= 0 ? s_off_fontTypefaceName : FONT_TYPEFACE_NAME,
+             s_off_fontSize >= 0 ? s_off_fontSize : FONT_SIZE);
+    }
+
+    // Probe FTextureParameterValue struct fields (called once when s_off_texParamValues is first resolved)
+    inline void probeTexParamStruct(UObject* materialInstance)
+    {
+        if (s_off_texParamValue != -2) return; // already probed
+        if (!materialInstance) { s_off_texParamValue = -1; return; }
+        // TextureParameterValues is a TArray<FTextureParameterValue> — get array inner struct
+        for (auto* strct = static_cast<UStruct*>(materialInstance->GetClassPrivate());
+             strct;
+             strct = strct->GetSuperStruct())
+        {
+            for (auto* prop : strct->ForEachProperty())
+            {
+                if (prop->GetName() == std::wstring_view(L"TextureParameterValues"))
+                {
+                    auto* arrProp = static_cast<FArrayProperty*>(prop);
+                    FProperty* inner = arrProp->GetInner();
+                    if (inner)
+                    {
+                        auto* innerStructProp = static_cast<FStructProperty*>(inner);
+                        UScriptStruct* elemStruct = innerStructProp->GetStruct();
+                        if (elemStruct)
+                        {
+                            resolveStructFieldOffset(elemStruct, L"ParameterValue", s_off_texParamValue);
+                            int structSize = elemStruct->GetPropertiesSize();
+                            if (s_off_texParamValue >= 0 && s_off_texParamValue != TEX_PARAM_VALUE_PTR)
+                                VLOG(STR("[MoriaCppMod] [Validate] FTextureParameterValue::ParameterValue MISMATCH: expected 0x{:02X}, got 0x{:02X}\n"),
+                                     TEX_PARAM_VALUE_PTR, s_off_texParamValue);
+                            VLOG(STR("[MoriaCppMod] [Validate] FTextureParameterValue: PropertiesSize={} ParameterValue@0x{:02X}\n"),
+                                 structSize,
+                                 s_off_texParamValue >= 0 ? s_off_texParamValue : TEX_PARAM_VALUE_PTR);
+                        }
+                        goto probed;
+                    }
+                }
+            }
+        }
+        probed:
+        if (s_off_texParamValue == -2) s_off_texParamValue = -1; // mark as not found
     }
 
     // Set UWidgetTree::RootWidget via reflected offset

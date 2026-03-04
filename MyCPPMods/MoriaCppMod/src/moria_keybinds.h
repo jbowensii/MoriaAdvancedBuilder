@@ -1,7 +1,7 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║  moria_keybinds.h — Keybinding system & window discovery                  ║
-// ║  Rebindable F-key assignments, VK code → string conversion,               ║
-// ║  findGameWindow() for overlay positioning                                 ║
+// ║  22 rebindable keys (8 quickbuild + 12 MC slots + 2 extra),              ║
+// ║  VK code ↔ string conversion, findGameWindow() for overlay               ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 #pragma once
 
@@ -14,12 +14,13 @@ namespace MoriaMods
     // ════════════════════════════════════════════════════════════════════════════
 
     // BIND_COUNT defined in moria_testable.h
-    static constexpr int MC_BIND_BASE = 8;     // s_bindings[8..15] = MC slots 0..7
+    static constexpr int MC_BIND_BASE = 8;     // s_bindings[8..19] = MC slots 0..11
     static constexpr int BIND_ROTATION = 8;    // "Rotation" — MC slot 0
     static constexpr int BIND_TARGET   = 9;    // "Target" — MC slot 1
-    static constexpr int BIND_SWAP     = 10;   // "Toolbar Swap" — MC slot 2
-    static constexpr int BIND_CONFIG   = 15;   // "Configuration" — MC slot 7
-    static constexpr int BIND_AB_OPEN  = 16;   // "Advanced Builder Open"
+    static constexpr int BIND_SWAP     = 12;   // "Toolbar Swap" — MC slot 4
+    static constexpr int BIND_CONFIG   = 19;   // "Configuration" — MC slot 11
+    static constexpr int BIND_AB_OPEN  = 20;   // "Advanced Builder Open"
+    static constexpr int BIND_STABILITY = 10;  // "Stability Check" — MC slot 2
 
     struct KeyBind
     {
@@ -39,13 +40,18 @@ namespace MoriaMods
             {L"Quick Build 8", L"Quick Building", Input::Key::F8},                     // 7
             {L"Rotation", L"Mod Controller", Input::Key::F9},                          // 8  (BIND_ROTATION, MC slot 0)
             {L"Target", L"Mod Controller", Input::Key::OEM_SIX},                       // 9  (BIND_TARGET, MC slot 1)
-            {L"Toolbar Swap", L"Mod Controller", Input::Key::PAGE_DOWN},               // 10 (BIND_SWAP, MC slot 2)
-            {L"Super Dwarf", L"Mod Controller", Input::Key::OEM_FIVE},                   // 11 (MC slot 3)
-            {L"Remove Target", L"Mod Controller", Input::Key::NUM_ONE},                // 12 (MC slot 4)
-            {L"Undo Last", L"Mod Controller", Input::Key::NUM_TWO},                    // 13 (MC slot 5)
-            {L"Remove All", L"Mod Controller", Input::Key::NUM_THREE},                 // 14 (MC slot 6)
-            {L"Configuration", L"Mod Controller", Input::Key::F12},                    // 15 (BIND_CONFIG, MC slot 7)
-            {L"Advanced Builder Open", L"Advanced Builder", Input::Key::ADD},             // 16 (BIND_AB_OPEN)
+            {L"Stability Check", L"Mod Controller", Input::Key::DIVIDE},                // 10 (BIND_STABILITY, MC slot 2)
+            {L"Super Dwarf", L"Mod Controller", Input::Key::OEM_FIVE},                 // 11 (MC slot 3)
+            {L"Toolbar Swap", L"Mod Controller", Input::Key::PAGE_DOWN},               // 12 (BIND_SWAP, MC slot 4)
+            {L"Empty 5", L"Mod Controller", 0},                                        // 13 (MC slot 5 — empty)
+            {L"Empty 6", L"Mod Controller", 0},                                        // 14 (MC slot 6 — empty)
+            {L"Empty 7", L"Mod Controller", 0},                                        // 15 (MC slot 7 — empty)
+            {L"Remove Target", L"Mod Controller", Input::Key::NUM_ONE},                // 16 (MC slot 8)
+            {L"Undo Last", L"Mod Controller", Input::Key::NUM_TWO},                    // 17 (MC slot 9)
+            {L"Remove All", L"Mod Controller", Input::Key::NUM_THREE},                 // 18 (MC slot 10)
+            {L"Configuration", L"Mod Controller", Input::Key::F12},                    // 19 (BIND_CONFIG, MC slot 11)
+            {L"Advanced Builder Open", L"Advanced Builder", Input::Key::ADD},           // 20 (BIND_AB_OPEN)
+            {L"Reserved", L"Diagnostics", 0},                                          // 21 (placeholder — no key, no action)
     };
 
     inline std::atomic<int> s_capturingBind{-1};

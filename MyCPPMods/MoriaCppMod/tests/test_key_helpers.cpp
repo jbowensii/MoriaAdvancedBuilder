@@ -197,20 +197,25 @@ TEST_F(KeyHelperTest, IniKeyToBindIndex_AllKeys)
     EXPECT_EQ(iniKeyToBindIndex("QuickBuild8"), 7);
     EXPECT_EQ(iniKeyToBindIndex("Rotation"), 8);
     EXPECT_EQ(iniKeyToBindIndex("Target"), 9);
-    EXPECT_EQ(iniKeyToBindIndex("ToolbarSwap"), 10);
+    EXPECT_EQ(iniKeyToBindIndex("StabilityCheck"), 10);
     EXPECT_EQ(iniKeyToBindIndex("SuperDwarf"), 11);
-    EXPECT_EQ(iniKeyToBindIndex("RemoveTarget"), 12);
-    EXPECT_EQ(iniKeyToBindIndex("UndoLast"), 13);
-    EXPECT_EQ(iniKeyToBindIndex("RemoveAll"), 14);
-    EXPECT_EQ(iniKeyToBindIndex("Configuration"), 15);
-    EXPECT_EQ(iniKeyToBindIndex("AdvancedBuilderOpen"), 16);
+    EXPECT_EQ(iniKeyToBindIndex("ToolbarSwap"), 12);
+    EXPECT_EQ(iniKeyToBindIndex("Empty5"), 13);
+    EXPECT_EQ(iniKeyToBindIndex("Empty6"), 14);
+    EXPECT_EQ(iniKeyToBindIndex("Empty7"), 15);
+    EXPECT_EQ(iniKeyToBindIndex("RemoveTarget"), 16);
+    EXPECT_EQ(iniKeyToBindIndex("UndoLast"), 17);
+    EXPECT_EQ(iniKeyToBindIndex("RemoveAll"), 18);
+    EXPECT_EQ(iniKeyToBindIndex("Configuration"), 19);
+    EXPECT_EQ(iniKeyToBindIndex("AdvancedBuilderOpen"), 20);
+    EXPECT_EQ(iniKeyToBindIndex("Reserved1"), 21);
 }
 
 TEST_F(KeyHelperTest, IniKeyToBindIndex_CaseInsensitive)
 {
     EXPECT_EQ(iniKeyToBindIndex("quickbuild1"), 0);
     EXPECT_EQ(iniKeyToBindIndex("ROTATION"), 8);
-    EXPECT_EQ(iniKeyToBindIndex("toolbarswap"), 10);
+    EXPECT_EQ(iniKeyToBindIndex("toolbarswap"), 12);
 }
 
 TEST_F(KeyHelperTest, IniKeyToBindIndex_NotFound)
@@ -227,13 +232,18 @@ TEST_F(KeyHelperTest, BindIndexToIniKey_ValidRange)
     EXPECT_STREQ(bindIndexToIniKey(0), "QuickBuild1");
     EXPECT_STREQ(bindIndexToIniKey(7), "QuickBuild8");
     EXPECT_STREQ(bindIndexToIniKey(8), "Rotation");
-    EXPECT_STREQ(bindIndexToIniKey(16), "AdvancedBuilderOpen");
+    EXPECT_STREQ(bindIndexToIniKey(10), "StabilityCheck");
+    EXPECT_STREQ(bindIndexToIniKey(12), "ToolbarSwap");
+    EXPECT_STREQ(bindIndexToIniKey(16), "RemoveTarget");
+    EXPECT_STREQ(bindIndexToIniKey(19), "Configuration");
+    EXPECT_STREQ(bindIndexToIniKey(20), "AdvancedBuilderOpen");
+    EXPECT_STREQ(bindIndexToIniKey(21), "Reserved1");
 }
 
 TEST_F(KeyHelperTest, BindIndexToIniKey_OutOfRange)
 {
     EXPECT_EQ(bindIndexToIniKey(-1), nullptr);
-    EXPECT_EQ(bindIndexToIniKey(17), nullptr);
+    EXPECT_EQ(bindIndexToIniKey(BIND_COUNT), nullptr);
     EXPECT_EQ(bindIndexToIniKey(100), nullptr);
 }
 

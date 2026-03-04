@@ -52,7 +52,7 @@ namespace MoriaMods
     // Constants
     // ════════════════════════════════════════════════════════════════════════════
 
-    static constexpr int BIND_COUNT = 17;
+    static constexpr int BIND_COUNT = 22;
     static constexpr int OVERLAY_BUILD_SLOTS = 8;
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -191,10 +191,12 @@ namespace MoriaMods
             s_table["bind.remove_all"] = L"Remove All";
             s_table["bind.configuration"] = L"Configuration";
             s_table["bind.ab_open"] = L"Advanced Builder Open";
+            s_table["bind.stability_check"] = L"Stability Check";
             // ── Keybind section names ──
             s_table["bind.section_quick_building"] = L"Quick Building";
             s_table["bind.section_mod_controller"] = L"Mod Controller";
             s_table["bind.section_advanced_builder"] = L"Advanced Builder";
+            s_table["bind.section_diagnostics"] = L"Diagnostics";
             // ── Modifier key names ──
             s_table["key.shift"] = L"SHIFT";
             s_table["key.ctrl"] = L"CTRL";
@@ -712,15 +714,20 @@ namespace MoriaMods
             "QuickBuild6",        // 5
             "QuickBuild7",        // 6
             "QuickBuild8",        // 7
-            "Rotation",           // 8
-            "Target",             // 9
-            "ToolbarSwap",        // 10
-            "SuperDwarf",         // 11
-            "RemoveTarget",       // 12
-            "UndoLast",           // 13
-            "RemoveAll",          // 14
-            "Configuration",      // 15
-            "AdvancedBuilderOpen" // 16
+            "Rotation",           // 8  (MC slot 0)
+            "Target",             // 9  (MC slot 1)
+            "StabilityCheck",     // 10 (MC slot 2)
+            "SuperDwarf",         // 11 (MC slot 3)
+            "ToolbarSwap",        // 12 (MC slot 4)
+            "Empty5",             // 13 (MC slot 5 — empty)
+            "Empty6",             // 14 (MC slot 6 — empty)
+            "Empty7",             // 15 (MC slot 7 — empty)
+            "RemoveTarget",       // 16 (MC slot 8)
+            "UndoLast",           // 17 (MC slot 9)
+            "RemoveAll",          // 18 (MC slot 10)
+            "Configuration",      // 19 (MC slot 11)
+            "AdvancedBuilderOpen", // 20
+            "Reserved1"           // 21 (placeholder — will be reassigned)
         };
         if (idx < 0 || idx >= BIND_COUNT) return nullptr;
         return keys[idx];
@@ -824,6 +831,7 @@ namespace MoriaMods
         int slotIndex;
         std::string displayName;
         std::string textureName; // may be empty (backward compat)
+        std::string rowName;     // may be empty (backward compat with 3-field lines)
     };
 
     struct ParsedRotation
@@ -864,19 +872,28 @@ namespace MoriaMods
         }
         if (slot < 0 || slot >= OVERLAY_BUILD_SLOTS) return std::monostate{};
 
-        // Parse: displayName|textureName (textureName optional)
+        // Parse: displayName|textureName|rowName (textureName and rowName optional)
         auto sep2 = line.find('|', sep1 + 1);
-        std::string name, tex;
+        std::string name, tex, row;
         if (sep2 != std::string::npos)
         {
             name = line.substr(sep1 + 1, sep2 - sep1 - 1);
-            tex = line.substr(sep2 + 1);
+            auto sep3 = line.find('|', sep2 + 1);
+            if (sep3 != std::string::npos)
+            {
+                tex = line.substr(sep2 + 1, sep3 - sep2 - 1);
+                row = line.substr(sep3 + 1);
+            }
+            else
+            {
+                tex = line.substr(sep2 + 1);
+            }
         }
         else
         {
             name = line.substr(sep1 + 1);
         }
-        return ParsedSlot{slot, name, tex};
+        return ParsedSlot{slot, name, tex, row};
     }
 
     // Result for parsed keybind line

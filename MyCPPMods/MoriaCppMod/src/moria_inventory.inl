@@ -69,10 +69,20 @@
             int32_t contNum = *reinterpret_cast<int32_t*>(contBuf.data() + contRet.offset + 8);
 
             // Build IDÃ¢â€ â€™className map from Items.List
-            constexpr int ITEMINSTANCE_SIZE = 0x30;
-            constexpr int ITEM_CLASS_OFF = 0x10;
-            constexpr int ITEM_ID_OFF = 0x20;
-            constexpr int ITEMS_LIST_OFFSET = 0x0330;
+            // FItemInstance struct internals (CXXHeaderDump FGK.hpp:1723, verified):
+            constexpr int ITEMINSTANCE_SIZE = 0x30;        // sizeof(FItemInstance)
+            constexpr int ITEM_CLASS_OFF = 0x10;           // FItemInstance::Item (TSubclassOf)
+            constexpr int ITEM_ID_OFF = 0x20;              // FItemInstance::ID (int32)
+            // Internal TArray offset within FItemInstanceArray (FFastArraySerializer::Items)
+            constexpr int ITEMS_ARRAY_INTERNAL_OFFSET = 0x110;
+
+            // Resolve Items property offset on UInventoryComponent dynamically
+            static int s_off_invItems = -2;
+            if (s_off_invItems == -2)
+                resolveOffset(invComp, L"Items", s_off_invItems);
+            int itemsListOffset = (s_off_invItems >= 0)
+                ? s_off_invItems + ITEMS_ARRAY_INTERNAL_OFFSET
+                : 0x0330; // fallback to original hardcoded value
 
             uint8_t* invBase = reinterpret_cast<uint8_t*>(invComp);
             struct
@@ -81,7 +91,7 @@
                 int32_t Num;
                 int32_t Max;
             } itemsList{};
-            if (isReadableMemory(invBase + ITEMS_LIST_OFFSET, 16)) std::memcpy(&itemsList, invBase + ITEMS_LIST_OFFSET, 16);
+            if (isReadableMemory(invBase + itemsListOffset, 16)) std::memcpy(&itemsList, invBase + itemsListOffset, 16);
 
             std::unordered_map<int32_t, std::wstring> idToClass;
             UObject* bodyInvClass = nullptr; // save BodyInventory UClass* for creating stash containers

@@ -247,6 +247,7 @@
             if (!setFontFn) return;
             int fontOff = resolveOffset(textBlock, L"Font", s_off_font);
             if (fontOff < 0) return;
+            probeFontStruct(textBlock);
             auto* pFontInfo = findParam(setFontFn, STR("InFontInfo"));
             if (!pFontInfo) return;
 
@@ -3337,7 +3338,7 @@
             VLOG(STR("[MoriaCppMod] [CFG] Config UMG widget created\n"));
         }
 
-        // Ã¢â€â‚¬Ã¢â€â‚¬ Mod Controller Toolbar (3x3, lower-right) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+        // Ã¢â€â‚¬Ã¢â€â‚¬ Mod Controller Toolbar (4x3, lower-right) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
         void destroyModControllerBar()
         {
@@ -3356,8 +3357,8 @@
             }
             m_mcRotationLabel = nullptr;
             m_mcSlot0Overlay = nullptr;
-            m_mcSlot4Overlay = nullptr;
-            m_mcSlot6Overlay = nullptr;
+            m_mcSlot8Overlay = nullptr;
+            m_mcSlot10Overlay = nullptr;
             VLOG(STR("[MoriaCppMod] [MC] Mod Controller bar removed\n"));
         }
 
@@ -3370,7 +3371,7 @@
                 return;
             }
 
-            VLOG(STR("[MoriaCppMod] [MC] === Creating 4x2 Mod Controller toolbar ===\n"));
+            VLOG(STR("[MoriaCppMod] [MC] === Creating 4x3 Mod Controller toolbar ===\n"));
 
             // --- Find textures (reuse same state/frame textures + MC slot icons) ---
             UObject* texFrame = nullptr;
@@ -3380,11 +3381,12 @@
             UObject* texBlankRect = nullptr;
             UObject* texRotation = nullptr;     // T_UI_Refresh Ã¢â‚¬â€ MC slot 0 (Rotation)
             UObject* texTarget = nullptr;       // T_UI_Search Ã¢â‚¬â€ MC slot 1 (Target)
-            UObject* texToolbarSwap = nullptr;  // Swap-Bag_Icon Ã¢â‚¬â€ MC slot 2 (Toolbar Swap)
-            UObject* texRemoveTarget = nullptr; // T_UI_Icon_GoodPlace2 Ã¢â‚¬â€ MC slot 4 (Remove Target)
-            UObject* texUndoLast = nullptr;     // T_UI_Alert_BakedIcon Ã¢â‚¬â€ MC slot 5 (Undo Last)
-            UObject* texRemoveAll = nullptr;    // T_UI_Icon_Filled_GoodPlace2 Ã¢â‚¬â€ MC slot 6 (Remove All)
-            UObject* texSettings = nullptr;     // T_UI_Icon_Settings Ã¢â‚¬â€ MC slot 7 (Configuration)
+            UObject* texToolbarSwap = nullptr;  // Swap-Bag_Icon Ã¢â‚¬â€ MC slot 4 (Toolbar Swap)
+            UObject* texRemoveTarget = nullptr; // T_UI_Icon_GoodPlace2 Ã¢â‚¬â€ MC slot 8 (Remove Target)
+            UObject* texUndoLast = nullptr;     // T_UI_Alert_BakedIcon Ã¢â‚¬â€ MC slot 9 (Undo Last)
+            UObject* texRemoveAll = nullptr;    // T_UI_Icon_Filled_GoodPlace2 Ã¢â‚¬â€ MC slot 10 (Remove All)
+            UObject* texSettings = nullptr;     // T_UI_Icon_Settings Ã¢â‚¬â€ MC slot 11 (Configuration)
+            UObject* texStability = nullptr;     // HammerBreak_Icon — MC slot 2 (Stability Check)
             UObject* texHideChar = nullptr;     // T_UI_Eye_Open Ã¢â‚¬â€ MC slot 3 (Hide Character)
             {
                 std::vector<UObject*> textures;
@@ -3405,6 +3407,7 @@
                     else if (name == STR("T_UI_Alert_BakedIcon")) texUndoLast = t;
                     else if (name == STR("T_UI_Icon_Filled_GoodPlace2")) texRemoveAll = t;
                     else if (name == STR("T_UI_Icon_Settings")) texSettings = t;
+                    else if (name == STR("HammerBreak_Icon")) texStability = t;
                     else if (name == STR("T_UI_Eye_Open")) texHideChar = t;
                 }
             }
@@ -3427,6 +3430,7 @@
                 {texRotation, STR("/Game/UI/textures/_Shared/Icons/T_UI_Refresh.T_UI_Refresh"), L"T_UI_Refresh"},
                 {texTarget, STR("/Game/UI/textures/_Icons/Menus/T_UI_Search.T_UI_Search"), L"T_UI_Search"},
                 {texHideChar, STR("/Game/UI/textures/_Icons/Waypoints/T_UI_Eye_Open.T_UI_Eye_Open"), L"T_UI_Eye_Open"},
+                {texStability, STR("/Game/UI/textures/CommunicationIcons/HammerBreak_Icon.HammerBreak_Icon"), L"HammerBreak_Icon"},
             };
             for (auto& fb : fallbacks)
             {
@@ -3535,10 +3539,10 @@
                 outerBorder->ProcessEvent(setContentFn, sc.data());
             }
 
-            // --- Create 2 rows x 4 columns = 8 slots ---
+            // --- Create 3 rows x 4 columns = 12 slots ---
             float frameW = 0, frameH = 0, stateW = 0, stateH = 0;
             int slotIdx = 0;
-            for (int row = 0; row < 2; row++)
+            for (int row = 0; row < 3; row++)
             {
                 // Create HBox for this row
                 FStaticConstructObjectParameters hboxP(hboxClass, outer);
@@ -3605,8 +3609,8 @@
                                                         frameW, frameH, stateW, stateH);
                         m_mcSlot0Overlay = overlay; // save for rotation label (added after loop)
                     }
-                    if (i == 4) m_mcSlot4Overlay = overlay; // save for "Single" label
-                    if (i == 6) m_mcSlot6Overlay = overlay; // save for "All" label
+                    if (i == 8) m_mcSlot8Overlay = overlay; // save for "Single" label
+                    if (i == 10) m_mcSlot10Overlay = overlay; // save for "All" label
 
                     umgSetOpacity(stateImg, 1.0f);
                     umgSetOpacity(frameImg, 0.25f);
@@ -3817,16 +3821,18 @@
                     m_mcSlotStates[i] = UmgSlotState::Empty;
                 }
             }
-            VLOG(STR("[MoriaCppMod] [MC] All 8 slots created (4x2)\n"));
+            VLOG(STR("[MoriaCppMod] [MC] All 12 slots created (4x3)\n"));
 
-            // --- Set custom icons for all 8 MC slots ---
+            // --- Set custom icons for all 12 MC slots ---
             {
                 UObject* mcSlotTextures[MC_SLOTS] = {
-                    texRotation, texTarget, texToolbarSwap, texHideChar,
-                    texRemoveTarget, texUndoLast, texRemoveAll, texSettings
+                    texRotation, texTarget, texStability, texHideChar,         // row 0: Rotation, Target, StabilityCheck, SuperDwarf
+                    texToolbarSwap, nullptr, nullptr, nullptr,               // row 1: ToolbarSwap, Empty5, Empty6, Empty7
+                    texRemoveTarget, texUndoLast, texRemoveAll, texSettings  // row 2: RemoveTarget, UndoLast, RemoveAll, Config
                 };
                 const wchar_t* mcSlotNames[MC_SLOTS] = {
-                    L"T_UI_Refresh", L"T_UI_Search", L"Swap-Bag_Icon", L"T_UI_Eye_Open",
+                    L"T_UI_Refresh", L"T_UI_Search", L"HammerBreak_Icon", L"T_UI_Eye_Open",
+                    L"Swap-Bag_Icon", L"Empty5", L"Empty6", L"Empty7",
                     L"T_UI_Icon_GoodPlace2", L"T_UI_Alert_BakedIcon", L"T_UI_Icon_Filled_GoodPlace2", L"T_UI_Icon_Settings"
                 };
                 for (int i = 0; i < MC_SLOTS; i++)
@@ -3906,10 +3912,10 @@
                 }
             }
 
-            // --- Add "Single" text overlay on MC slot 4 (Remove Target) ---
-            if (m_mcSlot4Overlay && textBlockClass)
+            // --- Add "Single" text overlay on MC slot 8 (Remove Target) ---
+            if (m_mcSlot8Overlay && textBlockClass)
             {
-                auto* addToOverlayFn = m_mcSlot4Overlay->GetFunctionByNameInChain(STR("AddChildToOverlay"));
+                auto* addToOverlayFn = m_mcSlot8Overlay->GetFunctionByNameInChain(STR("AddChildToOverlay"));
                 if (addToOverlayFn)
                 {
                     FStaticConstructObjectParameters tbP(textBlockClass, outer);
@@ -3925,7 +3931,7 @@
                         int sz = addToOverlayFn->GetParmsSize();
                         std::vector<uint8_t> ap(sz, 0);
                         if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = singleLabel;
-                        m_mcSlot4Overlay->ProcessEvent(addToOverlayFn, ap.data());
+                        m_mcSlot8Overlay->ProcessEvent(addToOverlayFn, ap.data());
                         UObject* labelSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
                         if (labelSlot)
                         {
@@ -3934,15 +3940,15 @@
                             auto* setVA = labelSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
                             if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; labelSlot->ProcessEvent(setVA, v.data()); }
                         }
-                        VLOG(STR("[MoriaCppMod] [MC] 'Single' label created on slot 4\n"));
+                        VLOG(STR("[MoriaCppMod] [MC] 'Single' label created on slot 8\n"));
                     }
                 }
             }
 
-            // --- Add "All" text overlay on MC slot 6 (Remove All) ---
-            if (m_mcSlot6Overlay && textBlockClass)
+            // --- Add "All" text overlay on MC slot 10 (Remove All) ---
+            if (m_mcSlot10Overlay && textBlockClass)
             {
-                auto* addToOverlayFn = m_mcSlot6Overlay->GetFunctionByNameInChain(STR("AddChildToOverlay"));
+                auto* addToOverlayFn = m_mcSlot10Overlay->GetFunctionByNameInChain(STR("AddChildToOverlay"));
                 if (addToOverlayFn)
                 {
                     FStaticConstructObjectParameters tbP(textBlockClass, outer);
@@ -3958,7 +3964,7 @@
                         int sz = addToOverlayFn->GetParmsSize();
                         std::vector<uint8_t> ap(sz, 0);
                         if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = allLabel;
-                        m_mcSlot6Overlay->ProcessEvent(addToOverlayFn, ap.data());
+                        m_mcSlot10Overlay->ProcessEvent(addToOverlayFn, ap.data());
                         UObject* labelSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
                         if (labelSlot)
                         {
@@ -3967,7 +3973,7 @@
                             auto* setVA = labelSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
                             if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; labelSlot->ProcessEvent(setVA, v.data()); }
                         }
-                        VLOG(STR("[MoriaCppMod] [MC] 'All' label created on slot 6\n"));
+                        VLOG(STR("[MoriaCppMod] [MC] 'All' label created on slot 10\n"));
                     }
                 }
             }

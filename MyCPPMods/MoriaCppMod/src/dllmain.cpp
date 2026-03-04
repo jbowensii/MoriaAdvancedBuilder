@@ -1,5 +1,5 @@
 // Ã¢â€¢â€Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢â€”
-// Ã¢â€¢â€˜  MoriaCppMod v2.5 Ã¢â‚¬â€ Advanced Builder & HISM Removal for Return to Moria   Ã¢â€¢â€˜
+// Ã¢â€¢â€˜  MoriaCppMod v2.6 Ã¢â‚¬â€ Advanced Builder & HISM Removal for Return to Moria   Ã¢â€¢â€˜
 // Ã¢â€¢â€˜                                                                            Ã¢â€¢â€˜
 // Ã¢â€¢â€˜  A UE4SS C++ mod for Return to Moria (UE4.27) providing:                  Ã¢â€¢â€˜
 // Ã¢â€¢â€˜    - HISM instance hiding with persistence across sessions/worlds          Ã¢â€¢â€˜
@@ -274,6 +274,8 @@ namespace MoriaMods
 
         #include "moria_inventory.inl"   // 6E: Inventory & toolbar swap
 
+        #include "moria_stability.inl"   // Stability audit (scan + highlight)
+
 
 
         static inline MoriaCppMod* s_instance{nullptr};
@@ -283,12 +285,19 @@ namespace MoriaMods
 
         // Per-slot: save display name + recipe struct for activation
         static constexpr int BLOCK_DATA_SIZE = 120; // bLock struct size in blockSelectedEvent
+        // FMorConstructionRecipeRowHandle layout: 16 bytes
+        // [0-7] DataTable ptr (usually null for runtime handles), [8-15] FName RowName
+        static constexpr int RECIPE_HANDLE_SIZE = 16;
+
         struct RecipeSlot
         {
             std::wstring displayName;             // display name from blockName TextBlock
             std::wstring textureName;             // e.g. "T_UI_BuildIcon_AdornedDoor" (for PNG lookup)
+            std::wstring rowName;                 // FName RowName string (e.g. "Recipe_Beorn_Wall_3x4m_A"), persisted to disk
             uint8_t bLockData[BLOCK_DATA_SIZE]{}; // captured recipe struct (session-only, not saved to disk)
             bool hasBLockData{false};             // true if bLockData was captured this session
+            uint8_t recipeHandle[RECIPE_HANDLE_SIZE]{}; // FMorConstructionRecipeRowHandle (session-only)
+            bool hasHandle{false};                // true if recipeHandle was captured this session
             bool used{false};
         };
         RecipeSlot m_recipeSlots[QUICK_BUILD_SLOTS]{};
@@ -296,7 +305,9 @@ namespace MoriaMods
         // Auto-capture from post-hook
         std::wstring m_lastCapturedName;
         uint8_t m_lastCapturedBLock[BLOCK_DATA_SIZE]{}; // last captured bLock from manual click
+        uint8_t m_lastCapturedHandle[RECIPE_HANDLE_SIZE]{}; // last captured recipe handle
         bool m_hasLastCapture{false};
+        bool m_hasLastHandle{false};
         bool m_isAutoSelecting{false}; // suppress post-hook capture during automated quickbuild
 
         // bLock offset resolved via s_off_bLock (ForEachProperty on UI_WBP_Build_Item_C)
@@ -312,8 +323,18 @@ namespace MoriaMods
         ULONGLONG m_qbRetryTime{0};          // timestamp of last retry/phase change
         int m_qbWaitCount{0};                // WaitReopen frame countdown
 
-        // Cached widget pointers for cheap state checks (invalidated on world unload)
-        UObject* m_cachedBuildHUD{nullptr};  // UI_WBP_BuildHUDv2_C
+        // Eager handle resolution state machine (runs once at toolbar creation)
+        enum class HandleResolvePhase { None, Priming, Resolving, Done };
+        HandleResolvePhase m_handleResolvePhase{HandleResolvePhase::None};
+        ULONGLONG m_handleResolveStartTime{0};  // timestamp when resolve SM started
+        ULONGLONG m_handleResolveRetryTime{0};  // timestamp of last retry in Priming phase
+        int m_handleResolveSlotIdx{0};          // which slot we're resolving next in Resolving phase
+        ULONGLONG m_lastDirectSelectTime{0};    // cooldown: last SelectRecipe via DIRECT path (ms)
+        ULONGLONG m_lastShowHideTime{0};        // cooldown: last Show()/Hide() on build tab (ms)
+
+        // Cached widget/component pointers for cheap state checks (invalidated on world unload)
+        UObject* m_cachedBuildComp{nullptr}; // UMorBuildingComponent on player character
+        UObject* m_cachedBuildHUD{nullptr};  // UI_WBP_BuildHUDv2_C (UBuildOverlayWidget)
         UObject* m_cachedBuildTab{nullptr};  // UI_WBP_Build_Tab_C
         UFunction* m_fnIsVisible{nullptr};   // cached IsVisible() on Build_Tab (UWidget standard)
 
@@ -348,8 +369,8 @@ namespace MoriaMods
         int m_activeBuilderSlot{-1};               // which slot is currently Active (-1 = none)
         UFunction* m_umgSetBrushFn{nullptr};       // cached SetBrushFromTexture function
 
-        // Mod Controller toolbar Ã¢â‚¬â€ 4x2 grid, lower-right of screen
-        static constexpr int MC_SLOTS = 8;
+        // Mod Controller toolbar Ã¢â‚¬â€ 4x3 grid, lower-right of screen
+        static constexpr int MC_SLOTS = 12;
         UObject* m_mcBarWidget{nullptr};               // root UUserWidget
         UObject* m_mcStateImages[MC_SLOTS]{};          // state icon UImage per slot
         UObject* m_mcIconImages[MC_SLOTS]{};           // icon UImage per slot (overlaid on state)
@@ -363,8 +384,8 @@ namespace MoriaMods
         UObject* m_umgTexBlankRect{nullptr};       // cached T_UI_Icon_Input_Blank_Rect texture
         UObject* m_mcRotationLabel{nullptr};       // UTextBlock overlaid on MC slot 0 Ã¢â‚¬â€ "5Ã‚Â°\nT0"
         UObject* m_mcSlot0Overlay{nullptr};        // Overlay containing state+icon for MC slot 0
-        UObject* m_mcSlot4Overlay{nullptr};        // Overlay for MC slot 4 (Remove Target)
-        UObject* m_mcSlot6Overlay{nullptr};        // Overlay for MC slot 6 (Remove All)
+        UObject* m_mcSlot8Overlay{nullptr};        // Overlay for MC slot 8 (Remove Target)
+        UObject* m_mcSlot10Overlay{nullptr};       // Overlay for MC slot 10 (Remove All)
         // Advanced Builder toolbar (single toggle button, lower-right corner)
         UObject* m_abBarWidget{nullptr};           // root UUserWidget for Advanced Builder toggle
         UObject* m_abKeyLabel{nullptr};            // UTextBlock showing key name on AB toolbar
@@ -373,7 +394,7 @@ namespace MoriaMods
         bool m_flyMode{false};                     // toggle state: is fly mode active?
         bool m_noCollisionWhileFlying{true};       // INI setting: disable collision when flying (default ON)
         bool m_hasSavedCameraState{false};         // true if camera state was captured before fly
-        uint8_t m_savedCamSettings[0x4C]{};        // FFGKCameraStateSettings blob
+        uint8_t m_savedCamSettings[CAM_SETTINGS_BLOB_SIZE]{}; // FFGKCameraStateSettings blob
         uint8_t m_savedProbeType{0};               // EFGKProbeType
         float m_savedProbeRadius{0.0f};            // ProbeRadius
         bool m_savedProbeDisallowIntersect{false}; // bProbeDisallowIntersect
@@ -450,6 +471,11 @@ namespace MoriaMods
         UObject* m_cfgRemovalHeader{nullptr};
         UObject* m_cfgRemovalVBox{nullptr};            // VBox holding removal entry rows
         int m_cfgLastRemovalCount{-1};
+        // Stability audit — PointLights at problem locations (red=critical, yellow=marginal)
+        ULONGLONG m_auditClearTime{0};
+        struct AuditLoc { float x, y, z; bool critical; };
+        std::vector<AuditLoc> m_auditLocations;
+        std::vector<UObject*> m_auditSpawnedActors;    // spawned PointLight actors
         // isReadableMemory Ã¢â‚¬â€ defined in moria_testable.h
 
         // Safe wrapper for GetClassPrivate()->GetName() Ã¢â‚¬â€ returns empty string on null
@@ -474,14 +500,14 @@ namespace MoriaMods
         // on_update (per-frame tick: state machines, replay, UMG config, keybinds)
         MoriaCppMod()
         {
-            ModVersion = STR("2.5");
+            ModVersion = STR("2.6");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
             // Init removal list CS before loadSaveFile can be called
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v2.5\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v2.6\n"));
         }
 
         ~MoriaCppMod() override
@@ -668,10 +694,17 @@ namespace MoriaMods
                 if (cls != STR("UI_WBP_Build_Tab_C")) return;
 
                 int sz = func->GetParmsSize();
+                QBLOG(STR("[MoriaCppMod] [QB] POST-HOOK blockSelectedEvent: parmsSize={} parms={}\n"),
+                      sz, parms ? STR("YES") : STR("NO"));
                 if (!parms || sz < 132) return;
                 uint8_t* p = reinterpret_cast<uint8_t*>(parms);
 
+                // Resolve BSE offsets on first capture (needed before we can read selfRef)
+                resolveBSEOffsets(func);
+
                 // Extract display name from selfRef widget's blockName TextBlock
+                QBLOG(STR("[MoriaCppMod] [QB] POST-HOOK: s_bse.selfRef={} s_bse.bLock={}\n"),
+                      s_bse.selfRef, s_bse.bLock);
                 if (s_bse.selfRef < 0) return;
                 UObject* selfRef = *reinterpret_cast<UObject**>(p + s_bse.selfRef);
                 if (!selfRef) return;
@@ -685,19 +718,58 @@ namespace MoriaMods
                 QBLOG(STR("[MoriaCppMod] [QuickBuild] Captured: '{}' (with bLock data)\n"), displayName);
                 s_instance->logBLockDiagnostics(L"CAPTURE", displayName, p);
 
+                // Capture recipe handle via GetSelectedRecipeHandle (16 bytes vs 120-byte bLock)
+                s_instance->m_hasLastHandle = false;
+                UObject* buildHUD = s_instance->getCachedBuildHUD();
+                if (buildHUD)
+                {
+                    auto* getHandleFn = buildHUD->GetFunctionByNameInChain(STR("GetSelectedRecipeHandle"));
+                    if (getHandleFn)
+                    {
+                        int hSz = getHandleFn->GetParmsSize();
+                        if (hSz >= RECIPE_HANDLE_SIZE)
+                        {
+                            std::vector<uint8_t> hParams(hSz, 0);
+                            buildHUD->ProcessEvent(getHandleFn, hParams.data());
+                            std::memcpy(s_instance->m_lastCapturedHandle, hParams.data(), RECIPE_HANDLE_SIZE);
+                            s_instance->m_hasLastHandle = true;
+                            // Log the handle's RowName for diagnostics
+                            uint32_t handleCI = *reinterpret_cast<uint32_t*>(hParams.data() + 8);
+                            int32_t handleNum = *reinterpret_cast<int32_t*>(hParams.data() + 12);
+                            QBLOG(STR("[MoriaCppMod] [QuickBuild] Captured handle: RowName CI={} Num={}\n"), handleCI, handleNum);
+                        }
+                    }
+                    else
+                    {
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] GetSelectedRecipeHandle not found on build HUD\n"));
+                    }
+                }
+
                 // Reset total rotation for new build piece selection
                 s_overlay.totalRotation = 0;
                 s_overlay.needsUpdate = true;
                 s_instance->updateMcRotationLabel();
 
-                // ONE-TIME: resolve bLock property offset via reflection
+                // ONE-TIME: resolve bLock property offset and validate BLOCK_DATA_SIZE
                 if (s_off_bLock == -2)
-                    resolveOffset(selfRef, L"bLock", s_off_bLock);
+                {
+                    int bLockSize = 0;
+                    resolveOffsetAndSize(selfRef, L"bLock", s_off_bLock, bLockSize);
+                    if (bLockSize > 0 && bLockSize != BLOCK_DATA_SIZE)
+                    {
+                        VLOG(STR("[MoriaCppMod] WARNING: bLock property size {} != BLOCK_DATA_SIZE {} — struct layout may have changed!\n"),
+                             bLockSize, BLOCK_DATA_SIZE);
+                    }
+                    else if (bLockSize > 0)
+                    {
+                        VLOG(STR("[MoriaCppMod] [Validate] BLOCK_DATA_SIZE OK: bLock size = {} (matches constant)\n"), bLockSize);
+                    }
+                }
             });
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v2.5: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v2.6: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
         }
 
         // Per-frame tick. Drives all state machines and periodic tasks:
@@ -727,6 +799,30 @@ namespace MoriaMods
                 {
                     createAdvancedBuilderBar();
                     justCreated = true;
+                    // Kick off eager handle resolution if any slots have rowNames from disk
+                    if (m_handleResolvePhase == HandleResolvePhase::None)
+                    {
+                        bool needsResolve = false;
+                        for (int i = 0; i < QUICK_BUILD_SLOTS; i++)
+                        {
+                            if (m_recipeSlots[i].used && !m_recipeSlots[i].hasHandle && !m_recipeSlots[i].rowName.empty())
+                            {
+                                needsResolve = true;
+                                break;
+                            }
+                        }
+                        if (needsResolve)
+                        {
+                            QBLOG(STR("[MoriaCppMod] [HandleResolve] Toolbar created, starting eager handle resolution\n"));
+                            m_handleResolvePhase = HandleResolvePhase::Priming;
+                            m_handleResolveStartTime = GetTickCount64();
+                            m_handleResolveRetryTime = m_handleResolveStartTime;
+                        }
+                        else
+                        {
+                            m_handleResolvePhase = HandleResolvePhase::Done;
+                        }
+                    }
                 }
                 if (m_characterLoaded && !m_targetInfoWidget)
                     createTargetInfoWidget();
@@ -759,6 +855,10 @@ namespace MoriaMods
             if (m_tiShowTick > 0 && (GetTickCount64() - m_tiShowTick) >= 10000)
                 hideTargetInfo();
 
+            // Stability audit — auto-clear PointLights after timeout
+            if (m_auditClearTime > 0 && GetTickCount64() >= m_auditClearTime)
+                clearStabilityHighlights();
+
             // BELIEVED DEAD CODE -- InfoBox popup never shown, m_ibShowTick always 0
             // if (m_ibShowTick > 0 && (GetTickCount64() - m_ibShowTick) >= 10000)
             //     hideInfoBox();
@@ -774,7 +874,7 @@ namespace MoriaMods
             // Config key (MC slot 7) always polled Ã¢â‚¬â€ allows toggle even when config is visible
             {
                 static bool s_lastCfgKey = false;
-                uint8_t cfgVk = s_bindings[MC_BIND_BASE + 7].key;
+                uint8_t cfgVk = s_bindings[MC_BIND_BASE + 11].key;
                 if (cfgVk != 0)
                 {
                     bool nowDown = (GetAsyncKeyState(cfgVk) & 0x8000) != 0;
@@ -793,7 +893,7 @@ namespace MoriaMods
                 const bool shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
                 for (int i = 0; i < MC_SLOTS; i++)
                 {
-                    if (i == 7) { s_lastMcKey[i] = false; continue; } // slot 7 handled by always-on config toggle
+                    if (i == 11) { s_lastMcKey[i] = false; continue; } // slot 11 handled by always-on config toggle
                     uint8_t vk = s_bindings[MC_BIND_BASE + i].key;
                     if (vk == 0) { s_lastMcKey[i] = false; continue; }
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
@@ -837,8 +937,8 @@ namespace MoriaMods
                             else
                                 dumpAimedActor();
                             break;
-                        case 2: // Toolbar Swap Ã¢â‚¬â€ same as OEM_FIVE handler
-                            swapToolbar();
+                        case 2: // Stability Check
+                            runStabilityAudit();
                             break;
                         case 3: // Super Dwarf: modifier+key = fly, key alone = hide character
                             if (isModifierDown())
@@ -846,16 +946,19 @@ namespace MoriaMods
                             else
                                 toggleHideCharacter();
                             break;
-                        case 4: // Remove Target Ã¢â‚¬â€ same as Num1 handler
+                        case 4: // Toolbar Swap
+                            swapToolbar();
+                            break;
+                        case 8: // Remove Target
                             removeAimed();
                             break;
-                        case 5: // Undo Last Ã¢â‚¬â€ same as Num2 handler
+                        case 9: // Undo Last
                             undoLast();
                             break;
-                        case 6: // Remove All Ã¢â‚¬â€ same as Num6 handler
+                        case 10: // Remove All
                             removeAllOfType();
                             break;
-                        case 7: // Configuration Ã¢â‚¬â€ handled separately above (always-on toggle)
+                        case 11: // Configuration — handled separately above (always-on toggle)
                             break;
                         default:
                             break;
@@ -1015,9 +1118,11 @@ namespace MoriaMods
                             setWidgetVis(m_mcBarWidget);
                         }
                     }
-                    s_lastAbKey = nowDown; // always update Ã¢â‚¬â€ prevents stale edge after config closes
+                    s_lastAbKey = nowDown; // always update -- prevents stale edge after config closes
                 }
             }
+
+            // Stability audit now handled by MC slot 2 dispatch (case 2: runStabilityAudit)
 
             // Re-apply UI input mode after Alt-Tab (engine resets to Game on focus regain)
             {
@@ -1420,12 +1525,123 @@ namespace MoriaMods
                 }
             }
 
+            // ── Eager handle resolution state machine ──
+            // Runs once after toolbar creation to batch-resolve recipe handles for all
+            // populated slots loaded from disk, so every F-key uses the DIRECT path.
+            if (m_handleResolvePhase == HandleResolvePhase::Priming)
+            {
+                ULONGLONG now = GetTickCount64();
+                ULONGLONG sinceLast = now - m_handleResolveRetryTime;
+                ULONGLONG elapsed = now - m_handleResolveStartTime;
+
+                if (elapsed > 5000)
+                {
+                    QBLOG(STR("[MoriaCppMod] [HandleResolve] Timeout in Priming ({}ms), aborting\n"), elapsed);
+                    if (isBuildTabShowing()) hideBuildTab();
+                    m_handleResolvePhase = HandleResolvePhase::Done;
+                }
+                else if (m_buildTabAfterShowFired)
+                {
+                    QBLOG(STR("[MoriaCppMod] [HandleResolve] OnAfterShow fired, primed in {}ms\n"), elapsed);
+                    m_buildTabAfterShowFired = false;
+                    m_buildMenuPrimed = true;
+                    m_handleResolveSlotIdx = 0;
+                    m_handleResolvePhase = HandleResolvePhase::Resolving;
+                }
+                else if (isBuildTabShowing() && sinceLast > 2000)
+                {
+                    QBLOG(STR("[MoriaCppMod] [HandleResolve] 2s fallback, entering Resolving\n"));
+                    m_buildMenuPrimed = true;
+                    m_handleResolveSlotIdx = 0;
+                    m_handleResolvePhase = HandleResolvePhase::Resolving;
+                }
+                else if (!isBuildTabShowing() && sinceLast > 417)
+                {
+                    QBLOG(STR("[MoriaCppMod] [HandleResolve] Sending B key to prime build menu\n"));
+                    m_buildTabAfterShowFired = false;
+                    keybd_event(0x42, 0, 0, 0);
+                    keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
+                    m_handleResolveRetryTime = now;
+                }
+            }
+            else if (m_handleResolvePhase == HandleResolvePhase::Resolving)
+            {
+                // Resolve ONE slot per frame to avoid Slate invalidation crashes.
+                // SelectRecipe triggers internal widget changes; spreading across frames
+                // lets Slate process invalidation between each call.
+                UObject* buildHUD = getCachedBuildHUD();
+                if (!buildHUD)
+                {
+                    QBLOG(STR("[MoriaCppMod] [HandleResolve] No BuildHUD found, aborting\n"));
+                    hideBuildTab();
+                    m_handleResolvePhase = HandleResolvePhase::Done;
+                }
+                else
+                {
+                    // Advance to next slot that needs resolution
+                    while (m_handleResolveSlotIdx < QUICK_BUILD_SLOTS)
+                    {
+                        auto& slot = m_recipeSlots[m_handleResolveSlotIdx];
+                        if (slot.used && !slot.hasHandle && !slot.rowName.empty())
+                            break; // found one to resolve
+                        m_handleResolveSlotIdx++;
+                    }
+
+                    if (m_handleResolveSlotIdx >= QUICK_BUILD_SLOTS)
+                    {
+                        // All slots processed — hide build tab and mark done
+                        hideBuildTab();
+                        m_handleResolvePhase = HandleResolvePhase::Done;
+                        ULONGLONG totalMs = GetTickCount64() - m_handleResolveStartTime;
+                        QBLOG(STR("[MoriaCppMod] [HandleResolve] Complete in {}ms\n"), totalMs);
+                    }
+                    else
+                    {
+                        int i = m_handleResolveSlotIdx;
+                        // Construct FName from persisted rowName string
+                        RC::Unreal::FName fn(m_recipeSlots[i].rowName.c_str(), RC::Unreal::FNAME_Add);
+                        uint32_t ci = fn.GetComparisonIndex();
+                        uint32_t num = fn.GetNumber();
+
+                        if (ci == 0)
+                        {
+                            QBLOG(STR("[MoriaCppMod] [HandleResolve] F{}: FName('{}') returned CI=0, skipping\n"),
+                                  i + 1, m_recipeSlots[i].rowName);
+                        }
+                        else
+                        {
+                            // Build 16-byte handle: [8 zero bytes | CI(4) | Num(4)]
+                            uint8_t handle[RECIPE_HANDLE_SIZE]{};
+                            std::memcpy(handle + 8, &ci, 4);
+                            std::memcpy(handle + 12, &num, 4);
+
+                            m_isAutoSelecting = true;
+                            if (trySelectRecipeByHandle(buildHUD, handle))
+                            {
+                                cacheRecipeHandleForSlot(buildHUD, i);
+                                QBLOG(STR("[MoriaCppMod] [HandleResolve] F{}: resolved '{}' CI={} hasHandle={}\n"),
+                                      i + 1, m_recipeSlots[i].rowName, ci, m_recipeSlots[i].hasHandle);
+                            }
+                            else
+                            {
+                                QBLOG(STR("[MoriaCppMod] [HandleResolve] F{}: SelectRecipe failed for '{}'\n"),
+                                      i + 1, m_recipeSlots[i].rowName);
+                            }
+                            m_isAutoSelecting = false;
+                        }
+
+                        m_handleResolveSlotIdx++;
+                    }
+                }
+            }
+
             // Detect build menu close Ã¢â€ â€™ refresh ActionBar (fixes stale hotbar display)
             // Uses cheap isBuildTabShowing() Ã¢â‚¬â€ cached pointer with GC-flag validation
             if (m_buildMenuWasOpen && !isBuildTabShowing())
             {
                 m_buildMenuWasOpen = false;
                 // Clear cached pointers Ã¢â‚¬â€ Build_Tab widget may be getting destroyed
+                m_cachedBuildComp = nullptr;
                 m_cachedBuildTab = nullptr;
                 m_cachedBuildHUD = nullptr;
                 m_fnIsVisible = nullptr;
@@ -1467,7 +1683,9 @@ namespace MoriaMods
                         else
                         {
                             // Menu already closed Ã¢â‚¬â€ open fresh
-                            showBuildTab();
+                            m_buildTabAfterShowFired = false;
+                            keybd_event(0x42, 0, 0, 0);
+                            keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                             m_qbPhase = QBPhase::OpenMenu;
                         }
                     }
@@ -1487,9 +1705,11 @@ namespace MoriaMods
                 {
                     if (--m_qbWaitCount <= 0)
                     {
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: wait complete ({}ms) -- opening fresh\n"), elapsed);
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: wait complete ({}ms) -- opening fresh via B key\n"), elapsed);
                         m_qbRetryTime = now;
-                        showBuildTab();
+                        m_buildTabAfterShowFired = false;
+                        keybd_event(0x42, 0, 0, 0);
+                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                         m_qbPhase = QBPhase::OpenMenu;
                     }
                 }
@@ -1523,19 +1743,22 @@ namespace MoriaMods
                 }
                 else if (m_qbPhase == QBPhase::OpenMenu)
                 {
-                    if (isBuildTabShowing())
+                    if (m_buildTabAfterShowFired || isBuildTabShowing())
                     {
                         // Menu visible Ã¢â‚¬â€ advance to recipe selection
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu visible ({}ms) Ã¢â‚¬â€ selecting recipe\n"), elapsed);
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu ready ({}ms) Ã¢â‚¬â€ selecting recipe\n"), elapsed);
+                        m_buildTabAfterShowFired = false;
                         m_qbRetryTime = now;
                         m_qbPhase = QBPhase::SelectRecipe;
                         // Fall through to SelectRecipe on same tick
                     }
                     else if (sinceLast > 417)
                     {
-                        // Retry Show() if menu hasn't appeared yet
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: retrying Show() ({}ms since last)\n"), sinceLast);
-                        showBuildTab();
+                        // Retry B key (opens full HUD chain)
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: retrying B key ({}ms since last)\n"), sinceLast);
+                        m_buildTabAfterShowFired = false;
+                        keybd_event(0x42, 0, 0, 0);
+                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                         m_qbRetryTime = now;
                     }
                 }
@@ -1610,7 +1833,9 @@ namespace MoriaMods
                         else
                         {
                             // Menu already closed Ã¢â‚¬â€ open fresh
-                            showBuildTab();
+                            m_buildTabAfterShowFired = false;
+                            keybd_event(0x42, 0, 0, 0);
+                            keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                             m_tbPhase = QBPhase::OpenMenu;
                         }
                     }
@@ -1632,7 +1857,9 @@ namespace MoriaMods
                     {
                         QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: wait complete ({}ms) -- opening fresh\n"), elapsed);
                         m_tbRetryTime = now;
-                        showBuildTab();
+                        m_buildTabAfterShowFired = false;
+                        keybd_event(0x42, 0, 0, 0);
+                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                         m_tbPhase = QBPhase::OpenMenu;
                     }
                 }
@@ -1666,19 +1893,22 @@ namespace MoriaMods
                 }
                 else if (m_tbPhase == QBPhase::OpenMenu)
                 {
-                    if (isBuildTabShowing())
+                    if (m_buildTabAfterShowFired || isBuildTabShowing())
                     {
                         // Menu visible Ã¢â‚¬â€ advance to recipe selection
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu visible ({}ms) Ã¢â‚¬â€ selecting recipe\n"), elapsed);
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu ready ({}ms) Ã¢â‚¬â€ selecting recipe\n"), elapsed);
+                        m_buildTabAfterShowFired = false;
                         m_tbRetryTime = now;
                         m_tbPhase = QBPhase::SelectRecipe;
                         // Fall through to SelectRecipe on same tick
                     }
                     else if (sinceLast > 417)
                     {
-                        // Retry Show() if menu hasn't appeared yet
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: retrying Show() ({}ms since last)\n"), sinceLast);
-                        showBuildTab();
+                        // Retry B key (opens full HUD chain)
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: retrying B key ({}ms since last)\n"), sinceLast);
+                        m_buildTabAfterShowFired = false;
+                        keybd_event(0x42, 0, 0, 0);
+                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
                         m_tbRetryTime = now;
                     }
                 }
@@ -1730,13 +1960,23 @@ namespace MoriaMods
                     m_flyMode = false;               // reset fly toggle for new world
                     m_buildMenuPrimed = false;       // force re-prime on next quickbuild
                     // Reset reactive state machine Ã¢â‚¬â€ cached pointers are stale in new world
+                    m_cachedBuildComp = nullptr;
                     m_cachedBuildHUD = nullptr;
                     m_cachedBuildTab = nullptr;
                     m_fnIsVisible = nullptr;
                     m_qbPhase = QBPhase::Idle;
                     m_tbPhase = QBPhase::Idle;
+                    m_handleResolvePhase = HandleResolvePhase::None; // re-resolve after next load
                     m_pendingQuickBuildSlot = -1;
                     m_pendingTargetBuild = false;
+                    m_hasLastCapture = false;           // bLock data stale in new world
+                    m_hasLastHandle = false;            // recipe handle stale in new world
+                    m_lastCapturedName.clear();
+                    for (auto& slot : m_recipeSlots)    // invalidate session-only data
+                    {
+                        slot.hasBLockData = false;
+                        slot.hasHandle = false;
+                    }
                     s_overlay.visible = false; // hide overlay until character reloads
                     m_initialReplayDone = false;
                     m_processedComps.clear();
@@ -1789,8 +2029,8 @@ namespace MoriaMods
                     }
                     m_mcRotationLabel = nullptr;
                     m_mcSlot0Overlay = nullptr;
-                    m_mcSlot4Overlay = nullptr;
-                    m_mcSlot6Overlay = nullptr;
+                    m_mcSlot8Overlay = nullptr;
+                    m_mcSlot10Overlay = nullptr;
                     // Advanced Builder toolbar destroyed with world
                     m_abBarWidget = nullptr;
                     m_abKeyLabel = nullptr;
@@ -1815,6 +2055,8 @@ namespace MoriaMods
                     // m_ibTitleLabel = nullptr;
                     // m_ibMessageLabel = nullptr;
                     // m_ibShowTick = 0;
+                    // Stability audit highlights cleared with world
+                    clearStabilityHighlights();
                     // Config Menu destroyed with world
                     m_configWidget = nullptr;
                     m_cfgTabLabels[0] = m_cfgTabLabels[1] = m_cfgTabLabels[2] = nullptr;

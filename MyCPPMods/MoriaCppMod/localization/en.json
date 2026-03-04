@@ -16,10 +16,12 @@
   "bind.remove_all": "Remove All",
   "bind.configuration": "Configuration",
   "bind.ab_open": "Advanced Builder Open",
+  "bind.stability_check": "Stability Check",
 
   "bind.section_quick_building": "Quick Building",
   "bind.section_mod_controller": "Mod Controller",
   "bind.section_advanced_builder": "Advanced Builder",
+  "bind.section_diagnostics": "Diagnostics",
 
   "key.shift": "SHIFT",
   "key.ctrl": "CTRL",
