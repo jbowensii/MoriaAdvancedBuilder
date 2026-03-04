@@ -186,12 +186,13 @@ namespace MoriaMods
             s_table["bind.target"] = L"Target";
             s_table["bind.toolbar_swap"] = L"Toolbar Swap";
             s_table["bind.mod_menu_4"] = L"Super Dwarf";
-            s_table["bind.remove_target"] = L"Remove Target";
+            s_table["bind.integrity_check"] = L"Integrity Check";
+            s_table["bind.empty"] = L"Empty";
+            s_table["bind.remove_single"] = L"Remove Single";
             s_table["bind.undo_last"] = L"Undo Last";
             s_table["bind.remove_all"] = L"Remove All";
             s_table["bind.configuration"] = L"Configuration";
             s_table["bind.ab_open"] = L"Advanced Builder Open";
-            s_table["bind.stability_check"] = L"Stability Check";
             // ── Keybind section names ──
             s_table["bind.section_quick_building"] = L"Quick Building";
             s_table["bind.section_mod_controller"] = L"Mod Controller";

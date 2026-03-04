@@ -2999,6 +2999,9 @@
                     const wchar_t* lastSection = nullptr;
                     for (int b = 0; b < BIND_COUNT; b++)
                     {
+                        // Skip reserved/placeholder entries (no visible action, clutters UI)
+                        if (wcscmp(s_bindings[b].label, L"Reserved") == 0) continue;
+
                         // Section header with background texture
                         if (!lastSection || wcscmp(lastSection, s_bindings[b].section) != 0)
                         {

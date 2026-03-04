@@ -560,20 +560,28 @@ namespace MoriaMods
             s_bindings[8].section = Loc::get("bind.section_mod_controller").c_str();
             s_bindings[9].label = Loc::get("bind.target").c_str();
             s_bindings[9].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[10].label = Loc::get("bind.toolbar_swap").c_str();
+            s_bindings[10].label = Loc::get("bind.integrity_check").c_str();
             s_bindings[10].section = Loc::get("bind.section_mod_controller").c_str();
             s_bindings[11].label = Loc::get("bind.mod_menu_4").c_str();
             s_bindings[11].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[12].label = Loc::get("bind.remove_target").c_str();
+            s_bindings[12].label = Loc::get("bind.toolbar_swap").c_str();
             s_bindings[12].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[13].label = Loc::get("bind.undo_last").c_str();
+            s_bindings[13].label = Loc::get("bind.empty").c_str();
             s_bindings[13].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[14].label = Loc::get("bind.remove_all").c_str();
+            s_bindings[14].label = Loc::get("bind.empty").c_str();
             s_bindings[14].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[15].label = Loc::get("bind.configuration").c_str();
+            s_bindings[15].label = Loc::get("bind.empty").c_str();
             s_bindings[15].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[16].label = Loc::get("bind.ab_open").c_str();
-            s_bindings[16].section = Loc::get("bind.section_advanced_builder").c_str();
+            s_bindings[16].label = Loc::get("bind.remove_single").c_str();
+            s_bindings[16].section = Loc::get("bind.section_mod_controller").c_str();
+            s_bindings[17].label = Loc::get("bind.undo_last").c_str();
+            s_bindings[17].section = Loc::get("bind.section_mod_controller").c_str();
+            s_bindings[18].label = Loc::get("bind.remove_all").c_str();
+            s_bindings[18].section = Loc::get("bind.section_mod_controller").c_str();
+            s_bindings[19].label = Loc::get("bind.configuration").c_str();
+            s_bindings[19].section = Loc::get("bind.section_mod_controller").c_str();
+            s_bindings[20].label = Loc::get("bind.ab_open").c_str();
+            s_bindings[20].section = Loc::get("bind.section_advanced_builder").c_str();
             // Patch config tab names
             CONFIG_TAB_NAMES[0] = Loc::get("tab.optional_mods").c_str();
             CONFIG_TAB_NAMES[1] = Loc::get("tab.key_mapping").c_str();
@@ -1250,6 +1258,9 @@ namespace MoriaMods
                                     bool bindMatched = false;
                                     for (int b = 0; b < BIND_COUNT; b++)
                                     {
+                                        // Skip reserved/placeholder entries (must match createConfigWidget loop)
+                                        if (wcscmp(s_bindings[b].label, L"Reserved") == 0) continue;
+
                                         if (!lastSec || wcscmp(lastSec, s_bindings[b].section) != 0)
                                         {
                                             lastSec = s_bindings[b].section;
