@@ -1485,8 +1485,8 @@
                     return;
                 }
 
-                // Only use direct path when build system is actively running.
-                // GetActiveBuildingWidget() returns null when dormant — falls through to SM.
+                // Only use the direct path when the build system is actively running.
+                // GetActiveBuildingWidget() returns null when dormant — prevents silent failures.
                 UObject* buildHUD = nullptr;
                 UObject* comp = getCachedBuildComp();
                 if (comp)
@@ -1494,10 +1494,10 @@
                     auto* fn = comp->GetFunctionByNameInChain(STR("GetActiveBuildingWidget"));
                     if (fn)
                     {
-                        struct { UObject* Ret{nullptr}; } gabwParams{};
-                        comp->ProcessEvent(fn, &gabwParams);
-                        if (gabwParams.Ret && isWidgetAlive(gabwParams.Ret))
-                            buildHUD = gabwParams.Ret;
+                        struct { UObject* Ret{nullptr}; } params{};
+                        comp->ProcessEvent(fn, &params);
+                        if (params.Ret && isWidgetAlive(params.Ret))
+                            buildHUD = params.Ret;
                     }
                 }
                 if (buildHUD)
