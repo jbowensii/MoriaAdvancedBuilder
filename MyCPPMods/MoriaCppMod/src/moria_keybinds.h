@@ -21,6 +21,7 @@ namespace MoriaMods
     static constexpr int BIND_CONFIG   = 19;   // "Configuration" — MC slot 11
     static constexpr int BIND_AB_OPEN  = 20;   // "Advanced Builder Open"
     static constexpr int BIND_STABILITY = 10;  // "Stability Check" — MC slot 2
+    static constexpr int BIND_SNAP      = 13;  // "Snap Toggle" — MC slot 5
 
     struct KeyBind
     {
@@ -43,7 +44,7 @@ namespace MoriaMods
             {L"Integrity Check", L"Mod Controller", Input::Key::DIVIDE},               // 10 (BIND_STABILITY, MC slot 2)
             {L"Super Dwarf", L"Mod Controller", Input::Key::OEM_FIVE},                 // 11 (MC slot 3)
             {L"Toolbar Swap", L"Mod Controller", Input::Key::PAGE_DOWN},               // 12 (BIND_SWAP, MC slot 4)
-            {L"Empty", L"Mod Controller", 0},                                           // 13 (MC slot 5 — empty)
+            {L"Snap Toggle", L"Mod Controller", Input::Key::OEM_FOUR},                    // 13 (BIND_SNAP, MC slot 5)
             {L"Empty", L"Mod Controller", 0},                                           // 14 (MC slot 6 — empty)
             {L"Empty", L"Mod Controller", 0},                                           // 15 (MC slot 7 — empty)
             {L"Remove Single", L"Mod Controller", Input::Key::NUM_ONE},                // 16 (MC slot 8)

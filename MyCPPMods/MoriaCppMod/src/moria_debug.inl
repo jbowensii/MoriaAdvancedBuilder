@@ -342,3 +342,114 @@
             *free = step;
             return true;
         }
+
+        // Toggle snap off for current piece (per-piece, auto-restores on placement)
+        void toggleSnap()
+        {
+            VLOG(STR("[MoriaCppMod] [Snap] toggleSnap() called, current state: {} savedDist={}\n"),
+                 m_snapEnabled ? STR("ON") : STR("OFF"), m_savedMaxSnapDistance);
+
+            UObject* gata = resolveGATA();
+            if (!gata)
+            {
+                VLOG(STR("[MoriaCppMod] [Snap] resolveGATA returned nullptr — no piece being placed\n"));
+                showOnScreen(L"Snap: place a piece first", 2.0f, 1.0f, 0.5f, 0.0f);
+                return;
+            }
+
+            float* pSnap = gata->GetValuePtrByPropertyNameInChain<float>(STR("MaxSnapDistance"));
+            if (!pSnap)
+            {
+                VLOG(STR("[MoriaCppMod] [Snap] MaxSnapDistance not found on GATA\n"));
+                return;
+            }
+
+            // Capture original value on first use
+            if (m_savedMaxSnapDistance < 0.0f)
+            {
+                m_savedMaxSnapDistance = *pSnap;
+                VLOG(STR("[MoriaCppMod] [Snap] Captured original MaxSnapDistance={}\n"), m_savedMaxSnapDistance);
+            }
+
+            m_snapEnabled = !m_snapEnabled;
+            float newVal = m_snapEnabled ? m_savedMaxSnapDistance : 0.0f;
+            *pSnap = newVal;
+
+            VLOG(STR("[MoriaCppMod] [Snap] -> {} MaxSnapDistance={}\n"),
+                 m_snapEnabled ? STR("ON") : STR("OFF"), newVal);
+
+            showOnScreen(m_snapEnabled ? L"Snap: ON" : L"Snap: OFF",
+                         2.0f, 0.4f, 0.6f, 1.0f);
+        }
+
+        // Auto-restore snap after piece placement (called from ProcessEvent hook)
+        // Only resets the flag — old GATA is being destroyed, new one spawns with default MaxSnapDistance
+        void restoreSnap()
+        {
+            if (m_snapEnabled) return;
+            m_snapEnabled = true;
+            VLOG(STR("[MoriaCppMod] [Snap] Snap auto-restored to ON after placement (GATA will spawn fresh)\n"));
+        }
+
+        // Dispatch action for MC toolbar slot (used by both keyboard and click handlers)
+        void dispatchMcSlot(int slot)
+        {
+            switch (slot)
+            {
+            case 0: // Rotation
+            {
+                bool modDown = isModifierDown();
+                int cur = s_overlay.rotationStep;
+                int next;
+                if (modDown)
+                    next = (cur <= 5) ? 90 : cur - 5;
+                else
+                    next = (cur >= 90) ? 5 : cur + 5;
+                s_overlay.rotationStep = next;
+                s_overlay.needsUpdate = true;
+                saveConfig();
+                UObject* gata = resolveGATA();
+                if (gata) setGATARotation(gata, static_cast<float>(next));
+                std::wstring msg = L"Rotation step: " + std::to_wstring(next) + L"\xB0";
+                showOnScreen(msg.c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
+                updateMcRotationLabel();
+                break;
+            }
+            case 1: // Target
+                if (isModifierDown())
+                    buildFromTarget();
+                else if (m_tiShowTick > 0)
+                    hideTargetInfo();
+                else
+                    dumpAimedActor();
+                break;
+            case 2: // Stability Check
+                runStabilityAudit();
+                break;
+            case 3: // Super Dwarf
+                if (isModifierDown())
+                    toggleFlyMode();
+                else
+                    toggleHideCharacter();
+                break;
+            case 4: // Toolbar Swap
+                swapToolbar();
+                break;
+            case 5: // Snap Toggle
+                toggleSnap();
+                break;
+            case 8: // Remove Target
+                removeAimed();
+                break;
+            case 9: // Undo Last
+                undoLast();
+                break;
+            case 10: // Remove All
+                removeAllOfType();
+                break;
+            case 11: // Configuration — handled separately
+                break;
+            default:
+                break;
+            }
+        }

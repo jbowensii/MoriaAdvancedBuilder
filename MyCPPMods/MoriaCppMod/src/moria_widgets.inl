@@ -206,6 +206,72 @@
             widget->ProcessEvent(fn, buf.data());
         }
 
+        // Helper: set color multiplier on a UImage via SetColorAndOpacity(FLinearColor)
+        void umgSetImageColor(UObject* img, float r, float g, float b, float a)
+        {
+            if (!img) return;
+            auto* fn = img->GetFunctionByNameInChain(STR("SetColorAndOpacity"));
+            if (!fn) return;
+            auto* p = findParam(fn, STR("InColorAndOpacity"));
+            if (!p) return;
+            int sz = fn->GetParmsSize();
+            std::vector<uint8_t> buf(sz, 0);
+            auto* c = reinterpret_cast<float*>(buf.data() + p->GetOffset_Internal());
+            c[0] = r; c[1] = g; c[2] = b; c[3] = a;
+            img->ProcessEvent(fn, buf.data());
+        }
+
+        // Get the state image UObject for a given toolbar + slot (for hover highlight)
+        UObject* getSlotStateImage(int tb, int slot)
+        {
+            switch (tb)
+            {
+            case 0: return (slot >= 0 && slot < 8) ? m_umgStateImages[slot] : nullptr;
+            case 1: return (slot == 0) ? m_abStateImage : nullptr;
+            case 2: return (slot >= 0 && slot < MC_SLOTS) ? m_mcStateImages[slot] : nullptr;
+            default: return nullptr;
+            }
+        }
+
+        // Hit-test cursor (fractional viewport coords) against all visible toolbars
+        // Returns true if a slot was hit, sets outTB (0=BB,1=AB,2=MC) and outSlot
+        // Canvas slot sizes (m_toolbarSizeW/H) include umgScale once, but visual content
+        // is rendered at an additional 0.81x via SetRenderScale, centered by pivot (0.5, 0.5).
+        // Multiply by kRenderScale so hit zone matches the visible icons, not the larger canvas slot.
+        bool hitTestToolbarSlot(float curFracX, float curFracY, int& outTB, int& outSlot)
+        {
+            outTB = -1; outSlot = -1;
+            constexpr float kRenderScale = 0.81f;  // matches umgScale/mcScale/abScale
+            struct TBInfo { int idx; int cols; int rows; UObject* widget; };
+            TBInfo bars[] = {
+                {2, 4, 3, m_mcBarWidget},
+                {0, 8, 1, m_umgBarWidget},
+                {1, 1, 1, m_abBarWidget},
+            };
+            for (auto& b : bars)
+            {
+                if (!b.widget) continue;
+                float posX = (m_toolbarPosX[b.idx] >= 0) ? m_toolbarPosX[b.idx] : TB_DEF_X[b.idx];
+                float posY = (m_toolbarPosY[b.idx] >= 0) ? m_toolbarPosY[b.idx] : TB_DEF_Y[b.idx];
+                // Visual content is kRenderScale of canvas slot, centered at pivot
+                float halfW = m_toolbarSizeW[b.idx] * kRenderScale * 0.5f;
+                float halfH = m_toolbarSizeH[b.idx] * kRenderScale * 0.5f;
+                if (halfW <= 0 || halfH <= 0) continue;
+                float relX = curFracX - (posX - halfW);
+                float relY = curFracY - (posY - halfH);
+                float fullW = halfW * 2.0f, fullH = halfH * 2.0f;
+                if (relX < 0 || relX >= fullW || relY < 0 || relY >= fullH) continue;
+                int col = static_cast<int>(relX / (fullW / b.cols));
+                int row = static_cast<int>(relY / (fullH / b.rows));
+                col = std::clamp(col, 0, b.cols - 1);
+                row = std::clamp(row, 0, b.rows - 1);
+                outTB = b.idx;
+                outSlot = row * b.cols + col;
+                return true;
+            }
+            return false;
+        }
+
         // Helper: set text on a UTextBlock via SetText(FText)
         void umgSetText(UObject* textBlock, const std::wstring& text)
         {
@@ -1107,6 +1173,7 @@
                 m_abBarWidget->ProcessEvent(removeFn, nullptr);
             m_abBarWidget = nullptr;
             m_abKeyLabel = nullptr;
+            m_abStateImage = nullptr;
             VLOG(STR("[MoriaCppMod] [AB] Advanced Builder toolbar removed\n"));
         }
 
@@ -1252,6 +1319,9 @@
             FStaticConstructObjectParameters fiP(imageClass, outer);
             UObject* frameImg = UObjectGlobals::StaticConstructObject(fiP);
             if (!stateImg || !iconImg || !frameImg) return;
+
+            // Cache state image for hover highlight
+            m_abStateImage = stateImg;
 
             // Set textures
             umgSetBrush(stateImg, texActive, setBrushFn);  // active state (always active)
@@ -3389,6 +3459,7 @@
             UObject* texUndoLast = nullptr;     // T_UI_Alert_BakedIcon Ã¢â‚¬â€ MC slot 9 (Undo Last)
             UObject* texRemoveAll = nullptr;    // T_UI_Icon_Filled_GoodPlace2 Ã¢â‚¬â€ MC slot 10 (Remove All)
             UObject* texSettings = nullptr;     // T_UI_Icon_Settings Ã¢â‚¬â€ MC slot 11 (Configuration)
+            UObject* texSnapToggle = nullptr;   // T_UI_Icon_Build — MC slot 5 (Snap Toggle)
             UObject* texStability = nullptr;     // T_UI_Icon_Craft — MC slot 2 (Stability Check)
             UObject* texHideChar = nullptr;     // T_UI_Eye_Open Ã¢â‚¬â€ MC slot 3 (Hide Character)
             {
@@ -3412,6 +3483,7 @@
                     else if (name == STR("T_UI_Icon_Settings")) texSettings = t;
                     else if (name == STR("T_UI_Icon_Craft")) texStability = t;
                     else if (name == STR("T_UI_Eye_Open")) texHideChar = t;
+                    else if (name == STR("T_UI_Icon_Build")) texSnapToggle = t;
                 }
             }
             if (!texFrame || !texEmpty)
@@ -3434,6 +3506,7 @@
                 {texTarget, STR("/Game/UI/textures/_Icons/Menus/T_UI_Search.T_UI_Search"), L"T_UI_Search"},
                 {texHideChar, STR("/Game/UI/textures/_Icons/Waypoints/T_UI_Eye_Open.T_UI_Eye_Open"), L"T_UI_Eye_Open"},
                 {texStability, STR("/Game/UI/textures/_Shared/Icons/T_UI_Icon_Craft.T_UI_Icon_Craft"), L"T_UI_Icon_Craft"},
+                {texSnapToggle, STR("/Game/UI/textures/_Shared/Icons/T_UI_Icon_Build.T_UI_Icon_Build"), L"T_UI_Icon_Build"},
             };
             for (auto& fb : fallbacks)
             {
@@ -3830,12 +3903,12 @@
             {
                 UObject* mcSlotTextures[MC_SLOTS] = {
                     texRotation, texTarget, texStability, texHideChar,         // row 0: Rotation, Target, StabilityCheck, SuperDwarf
-                    texToolbarSwap, nullptr, nullptr, nullptr,               // row 1: ToolbarSwap, Empty5, Empty6, Empty7
+                    texToolbarSwap, texSnapToggle, nullptr, nullptr,        // row 1: ToolbarSwap, SnapToggle, Empty6, Empty7
                     texRemoveTarget, texUndoLast, texRemoveAll, texSettings  // row 2: RemoveTarget, UndoLast, RemoveAll, Config
                 };
                 const wchar_t* mcSlotNames[MC_SLOTS] = {
                     L"T_UI_Refresh", L"T_UI_Search", L"T_UI_Icon_Craft", L"T_UI_Eye_Open",
-                    L"Swap-Bag_Icon", L"Empty5", L"Empty6", L"Empty7",
+                    L"Swap-Bag_Icon", L"T_UI_Icon_Build", L"Empty6", L"Empty7",
                     L"T_UI_Icon_GoodPlace2", L"T_UI_Alert_BakedIcon", L"T_UI_Icon_Filled_GoodPlace2", L"T_UI_Icon_Settings"
                 };
                 for (int i = 0; i < MC_SLOTS; i++)
@@ -4013,7 +4086,7 @@
             float mcHOverlapPerSlot = mcIconW * 0.20f;             // 20% horizontal overlap (10% each side, reduced from 40%)
             float mcTotalW = (4.0f * mcIconW - 3.0f * mcHOverlapPerSlot) * mcScale * 1.2f;  // 4 cols, 3 gaps, +20% wider for spacing
             float mcSlotH = (frameH + stateH - mcVOverlap);
-            float mcTotalH = (2.0f * mcSlotH) * mcScale;           // 2 rows
+            float mcTotalH = (3.0f * mcSlotH) * mcScale;           // 3 rows (4x3 grid)
 
             auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
             if (setDesiredSizeFn)
