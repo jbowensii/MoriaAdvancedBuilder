@@ -102,7 +102,9 @@ namespace MoriaMods
     static constexpr int RECIPE_BLOCK_VARIANTS_NUM = 0x70; // FMorRecipeBlock::Variants.Num (int32)
     static constexpr int VARIANT_ROW_CI = 0xE0;         // FMorConstructionRecipeDefinition::ResultConstructionHandle.RowName.ComparisonIndex
     static constexpr int VARIANT_ROW_NUM = 0xE4;        // FMorConstructionRecipeDefinition::ResultConstructionHandle.RowName.Number
+    static constexpr int VARIANT_ENTRY_SIZE = 0xE8;     // sizeof(FMorConstructionRecipeDefinition) — minimum readable size per variant entry
     static constexpr int TEX_PARAM_VALUE_PTR = 0x10;     // FTextureParameterValue::ParameterValue (UTexture*)
+    static constexpr int VK_BUILD_MENU = 0x42;          // Virtual key code for 'B' (build menu toggle)
     static constexpr int DT_ROWMAP_OFFSET = 0x30;       // UDataTable internal RowMap offset
     static constexpr int DT_ROW_ACTOR_FNAME = 0x60;     // FSoftObjectPath.AssetPathName within construction row
     static constexpr int CAM_SETTINGS_BLOB_SIZE = 0x4C; // sizeof(FFGKCameraStateSettings) — 18 floats + FVector2D

@@ -322,9 +322,9 @@
             uint8_t fontBuf[FONT_STRUCT_SIZE];
             std::memcpy(fontBuf, tbRaw + fontOff, FONT_STRUCT_SIZE);
 
-            // Patch TypefaceFontName to "Bold"
+            // Patch TypefaceFontName to "Bold" (use probed offset, fallback to constant)
             RC::Unreal::FName boldName(STR("Bold"), RC::Unreal::FNAME_Add);
-            std::memcpy(fontBuf + FONT_TYPEFACE_NAME, &boldName, sizeof(RC::Unreal::FName));
+            std::memcpy(fontBuf + fontTypefaceName(), &boldName, sizeof(RC::Unreal::FName));
 
             // Call SetFont with the patched FSlateFontInfo
             int sz = setFontFn->GetParmsSize();
@@ -346,7 +346,7 @@
             uint8_t* tbRaw = reinterpret_cast<uint8_t*>(textBlock);
             uint8_t fontBuf[FONT_STRUCT_SIZE];
             std::memcpy(fontBuf, tbRaw + fontOff, FONT_STRUCT_SIZE);
-            std::memcpy(fontBuf + FONT_SIZE, &fontSize, sizeof(int32_t));
+            std::memcpy(fontBuf + fontSizeOff(), &fontSize, sizeof(int32_t));
 
             int sz = setFontFn->GetParmsSize();
             std::vector<uint8_t> buf(sz, 0);
@@ -434,8 +434,8 @@
 
                 // Read the icon texture's native size from the brush (FSlateBrush.ImageSize at UImage+0x108+0x08)
                 uint8_t* iBase = reinterpret_cast<uint8_t*>(m_umgIconImages[slot]);
-                float texW = *reinterpret_cast<float*>(iBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
-                float texH = *reinterpret_cast<float*>(iBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
+                float texW = *reinterpret_cast<float*>(iBase + s_off_brush + brushImageSizeX());
+                float texH = *reinterpret_cast<float*>(iBase + s_off_brush + brushImageSizeY());
 
                 // Get state icon size as the container bounds
                 float containerW = 64.0f;
@@ -443,8 +443,8 @@
                 if (m_umgStateImages[slot])
                 {
                     uint8_t* sBase = reinterpret_cast<uint8_t*>(m_umgStateImages[slot]);
-                    containerW = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
-                    containerH = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
+                    containerW = *reinterpret_cast<float*>(sBase + s_off_brush + brushImageSizeX());
+                    containerH = *reinterpret_cast<float*>(sBase + s_off_brush + brushImageSizeY());
                 }
                 if (containerW < 1.0f) containerW = 64.0f;
                 if (containerH < 1.0f) containerH = 64.0f;
@@ -638,8 +638,8 @@
             if (!userWidget) { showOnScreen(L"UMG: CreateWidget null!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
 
             // --- Phase C2: Get WidgetTree ---
-            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
-            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // --- Phase C3: Build widget tree ---
@@ -768,11 +768,11 @@
                 if (i == 0)
                 {
                     uint8_t* fBase = reinterpret_cast<uint8_t*>(frameImg);
-                    frameW = *reinterpret_cast<float*>(fBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
-                    frameH = *reinterpret_cast<float*>(fBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
+                    frameW = *reinterpret_cast<float*>(fBase + s_off_brush + brushImageSizeX());
+                    frameH = *reinterpret_cast<float*>(fBase + s_off_brush + brushImageSizeY());
                     uint8_t* sBase = reinterpret_cast<uint8_t*>(stateImg);
-                    stateW = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
-                    stateH = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
+                    stateW = *reinterpret_cast<float*>(sBase + s_off_brush + brushImageSizeX());
+                    stateH = *reinterpret_cast<float*>(sBase + s_off_brush + brushImageSizeY());
                     VLOG(STR("[MoriaCppMod] [UMG] Frame icon: {}x{}, State icon: {}x{}\n"),
                                                     frameW, frameH, stateW, stateH);
                 }
@@ -1241,8 +1241,8 @@
             if (!userWidget) { showOnScreen(L"AB: CreateWidget null!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
 
             // --- Get WidgetTree ---
-            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
-            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // --- Cache SetBrushFromTexture ---
@@ -1323,13 +1323,13 @@
                 umgSetBrush(iconImg, texToolsIcon, setBrushFn);
                 umgSetOpacity(iconImg, 1.0f);
                 uint8_t* iBase = reinterpret_cast<uint8_t*>(iconImg);
-                float texW = *reinterpret_cast<float*>(iBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
-                float texH = *reinterpret_cast<float*>(iBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
+                float texW = *reinterpret_cast<float*>(iBase + s_off_brush + brushImageSizeX());
+                float texH = *reinterpret_cast<float*>(iBase + s_off_brush + brushImageSizeY());
                 if (texW > 0.0f && texH > 0.0f)
                 {
                     uint8_t* sBase = reinterpret_cast<uint8_t*>(stateImg);
-                    float containerW = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
-                    float containerH = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
+                    float containerW = *reinterpret_cast<float*>(sBase + s_off_brush + brushImageSizeX());
+                    float containerH = *reinterpret_cast<float*>(sBase + s_off_brush + brushImageSizeY());
                     if (containerW < 1.0f) containerW = 64.0f;
                     if (containerH < 1.0f) containerH = 64.0f;
                     float scaleX = containerW / texW;
@@ -1345,11 +1345,11 @@
 
             // Read native sizes
             uint8_t* fBase = reinterpret_cast<uint8_t*>(frameImg);
-            float frameW = *reinterpret_cast<float*>(fBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
-            float frameH = *reinterpret_cast<float*>(fBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
+            float frameW = *reinterpret_cast<float*>(fBase + s_off_brush + brushImageSizeX());
+            float frameH = *reinterpret_cast<float*>(fBase + s_off_brush + brushImageSizeY());
             uint8_t* sBase = reinterpret_cast<uint8_t*>(stateImg);
-            float stateW = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
-            float stateH = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
+            float stateW = *reinterpret_cast<float*>(sBase + s_off_brush + brushImageSizeX());
+            float stateH = *reinterpret_cast<float*>(sBase + s_off_brush + brushImageSizeY());
 
             // Create Overlay for state + icon
             FStaticConstructObjectParameters olP(overlayClass, outer);
@@ -1662,8 +1662,8 @@
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) return;
 
-            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
-            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // Root SizeBox Ã¢â‚¬â€ enforces fixed width so TextBlocks can wrap text
@@ -1967,8 +1967,8 @@
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) return;
 
-            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
-            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // Root border (dark blue bg Ã¢â‚¬â€ same as Target Info)
@@ -2446,8 +2446,8 @@
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) return;
 
-            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
-            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // Make widget focusable for modal input mode (via FBoolProperty API)
@@ -3410,6 +3410,8 @@
                 return;
             }
             if (!m_umgTexBlankRect && texBlankRect) m_umgTexBlankRect = texBlankRect; // cache if not yet cached
+            if (!m_umgTexInactive && texInactive) m_umgTexInactive = texInactive;
+            if (!m_umgTexActive && texActive) m_umgTexActive = texActive;
 
             // Fallback: try StaticFindObject for textures not found in FindAllOf scan
             // (some textures may not be loaded yet; StaticFindObject with full path can locate them)
@@ -3475,8 +3477,8 @@
             if (!userWidget) { showOnScreen(L"MC: CreateWidget null!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
 
             // --- Get WidgetTree ---
-            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
-            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // --- Cache SetBrushFromTexture ---
@@ -3594,11 +3596,11 @@
                     if (i == 0)
                     {
                         uint8_t* fBase = reinterpret_cast<uint8_t*>(frameImg);
-                        frameW = *reinterpret_cast<float*>(fBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
-                        frameH = *reinterpret_cast<float*>(fBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
+                        frameW = *reinterpret_cast<float*>(fBase + s_off_brush + brushImageSizeX());
+                        frameH = *reinterpret_cast<float*>(fBase + s_off_brush + brushImageSizeY());
                         uint8_t* sBase = reinterpret_cast<uint8_t*>(stateImg);
-                        stateW = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
-                        stateH = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
+                        stateW = *reinterpret_cast<float*>(sBase + s_off_brush + brushImageSizeX());
+                        stateH = *reinterpret_cast<float*>(sBase + s_off_brush + brushImageSizeY());
                         VLOG(STR("[MoriaCppMod] [MC] Frame: {}x{}, State: {}x{}\n"),
                                                         frameW, frameH, stateW, stateH);
                         m_mcSlot0Overlay = overlay; // save for rotation label (added after loop)
@@ -3841,8 +3843,8 @@
                             umgSetBrush(m_mcStateImages[i], texActive, setBrushFn);
                         // Scale icon to 70% with aspect ratio preservation
                         uint8_t* iBase = reinterpret_cast<uint8_t*>(m_mcIconImages[i]);
-                        float texW = *reinterpret_cast<float*>(iBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
-                        float texH = *reinterpret_cast<float*>(iBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
+                        float texW = *reinterpret_cast<float*>(iBase + s_off_brush + brushImageSizeX());
+                        float texH = *reinterpret_cast<float*>(iBase + s_off_brush + brushImageSizeY());
                         if (texW > 0.0f && texH > 0.0f)
                         {
                             // Get state icon size as container bounds
@@ -3850,8 +3852,8 @@
                             if (m_mcStateImages[i])
                             {
                                 uint8_t* sBase = reinterpret_cast<uint8_t*>(m_mcStateImages[i]);
-                                containerW = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_X);
-                                containerH = *reinterpret_cast<float*>(sBase + s_off_brush + BRUSH_IMAGE_SIZE_Y);
+                                containerW = *reinterpret_cast<float*>(sBase + s_off_brush + brushImageSizeX());
+                                containerH = *reinterpret_cast<float*>(sBase + s_off_brush + brushImageSizeY());
                             }
                             if (containerW < 1.0f) containerW = 64.0f;
                             if (containerH < 1.0f) containerH = 64.0f;
@@ -4064,6 +4066,10 @@
             m_toolbarSizeW[2] = m_screen.pixelToFracX(mcTotalW);
             m_toolbarSizeH[2] = m_screen.pixelToFracY(mcTotalH);
             m_mcBarWidget = userWidget;
+
+            // Snap Toggle (slot 5) starts Disabled — no ghost piece at creation time
+            setMcSlotState(5, UmgSlotState::Disabled);
+
             showOnScreen(Loc::get("msg.mod_controller_created").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [MC] === Mod Controller bar creation complete ({}x{}) ===\n"),
                                             mcTotalW, mcTotalH);

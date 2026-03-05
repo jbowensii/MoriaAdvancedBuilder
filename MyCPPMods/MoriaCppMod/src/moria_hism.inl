@@ -685,10 +685,10 @@
                 auto* pc = findPlayerController();
                 if (pc)
                 {
-                    int camOff = resolveOffset(pc, L"PlayerCameraManager", s_off_playerCameraManager);
-                    if (camOff >= 0)
+                    auto** camMgrPtr = pc->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerCameraManager"));
+                    if (camMgrPtr)
                     {
-                        auto* camMgr = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(pc) + camOff);
+                        auto* camMgr = *camMgrPtr;
                         if (camMgr)
                         {
                             m_hasSavedCameraState = true;
@@ -732,9 +732,9 @@
             // Ã¢â€â‚¬Ã¢â€â‚¬ Fly toggle Ã¢â€â‚¬Ã¢â€â‚¬
             for (auto* dwarf : dwarves)
             {
-                int cmOff = resolveOffset(dwarf, L"CharacterMovement", s_off_charMovement);
-                if (cmOff < 0) continue;
-                auto* movComp = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(dwarf) + cmOff);
+                auto** movCompPtr = dwarf->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
+                if (!movCompPtr) continue;
+                auto* movComp = *movCompPtr;
                 if (!movComp)
                 {
                     VLOG(STR("[MoriaCppMod] CharacterMovement is null!\n"));
@@ -786,10 +786,10 @@
                 auto* pc = findPlayerController();
                 if (pc)
                 {
-                    int camOff = resolveOffset(pc, L"PlayerCameraManager", s_off_playerCameraManager);
-                    if (camOff >= 0)
+                    auto** camMgrPtr = pc->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerCameraManager"));
+                    if (camMgrPtr)
                     {
-                        auto* camMgr = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(pc) + camOff);
+                        auto* camMgr = *camMgrPtr;
                         if (camMgr)
                         {
                             VLOG(STR("[MoriaCppMod] [Camera RESTORE] flyMode={} camMgr={:p}\n"),
@@ -807,25 +807,25 @@
                             {
                                 VLOG(STR("[MoriaCppMod] [Camera RESTORE] Settings offset NOT RESOLVED ({})\n"), s_off_camSettings);
                             }
-                            if (s_off_probeType >= 0)
+                            auto* ptPtr = camMgr->GetValuePtrByPropertyNameInChain<uint8_t>(STR("ProbeType"));
+                            if (ptPtr)
                             {
-                                uint8_t livePT = *(reinterpret_cast<uint8_t*>(camMgr) + s_off_probeType);
-                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeType BEFORE={} writing={}\n"), livePT, m_savedProbeType);
-                                *(reinterpret_cast<uint8_t*>(camMgr) + s_off_probeType) = m_savedProbeType;
+                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeType BEFORE={} writing={}\n"), *ptPtr, m_savedProbeType);
+                                *ptPtr = m_savedProbeType;
                             }
                             else
                             {
-                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeType offset NOT RESOLVED ({})\n"), s_off_probeType);
+                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeType property NOT FOUND\n"));
                             }
-                            if (s_off_probeRadius >= 0)
+                            auto* prPtr = camMgr->GetValuePtrByPropertyNameInChain<float>(STR("ProbeRadius"));
+                            if (prPtr)
                             {
-                                float liveR = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(camMgr) + s_off_probeRadius);
-                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeRadius BEFORE={:.1f} writing={:.1f}\n"), liveR, m_savedProbeRadius);
-                                *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(camMgr) + s_off_probeRadius) = m_savedProbeRadius;
+                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeRadius BEFORE={:.1f} writing={:.1f}\n"), *prPtr, m_savedProbeRadius);
+                                *prPtr = m_savedProbeRadius;
                             }
                             else
                             {
-                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeRadius offset NOT RESOLVED ({})\n"), s_off_probeRadius);
+                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeRadius property NOT FOUND\n"));
                             }
                             bool liveDI = getBoolProp(camMgr, L"bProbeDisallowIntersect");
                             VLOG(STR("[MoriaCppMod] [Camera RESTORE] bProbeDisallowIntersect BEFORE={} writing={}\n"),

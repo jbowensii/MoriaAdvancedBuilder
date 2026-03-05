@@ -215,15 +215,11 @@
                 std::wstring cls = safeClassName(a);
                 if (cls == STR("BP_DebugMenu_CraftingAndConstruction_C"))
                 {
-                    auto readBool = [&](const TCHAR* name) -> bool {
-                        void* ptr = a->GetValuePtrByPropertyNameInChain(name);
-                        return ptr && *static_cast<uint8_t*>(ptr) != 0;
-                    };
-                    bool freeCon = readBool(STR("free_construction"));
-                    bool freeCraft = readBool(STR("free_crafting"));
-                    bool prereqs = readBool(STR("construction_prereqs"));
-                    bool stability = readBool(STR("construction_stability"));
-                    bool instant = readBool(STR("instant_crafting"));
+                    bool freeCon = getBoolProp(a, L"free_construction");
+                    bool freeCraft = getBoolProp(a, L"free_crafting");
+                    bool prereqs = getBoolProp(a, L"construction_prereqs");
+                    bool stability = getBoolProp(a, L"construction_stability");
+                    bool instant = getBoolProp(a, L"instant_crafting");
                     std::wstring msg = L"[Cheats] ";
                     msg += freeCon ? L"FreeBuild:ON " : L"FreeBuild:OFF ";
                     msg += freeCraft ? L"FreeCraft:ON " : L"FreeCraft:OFF ";
@@ -266,12 +262,7 @@
             }
 
             UObject* debugActor = objs[0];
-            auto readBool = [&](const TCHAR* name) -> bool {
-                void* ptr = debugActor->GetValuePtrByPropertyNameInChain(name);
-                return ptr && *static_cast<uint8_t*>(ptr) != 0;
-            };
-
-            s_config.freeBuild = readBool(STR("free_construction"));
+            s_config.freeBuild = getBoolProp(debugActor, L"free_construction");
 
             VLOG(
                 STR("[MoriaCppMod] syncDebugToggleState: freeBuild={}\n"),
@@ -280,116 +271,8 @@
         }
 
 
-        // â"€â"€ Rotate Aimed Building: set mobility then rotate + raw memory fallback â"€â"€
-        // Find BuildHUDv2 widget by searching all UserWidgets
-        UObject* findBuildHUD()
-        {
-            std::vector<UObject*> widgets;
-            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
-            for (auto* w : widgets)
-            {
-                if (!w) continue;
-                std::wstring cls = safeClassName(w);
-                if (cls.empty()) continue;
-                if (cls.find(STR("BuildHUD")) != std::wstring::npos)
-                {
-                    // Check if visible
-                    auto* visFunc = w->GetFunctionByNameInChain(STR("IsVisible"));
-                    if (visFunc)
-                    {
-                        struct
-                        {
-                            bool Ret{false};
-                        } vp{};
-                        w->ProcessEvent(visFunc, &vp);
-                        if (vp.Ret) return w;
-                    }
-                }
-            }
-            // Also return first match even if not visible
-            for (auto* w : widgets)
-            {
-                if (!w) continue;
-                std::wstring cls = safeClassName(w);
-                if (cls.empty()) continue;
-                if (cls.find(STR("BuildHUD")) != std::wstring::npos) return w;
-            }
-            return nullptr;
-        }
-
-        UObject* resolveGATA()
-        {
-            auto* hud = findBuildHUD();
-            if (!hud) return nullptr;
-            if (s_off_targetActor == -2)
-                resolveOffset(hud, L"TargetActor", s_off_targetActor);
-            if (s_off_targetActor < 0) return nullptr;
-            uint8_t* hudBase = reinterpret_cast<uint8_t*>(hud);
-            if (!isReadableMemory(hudBase + s_off_targetActor, sizeof(RC::Unreal::FWeakObjectPtr))) return nullptr;
-            RC::Unreal::FWeakObjectPtr weakPtr{};
-            std::memcpy(&weakPtr, hudBase + s_off_targetActor, sizeof(RC::Unreal::FWeakObjectPtr));
-            return weakPtr.Get();
-        }
-
-        // Sets SnapRotateIncrement + FreePlaceRotateIncrement on GATA actor
-        // via runtime property discovery (replaces hard-coded +1616/+1620 offsets).
-        bool setGATARotation(UObject* gata, float step)
-        {
-            float* snap = gata->GetValuePtrByPropertyNameInChain<float>(STR("SnapRotateIncrement"));
-            float* free = gata->GetValuePtrByPropertyNameInChain<float>(STR("FreePlaceRotateIncrement"));
-            if (!snap || !free) return false;
-            *snap = step;
-            *free = step;
-            return true;
-        }
-
-        // Toggle snap off for current piece (per-piece, auto-restores on placement)
-        void toggleSnap()
-        {
-            VLOG(STR("[MoriaCppMod] [Snap] toggleSnap() called, current state: {} savedDist={}\n"),
-                 m_snapEnabled ? STR("ON") : STR("OFF"), m_savedMaxSnapDistance);
-
-            UObject* gata = resolveGATA();
-            if (!gata)
-            {
-                VLOG(STR("[MoriaCppMod] [Snap] resolveGATA returned nullptr — no piece being placed\n"));
-                showOnScreen(L"Snap: place a piece first", 2.0f, 1.0f, 0.5f, 0.0f);
-                return;
-            }
-
-            float* pSnap = gata->GetValuePtrByPropertyNameInChain<float>(STR("MaxSnapDistance"));
-            if (!pSnap)
-            {
-                VLOG(STR("[MoriaCppMod] [Snap] MaxSnapDistance not found on GATA\n"));
-                return;
-            }
-
-            // Capture original value on first use
-            if (m_savedMaxSnapDistance < 0.0f)
-            {
-                m_savedMaxSnapDistance = *pSnap;
-                VLOG(STR("[MoriaCppMod] [Snap] Captured original MaxSnapDistance={}\n"), m_savedMaxSnapDistance);
-            }
-
-            m_snapEnabled = !m_snapEnabled;
-            float newVal = m_snapEnabled ? m_savedMaxSnapDistance : 0.0f;
-            *pSnap = newVal;
-
-            VLOG(STR("[MoriaCppMod] [Snap] -> {} MaxSnapDistance={}\n"),
-                 m_snapEnabled ? STR("ON") : STR("OFF"), newVal);
-
-            showOnScreen(m_snapEnabled ? L"Snap: ON" : L"Snap: OFF",
-                         2.0f, 0.4f, 0.6f, 1.0f);
-        }
-
-        // Auto-restore snap after piece placement (called from ProcessEvent hook)
-        // Only resets the flag — old GATA is being destroyed, new one spawns with default MaxSnapDistance
-        void restoreSnap()
-        {
-            if (m_snapEnabled) return;
-            m_snapEnabled = true;
-            VLOG(STR("[MoriaCppMod] [Snap] Snap auto-restored to ON after placement (GATA will spawn fresh)\n"));
-        }
+        // findBuildHUD, resolveGATA, setGATARotation, toggleSnap, restoreSnap
+        // -> moved to moria_placement.inl
 
         // Dispatch action for MC toolbar slot (used by both keyboard and click handlers)
         void dispatchMcSlot(int slot)
@@ -417,7 +300,7 @@
             }
             case 1: // Target
                 if (isModifierDown())
-                    buildFromTarget();
+                    quickBuildFromTarget();
                 else if (m_tiShowTick > 0)
                     hideTargetInfo();
                 else

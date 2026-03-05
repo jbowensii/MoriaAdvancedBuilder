@@ -315,12 +315,12 @@ namespace MoriaMods
         // bLock offset resolved via s_off_bLock (ForEachProperty on UI_WBP_Build_Item_C)
 
         // Reactive quick-build state machine (replaces frame-counting)
-        enum class QBPhase { Idle, CancelPlacement, CloseMenu, WaitReopen, PrimeOpen, OpenMenu, SelectRecipe };
+        enum class PlacePhase { Idle, CancelGhost, CloseMenu, WaitReopen, PrimeOpen, OpenMenu, SelectRecipe };
         int m_quickBuildSwapDelay{5};  // frames to wait between close and reopen (Slate cleanup)
         // Result of selectRecipeOnBuildTab Ã¢â‚¬â€ distinguishes "still loading" from "genuinely missing"
         enum class SelectResult { Found, Loading, NotFound };
         int m_pendingQuickBuildSlot{-1};     // which F1-F8 slot is pending (-1 = none)
-        QBPhase m_qbPhase{QBPhase::Idle};    // quickbuild phase
+        PlacePhase m_qbPhase{PlacePhase::Idle};    // quickbuild phase
         ULONGLONG m_qbStartTime{0};          // timestamp when SM entered non-idle
         ULONGLONG m_qbRetryTime{0};          // timestamp of last retry/phase change
         int m_qbWaitCount{0};                // WaitReopen frame countdown
@@ -346,12 +346,8 @@ namespace MoriaMods
         std::wstring m_targetBuildRecipeRef; // class name sans BP_ prefix (for bLock matching)
         std::wstring m_targetBuildRowName;   // DT_Constructions row name (also key for DT_ConstructionRecipes)
         bool m_lastTargetBuildable{false};   // was the last target buildable?
-        bool m_pendingTargetBuild{false};    // pending build-from-target state machine
+        bool m_isTargetBuild{false};          // true when SM is running a target-build (vs F-key)
         bool m_buildMenuWasOpen{false};      // tracks build menu open/close for ActionBar refresh
-        QBPhase m_tbPhase{QBPhase::Idle};    // target-build phase
-        ULONGLONG m_tbStartTime{0};          // timestamp when SM entered non-idle
-        ULONGLONG m_tbRetryTime{0};          // timestamp of last retry/phase change
-        int m_tbWaitCount{0};                // WaitReopen frame countdown
 
         std::vector<uint8_t> m_bagHandle; // cached EpicPack bag FItemHandle
 
@@ -367,7 +363,7 @@ namespace MoriaMods
         UObject* m_umgTexEmpty{nullptr};            // cached Empty state texture
         UObject* m_umgTexInactive{nullptr};         // cached Inactive state texture
         UObject* m_umgTexActive{nullptr};           // cached Active state texture
-        enum class UmgSlotState : uint8_t { Empty, Inactive, Active };
+        enum class UmgSlotState : uint8_t { Empty, Inactive, Active, Disabled };
         UmgSlotState m_umgSlotStates[8]{};
         int m_activeBuilderSlot{-1};               // which slot is currently Active (-1 = none)
         UFunction* m_umgSetBrushFn{nullptr};       // cached SetBrushFromTexture function
@@ -498,7 +494,8 @@ namespace MoriaMods
         }
 
 
-        #include "moria_quickbuild.inl"  // 6G + 6H: Quick-build & icon extraction
+        #include "moria_placement.inl"   // Build placement lifecycle, snap, ghost piece mgmt
+        #include "moria_quickbuild.inl"  // 6G + 6H: Quick-build dispatch & icon extraction
 
         #include "moria_widgets.inl"     // 6I: UMG widget system
 
@@ -715,6 +712,18 @@ namespace MoriaMods
                     return;
                 }
 
+                // OnAfterHide on BuildHUD or Build_Tab: ghost piece gone, grey out snap slot
+                if (fn == STR("OnAfterHide"))
+                {
+                    std::wstring cls = safeClassName(context);
+                    if (cls == STR("UI_WBP_BuildHUDv2_C") || cls == STR("UI_WBP_Build_Tab_C"))
+                    {
+                        QBLOG(STR("[MoriaCppMod] [Placement] OnAfterHide fired on {}\n"), cls);
+                        s_instance->onGhostDisappeared();
+                    }
+                    return;
+                }
+
                 // Skip capture during automated quickbuild activation
                 if (s_instance->m_isAutoSelecting) return;
 
@@ -794,6 +803,9 @@ namespace MoriaMods
                         VLOG(STR("[MoriaCppMod] [Validate] BLOCK_DATA_SIZE OK: bLock size = {} (matches constant)\n"), bLockSize);
                     }
                 }
+
+                // Ghost piece will appear from manual recipe selection — enable snap slot
+                s_instance->onGhostAppeared();
             });
 
             m_replayActive = true;
@@ -1684,326 +1696,12 @@ namespace MoriaMods
                 refreshActionBar();
             }
 
-            // Ã¢â€â‚¬Ã¢â€â‚¬ Reactive quickbuild state machine Ã¢â€â‚¬Ã¢â€â‚¬
-            // Polls cheap widget booleans each tick, proceeds the instant game state transitions
-            if (m_qbPhase != QBPhase::Idle)
-            {
-                ULONGLONG now = GetTickCount64();
-                ULONGLONG elapsed = now - m_qbStartTime;
-                ULONGLONG sinceLast = now - m_qbRetryTime;
-
-                // Global safety timeout (5s during prime, 2.5s normal)
-                ULONGLONG maxTime = m_buildMenuPrimed ? 2500 : 5000;
-                if (elapsed > maxTime)
-                {
-                    QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: TIMEOUT at {}ms phase {}\n"),
-                                                    elapsed, static_cast<int>(m_qbPhase));
-                    showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
-                    hideBuildTab();
-                    m_pendingQuickBuildSlot = -1;
-                    m_qbPhase = QBPhase::Idle;
-                }
-                else if (m_qbPhase == QBPhase::CancelPlacement)
-                {
-                    // Wait for ESC to take effect Ã¢â‚¬â€ placement deactivates
-                    if (!isPlacementActive())
-                    {
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: placement cancelled ({}ms)\n"), elapsed);
-                        m_qbRetryTime = now;
-                        if (isBuildTabShowing())
-                        {
-                            // Build menu still showing after ESC -- skip close/reopen
-                            // cycle and select directly. Avoids cumulative Slate widget
-                            // churn (each open/close destroys/recreates ~300-468 widgets)
-                            // that corrupts FHittestGrid::AddWidget during rapid F-key switching.
-                            QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu still open -- skipping to SelectRecipe\n"));
-                            m_qbPhase = QBPhase::SelectRecipe;
-                        }
-                        else
-                        {
-                            // Menu already closed Ã¢â‚¬â€ open fresh
-                            m_buildTabAfterShowFired = false;
-                            keybd_event(0x42, 0, 0, 0);
-                            keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                            m_qbPhase = QBPhase::OpenMenu;
-                        }
-                    }
-                }
-                else if (m_qbPhase == QBPhase::CloseMenu)
-                {
-                    // Wait for build tab to close, then pause for Slate cleanup
-                    if (!isBuildTabShowing())
-                    {
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu closed ({}ms) -- waiting {} frames\n"), elapsed, m_quickBuildSwapDelay);
-                        m_qbRetryTime = now;
-                        m_qbWaitCount = m_quickBuildSwapDelay;
-                        m_qbPhase = QBPhase::WaitReopen;
-                    }
-                }
-                else if (m_qbPhase == QBPhase::WaitReopen)
-                {
-                    // Wait for both: (1) frame countdown to expire AND (2) 250ms since last
-                    // Show/Hide to prevent MovieScene re-entrancy crashes.
-                    //
-                    // The B key bypasses showBuildTab()'s cooldown (it goes through the game's
-                    // input system, not our API wrapper). Without this cooldown check, the gap
-                    // between hideBuildTab() and the B-key Show was only ~156ms — well under
-                    // 250ms — causing UUMGSequenceTickManager::TickWidgetAnimations() to crash
-                    // with a null UObject access in SavePreAnimatedState().
-                    //
-                    // We also update m_lastShowHideTime here so that subsequent Show/Hide calls
-                    // from other code paths respect the cooldown relative to this B-key open.
-                    //
-                    // HISTORY (v2.8 debugging):
-                    //   Initially used isBuildTabAnimating() instead of the 250ms check. This
-                    //   caused the SM to timeout at 2.5s because Hide()'s animation keeps
-                    //   playing and isBuildTabAnimating() never returned false. The user had
-                    //   to press F-keys 3-4 times before one would succeed.
-                    if (--m_qbWaitCount <= 0 && (now - m_lastShowHideTime >= 350)) // originally 250ms
-                    {
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: wait complete ({}ms) -- opening fresh via B key\n"), elapsed);
-                        m_qbRetryTime = now;
-                        m_lastShowHideTime = now; // B key triggers Show — update cooldown
-                        m_buildTabAfterShowFired = false;
-                        keybd_event(0x42, 0, 0, 0);
-                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                        m_qbPhase = QBPhase::OpenMenu;
-                    }
-                }
-                else if (m_qbPhase == QBPhase::PrimeOpen)
-                {
-                    // Wait for OnAfterShow signal (definitive "ready" from FGK lifecycle)
-                    if (m_buildTabAfterShowFired)
-                    {
-                        // Menu is already open and widgets are ready Ã¢â‚¬â€ go straight to select
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: prime complete via OnAfterShow ({}ms) Ã¢â‚¬â€ selecting recipe\n"), elapsed);
-                        m_buildTabAfterShowFired = false;
-                        m_buildMenuPrimed = true;
-                        m_qbRetryTime = now;
-                        m_qbPhase = QBPhase::SelectRecipe;
-                    }
-                    else if (isBuildTabShowing() && sinceLast > 2000)
-                    {
-                        // Fallback: 2s elapsed since B key with tab showing but no OnAfterShow
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: prime complete via fallback ({}ms) Ã¢â‚¬â€ selecting recipe\n"), elapsed);
-                        m_buildMenuPrimed = true;
-                        m_qbRetryTime = now;
-                        m_qbPhase = QBPhase::SelectRecipe;
-                    }
-                    else if (!isBuildTabShowing() && sinceLast > 500) // originally 417ms
-                    {
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: prime retrying B key ({}ms since last)\n"), sinceLast);
-                        keybd_event(0x42, 0, 0, 0);
-                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                        m_qbRetryTime = now;
-                    }
-                }
-                else if (m_qbPhase == QBPhase::OpenMenu)
-                {
-                    if (m_buildTabAfterShowFired || isBuildTabShowing())
-                    {
-                        // Menu visible Ã¢â‚¬â€ advance to recipe selection
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu ready ({}ms) Ã¢â‚¬â€ selecting recipe\n"), elapsed);
-                        m_buildTabAfterShowFired = false;
-                        m_qbRetryTime = now;
-                        m_qbPhase = QBPhase::SelectRecipe;
-                        // Fall through to SelectRecipe on same tick
-                    }
-                    else if (sinceLast > 500) // originally 417ms
-                    {
-                        // Retry B key (opens full HUD chain)
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: retrying B key ({}ms since last)\n"), sinceLast);
-                        m_buildTabAfterShowFired = false;
-                        keybd_event(0x42, 0, 0, 0);
-                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                        m_qbRetryTime = now;
-                    }
-                }
-
-                if (m_qbPhase == QBPhase::SelectRecipe)
-                {
-                    UObject* buildTab = getCachedBuildTab();
-                    if (!buildTab)
-                    {
-                        // Build tab lost Ã¢â‚¬â€ keep waiting (global timeout handles failure)
-                    }
-                    else
-                    {
-                        SelectResult result = selectRecipeOnBuildTab(buildTab, m_pendingQuickBuildSlot);
-                        if (result == SelectResult::Found)
-                        {
-                            // Success Ã¢â‚¬â€ reset total rotation for new build placement
-                            s_overlay.totalRotation = 0;
-                            s_overlay.needsUpdate = true;
-                            updateMcRotationLabel();
-                            m_pendingQuickBuildSlot = -1;
-                            m_qbPhase = QBPhase::Idle;
-                            m_lastQBSelectTime = now;
-                        }
-                        else if (result == SelectResult::NotFound)
-                        {
-                            // Widgets loaded but recipe not in menu Ã¢â‚¬â€ fail immediately
-                            QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: recipe not found ({}ms)\n"), elapsed);
-                            const std::wstring& targetName = m_recipeSlots[m_pendingQuickBuildSlot].displayName;
-                            showOnScreen((L"Recipe '" + targetName + L"' not found in menu!").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
-                            m_pendingQuickBuildSlot = -1;
-                            m_qbPhase = QBPhase::Idle;
-                        }
-                        // else Loading: widgets not yet created, keep retrying (global timeout handles failure)
-                    }
-                }
-            }
+            // Placement state machines (quickbuild + target-build)
+            placementTick();
 
             // Toolbar swap state machine: one item per tick
             swapToolbarTick();
 
-            // Ã¢â€â‚¬Ã¢â€â‚¬ Reactive target-build state machine (Shift+F10 Ã¢â€ â€™ build from targeted actor) Ã¢â€â‚¬Ã¢â€â‚¬
-            if (m_tbPhase != QBPhase::Idle)
-            {
-                ULONGLONG now = GetTickCount64();
-                ULONGLONG elapsed = now - m_tbStartTime;
-                ULONGLONG sinceLast = now - m_tbRetryTime;
-
-                // Global safety timeout (5s during prime, 2.5s normal)
-                ULONGLONG tbMaxTime = m_buildMenuPrimed ? 2500 : 5000;
-                if (elapsed > tbMaxTime)
-                {
-                    QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: TIMEOUT at {}ms phase {}\n"),
-                                                    elapsed, static_cast<int>(m_tbPhase));
-                    showOnScreen(Loc::get("msg.build_menu_timeout").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
-                    hideBuildTab();
-                    m_pendingTargetBuild = false;
-                    m_tbPhase = QBPhase::Idle;
-                }
-                else if (m_tbPhase == QBPhase::CancelPlacement)
-                {
-                    // Wait for ESC to take effect Ã¢â‚¬â€ placement deactivates
-                    if (!isPlacementActive())
-                    {
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: placement cancelled ({}ms)\n"), elapsed);
-                        m_tbRetryTime = now;
-                        if (isBuildTabShowing())
-                        {
-                            // Build menu still showing after ESC -- skip close/reopen
-                            // cycle (same widget churn fix as QB CancelPlacement above).
-                            QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu still open -- skipping to SelectRecipe\n"));
-                            m_tbPhase = QBPhase::SelectRecipe;
-                        }
-                        else
-                        {
-                            // Menu already closed Ã¢â‚¬â€ open fresh
-                            m_buildTabAfterShowFired = false;
-                            keybd_event(0x42, 0, 0, 0);
-                            keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                            m_tbPhase = QBPhase::OpenMenu;
-                        }
-                    }
-                }
-                else if (m_tbPhase == QBPhase::CloseMenu)
-                {
-                    // Wait for build tab to close, then pause for Slate cleanup
-                    if (!isBuildTabShowing())
-                    {
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu closed ({}ms) -- waiting {} frames\n"), elapsed, m_quickBuildSwapDelay);
-                        m_tbRetryTime = now;
-                        m_tbWaitCount = m_quickBuildSwapDelay;
-                        m_tbPhase = QBPhase::WaitReopen;
-                    }
-                }
-                else if (m_tbPhase == QBPhase::WaitReopen)
-                {
-                    // Same cooldown guard as QB WaitReopen — see comments there.
-                    if (--m_tbWaitCount <= 0 && (now - m_lastShowHideTime >= 350)) // originally 250ms
-                    {
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: wait complete ({}ms) -- opening fresh\n"), elapsed);
-                        m_tbRetryTime = now;
-                        m_lastShowHideTime = now; // B key triggers Show — update cooldown
-                        m_buildTabAfterShowFired = false;
-                        keybd_event(0x42, 0, 0, 0);
-                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                        m_tbPhase = QBPhase::OpenMenu;
-                    }
-                }
-                else if (m_tbPhase == QBPhase::PrimeOpen)
-                {
-                    // Wait for OnAfterShow signal (definitive "ready" from FGK lifecycle)
-                    if (m_buildTabAfterShowFired)
-                    {
-                        // Menu is already open and widgets are ready Ã¢â‚¬â€ go straight to select
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: prime complete via OnAfterShow ({}ms) Ã¢â‚¬â€ selecting recipe\n"), elapsed);
-                        m_buildTabAfterShowFired = false;
-                        m_buildMenuPrimed = true;
-                        m_tbRetryTime = now;
-                        m_tbPhase = QBPhase::SelectRecipe;
-                    }
-                    else if (isBuildTabShowing() && sinceLast > 2000)
-                    {
-                        // Fallback: 2s elapsed since B key with tab showing but no OnAfterShow
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: prime complete via fallback ({}ms) Ã¢â‚¬â€ selecting recipe\n"), elapsed);
-                        m_buildMenuPrimed = true;
-                        m_tbRetryTime = now;
-                        m_tbPhase = QBPhase::SelectRecipe;
-                    }
-                    else if (!isBuildTabShowing() && sinceLast > 500) // originally 417ms
-                    {
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: prime retrying B key ({}ms since last)\n"), sinceLast);
-                        keybd_event(0x42, 0, 0, 0);
-                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                        m_tbRetryTime = now;
-                    }
-                }
-                else if (m_tbPhase == QBPhase::OpenMenu)
-                {
-                    if (m_buildTabAfterShowFired || isBuildTabShowing())
-                    {
-                        // Menu visible Ã¢â‚¬â€ advance to recipe selection
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu ready ({}ms) Ã¢â‚¬â€ selecting recipe\n"), elapsed);
-                        m_buildTabAfterShowFired = false;
-                        m_tbRetryTime = now;
-                        m_tbPhase = QBPhase::SelectRecipe;
-                        // Fall through to SelectRecipe on same tick
-                    }
-                    else if (sinceLast > 500) // originally 417ms
-                    {
-                        // Retry B key (opens full HUD chain)
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: retrying B key ({}ms since last)\n"), sinceLast);
-                        m_buildTabAfterShowFired = false;
-                        keybd_event(0x42, 0, 0, 0);
-                        keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                        m_tbRetryTime = now;
-                    }
-                }
-
-                if (m_tbPhase == QBPhase::SelectRecipe)
-                {
-                    UObject* buildTab = getCachedBuildTab();
-                    if (!buildTab)
-                    {
-                        // Build tab lost Ã¢â‚¬â€ keep waiting (global timeout handles failure)
-                    }
-                    else
-                    {
-                        SelectResult result = selectRecipeByTargetName(buildTab);
-                        if (result == SelectResult::Found)
-                        {
-                            // Reset total rotation for new build placement
-                            s_overlay.totalRotation = 0;
-                            s_overlay.needsUpdate = true;
-                            updateMcRotationLabel();
-                            m_pendingTargetBuild = false;
-                            m_tbPhase = QBPhase::Idle;
-                        }
-                        else if (result == SelectResult::NotFound)
-                        {
-                            // Widgets loaded but target recipe not in menu Ã¢â‚¬â€ fail immediately
-                            QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: recipe not found ({}ms)\n"), elapsed);
-                            m_pendingTargetBuild = false;
-                            m_tbPhase = QBPhase::Idle;
-                        }
-                        // else Loading: widgets not yet created, keep retrying (global timeout handles failure)
-                    }
-                }
-            }
 
             if (!m_replayActive) return;
             m_frameCounter++;
@@ -2028,11 +1726,10 @@ namespace MoriaMods
                     m_cachedBuildTab = nullptr;
                     m_fnIsVisible = nullptr;
                     m_bpShowMouseCursor = nullptr;
-                    m_qbPhase = QBPhase::Idle;
-                    m_tbPhase = QBPhase::Idle;
+                    m_qbPhase = PlacePhase::Idle;
+                    m_isTargetBuild = false;
                     m_handleResolvePhase = HandleResolvePhase::None; // re-resolve after next load
                     m_pendingQuickBuildSlot = -1;
-                    m_pendingTargetBuild = false;
                     m_hasLastCapture = false;           // bLock data stale in new world
                     m_hasLastHandle = false;            // recipe handle stale in new world
                     m_lastCapturedName.clear();

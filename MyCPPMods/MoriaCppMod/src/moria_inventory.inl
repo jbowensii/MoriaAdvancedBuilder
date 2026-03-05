@@ -70,18 +70,17 @@
 
             // Build IDÃ¢â€ â€™className map from Items.List
             // FItemInstance struct internals (CXXHeaderDump FGK.hpp:1723, verified):
-            constexpr int ITEMINSTANCE_SIZE = 0x30;        // sizeof(FItemInstance)
-            constexpr int ITEM_CLASS_OFF = 0x10;           // FItemInstance::Item (TSubclassOf)
-            constexpr int ITEM_ID_OFF = 0x20;              // FItemInstance::ID (int32)
-            // Internal TArray offset within FItemInstanceArray (FFastArraySerializer::Items)
-            constexpr int ITEMS_ARRAY_INTERNAL_OFFSET = 0x110;
+            // Struct offsets resolved via probeItemInstanceStruct() on first use
 
             // Resolve Items property offset on UInventoryComponent dynamically
             static int s_off_invItems = -2;
             if (s_off_invItems == -2)
+            {
                 resolveOffset(invComp, L"Items", s_off_invItems);
+                probeItemInstanceStruct(invComp);
+            }
             int itemsListOffset = (s_off_invItems >= 0)
-                ? s_off_invItems + ITEMS_ARRAY_INTERNAL_OFFSET
+                ? s_off_invItems + iiaListOff()
                 : 0x0330; // fallback to original hardcoded value
 
             uint8_t* invBase = reinterpret_cast<uint8_t*>(invComp);
@@ -95,13 +94,13 @@
 
             std::unordered_map<int32_t, std::wstring> idToClass;
             UObject* bodyInvClass = nullptr; // save BodyInventory UClass* for creating stash containers
-            if (itemsList.Data && itemsList.Num > 0 && itemsList.Num < 500 && isReadableMemory(itemsList.Data, itemsList.Num * ITEMINSTANCE_SIZE))
+            if (itemsList.Data && itemsList.Num > 0 && itemsList.Num < 500 && isReadableMemory(itemsList.Data, itemsList.Num * iiSize()))
             {
                 for (int i = 0; i < itemsList.Num; i++)
                 {
-                    uint8_t* entry = itemsList.Data + i * ITEMINSTANCE_SIZE;
-                    int32_t id = *reinterpret_cast<int32_t*>(entry + ITEM_ID_OFF);
-                    UObject* cls = *reinterpret_cast<UObject**>(entry + ITEM_CLASS_OFF);
+                    uint8_t* entry = itemsList.Data + i * iiSize();
+                    int32_t id = *reinterpret_cast<int32_t*>(entry + iiIDOff());
+                    UObject* cls = *reinterpret_cast<UObject**>(entry + iiItemOff());
                     if (cls && isReadableMemory(cls, 64))
                     {
                         try

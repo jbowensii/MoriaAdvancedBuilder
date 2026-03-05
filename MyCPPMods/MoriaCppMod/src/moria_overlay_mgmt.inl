@@ -229,10 +229,9 @@
                 auto* widgetTree = UObjectGlobals::StaticConstructObject(wtP);
                 if (widgetTree)
                 {
-                    // Set WidgetTree on UserWidget via reflected offset
-                    if (s_off_widgetTree == -2) resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
-                    if (s_off_widgetTree >= 0)
-                        *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + s_off_widgetTree) = widgetTree;
+                    // Set WidgetTree on UserWidget via reflected property
+                    auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+                    if (wtSlot) *wtSlot = widgetTree;
 
                     // Create a TextBlock as root
                     auto* tbClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
@@ -339,8 +338,8 @@
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) return;
 
-            int wtOff = resolveOffset(userWidget, L"WidgetTree", s_off_widgetTree);
-            UObject* widgetTree = (wtOff >= 0) ? *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(userWidget) + wtOff) : nullptr;
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
             // Root SizeBox -- matches real Target Info widget structure (width constraint 550)

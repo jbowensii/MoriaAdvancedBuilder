@@ -9,6 +9,7 @@
 
 #include "moria_common.h"
 #include <Unreal/Property/FArrayProperty.hpp>
+#include <Unreal/FField.hpp>
 
 namespace MoriaMods
 {
@@ -46,6 +47,62 @@ namespace MoriaMods
     inline int s_off_fontTypefaceName = -2;    // FSlateFontInfo::TypefaceFontName (probed)
     inline int s_off_fontSize = -2;            // FSlateFontInfo::Size (probed)
     inline int s_off_texParamValue = -2;       // FTextureParameterValue::ParameterValue (probed)
+
+    // FMorRecipeBlock struct field offsets (probed from bLock property's UScriptStruct)
+    inline int s_off_rbVariants = -2;          // FMorRecipeBlock::Variants (TArray offset within struct)
+    inline int s_off_rbTag = -2;               // FMorRecipeBlock::Tag (FGameplayTag)
+
+    // FMorConstructionRecipeDefinition nested offsets (probed from Variants inner type)
+    inline int s_off_varResultHandle = -2;     // FMorConstructionRecipeDefinition::ResultConstructionHandle
+    inline int s_off_rhRowName = -2;           // FDataTableRowHandle::RowName (FName, within ResultConstructionHandle)
+    inline int s_off_variantEntrySize = -2;    // sizeof(FMorConstructionRecipeDefinition) element stride
+
+    // FItemInstance struct field offsets (probed from Items property inner type)
+    inline int s_off_iiItem = -2;              // FItemInstance::Item (TSubclassOf)
+    inline int s_off_iiID = -2;               // FItemInstance::ID (int32)
+    inline int s_off_iiSize = -2;             // sizeof(FItemInstance) element stride
+
+    // FItemInstanceArray::List internal offset (probed from Items struct)
+    inline int s_off_iiaList = -2;            // FItemInstanceArray::List (TArray offset within FFastArraySerializer-derived struct)
+
+    // (FScriptArrayHelper unavailable — ScriptArrayHelper.hpp has broken include in this UE4SS build)
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // Resolved Struct-Internal Offsets — use probed value if available, else constant
+    // These replace direct use of hardcoded constants throughout the codebase.
+    // ════════════════════════════════════════════════════════════════════════════
+    inline int brushImageSizeX() { return (s_off_brushImageSize >= 0) ? s_off_brushImageSize     : BRUSH_IMAGE_SIZE_X; }
+    inline int brushImageSizeY() { return (s_off_brushImageSize >= 0) ? s_off_brushImageSize + 4 : BRUSH_IMAGE_SIZE_Y; }
+    inline int brushResourceObj(){ return (s_off_brushResourceObj >= 0) ? s_off_brushResourceObj  : BRUSH_RESOURCE_OBJECT; }
+    inline int fontTypefaceName(){ return (s_off_fontTypefaceName >= 0) ? s_off_fontTypefaceName  : FONT_TYPEFACE_NAME; }
+    inline int fontSizeOff()     { return (s_off_fontSize >= 0)         ? s_off_fontSize          : FONT_SIZE; }
+    inline int fontStructSize()  { return FONT_STRUCT_SIZE; } // no probed alternative yet
+    inline int texParamValueOff(){ return (s_off_texParamValue >= 0)    ? s_off_texParamValue     : TEX_PARAM_VALUE_PTR; }
+
+    // FMorRecipeBlock field accessors (probed value or hardcoded fallback)
+    inline int rbVariantsOff()   { return (s_off_rbVariants >= 0)      ? s_off_rbVariants        : RECIPE_BLOCK_VARIANTS; }
+    inline int rbVariantsNumOff(){ return (s_off_rbVariants >= 0)      ? s_off_rbVariants + 8    : RECIPE_BLOCK_VARIANTS_NUM; }
+
+    // FMorConstructionRecipeDefinition::ResultConstructionHandle.RowName offsets
+    inline int variantRowCIOff() {
+        if (s_off_varResultHandle >= 0 && s_off_rhRowName >= 0)
+            return s_off_varResultHandle + s_off_rhRowName;
+        return VARIANT_ROW_CI;
+    }
+    inline int variantRowNumOff() {
+        if (s_off_varResultHandle >= 0 && s_off_rhRowName >= 0)
+            return s_off_varResultHandle + s_off_rhRowName + 4;
+        return VARIANT_ROW_NUM;
+    }
+    inline int variantEntrySize() { return (s_off_variantEntrySize >= 0) ? s_off_variantEntrySize : VARIANT_ENTRY_SIZE; }
+
+    // FItemInstance field accessors (probed value or hardcoded fallback)
+    inline int iiItemOff()  { return (s_off_iiItem >= 0)  ? s_off_iiItem : 0x10; }
+    inline int iiIDOff()    { return (s_off_iiID >= 0)    ? s_off_iiID   : 0x20; }
+    inline int iiSize()     { return (s_off_iiSize >= 0)  ? s_off_iiSize : 0x30; }
+
+    // FItemInstanceArray::List offset accessor
+    inline int iiaListOff() { return (s_off_iiaList >= 0) ? s_off_iiaList : 0x110; }
 
     // ════════════════════════════════════════════════════════════════════════════
     // Property Offset Resolution
@@ -288,12 +345,141 @@ namespace MoriaMods
         if (s_off_texParamValue == -2) s_off_texParamValue = -1; // mark as not found
     }
 
-    // Set UWidgetTree::RootWidget via reflected offset
+    // Probe FMorRecipeBlock struct fields from the bLock FStructProperty.
+    // Resolves Variants TArray offset and inner entry offsets for ResultConstructionHandle.RowName.
+    inline void probeRecipeBlockStruct(UObject* widget)
+    {
+        if (s_off_rbVariants != -2) return; // already probed
+        s_off_rbVariants = -1;
+        s_off_rbTag = -1;
+        s_off_varResultHandle = -1;
+        s_off_rhRowName = -1;
+        s_off_variantEntrySize = -1;
+
+        // Get the bLock FStructProperty from the widget
+        FProperty* bLockProp = widget->GetPropertyByNameInChain(STR("bLock"));
+        if (!bLockProp)
+        {
+            VLOG(STR("[MoriaCppMod] [Validate] probeRecipeBlockStruct: bLock property not found\n"));
+            return;
+        }
+        auto* structProp = static_cast<FStructProperty*>(bLockProp);
+        UScriptStruct* recipeBlockStruct = structProp->GetStruct();
+        if (!recipeBlockStruct)
+        {
+            VLOG(STR("[MoriaCppMod] [Validate] probeRecipeBlockStruct: UScriptStruct null\n"));
+            return;
+        }
+
+        // Resolve FMorRecipeBlock fields: Tag, Variants
+        resolveStructFieldOffset(recipeBlockStruct, L"Tag", s_off_rbTag);
+        resolveStructFieldOffset(recipeBlockStruct, L"Variants", s_off_rbVariants);
+
+        VLOG(STR("[MoriaCppMod] [Validate] FMorRecipeBlock: Tag@0x{:02X} Variants@0x{:02X} (expected Tag@0x00 Variants@0x{:02X})\n"),
+             s_off_rbTag >= 0 ? s_off_rbTag : 0,
+             s_off_rbVariants >= 0 ? s_off_rbVariants : RECIPE_BLOCK_VARIANTS,
+             RECIPE_BLOCK_VARIANTS);
+
+        // Now probe the Variants TArray inner type: FMorConstructionRecipeDefinition
+        for (auto* prop : recipeBlockStruct->ForEachProperty())
+        {
+            if (prop->GetName() == std::wstring_view(L"Variants"))
+            {
+                auto* arrProp = static_cast<FArrayProperty*>(prop);
+                FProperty* inner = arrProp->GetInner();
+                if (!inner) break;
+                auto* innerStructProp = static_cast<FStructProperty*>(inner);
+                UScriptStruct* variantStruct = innerStructProp->GetStruct();
+                if (!variantStruct) break;
+
+                s_off_variantEntrySize = variantStruct->GetPropertiesSize();
+
+                // Find ResultConstructionHandle offset within the variant entry
+                resolveStructFieldOffset(variantStruct, L"ResultConstructionHandle", s_off_varResultHandle);
+
+                VLOG(STR("[MoriaCppMod] [Validate] FMorConstructionRecipeDefinition: size=0x{:X} ResultConstructionHandle@0x{:02X} (expected @0xD8)\n"),
+                     s_off_variantEntrySize, s_off_varResultHandle >= 0 ? s_off_varResultHandle : 0xD8);
+
+                // Probe ResultConstructionHandle struct for RowName offset
+                if (s_off_varResultHandle >= 0)
+                {
+                    for (auto* vProp : variantStruct->ForEachProperty())
+                    {
+                        if (vProp->GetName() == std::wstring_view(L"ResultConstructionHandle"))
+                        {
+                            auto* handleStructProp = static_cast<FStructProperty*>(vProp);
+                            UScriptStruct* handleStruct = handleStructProp->GetStruct();
+                            if (handleStruct)
+                            {
+                                resolveStructFieldOffset(handleStruct, L"RowName", s_off_rhRowName);
+                                VLOG(STR("[MoriaCppMod] [Validate] FDataTableRowHandle: RowName@0x{:02X} (expected @0x08)\n"),
+                                     s_off_rhRowName >= 0 ? s_off_rhRowName : 0x08);
+                            }
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    // Probe FItemInstance and FItemInstanceArray struct fields from the Items property.
+    inline void probeItemInstanceStruct(UObject* invComp)
+    {
+        if (s_off_iiItem != -2) return; // already probed
+        s_off_iiItem = -1;
+        s_off_iiID = -1;
+        s_off_iiSize = -1;
+        s_off_iiaList = -1;
+
+        // Get the Items FStructProperty from UInventoryComponent
+        FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
+        if (!itemsProp)
+        {
+            VLOG(STR("[MoriaCppMod] [Validate] probeItemInstanceStruct: Items property not found\n"));
+            return;
+        }
+        auto* itemsStructProp = static_cast<FStructProperty*>(itemsProp);
+        UScriptStruct* iiaStruct = itemsStructProp->GetStruct();
+        if (!iiaStruct)
+        {
+            VLOG(STR("[MoriaCppMod] [Validate] probeItemInstanceStruct: FItemInstanceArray struct null\n"));
+            return;
+        }
+
+        // Resolve FItemInstanceArray::List offset
+        resolveStructFieldOffset(iiaStruct, L"List", s_off_iiaList);
+        VLOG(STR("[MoriaCppMod] [Validate] FItemInstanceArray: List@0x{:02X} (expected @0x110)\n"),
+             s_off_iiaList >= 0 ? s_off_iiaList : 0x110);
+
+        // Probe the List TArray inner type: FItemInstance
+        for (auto* prop : iiaStruct->ForEachProperty())
+        {
+            if (prop->GetName() == std::wstring_view(L"List"))
+            {
+                auto* arrProp = static_cast<FArrayProperty*>(prop);
+                FProperty* inner = arrProp->GetInner();
+                if (!inner) break;
+                auto* innerStructProp = static_cast<FStructProperty*>(inner);
+                UScriptStruct* iiStruct = innerStructProp->GetStruct();
+                if (!iiStruct) break;
+
+                s_off_iiSize = iiStruct->GetPropertiesSize();
+                resolveStructFieldOffset(iiStruct, L"Item", s_off_iiItem);
+                resolveStructFieldOffset(iiStruct, L"ID", s_off_iiID);
+                VLOG(STR("[MoriaCppMod] [Validate] FItemInstance: size=0x{:02X} Item@0x{:02X} ID@0x{:02X} (expected size=0x30 Item@0x10 ID@0x20)\n"),
+                     s_off_iiSize, s_off_iiItem >= 0 ? s_off_iiItem : 0x10, s_off_iiID >= 0 ? s_off_iiID : 0x20);
+                break;
+            }
+        }
+    }
+
+    // Set UWidgetTree::RootWidget via reflected property
     inline void setRootWidget(UObject* widgetTree, UObject* root)
     {
-        int off = resolveOffset(widgetTree, L"RootWidget", s_off_rootWidget);
-        if (off >= 0)
-            *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(widgetTree) + off) = root;
+        auto* slot = widgetTree->GetValuePtrByPropertyNameInChain<UObject*>(STR("RootWidget"));
+        if (slot) *slot = root;
     }
 
     // Resolve a UProperty offset + property size by name (for runtime struct size validation)
