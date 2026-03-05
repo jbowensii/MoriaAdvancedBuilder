@@ -110,6 +110,12 @@
             return params.Ret;
         }
 
+        // FAILED APPROACH: stopBuildTabAnimations() calling StopAllAnimations() before
+        // blockSelectedEvent. Caused MovieScene re-entrancy error:
+        //   "An evaluation is already running on this linker, and re-entrancy isn't allowed"
+        // StopAllAnimations triggers a MovieScene flush, but on_update runs during the game
+        // tick where UUMGSequenceTickManager is already evaluating. Can't force-flush from here.
+
         // Open build tab via FGK Show() API (no B key toggle).
         // Rate-limited: 250ms cooldown prevents rapid Show/Hide cycling that causes
         // MovieScene re-entrancy crashes (UUMGSequenceTickManager::TickWidgetAnimations
@@ -130,7 +136,7 @@
         void showBuildTab()
         {
             ULONGLONG now = GetTickCount64();
-            if (now - m_lastShowHideTime < 250)
+            if (now - m_lastShowHideTime < 350) // originally 250ms
             {
                 QBLOG(STR("[MoriaCppMod] [QB] showBuildTab: SKIPPED ({}ms since last Show/Hide)\n"),
                       now - m_lastShowHideTime);
@@ -159,7 +165,7 @@
         void hideBuildTab()
         {
             ULONGLONG now = GetTickCount64();
-            if (now - m_lastShowHideTime < 250)
+            if (now - m_lastShowHideTime < 350) // originally 250ms
             {
                 QBLOG(STR("[MoriaCppMod] [QB] hideBuildTab: SKIPPED ({}ms since last Show/Hide)\n"),
                       now - m_lastShowHideTime);
@@ -1437,12 +1443,32 @@
                 return;
             }
 
-            // Guard: if a previous quickbuild is already in progress, skip
+            // Debounce: if SM is already running, just update the target slot.
+            // The in-flight cycle will pick up the latest slot when it reaches
+            // SelectRecipe, avoiding multiple blockSelectedEvent calls that each
+            // trigger game UI transitions (HideAllScreens -> StopAnimation)
+            // which corrupt MovieScene entity state cumulatively.
             if (m_qbPhase != QBPhase::Idle)
             {
-                QBLOG(STR("[MoriaCppMod] [QuickBuild] F{} pressed but phase {} active, ignoring\n"),
-                                                slot + 1, static_cast<int>(m_qbPhase));
+                QBLOG(STR("[MoriaCppMod] [QuickBuild] F{} pressed while phase {} active -- updating pending slot\n"),
+                                                        slot + 1, static_cast<int>(m_qbPhase));
+                m_pendingQuickBuildSlot = slot;
                 return;
+            }
+
+            // Post-completion cooldown: blockSelectedEvent triggers game UI transitions
+            // (ConstructionPlacement ability -> HideAllScreens -> StopAnimation) that
+            // need time to settle. Without this, rapid F-key presses cause cumulative
+            // MovieScene entity corruption in SavePreAnimatedState.
+            // Originally 300ms — increased to 500ms for additional settle time.
+            {
+                ULONGLONG now = GetTickCount64();
+                if (now - m_lastQBSelectTime < 500)
+                {
+                    QBLOG(STR("[MoriaCppMod] [QuickBuild] F{} cooldown ({}ms since last select)\n"),
+                          slot + 1, now - m_lastQBSelectTime);
+                    return;
+                }
             }
 
             QBLOG(STR("[MoriaCppMod] [QuickBuild] ACTIVATE F{} -> '{}' (charLoaded={} frameCounter={} hasHandle={})\n"),
@@ -1508,6 +1534,7 @@
                     {
                         m_isAutoSelecting = false;
                         m_lastDirectSelectTime = now;
+                        m_lastQBSelectTime = now;
                         // Hide build tab if it happens to be showing
                         if (isBuildTabShowing()) hideBuildTab();
                         const std::wstring& targetName = m_recipeSlots[slot].displayName;
@@ -1556,10 +1583,10 @@
             }
             else if (isBuildTabShowing())
             {
-                // Build menu is open Ã¢â‚¬â€ close it first, then reopen fresh
-                QBLOG(STR("[MoriaCppMod] [QuickBuild] Build tab already open Ã¢â‚¬â€ closing first\n"));
-                hideBuildTab();
-                m_qbPhase = QBPhase::CloseMenu;
+                // Build menu already open -- select directly (no close/reopen).
+                // Avoids cumulative Slate widget churn that corrupts FHittestGrid.
+                QBLOG(STR("[MoriaCppMod] [QuickBuild] Build tab already open -- skipping to SelectRecipe\n"));
+                m_qbPhase = QBPhase::SelectRecipe;
             }
             else
             {
@@ -1630,10 +1657,10 @@
             }
             else if (isBuildTabShowing())
             {
-                // Build menu is open Ã¢â‚¬â€ close it first, then reopen fresh
-                QBLOG(STR("[MoriaCppMod] [TargetBuild] Build tab already open Ã¢â‚¬â€ closing first\n"));
-                hideBuildTab();
-                m_tbPhase = QBPhase::CloseMenu;
+                // Build menu already open -- select directly (no close/reopen).
+                // Avoids cumulative Slate widget churn that corrupts FHittestGrid.
+                QBLOG(STR("[MoriaCppMod] [TargetBuild] Build tab already open -- skipping to SelectRecipe\n"));
+                m_tbPhase = QBPhase::SelectRecipe;
             }
             else
             {

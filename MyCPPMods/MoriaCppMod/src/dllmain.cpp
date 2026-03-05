@@ -333,6 +333,7 @@ namespace MoriaMods
         int m_handleResolveSlotIdx{0};          // which slot we're resolving next in Resolving phase
         ULONGLONG m_lastDirectSelectTime{0};    // cooldown: last SelectRecipe via DIRECT path (ms)
         ULONGLONG m_lastShowHideTime{0};        // cooldown: last Show()/Hide() on build tab (ms)
+        ULONGLONG m_lastQBSelectTime{0};        // cooldown: last blockSelectedEvent completion (ms)
 
         // Cached widget/component pointers for cheap state checks (invalidated on world unload)
         UObject* m_cachedBuildComp{nullptr}; // UMorBuildingComponent on player character
@@ -1596,7 +1597,7 @@ namespace MoriaMods
                     m_handleResolveSlotIdx = 0;
                     m_handleResolvePhase = HandleResolvePhase::Resolving;
                 }
-                else if (!isBuildTabShowing() && sinceLast > 417)
+                else if (!isBuildTabShowing() && sinceLast > 500) // originally 417ms
                 {
                     QBLOG(STR("[MoriaCppMod] [HandleResolve] Sending B key to prime build menu\n"));
                     m_buildTabAfterShowFired = false;
@@ -1711,9 +1712,12 @@ namespace MoriaMods
                         m_qbRetryTime = now;
                         if (isBuildTabShowing())
                         {
-                            // Build menu still showing after ESC Ã¢â‚¬â€ close it first
-                            hideBuildTab();
-                            m_qbPhase = QBPhase::CloseMenu;
+                            // Build menu still showing after ESC -- skip close/reopen
+                            // cycle and select directly. Avoids cumulative Slate widget
+                            // churn (each open/close destroys/recreates ~300-468 widgets)
+                            // that corrupts FHittestGrid::AddWidget during rapid F-key switching.
+                            QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: menu still open -- skipping to SelectRecipe\n"));
+                            m_qbPhase = QBPhase::SelectRecipe;
                         }
                         else
                         {
@@ -1755,7 +1759,7 @@ namespace MoriaMods
                     //   caused the SM to timeout at 2.5s because Hide()'s animation keeps
                     //   playing and isBuildTabAnimating() never returned false. The user had
                     //   to press F-keys 3-4 times before one would succeed.
-                    if (--m_qbWaitCount <= 0 && (now - m_lastShowHideTime >= 250))
+                    if (--m_qbWaitCount <= 0 && (now - m_lastShowHideTime >= 350)) // originally 250ms
                     {
                         QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: wait complete ({}ms) -- opening fresh via B key\n"), elapsed);
                         m_qbRetryTime = now;
@@ -1786,7 +1790,7 @@ namespace MoriaMods
                         m_qbRetryTime = now;
                         m_qbPhase = QBPhase::SelectRecipe;
                     }
-                    else if (!isBuildTabShowing() && sinceLast > 417)
+                    else if (!isBuildTabShowing() && sinceLast > 500) // originally 417ms
                     {
                         QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: prime retrying B key ({}ms since last)\n"), sinceLast);
                         keybd_event(0x42, 0, 0, 0);
@@ -1805,7 +1809,7 @@ namespace MoriaMods
                         m_qbPhase = QBPhase::SelectRecipe;
                         // Fall through to SelectRecipe on same tick
                     }
-                    else if (sinceLast > 417)
+                    else if (sinceLast > 500) // originally 417ms
                     {
                         // Retry B key (opens full HUD chain)
                         QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: retrying B key ({}ms since last)\n"), sinceLast);
@@ -1834,6 +1838,7 @@ namespace MoriaMods
                             updateMcRotationLabel();
                             m_pendingQuickBuildSlot = -1;
                             m_qbPhase = QBPhase::Idle;
+                            m_lastQBSelectTime = now;
                         }
                         else if (result == SelectResult::NotFound)
                         {
@@ -1879,9 +1884,10 @@ namespace MoriaMods
                         m_tbRetryTime = now;
                         if (isBuildTabShowing())
                         {
-                            // Build menu still showing after ESC Ã¢â‚¬â€ close it first
-                            hideBuildTab();
-                            m_tbPhase = QBPhase::CloseMenu;
+                            // Build menu still showing after ESC -- skip close/reopen
+                            // cycle (same widget churn fix as QB CancelPlacement above).
+                            QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: menu still open -- skipping to SelectRecipe\n"));
+                            m_tbPhase = QBPhase::SelectRecipe;
                         }
                         else
                         {
@@ -1906,8 +1912,8 @@ namespace MoriaMods
                 }
                 else if (m_tbPhase == QBPhase::WaitReopen)
                 {
-                    // Same 250ms cooldown guard as QB WaitReopen — see comments there.
-                    if (--m_tbWaitCount <= 0 && (now - m_lastShowHideTime >= 250))
+                    // Same cooldown guard as QB WaitReopen — see comments there.
+                    if (--m_tbWaitCount <= 0 && (now - m_lastShowHideTime >= 350)) // originally 250ms
                     {
                         QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: wait complete ({}ms) -- opening fresh\n"), elapsed);
                         m_tbRetryTime = now;
@@ -1938,7 +1944,7 @@ namespace MoriaMods
                         m_tbRetryTime = now;
                         m_tbPhase = QBPhase::SelectRecipe;
                     }
-                    else if (!isBuildTabShowing() && sinceLast > 417)
+                    else if (!isBuildTabShowing() && sinceLast > 500) // originally 417ms
                     {
                         QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: prime retrying B key ({}ms since last)\n"), sinceLast);
                         keybd_event(0x42, 0, 0, 0);
@@ -1957,7 +1963,7 @@ namespace MoriaMods
                         m_tbPhase = QBPhase::SelectRecipe;
                         // Fall through to SelectRecipe on same tick
                     }
-                    else if (sinceLast > 417)
+                    else if (sinceLast > 500) // originally 417ms
                     {
                         // Retry B key (opens full HUD chain)
                         QBLOG(STR("[MoriaCppMod] [TargetBuild] SM: retrying B key ({}ms since last)\n"), sinceLast);
