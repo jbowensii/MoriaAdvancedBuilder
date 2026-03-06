@@ -200,7 +200,7 @@ TEST_F(KeyHelperTest, IniKeyToBindIndex_AllKeys)
     EXPECT_EQ(iniKeyToBindIndex("StabilityCheck"), 10);
     EXPECT_EQ(iniKeyToBindIndex("SuperDwarf"), 11);
     EXPECT_EQ(iniKeyToBindIndex("ToolbarSwap"), 12);
-    EXPECT_EQ(iniKeyToBindIndex("Empty5"), 13);
+    EXPECT_EQ(iniKeyToBindIndex("SnapToggle"), 13);
     EXPECT_EQ(iniKeyToBindIndex("Empty6"), 14);
     EXPECT_EQ(iniKeyToBindIndex("Empty7"), 15);
     EXPECT_EQ(iniKeyToBindIndex("RemoveTarget"), 16);

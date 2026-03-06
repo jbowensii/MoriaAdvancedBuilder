@@ -64,14 +64,12 @@ namespace MoriaMods
     // Logging Macros
     // ════════════════════════════════════════════════════════════════════════════
 
-    // Verbose logging gate — when false (default), all VLOG() calls are short-circuited
-    // to avoid format-string overhead.  Set to true via config or code for debugging.
+    // Verbose logging gate (false = short-circuits all VLOG calls)
     inline bool s_verbose = false;
-    inline std::string s_language = "en"; // localization file (e.g. "en" loads en.json)
-    // NOLINTNEXTLINE(cppcoreguidelines-macro-usage) — macro needed to short-circuit variadic template
+    inline std::string s_language = "en";
+    // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
     #define VLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
 
-    // QuickBuild/TargetBuild logging — compile-time switch (0=off, 1=on)
     #define QUICKBUILD_LOGGING 1
     // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
     #if QUICKBUILD_LOGGING
@@ -81,15 +79,15 @@ namespace MoriaMods
     #endif
 
     // ════════════════════════════════════════════════════════════════════════════
-    // Mathematical Constants
+    // Constants
     // ════════════════════════════════════════════════════════════════════════════
     static constexpr float MY_PI = 3.14159265358979323846f;
     static constexpr float DEG2RAD = MY_PI / 180.0f;
-    static constexpr float TRACE_DIST = 5000.0f;   // 50m (was 500m — way too far)
-    static constexpr float POS_TOLERANCE = 100.0f; // 1 meter — game scale is huge (walls = 2000 units)
+    static constexpr float TRACE_DIST = 5000.0f;   // 50m
+    static constexpr float POS_TOLERANCE = 100.0f; // 1m in game units
 
     // ════════════════════════════════════════════════════════════════════════════
-    // Struct-Internal Offsets (POD struct internals, NOT resolvable via ForEachProperty)
+    // Struct-Internal Offsets (NOT resolvable via ForEachProperty)
     // ════════════════════════════════════════════════════════════════════════════
     static constexpr int BRUSH_IMAGE_SIZE_X = 0x08;     // FSlateBrush::ImageSize.X
     static constexpr int BRUSH_IMAGE_SIZE_Y = 0x0C;     // FSlateBrush::ImageSize.Y
@@ -107,7 +105,6 @@ namespace MoriaMods
     static constexpr int VK_BUILD_MENU = 0x42;          // Virtual key code for 'B' (build menu toggle)
     static constexpr int DT_ROWMAP_OFFSET = 0x30;       // UDataTable internal RowMap offset
     static constexpr int DT_ROW_ACTOR_FNAME = 0x60;     // FSoftObjectPath.AssetPathName within construction row
-    static constexpr int CAM_SETTINGS_BLOB_SIZE = 0x4C; // sizeof(FFGKCameraStateSettings) — 18 floats + FVector2D
 
     // ════════════════════════════════════════════════════════════════════════════
     // Raw UE4.27 Types (floats, not doubles)
@@ -155,7 +152,7 @@ namespace MoriaMods
 #pragma pack(pop)
     static_assert(sizeof(GetInstanceTransform_Params) == 66, "Must be 66 bytes");
 
-    // FHitResult — matches Engine.hpp:2742 (Size: 0x88 = 136 bytes)
+    // FHitResult (0x88 = 136 bytes, matches Engine.hpp:2742)
 #pragma pack(push, 1)
     struct FHitResultLocal
     {
@@ -183,7 +180,7 @@ namespace MoriaMods
 #pragma pack(pop)
     static_assert(sizeof(FHitResultLocal) == 0x88, "FHitResult must be 136 bytes");
 
-    // FItemHandle — matches FGK.hpp:1715 (Size: 0x14 = 20 bytes)
+    // FItemHandle (0x14 = 20 bytes, matches FGK.hpp:1715)
     struct FItemHandleLocal
     {
         int32_t ID;        // 0x00
@@ -196,8 +193,6 @@ namespace MoriaMods
     // Application Structs
     // ════════════════════════════════════════════════════════════════════════════
 
-    // SavedRemoval, RemovalEntry, extractFriendlyName — defined in moria_testable.h
-
     struct RemovedInstance
     {
         RC::Unreal::FWeakObjectPtr component;
@@ -208,7 +203,7 @@ namespace MoriaMods
         std::string typeRuleMeshId;
     };
 
-    // PrintString param offsets (discovered at runtime via probe)
+    // PrintString param offsets (runtime-discovered)
     struct PSOffsets
     {
         int worldContext{-1};
@@ -225,14 +220,13 @@ namespace MoriaMods
     // Win32 Overlay State
     // ════════════════════════════════════════════════════════════════════════════
 
-    // OVERLAY_BUILD_SLOTS (8) defined in moria_testable.h
-    static constexpr int OVERLAY_SLOTS = 12;      // F1-F12 total displayed in overlay
+    static constexpr int OVERLAY_SLOTS = 12;
 
     struct OverlaySlot
     {
-        std::wstring displayName;                   // recipe name (short)
-        std::wstring textureName;                   // e.g. "T_UI_BuildIcon_AdornedDoor"
-        std::shared_ptr<Gdiplus::Image> icon;       // loaded PNG icon (ref-counted for thread safety)
+        std::wstring displayName;
+        std::wstring textureName;
+        std::shared_ptr<Gdiplus::Image> icon;
         bool used{false};
     };
 
@@ -248,18 +242,16 @@ namespace MoriaMods
         OverlaySlot slots[OVERLAY_SLOTS]{};
         std::atomic<bool> csInit{false};
         ULONG_PTR gdipToken{0};
-        std::wstring iconFolder;                    // path to icon PNGs
-        std::atomic<int> rotationStep{5};           // current build rotation step in degrees (shown in F9)
-        std::atomic<int> totalRotation{0};          // cumulative build rotation 0-359° (shown in F9)
-        std::atomic<int> activeToolbar{0};          // which toolbar is visible (0/1/2) — shown in F12 slot
+        std::wstring iconFolder;
+        std::atomic<int> rotationStep{5};
+        std::atomic<int> totalRotation{0};
+        std::atomic<int> activeToolbar{0};
     };
     inline OverlayState s_overlay;
 
-    // Loc namespace core (s_table, utf8ToWide, parseJsonFile, initDefaults, get) — defined in moria_testable.h
-    // Loc::load() remains here because it uses UE4SS Output::send for logging.
     namespace Loc
     {
-        // Load string table: init defaults, then override from JSON file if available
+        // Load string table from JSON, falling back to compiled English defaults
         inline void load(const std::string& locDir, const std::string& lang = "en")
         {
             initDefaults();
@@ -284,25 +276,18 @@ namespace MoriaMods
 
     struct ConfigState
     {
-        // Cheat toggle states (read from debug menu actor on game thread)
         std::atomic<bool> freeBuild{false};
-
-        // Pending actions (set by UMG config UI, consumed by game thread in on_update)
         std::atomic<bool> pendingToggleFreeBuild{false};
         std::atomic<bool> pendingUnlockAllRecipes{false};
-
-        // Removal list (Building Options tab)
         CRITICAL_SECTION removalCS;
         std::atomic<bool> removalCSInit{false};
-        std::vector<RemovalEntry> removalEntries; // display snapshot, protected by removalCS
-        std::atomic<int> removalCount{0};         // quick count without lock
-
-        // Pending removal (set by UI thread, consumed by game thread)
+        std::vector<RemovalEntry> removalEntries;
+        std::atomic<int> removalCount{0};
         std::atomic<int> pendingRemoveIndex{-1};
     };
     inline ConfigState s_config{};
 
-    inline std::atomic<bool> s_pendingKeyLabelRefresh{false}; // cross-thread flag: config→game thread
+    inline std::atomic<bool> s_pendingKeyLabelRefresh{false};
 
     // ════════════════════════════════════════════════════════════════════════════
     // RAII CriticalSection Lock
@@ -310,7 +295,7 @@ namespace MoriaMods
     struct CriticalSectionLock
     {
         CRITICAL_SECTION& cs;
-        CriticalSectionLock(CRITICAL_SECTION& c) : cs(c) { EnterCriticalSection(&cs); }
+        explicit CriticalSectionLock(CRITICAL_SECTION& c) : cs(c) { EnterCriticalSection(&cs); }
         ~CriticalSectionLock() { LeaveCriticalSection(&cs); }
         CriticalSectionLock(const CriticalSectionLock&) = delete;
         CriticalSectionLock& operator=(const CriticalSectionLock&) = delete;

@@ -56,9 +56,7 @@ namespace MoriaMods
     static constexpr int OVERLAY_BUILD_SLOTS = 8;
 
     // ════════════════════════════════════════════════════════════════════════════
-    // Localization String Table
-    //   Flat JSON string table (en.json) with compiled English defaults.
-    //   Loc::get("key") returns const wstring& for zero-copy UI text.
+    // Localization String Table (flat JSON with compiled English defaults)
     // ════════════════════════════════════════════════════════════════════════════
 
     namespace Loc
@@ -77,8 +75,7 @@ namespace MoriaMods
             return w;
         }
 
-        // Minimal flat JSON parser: reads { "key": "value", ... } with escape support.
-        // No nesting, no arrays, no numbers — just string key-value pairs.
+        // Flat JSON parser: string key-value pairs only, with escape support
         static bool parseJsonFile(const std::string& path)
         {
             std::ifstream file(path, std::ios::binary);
@@ -307,7 +304,7 @@ namespace MoriaMods
             s_table["save.keybind_header"] = L"# MoriaCppMod keybindings (index|VK_code)";
         }
 
-        // Get localized string by key. Returns const ref — zero-copy at call sites.
+        // Get localized string by key (const ref, zero-copy)
         static const std::wstring& get(const char* key)
         {
             auto it = s_table.find(key);
@@ -325,8 +322,7 @@ namespace MoriaMods
     // String Helpers
     // ════════════════════════════════════════════════════════════════════════════
 
-    // Insert newlines into a prefixed string so each line fits within maxLine chars.
-    // Tries to break at word boundaries (space, underscore, slash, dash, backslash).
+    // Word-wrap a prefixed string to fit within maxLine chars
     static std::wstring wrapText(const std::wstring& prefix, const std::wstring& value, size_t maxLine = 70)
     {
         std::wstring full = prefix + value;
@@ -366,8 +362,7 @@ namespace MoriaMods
         return std::wstring(shortName.begin(), shortName.end());
     }
 
-    // Strips numeric suffix from UE4 component name to get stable mesh ID.
-    // e.g. "PWM_Quarry_2x2x2_A-..._2147476295" -> "PWM_Quarry_2x2x2_A-..."
+    // Strip numeric suffix from component name to get stable mesh ID
     static std::string componentNameToMeshId(const std::wstring& name)
     {
         std::string narrow;
@@ -519,7 +514,7 @@ namespace MoriaMods
     }
 
     // ════════════════════════════════════════════════════════════════════════════
-    // Reverse Key Name Mapping (INI support)
+    // Reverse Key Name Mapping
     // ════════════════════════════════════════════════════════════════════════════
 
     // Helper: case-insensitive wstring compare
@@ -559,7 +554,7 @@ namespace MoriaMods
             return static_cast<uint8_t>(0x60 + (name[3] - L'0'));
         }
 
-        // Numpad operators (hardcoded English — matches en.json Loc defaults)
+        // Numpad operators
         if (wstrEqualCI(name, L"Num*")) return 0x6A;
         if (wstrEqualCI(name, L"Num+")) return 0x6B;
         if (wstrEqualCI(name, L"NumSep")) return 0x6C;
@@ -594,7 +589,7 @@ namespace MoriaMods
                 return static_cast<uint8_t>(upper);
         }
 
-        // Special keys (hardcoded English — matches en.json Loc defaults)
+        // Special keys
         if (wstrEqualCI(name, L"Space")) return 0x20;
         if (wstrEqualCI(name, L"Tab")) return 0x09;
         if (wstrEqualCI(name, L"Enter")) return 0x0D;
@@ -779,9 +774,7 @@ namespace MoriaMods
     }
 
     // ════════════════════════════════════════════════════════════════════════════
-    // File Format Parse Helpers
-    //   Used by both production load methods and unit tests.
-    //   Each returns std::nullopt for lines that should be skipped.
+    // File Format Parse Helpers (shared by production and tests)
     // ════════════════════════════════════════════════════════════════════════════
 
     // Result types for parsed lines
@@ -799,7 +792,6 @@ namespace MoriaMods
     using ParsedRemovalLine = std::variant<std::monostate, ParsedRemovalPosition, ParsedRemovalTypeRule>;
 
     // Parse a single line from removed_instances.txt
-    // Returns monostate for skip (comment/empty), Position or TypeRule for valid data
     static ParsedRemovalLine parseRemovalLine(const std::string& line)
     {
         if (line.empty() || line[0] == '#') return std::monostate{};

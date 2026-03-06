@@ -57,7 +57,7 @@ namespace MoriaMods
 
     inline std::atomic<int> s_capturingBind{-1};
 
-    // Modifier key choice: VK_SHIFT (0x10), VK_CONTROL (0x11), VK_MENU (0x12 = ALT), or VK_RMENU (0xA5 = RALT)
+    // Active modifier key (SHIFT/CTRL/ALT/RALT)
     inline std::atomic<uint8_t> s_modifierVK{VK_SHIFT};
 
     // Config file paths
@@ -73,9 +73,7 @@ namespace MoriaMods
         return (GetAsyncKeyState(s_modifierVK.load()) & 0x8000) != 0;
     }
 
-    // When SHIFT is held with NumLock on, Windows reverses numpad keys:
-    // VK_NUMPAD0-9 become their navigation equivalents (Insert, End, Down, etc.)
-    // Returns the alternate VK code for a numpad key, or 0 if not a numpad key.
+    // SHIFT+NumLock reverses numpad keys to navigation equivalents; returns alternate VK or 0
     inline uint8_t numpadShiftAlternate(uint8_t vk)
     {
         switch (vk)
@@ -98,8 +96,7 @@ namespace MoriaMods
 
     inline HWND findGameWindow()
     {
-        // UE4 games use "UnrealWindow" window class
-        // Pick the LARGEST one in case there are multiple
+        // Find largest visible UnrealWindow
         struct FindData
         {
             HWND best;

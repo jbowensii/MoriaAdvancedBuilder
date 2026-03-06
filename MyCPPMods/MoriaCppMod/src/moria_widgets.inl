@@ -2309,17 +2309,6 @@
             UObject* outer = m_cfgRemovalVBox->GetOuterPrivate();
             if (!outer) outer = m_cfgRemovalVBox;
 
-            // Helper: add widget to VBox
-            auto addToVBox = [&](UObject* vbox, UObject* child) {
-                auto* fn = vbox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
-                if (!fn) return;
-                auto* pC2 = findParam(fn, STR("Content"));
-                int sz = fn->GetParmsSize();
-                std::vector<uint8_t> ap(sz, 0);
-                if (pC2) *reinterpret_cast<UObject**>(ap.data() + pC2->GetOffset_Internal()) = child;
-                vbox->ProcessEvent(fn, ap.data());
-            };
-
             // Clear existing entry rows (all children after the header)
             // Use ClearChildren then re-add header
             auto* clearFn = m_cfgRemovalVBox->GetFunctionByNameInChain(STR("ClearChildren"));
@@ -2347,10 +2336,6 @@
                     UObject* rowHBox = UObjectGlobals::StaticConstructObject(rowP);
                     if (!rowHBox) continue;
 
-                    auto* addToHFn = rowHBox->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
-                    if (!addToHFn) continue;
-                    auto* hbC = findParam(addToHFn, STR("Content"));
-
                     // Danger icon
                     if (texDanger && setBrushFn)
                     {
@@ -2360,10 +2345,7 @@
                         {
                             umgSetBrushNoMatch(dangerImg, texDanger, setBrushFn);
                             umgSetBrushSize(dangerImg, 56.0f, 56.0f);
-                            int sz = addToHFn->GetParmsSize();
-                            std::vector<uint8_t> ap(sz, 0);
-                            if (hbC) *reinterpret_cast<UObject**>(ap.data() + hbC->GetOffset_Internal()) = dangerImg;
-                            rowHBox->ProcessEvent(addToHFn, ap.data());
+                            addToHBox(rowHBox, dangerImg);
                         }
                     }
 
@@ -2395,10 +2377,7 @@
                             addToVBox(infoVBox, coordsTB);
                         }
 
-                        int sz = addToHFn->GetParmsSize();
-                        std::vector<uint8_t> ap(sz, 0);
-                        if (hbC) *reinterpret_cast<UObject**>(ap.data() + hbC->GetOffset_Internal()) = infoVBox;
-                        rowHBox->ProcessEvent(addToHFn, ap.data());
+                        addToHBox(rowHBox, infoVBox);
                     }
 
                     addToVBox(m_cfgRemovalVBox, rowHBox);
@@ -2483,10 +2462,6 @@
                 rootSizeBox->ProcessEvent(setSbContentFn, sc.data());
             }
 
-            auto* addToOverlayFn = rootOverlay->GetFunctionByNameInChain(STR("AddChildToOverlay"));
-            if (!addToOverlayFn) return;
-            auto* olC = findParam(addToOverlayFn, STR("Content"));
-
             // Layer 0: Vignette border image (tinted dark blue)
             UObject* texVignette = findTexture2DByName(L"T_UI_Waypoint_Vignette_White_Optimized");
             if (texVignette)
@@ -2510,10 +2485,7 @@
                             vigImg->ProcessEvent(setColorFn, cb.data());
                         }
                     }
-                    int sz = addToOverlayFn->GetParmsSize();
-                    std::vector<uint8_t> ap(sz, 0);
-                    if (olC) *reinterpret_cast<UObject**>(ap.data() + olC->GetOffset_Internal()) = vigImg;
-                    rootOverlay->ProcessEvent(addToOverlayFn, ap.data());
+                    addToOverlay(rootOverlay, vigImg);
                     m_cfgVignetteImage = vigImg;
                 }
             }
@@ -2552,12 +2524,7 @@
                 }
             }
             // Add border to overlay layer 1
-            {
-                int sz = addToOverlayFn->GetParmsSize();
-                std::vector<uint8_t> ap(sz, 0);
-                if (olC) *reinterpret_cast<UObject**>(ap.data() + olC->GetOffset_Internal()) = rootBorder;
-                rootOverlay->ProcessEvent(addToOverlayFn, ap.data());
-            }
+            addToOverlay(rootOverlay, rootBorder);
 
             // Main VBox inside the border
             FStaticConstructObjectParameters mainVP(vboxClass, outer);
@@ -2572,19 +2539,6 @@
                 if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = mainVBox;
                 rootBorder->ProcessEvent(setContentFn, sc.data());
             }
-
-            // Helper: add widget to a VBox, returns slot for further configuration
-            auto addToVBox = [&](UObject* vbox, UObject* child) -> UObject* {
-                auto* fn = vbox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
-                if (!fn) return nullptr;
-                auto* pC2 = findParam(fn, STR("Content"));
-                auto* pRV = findParam(fn, STR("ReturnValue"));
-                int sz = fn->GetParmsSize();
-                std::vector<uint8_t> ap(sz, 0);
-                if (pC2) *reinterpret_cast<UObject**>(ap.data() + pC2->GetOffset_Internal()) = child;
-                vbox->ProcessEvent(fn, ap.data());
-                return pRV ? *reinterpret_cast<UObject**>(ap.data() + pRV->GetOffset_Internal()) : nullptr;
-            };
 
             // Helper: create TextBlock with optional font size (0 = default)
             auto makeTB = [&](const std::wstring& text, float r, float g, float b, float a, int32_t fontSize = 0) -> UObject* {
@@ -2606,13 +2560,7 @@
 
             // Helper: add child to a ScrollBox (uses UPanelWidget::AddChild)
             auto addToScrollBox = [&](UObject* scrollBox, UObject* child) {
-                auto* fn = scrollBox->GetFunctionByNameInChain(STR("AddChild"));
-                if (!fn) return;
-                auto* pC2 = findParam(fn, STR("Content"));
-                int sz = fn->GetParmsSize();
-                std::vector<uint8_t> ap(sz, 0);
-                if (pC2) *reinterpret_cast<UObject**>(ap.data() + pC2->GetOffset_Internal()) = child;
-                scrollBox->ProcessEvent(fn, ap.data());
+                addChildToPanel(scrollBox, STR("AddChild"), child);
             };
 
             // Title
@@ -2633,7 +2581,6 @@
                 if (tabHBox)
                 {
                     addToVBox(mainVBox, tabHBox);
-                    auto* addToHBoxFn = tabHBox->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
                     const wchar_t* tabNames[3] = {CONFIG_TAB_NAMES[0], CONFIG_TAB_NAMES[1], CONFIG_TAB_NAMES[2]};
 
                     for (int t = 0; t < 3; t++)
@@ -2642,11 +2589,6 @@
                         FStaticConstructObjectParameters tolP(overlayClass, outer);
                         UObject* tabOl = UObjectGlobals::StaticConstructObject(tolP);
                         if (!tabOl) continue;
-
-                        auto* addToTabOlFn = tabOl->GetFunctionByNameInChain(STR("AddChildToOverlay"));
-                        if (!addToTabOlFn) continue;
-                        auto* tolC = findParam(addToTabOlFn, STR("Content"));
-                        auto* tolR = findParam(addToTabOlFn, STR("ReturnValue"));
 
                         // Layer 0: tab background image (sized to cover text)
                         FStaticConstructObjectParameters imgP(imageClass, outer);
@@ -2657,10 +2599,7 @@
                             UObject* tex = (t == 0) ? texP1 : texP2; // tab 0 active by default
                             if (tex) umgSetBrushNoMatch(tabImg, tex, setBrushFn);
                             umgSetBrushSize(tabImg, 420.0f, 66.0f);
-                            int sz = addToTabOlFn->GetParmsSize();
-                            std::vector<uint8_t> ap(sz, 0);
-                            if (tolC) *reinterpret_cast<UObject**>(ap.data() + tolC->GetOffset_Internal()) = tabImg;
-                            tabOl->ProcessEvent(addToTabOlFn, ap.data());
+                            addToOverlay(tabOl, tabImg);
                         }
 
                         // Layer 1: tab label text
@@ -2673,11 +2612,7 @@
                         m_cfgTabLabels[t] = tabLabel;
                         if (tabLabel)
                         {
-                            int sz = addToTabOlFn->GetParmsSize();
-                            std::vector<uint8_t> ap(sz, 0);
-                            if (tolC) *reinterpret_cast<UObject**>(ap.data() + tolC->GetOffset_Internal()) = tabLabel;
-                            tabOl->ProcessEvent(addToTabOlFn, ap.data());
-                            UObject* labelSlot = tolR ? *reinterpret_cast<UObject**>(ap.data() + tolR->GetOffset_Internal()) : nullptr;
+                            UObject* labelSlot = addToOverlay(tabOl, tabLabel);
                             if (labelSlot)
                             {
                                 auto* setHA = labelSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
@@ -2688,14 +2623,7 @@
                         }
 
                         // Add tab overlay to HBox
-                        if (addToHBoxFn)
-                        {
-                            auto* hbC = findParam(addToHBoxFn, STR("Content"));
-                            int sz = addToHBoxFn->GetParmsSize();
-                            std::vector<uint8_t> ap(sz, 0);
-                            if (hbC) *reinterpret_cast<UObject**>(ap.data() + hbC->GetOffset_Internal()) = tabOl;
-                            tabHBox->ProcessEvent(addToHBoxFn, ap.data());
-                        }
+                        addToHBox(tabHBox, tabOl);
                     }
                 }
             }
@@ -2739,17 +2667,15 @@
                         if (cbRow)
                         {
                             addToVBox(tab0VBox, cbRow);
-                            auto* addToHFn = cbRow->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
 
                             // Checkbox overlay: background + check mark
                             FStaticConstructObjectParameters olP(overlayClass, outer);
                             UObject* cbOl = UObjectGlobals::StaticConstructObject(olP);
-                            if (cbOl && addToHFn)
+                            if (cbOl)
                             {
-                                auto* addToOlFn = cbOl->GetFunctionByNameInChain(STR("AddChildToOverlay"));
                                 // Layer 0: checkbox background (always visible)
                                 UObject* texCB = findTexture2DByName(L"T_UI_Icon_Checkbox_DiamondBG");
-                                if (texCB && addToOlFn)
+                                if (texCB)
                                 {
                                     FStaticConstructObjectParameters imgP2(imageClass, outer);
                                     UObject* cbBgImg = UObjectGlobals::StaticConstructObject(imgP2);
@@ -2757,16 +2683,12 @@
                                     {
                                         umgSetBrushNoMatch(cbBgImg, texCB, setBrushFn);
                                         umgSetBrushSize(cbBgImg, 48.0f, 48.0f);
-                                        auto* pCC = findParam(addToOlFn, STR("Content"));
-                                        int sz = addToOlFn->GetParmsSize();
-                                        std::vector<uint8_t> ap(sz, 0);
-                                        if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = cbBgImg;
-                                        cbOl->ProcessEvent(addToOlFn, ap.data());
+                                        addToOverlay(cbOl, cbBgImg);
                                     }
                                 }
                                 // Layer 1: check mark (shown/hidden based on state)
                                 UObject* texCheck = findTexture2DByName(L"T_UI_Icon_Check");
-                                if (texCheck && addToOlFn)
+                                if (texCheck)
                                 {
                                     FStaticConstructObjectParameters imgP2(imageClass, outer);
                                     UObject* checkImg = UObjectGlobals::StaticConstructObject(imgP2);
@@ -2774,11 +2696,7 @@
                                     {
                                         umgSetBrushNoMatch(checkImg, texCheck, setBrushFn);
                                         umgSetBrushSize(checkImg, 48.0f, 48.0f);
-                                        auto* pCC = findParam(addToOlFn, STR("Content"));
-                                        int sz = addToOlFn->GetParmsSize();
-                                        std::vector<uint8_t> ap(sz, 0);
-                                        if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = checkImg;
-                                        cbOl->ProcessEvent(addToOlFn, ap.data());
+                                        addToOverlay(cbOl, checkImg);
                                         m_cfgFreeBuildCheckImg = checkImg;
                                         // Start hidden (will be shown by updateConfigFreeBuild)
                                         auto* visFn = checkImg->GetFunctionByNameInChain(STR("SetVisibility"));
@@ -2787,23 +2705,15 @@
                                 }
 
                                 // Add checkbox overlay to HBox
-                                auto* hbC = findParam(addToHFn, STR("Content"));
-                                int sz = addToHFn->GetParmsSize();
-                                std::vector<uint8_t> ap(sz, 0);
-                                if (hbC) *reinterpret_cast<UObject**>(ap.data() + hbC->GetOffset_Internal()) = cbOl;
-                                cbRow->ProcessEvent(addToHFn, ap.data());
+                                addToHBox(cbRow, cbOl);
                             }
 
                             // Label: "Free Build" text next to checkbox
                             UObject* fbLabel = makeTB(Loc::get("ui.free_build"), 0.55f, 0.55f, 0.55f, 1.0f, 26);
                             m_cfgFreeBuildLabel = fbLabel;
-                            if (fbLabel && addToHFn)
+                            if (fbLabel)
                             {
-                                auto* hbC = findParam(addToHFn, STR("Content"));
-                                int sz = addToHFn->GetParmsSize();
-                                std::vector<uint8_t> ap(sz, 0);
-                                if (hbC) *reinterpret_cast<UObject**>(ap.data() + hbC->GetOffset_Internal()) = fbLabel;
-                                cbRow->ProcessEvent(addToHFn, ap.data());
+                                addToHBox(cbRow, fbLabel);
                             }
                         }
                     }
@@ -2818,17 +2728,15 @@
                         if (ncRow)
                         {
                             addToVBox(tab0VBox, ncRow);
-                            auto* addToHFn = ncRow->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
 
                             // Checkbox overlay: background + check mark
                             FStaticConstructObjectParameters olP(overlayClass, outer);
                             UObject* ncOl = UObjectGlobals::StaticConstructObject(olP);
-                            if (ncOl && addToHFn)
+                            if (ncOl)
                             {
-                                auto* addToOlFn = ncOl->GetFunctionByNameInChain(STR("AddChildToOverlay"));
                                 // Layer 0: checkbox background (always visible)
                                 UObject* texCB = findTexture2DByName(L"T_UI_Icon_Checkbox_DiamondBG");
-                                if (texCB && addToOlFn)
+                                if (texCB)
                                 {
                                     FStaticConstructObjectParameters imgP2(imageClass, outer);
                                     UObject* cbBgImg = UObjectGlobals::StaticConstructObject(imgP2);
@@ -2836,16 +2744,12 @@
                                     {
                                         umgSetBrushNoMatch(cbBgImg, texCB, setBrushFn);
                                         umgSetBrushSize(cbBgImg, 48.0f, 48.0f);
-                                        auto* pCC = findParam(addToOlFn, STR("Content"));
-                                        int sz = addToOlFn->GetParmsSize();
-                                        std::vector<uint8_t> ap(sz, 0);
-                                        if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = cbBgImg;
-                                        ncOl->ProcessEvent(addToOlFn, ap.data());
+                                        addToOverlay(ncOl, cbBgImg);
                                     }
                                 }
                                 // Layer 1: check mark (shown/hidden based on state)
                                 UObject* texCheck = findTexture2DByName(L"T_UI_Icon_Check");
-                                if (texCheck && addToOlFn)
+                                if (texCheck)
                                 {
                                     FStaticConstructObjectParameters imgP2(imageClass, outer);
                                     UObject* checkImg = UObjectGlobals::StaticConstructObject(imgP2);
@@ -2853,11 +2757,7 @@
                                     {
                                         umgSetBrushNoMatch(checkImg, texCheck, setBrushFn);
                                         umgSetBrushSize(checkImg, 48.0f, 48.0f);
-                                        auto* pCC = findParam(addToOlFn, STR("Content"));
-                                        int sz = addToOlFn->GetParmsSize();
-                                        std::vector<uint8_t> ap(sz, 0);
-                                        if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = checkImg;
-                                        ncOl->ProcessEvent(addToOlFn, ap.data());
+                                        addToOverlay(ncOl, checkImg);
                                         m_cfgNoCollisionCheckImg = checkImg;
                                         // Start hidden (will be shown by updateConfigNoCollision)
                                         auto* visFn = checkImg->GetFunctionByNameInChain(STR("SetVisibility"));
@@ -2866,23 +2766,15 @@
                                 }
 
                                 // Add checkbox overlay to HBox
-                                auto* hbC = findParam(addToHFn, STR("Content"));
-                                int sz = addToHFn->GetParmsSize();
-                                std::vector<uint8_t> ap(sz, 0);
-                                if (hbC) *reinterpret_cast<UObject**>(ap.data() + hbC->GetOffset_Internal()) = ncOl;
-                                ncRow->ProcessEvent(addToHFn, ap.data());
+                                addToHBox(ncRow, ncOl);
                             }
 
                             // Label: "No Collision (Flying)" text next to checkbox
                             UObject* ncLabel = makeTB(Loc::get("ui.no_collision"), 0.55f, 0.55f, 0.55f, 1.0f, 26);
                             m_cfgNoCollisionLabel = ncLabel;
-                            if (ncLabel && addToHFn)
+                            if (ncLabel)
                             {
-                                auto* hbC = findParam(addToHFn, STR("Content"));
-                                int sz = addToHFn->GetParmsSize();
-                                std::vector<uint8_t> ap(sz, 0);
-                                if (hbC) *reinterpret_cast<UObject**>(ap.data() + hbC->GetOffset_Internal()) = ncLabel;
-                                ncRow->ProcessEvent(addToHFn, ap.data());
+                                addToHBox(ncRow, ncLabel);
                             }
                         }
                     }
@@ -2897,8 +2789,7 @@
                         UObject* btnOl = UObjectGlobals::StaticConstructObject(olP);
                         if (btnOl)
                         {
-                            auto* addToOlFn = btnOl->GetFunctionByNameInChain(STR("AddChildToOverlay"));
-                            if (addToOlFn && texBtn)
+                            if (texBtn)
                             {
                                 // Layer 0: button background image
                                 FStaticConstructObjectParameters imgP2(imageClass, outer);
@@ -2907,28 +2798,17 @@
                                 {
                                     umgSetBrushNoMatch(btnImg, texBtn, setBrushFn);
                                     umgSetBrushSize(btnImg, 420.0f, 66.0f);
-                                    auto* pCC = findParam(addToOlFn, STR("Content"));
-                                    int sz = addToOlFn->GetParmsSize();
-                                    std::vector<uint8_t> ap(sz, 0);
-                                    if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = btnImg;
-                                    btnOl->ProcessEvent(addToOlFn, ap.data());
+                                    addToOverlay(btnOl, btnImg);
                                     m_cfgUnlockBtnImg = btnImg;
                                 }
                             }
-                            if (addToOlFn)
                             {
                                 // Layer 1: "Unlock All Recipes" label
                                 UObject* btnLabel = makeTB(Loc::get("ui.unlock_all_recipes"), 0.86f, 0.90f, 1.0f, 0.95f, 26);
                                 if (btnLabel)
                                 {
-                                    auto* pCC = findParam(addToOlFn, STR("Content"));
-                                    auto* pRV = findParam(addToOlFn, STR("ReturnValue"));
-                                    int sz = addToOlFn->GetParmsSize();
-                                    std::vector<uint8_t> ap(sz, 0);
-                                    if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = btnLabel;
-                                    btnOl->ProcessEvent(addToOlFn, ap.data());
                                     // Center the label on the button
-                                    UObject* labelSlot = pRV ? *reinterpret_cast<UObject**>(ap.data() + pRV->GetOffset_Internal()) : nullptr;
+                                    UObject* labelSlot = addToOverlay(btnOl, btnLabel);
                                     if (labelSlot)
                                     {
                                         auto* setHA = labelSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
@@ -2939,16 +2819,8 @@
                                 }
                             }
                             // Add button to VBox center-justified
-                            auto* addBtnFn = tab0VBox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
-                            if (addBtnFn)
                             {
-                                auto* pC = findParam(addBtnFn, STR("Content"));
-                                auto* pR = findParam(addBtnFn, STR("ReturnValue"));
-                                int sz = addBtnFn->GetParmsSize();
-                                std::vector<uint8_t> ap(sz, 0);
-                                if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = btnOl;
-                                tab0VBox->ProcessEvent(addBtnFn, ap.data());
-                                UObject* btnSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
+                                UObject* btnSlot = addToVBox(tab0VBox, btnOl);
                                 if (btnSlot)
                                 {
                                     // Center-justify the button
@@ -3012,40 +2884,26 @@
                                 UObject* secOl = UObjectGlobals::StaticConstructObject(solP);
                                 if (secOl)
                                 {
-                                    auto* addToSecOlFn = secOl->GetFunctionByNameInChain(STR("AddChildToOverlay"));
-                                    if (addToSecOlFn)
+                                    // Layer 0: background image
+                                    FStaticConstructObjectParameters imgP2(imageClass, outer);
+                                    UObject* secBgImg = UObjectGlobals::StaticConstructObject(imgP2);
+                                    if (secBgImg)
                                     {
-                                        // Layer 0: background image
-                                        FStaticConstructObjectParameters imgP2(imageClass, outer);
-                                        UObject* secBgImg = UObjectGlobals::StaticConstructObject(imgP2);
-                                        if (secBgImg)
+                                        umgSetBrushNoMatch(secBgImg, texSectionBg, setBrushFn);
+                                        umgSetBrushSize(secBgImg, 1300.0f, 40.0f);
+                                        addToOverlay(secOl, secBgImg);
+                                    }
+                                    // Layer 1: section name text
+                                    UObject* secLabel = makeTB(std::wstring(lastSection), 0.78f, 0.86f, 1.0f, 1.0f, 32);
+                                    if (secLabel)
+                                    {
+                                        umgSetBold(secLabel);
+                                        // Center vertically, left-align
+                                        UObject* secSlot = addToOverlay(secOl, secLabel);
+                                        if (secSlot)
                                         {
-                                            umgSetBrushNoMatch(secBgImg, texSectionBg, setBrushFn);
-                                            umgSetBrushSize(secBgImg, 1300.0f, 40.0f);
-                                            auto* pCC = findParam(addToSecOlFn, STR("Content"));
-                                            int sz = addToSecOlFn->GetParmsSize();
-                                            std::vector<uint8_t> ap(sz, 0);
-                                            if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = secBgImg;
-                                            secOl->ProcessEvent(addToSecOlFn, ap.data());
-                                        }
-                                        // Layer 1: section name text
-                                        UObject* secLabel = makeTB(std::wstring(lastSection), 0.78f, 0.86f, 1.0f, 1.0f, 32);
-                                        if (secLabel)
-                                        {
-                                            umgSetBold(secLabel);
-                                            auto* pCC = findParam(addToSecOlFn, STR("Content"));
-                                            auto* pRV = findParam(addToSecOlFn, STR("ReturnValue"));
-                                            int sz = addToSecOlFn->GetParmsSize();
-                                            std::vector<uint8_t> ap(sz, 0);
-                                            if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = secLabel;
-                                            secOl->ProcessEvent(addToSecOlFn, ap.data());
-                                            // Center vertically, left-align
-                                            UObject* secSlot = pRV ? *reinterpret_cast<UObject**>(ap.data() + pRV->GetOffset_Internal()) : nullptr;
-                                            if (secSlot)
-                                            {
-                                                auto* setVA = secSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                                if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; secSlot->ProcessEvent(setVA, v.data()); }
-                                            }
+                                            auto* setVA = secSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
+                                            if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; secSlot->ProcessEvent(setVA, v.data()); }
                                         }
                                     }
                                     addToVBox(tab1VBox, secOl);
@@ -3062,21 +2920,12 @@
                         UObject* rowHBox = UObjectGlobals::StaticConstructObject(rowHbP);
                         if (rowHBox)
                         {
-                            auto* addToRowFn = rowHBox->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
-                            if (!addToRowFn) continue;
-                            auto* rowC = findParam(addToRowFn, STR("Content"));
-                            auto* rowR = findParam(addToRowFn, STR("ReturnValue"));
-
                             // Left: binding label
                             UObject* bindLabel = makeTB(std::wstring(s_bindings[b].label), 0.86f, 0.90f, 0.96f, 0.85f, 26);
                             if (bindLabel)
                             {
-                                int sz = addToRowFn->GetParmsSize();
-                                std::vector<uint8_t> ap(sz, 0);
-                                if (rowC) *reinterpret_cast<UObject**>(ap.data() + rowC->GetOffset_Internal()) = bindLabel;
-                                rowHBox->ProcessEvent(addToRowFn, ap.data());
                                 // Make label fill available space (push key box to right)
-                                UObject* labelSlot = rowR ? *reinterpret_cast<UObject**>(ap.data() + rowR->GetOffset_Internal()) : nullptr;
+                                UObject* labelSlot = addToHBox(rowHBox, bindLabel);
                                 if (labelSlot)
                                 {
                                     auto* setFill = labelSlot->GetFunctionByNameInChain(STR("SetSize"));
@@ -3089,8 +2938,7 @@
                             UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
                             if (kbOl)
                             {
-                                auto* addToKbFn = kbOl->GetFunctionByNameInChain(STR("AddChildToOverlay"));
-                                if (addToKbFn && texKeyBox)
+                                if (texKeyBox)
                                 {
                                     // Layer 0: key box background
                                     FStaticConstructObjectParameters imgP2(imageClass, outer);
@@ -3099,28 +2947,17 @@
                                     {
                                         umgSetBrushNoMatch(kbBgImg, texKeyBox, setBrushFn);
                                         umgSetBrushSize(kbBgImg, 220.0f, 42.0f);
-                                        auto* pCC = findParam(addToKbFn, STR("Content"));
-                                        int sz = addToKbFn->GetParmsSize();
-                                        std::vector<uint8_t> ap(sz, 0);
-                                        if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = kbBgImg;
-                                        kbOl->ProcessEvent(addToKbFn, ap.data());
+                                        addToOverlay(kbOl, kbBgImg);
                                     }
                                 }
-                                if (addToKbFn)
                                 {
                                     // Layer 1: key name text
                                     UObject* kbLabel = makeTB(keyName(s_bindings[b].key), 1.0f, 1.0f, 1.0f, 1.0f, 24);
                                     m_cfgKeyBoxLabels[b] = kbLabel;
                                     if (kbLabel)
                                     {
-                                        auto* pCC = findParam(addToKbFn, STR("Content"));
-                                        auto* pRV = findParam(addToKbFn, STR("ReturnValue"));
-                                        int sz = addToKbFn->GetParmsSize();
-                                        std::vector<uint8_t> ap(sz, 0);
-                                        if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = kbLabel;
-                                        kbOl->ProcessEvent(addToKbFn, ap.data());
                                         // Center text on key box
-                                        UObject* kbSlot = pRV ? *reinterpret_cast<UObject**>(ap.data() + pRV->GetOffset_Internal()) : nullptr;
+                                        UObject* kbSlot = addToOverlay(kbOl, kbLabel);
                                         if (kbSlot)
                                         {
                                             auto* setHA = kbSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
@@ -3131,13 +2968,7 @@
                                     }
                                 }
                                 // Add key box overlay to row HBox
-                                if (addToRowFn)
-                                {
-                                    int sz = addToRowFn->GetParmsSize();
-                                    std::vector<uint8_t> ap(sz, 0);
-                                    if (rowC) *reinterpret_cast<UObject**>(ap.data() + rowC->GetOffset_Internal()) = kbOl;
-                                    rowHBox->ProcessEvent(addToRowFn, ap.data());
-                                }
+                                addToHBox(rowHBox, kbOl);
                             }
 
                             addToVBox(tab1VBox, rowHBox);
@@ -3150,19 +2981,11 @@
                         UObject* modRow = UObjectGlobals::StaticConstructObject(rowHbP2);
                         if (modRow)
                         {
-                            auto* addToRowFn = modRow->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
-                            auto* rowC = findParam(addToRowFn, STR("Content"));
-                            auto* rowR = findParam(addToRowFn, STR("ReturnValue"));
-
                             // Left: "Set Modifier Key" label
                             UObject* modLabel = makeTB(Loc::get("ui.set_modifier_key_short"), 0.86f, 0.90f, 0.96f, 0.85f, 26);
-                            if (modLabel && addToRowFn)
+                            if (modLabel)
                             {
-                                int sz = addToRowFn->GetParmsSize();
-                                std::vector<uint8_t> ap(sz, 0);
-                                if (rowC) *reinterpret_cast<UObject**>(ap.data() + rowC->GetOffset_Internal()) = modLabel;
-                                modRow->ProcessEvent(addToRowFn, ap.data());
-                                UObject* labelSlot = rowR ? *reinterpret_cast<UObject**>(ap.data() + rowR->GetOffset_Internal()) : nullptr;
+                                UObject* labelSlot = addToHBox(modRow, modLabel);
                                 if (labelSlot)
                                 {
                                     auto* setFill = labelSlot->GetFunctionByNameInChain(STR("SetSize"));
@@ -3175,9 +2998,8 @@
                             UObject* modKbOl = UObjectGlobals::StaticConstructObject(kbOlP2);
                             if (modKbOl)
                             {
-                                auto* addToKbFn = modKbOl->GetFunctionByNameInChain(STR("AddChildToOverlay"));
                                 UObject* texKeyBox2 = findTexture2DByName(L"T_UI_Btn_P1_Active");
-                                if (addToKbFn && texKeyBox2)
+                                if (texKeyBox2)
                                 {
                                     FStaticConstructObjectParameters imgP2(imageClass, outer);
                                     UObject* kbBgImg = UObjectGlobals::StaticConstructObject(imgP2);
@@ -3185,26 +3007,15 @@
                                     {
                                         umgSetBrushNoMatch(kbBgImg, texKeyBox2, setBrushFn);
                                         umgSetBrushSize(kbBgImg, 220.0f, 42.0f);
-                                        auto* pCC = findParam(addToKbFn, STR("Content"));
-                                        int sz = addToKbFn->GetParmsSize();
-                                        std::vector<uint8_t> ap(sz, 0);
-                                        if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = kbBgImg;
-                                        modKbOl->ProcessEvent(addToKbFn, ap.data());
+                                        addToOverlay(modKbOl, kbBgImg);
                                     }
                                 }
-                                if (addToKbFn)
                                 {
                                     UObject* modKbLabel = makeTB(std::wstring(modifierName(s_modifierVK)), 1.0f, 1.0f, 1.0f, 1.0f, 24);
                                     m_cfgModBoxLabel = modKbLabel;
                                     if (modKbLabel)
                                     {
-                                        auto* pCC = findParam(addToKbFn, STR("Content"));
-                                        auto* pRV = findParam(addToKbFn, STR("ReturnValue"));
-                                        int sz = addToKbFn->GetParmsSize();
-                                        std::vector<uint8_t> ap(sz, 0);
-                                        if (pCC) *reinterpret_cast<UObject**>(ap.data() + pCC->GetOffset_Internal()) = modKbLabel;
-                                        modKbOl->ProcessEvent(addToKbFn, ap.data());
-                                        UObject* modKbSlot = pRV ? *reinterpret_cast<UObject**>(ap.data() + pRV->GetOffset_Internal()) : nullptr;
+                                        UObject* modKbSlot = addToOverlay(modKbOl, modKbLabel);
                                         if (modKbSlot)
                                         {
                                             auto* setHA = modKbSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
@@ -3214,13 +3025,7 @@
                                         }
                                     }
                                 }
-                                if (addToRowFn)
-                                {
-                                    int sz = addToRowFn->GetParmsSize();
-                                    std::vector<uint8_t> ap(sz, 0);
-                                    if (rowC) *reinterpret_cast<UObject**>(ap.data() + rowC->GetOffset_Internal()) = modKbOl;
-                                    modRow->ProcessEvent(addToRowFn, ap.data());
-                                }
+                                addToHBox(modRow, modKbOl);
                             }
 
                             addToVBox(tab1VBox, modRow);
@@ -3546,20 +3351,10 @@
                 if (!hbox) continue;
 
                 // Add HBox to root VBox
-                auto* addRowFn = rootVBox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
-                if (addRowFn)
+                UObject* rowSlot = addToVBox(rootVBox, hbox);
+                if (rowSlot)
                 {
-                    auto* pC = findParam(addRowFn, STR("Content"));
-                    auto* pR = findParam(addRowFn, STR("ReturnValue"));
-                    int sz = addRowFn->GetParmsSize();
-                    std::vector<uint8_t> ap(sz, 0);
-                    if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = hbox;
-                    rootVBox->ProcessEvent(addRowFn, ap.data());
-                    UObject* rowSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
-                    if (rowSlot)
-                    {
-                        umgSetSlotSize(rowSlot, 1.0f, 0); // Auto
-                    }
+                    umgSetSlotSize(rowSlot, 1.0f, 0); // Auto
                 }
 
                 for (int col = 0; col < 4; col++)
@@ -3611,205 +3406,101 @@
                     umgSetOpacity(stateImg, 1.0f);
                     umgSetOpacity(frameImg, 0.25f);
 
-                    // Add state + icon to Overlay
-                    auto* addToOverlayFn = overlay->GetFunctionByNameInChain(STR("AddChildToOverlay"));
-                    if (addToOverlayFn)
+                    // State image (bottom layer) -- centered to preserve aspect
+                    UObject* stateOlSlot = addToOverlay(overlay, stateImg);
+                    if (stateOlSlot)
                     {
-                        auto* pC = findParam(addToOverlayFn, STR("Content"));
-                        auto* pR = findParam(addToOverlayFn, STR("ReturnValue"));
-
-                        // State image (bottom layer) Ã¢â‚¬â€ centered to preserve aspect
-                        {
-                            int sz = addToOverlayFn->GetParmsSize();
-                            std::vector<uint8_t> ap(sz, 0);
-                            if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = stateImg;
-                            overlay->ProcessEvent(addToOverlayFn, ap.data());
-                            UObject* stateOlSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
-                            if (stateOlSlot)
-                            {
-                                auto* setHAFn = stateOlSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                if (setHAFn)
-                                {
-                                    int sz2 = setHAFn->GetParmsSize();
-                                    std::vector<uint8_t> hb(sz2, 0);
-                                    auto* pHA = findParam(setHAFn, STR("InHorizontalAlignment"));
-                                    if (pHA) *reinterpret_cast<uint8_t*>(hb.data() + pHA->GetOffset_Internal()) = 2;
-                                    stateOlSlot->ProcessEvent(setHAFn, hb.data());
-                                }
-                                auto* setVAFn = stateOlSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                if (setVAFn)
-                                {
-                                    int sz2 = setVAFn->GetParmsSize();
-                                    std::vector<uint8_t> vb(sz2, 0);
-                                    auto* pVA = findParam(setVAFn, STR("InVerticalAlignment"));
-                                    if (pVA) *reinterpret_cast<uint8_t*>(vb.data() + pVA->GetOffset_Internal()) = 2;
-                                    stateOlSlot->ProcessEvent(setVAFn, vb.data());
-                                }
-                            }
-                        }
-                        // Icon image (top layer) Ã¢â‚¬â€ centered
-                        {
-                            int sz = addToOverlayFn->GetParmsSize();
-                            std::vector<uint8_t> ap(sz, 0);
-                            if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = iconImg;
-                            overlay->ProcessEvent(addToOverlayFn, ap.data());
-                            UObject* iconSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
-                            if (iconSlot)
-                            {
-                                auto* setHAFn = iconSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                if (setHAFn)
-                                {
-                                    int sz2 = setHAFn->GetParmsSize();
-                                    std::vector<uint8_t> hb(sz2, 0);
-                                    auto* pHA = findParam(setHAFn, STR("InHorizontalAlignment"));
-                                    if (pHA) *reinterpret_cast<uint8_t*>(hb.data() + pHA->GetOffset_Internal()) = 2;
-                                    iconSlot->ProcessEvent(setHAFn, hb.data());
-                                }
-                                auto* setVAFn = iconSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                if (setVAFn)
-                                {
-                                    int sz2 = setVAFn->GetParmsSize();
-                                    std::vector<uint8_t> vb(sz2, 0);
-                                    auto* pVA = findParam(setVAFn, STR("InVerticalAlignment"));
-                                    if (pVA) *reinterpret_cast<uint8_t*>(vb.data() + pVA->GetOffset_Internal()) = 2;
-                                    iconSlot->ProcessEvent(setVAFn, vb.data());
-                                }
-                            }
-                        }
+                        umgSetHAlign(stateOlSlot, 2); // HAlign_Center
+                        umgSetVAlign(stateOlSlot, 2); // VAlign_Center
+                    }
+                    // Icon image (top layer) -- centered
+                    UObject* iconSlot = addToOverlay(overlay, iconImg);
+                    if (iconSlot)
+                    {
+                        umgSetHAlign(iconSlot, 2); // HAlign_Center
+                        umgSetVAlign(iconSlot, 2); // VAlign_Center
                     }
 
-                    // Add Overlay + frame to VBox
-                    auto* addToVBoxFn = vbox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
-                    if (addToVBoxFn)
+                    // Overlay (top)
+                    UObject* olSlot = addToVBox(vbox, overlay);
+                    if (olSlot)
                     {
-                        auto* pC = findParam(addToVBoxFn, STR("Content"));
-                        auto* pR = findParam(addToVBoxFn, STR("ReturnValue"));
+                        umgSetSlotSize(olSlot, 1.0f, 0); // Auto
+                        umgSetHAlign(olSlot, 2);          // HAlign_Center
+                    }
+                    // Frame overlay (bottom) -- wraps frameImg + keyBgImg + keyLabel
+                    {
+                        FStaticConstructObjectParameters foP(overlayClass, outer);
+                        UObject* frameOverlay = UObjectGlobals::StaticConstructObject(foP);
 
-                        // Overlay (top)
+                        if (frameOverlay)
                         {
-                            int sz = addToVBoxFn->GetParmsSize();
-                            std::vector<uint8_t> ap(sz, 0);
-                            if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = overlay;
-                            vbox->ProcessEvent(addToVBoxFn, ap.data());
-                            UObject* olSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
-                            if (olSlot)
-                            {
-                                umgSetSlotSize(olSlot, 1.0f, 0); // Auto
-                                umgSetHAlign(olSlot, 2);          // HAlign_Center
-                            }
-                        }
-                        // Frame overlay (bottom) Ã¢â‚¬â€ wraps frameImg + keyBgImg + keyLabel
-                        {
-                            FStaticConstructObjectParameters foP(overlayClass, outer);
-                            UObject* frameOverlay = UObjectGlobals::StaticConstructObject(foP);
+                            // Layer 1: frameImg (bottom -- fills overlay)
+                            addToOverlay(frameOverlay, frameImg);
 
-                            if (frameOverlay)
+                            // Layer 2: keyBgImg (keycap background, centered)
+                            if (texBlankRect)
                             {
-                                auto* addToFoFn = frameOverlay->GetFunctionByNameInChain(STR("AddChildToOverlay"));
-                                if (addToFoFn)
+                                FStaticConstructObjectParameters kbP(imageClass, outer);
+                                UObject* keyBgImg = UObjectGlobals::StaticConstructObject(kbP);
+                                if (keyBgImg && setBrushFn)
                                 {
-                                    auto* foC = findParam(addToFoFn, STR("Content"));
-                                    auto* foR = findParam(addToFoFn, STR("ReturnValue"));
+                                    umgSetBrush(keyBgImg, texBlankRect, setBrushFn);
+                                    umgSetOpacity(keyBgImg, 0.8f);
 
-                                    // Layer 1: frameImg (bottom Ã¢â‚¬â€ fills overlay)
+                                    UObject* kbSlot = addToOverlay(frameOverlay, keyBgImg);
+                                    if (kbSlot)
                                     {
-                                        int sz2 = addToFoFn->GetParmsSize();
-                                        std::vector<uint8_t> ap2(sz2, 0);
-                                        if (foC) *reinterpret_cast<UObject**>(ap2.data() + foC->GetOffset_Internal()) = frameImg;
-                                        frameOverlay->ProcessEvent(addToFoFn, ap2.data());
+                                        umgSetHAlign(kbSlot, 2); // HAlign_Center
+                                        umgSetVAlign(kbSlot, 2); // VAlign_Center
                                     }
-
-                                    // Layer 2: keyBgImg (keycap background, centered)
-                                    if (texBlankRect)
-                                    {
-                                        FStaticConstructObjectParameters kbP(imageClass, outer);
-                                        UObject* keyBgImg = UObjectGlobals::StaticConstructObject(kbP);
-                                        if (keyBgImg && setBrushFn)
-                                        {
-                                            umgSetBrush(keyBgImg, texBlankRect, setBrushFn);
-                                            umgSetOpacity(keyBgImg, 0.8f);
-
-                                            int sz2 = addToFoFn->GetParmsSize();
-                                            std::vector<uint8_t> ap2(sz2, 0);
-                                            if (foC) *reinterpret_cast<UObject**>(ap2.data() + foC->GetOffset_Internal()) = keyBgImg;
-                                            frameOverlay->ProcessEvent(addToFoFn, ap2.data());
-                                            UObject* kbSlot = foR ? *reinterpret_cast<UObject**>(ap2.data() + foR->GetOffset_Internal()) : nullptr;
-                                            if (kbSlot)
-                                            {
-                                                auto* setHA = kbSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                                if (setHA) { int s3 = setHA->GetParmsSize(); std::vector<uint8_t> h(s3, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; kbSlot->ProcessEvent(setHA, h.data()); }
-                                                auto* setVA = kbSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                                if (setVA) { int s3 = setVA->GetParmsSize(); std::vector<uint8_t> v(s3, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; kbSlot->ProcessEvent(setVA, v.data()); }
-                                            }
-                                            m_mcKeyBgImages[i] = keyBgImg;
-                                        }
-                                    }
-
-                                    // Layer 3: keyLabel (UTextBlock, centered)
-                                    if (textBlockClass)
-                                    {
-                                        FStaticConstructObjectParameters tbP(textBlockClass, outer);
-                                        UObject* keyLabel = UObjectGlobals::StaticConstructObject(tbP);
-                                        if (keyLabel)
-                                        {
-                                            std::wstring kn = keyName(s_bindings[MC_BIND_BASE + i].key);
-                                            umgSetText(keyLabel, kn);
-                                            umgSetTextColor(keyLabel, 1.0f, 1.0f, 1.0f, 1.0f);
-
-                                            int sz2 = addToFoFn->GetParmsSize();
-                                            std::vector<uint8_t> ap2(sz2, 0);
-                                            if (foC) *reinterpret_cast<UObject**>(ap2.data() + foC->GetOffset_Internal()) = keyLabel;
-                                            frameOverlay->ProcessEvent(addToFoFn, ap2.data());
-                                            UObject* tlSlot = foR ? *reinterpret_cast<UObject**>(ap2.data() + foR->GetOffset_Internal()) : nullptr;
-                                            if (tlSlot)
-                                            {
-                                                auto* setHA = tlSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                                if (setHA) { int s3 = setHA->GetParmsSize(); std::vector<uint8_t> h(s3, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; tlSlot->ProcessEvent(setHA, h.data()); }
-                                                auto* setVA = tlSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                                if (setVA) { int s3 = setVA->GetParmsSize(); std::vector<uint8_t> v(s3, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; tlSlot->ProcessEvent(setVA, v.data()); }
-                                            }
-                                            m_mcKeyLabels[i] = keyLabel;
-                                        }
-                                    }
+                                    m_mcKeyBgImages[i] = keyBgImg;
                                 }
                             }
 
-                            // Add frameOverlay (or fall back to frameImg) to VBox
-                            UObject* frameChild = frameOverlay ? frameOverlay : frameImg;
-                            int sz = addToVBoxFn->GetParmsSize();
-                            std::vector<uint8_t> ap(sz, 0);
-                            if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = frameChild;
-                            vbox->ProcessEvent(addToVBoxFn, ap.data());
-                            UObject* fSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
-                            if (fSlot)
+                            // Layer 3: keyLabel (UTextBlock, centered)
+                            if (textBlockClass)
                             {
-                                umgSetSlotSize(fSlot, 1.0f, 0); // Auto
-                                umgSetHAlign(fSlot, 2);
-                                float overlapPx = stateH * 0.25f; // 25% vertical overlap (reduced 5%)
-                                umgSetSlotPadding(fSlot, 0.0f, -overlapPx, 0.0f, 0.0f);
+                                FStaticConstructObjectParameters tbP(textBlockClass, outer);
+                                UObject* keyLabel = UObjectGlobals::StaticConstructObject(tbP);
+                                if (keyLabel)
+                                {
+                                    std::wstring kn = keyName(s_bindings[MC_BIND_BASE + i].key);
+                                    umgSetText(keyLabel, kn);
+                                    umgSetTextColor(keyLabel, 1.0f, 1.0f, 1.0f, 1.0f);
+
+                                    UObject* tlSlot = addToOverlay(frameOverlay, keyLabel);
+                                    if (tlSlot)
+                                    {
+                                        umgSetHAlign(tlSlot, 2); // HAlign_Center
+                                        umgSetVAlign(tlSlot, 2); // VAlign_Center
+                                    }
+                                    m_mcKeyLabels[i] = keyLabel;
+                                }
                             }
+                        }
+
+                        // Add frameOverlay (or fall back to frameImg) to VBox
+                        UObject* frameChild = frameOverlay ? frameOverlay : frameImg;
+                        UObject* fSlot = addToVBox(vbox, frameChild);
+                        if (fSlot)
+                        {
+                            umgSetSlotSize(fSlot, 1.0f, 0); // Auto
+                            umgSetHAlign(fSlot, 2);
+                            float overlapPx = stateH * 0.25f; // 25% vertical overlap (reduced 5%)
+                            umgSetSlotPadding(fSlot, 0.0f, -overlapPx, 0.0f, 0.0f);
                         }
                     }
 
                     // Add VBox to HBox
-                    auto* addToHBoxFn = hbox->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
-                    if (addToHBoxFn)
+                    UObject* hSlot = addToHBox(hbox, vbox);
+                    if (hSlot)
                     {
-                        auto* pC = findParam(addToHBoxFn, STR("Content"));
-                        auto* pR = findParam(addToHBoxFn, STR("ReturnValue"));
-                        int sz = addToHBoxFn->GetParmsSize();
-                        std::vector<uint8_t> ap(sz, 0);
-                        if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = vbox;
-                        hbox->ProcessEvent(addToHBoxFn, ap.data());
-                        UObject* hSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
-                        if (hSlot)
-                        {
-                            umgSetSlotSize(hSlot, 1.0f, 1); // Fill
-                            umgSetVAlign(hSlot, 0);          // VAlign_Fill
-                            float colW2 = (frameW > stateW) ? frameW : stateW;
-                            float hOverlap = colW2 * 0.10f; // 10% each side = 20% overlap (reduced from 40% for more spacing)
-                            umgSetSlotPadding(hSlot, -hOverlap, 0.0f, -hOverlap, 0.0f);
-                        }
+                        umgSetSlotSize(hSlot, 1.0f, 1); // Fill
+                        umgSetVAlign(hSlot, 0);          // VAlign_Fill
+                        float colW2 = (frameW > stateW) ? frameW : stateW;
+                        float hOverlap = colW2 * 0.10f; // 10% each side = 20% overlap (reduced from 40% for more spacing)
+                        umgSetSlotPadding(hSlot, -hOverlap, 0.0f, -hOverlap, 0.0f);
                     }
 
                     m_mcStateImages[i] = stateImg;
@@ -3874,103 +3565,66 @@
             // --- Add rotation text overlay on MC slot 0 ---
             if (m_mcSlot0Overlay && textBlockClass)
             {
-                auto* addToOverlayFn = m_mcSlot0Overlay->GetFunctionByNameInChain(STR("AddChildToOverlay"));
-                if (addToOverlayFn)
+                FStaticConstructObjectParameters tbP(textBlockClass, outer);
+                UObject* rotLabel = UObjectGlobals::StaticConstructObject(tbP);
+                if (rotLabel)
                 {
-                    FStaticConstructObjectParameters tbP(textBlockClass, outer);
-                    UObject* rotLabel = UObjectGlobals::StaticConstructObject(tbP);
-                    if (rotLabel)
-                    {
-                        // Initial text: "5Ã‚Â°\nT0"
-                        int step = s_overlay.rotationStep;
-                        int total = s_overlay.totalRotation;
-                        std::wstring txt = std::to_wstring(step) + L"\xB0\n" + L"T" + std::to_wstring(total);
-                        umgSetText(rotLabel, txt);
-                        umgSetTextColor(rotLabel, 0.4f, 0.6f, 1.0f, 1.0f); // medium blue
+                    int step = s_overlay.rotationStep;
+                    int total = s_overlay.totalRotation;
+                    std::wstring txt = std::to_wstring(step) + L"\xB0\n" + L"T" + std::to_wstring(total);
+                    umgSetText(rotLabel, txt);
+                    umgSetTextColor(rotLabel, 0.4f, 0.6f, 1.0f, 1.0f); // medium blue
 
-                        auto* pC = findParam(addToOverlayFn, STR("Content"));
-                        auto* pR = findParam(addToOverlayFn, STR("ReturnValue"));
-                        int sz = addToOverlayFn->GetParmsSize();
-                        std::vector<uint8_t> ap(sz, 0);
-                        if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = rotLabel;
-                        m_mcSlot0Overlay->ProcessEvent(addToOverlayFn, ap.data());
-                        UObject* rotSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
-                        if (rotSlot)
-                        {
-                            auto* setHA = rotSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                            if (setHA) { int s2 = setHA->GetParmsSize(); std::vector<uint8_t> h(s2, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; rotSlot->ProcessEvent(setHA, h.data()); }
-                            auto* setVA = rotSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                            if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; rotSlot->ProcessEvent(setVA, v.data()); }
-                        }
-                        m_mcRotationLabel = rotLabel;
-                        VLOG(STR("[MoriaCppMod] [MC] Rotation label created on slot 0\n"));
+                    UObject* rotSlot = addToOverlay(m_mcSlot0Overlay, rotLabel);
+                    if (rotSlot)
+                    {
+                        umgSetHAlign(rotSlot, 2); // HAlign_Center
+                        umgSetVAlign(rotSlot, 2); // VAlign_Center
                     }
+                    m_mcRotationLabel = rotLabel;
+                    VLOG(STR("[MoriaCppMod] [MC] Rotation label created on slot 0\n"));
                 }
             }
 
             // --- Add "Single" text overlay on MC slot 8 (Remove Target) ---
             if (m_mcSlot8Overlay && textBlockClass)
             {
-                auto* addToOverlayFn = m_mcSlot8Overlay->GetFunctionByNameInChain(STR("AddChildToOverlay"));
-                if (addToOverlayFn)
+                FStaticConstructObjectParameters tbP(textBlockClass, outer);
+                UObject* singleLabel = UObjectGlobals::StaticConstructObject(tbP);
+                if (singleLabel)
                 {
-                    FStaticConstructObjectParameters tbP(textBlockClass, outer);
-                    UObject* singleLabel = UObjectGlobals::StaticConstructObject(tbP);
-                    if (singleLabel)
-                    {
-                        umgSetText(singleLabel, L"Single");
-                        umgSetTextColor(singleLabel, 0.85f, 0.05f, 0.05f, 1.0f); // bright deep red
-                        umgSetFontSize(singleLabel, 31); // 10% larger
+                    umgSetText(singleLabel, L"Single");
+                    umgSetTextColor(singleLabel, 0.85f, 0.05f, 0.05f, 1.0f); // bright deep red
+                    umgSetFontSize(singleLabel, 31); // 10% larger
 
-                        auto* pC = findParam(addToOverlayFn, STR("Content"));
-                        auto* pR = findParam(addToOverlayFn, STR("ReturnValue"));
-                        int sz = addToOverlayFn->GetParmsSize();
-                        std::vector<uint8_t> ap(sz, 0);
-                        if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = singleLabel;
-                        m_mcSlot8Overlay->ProcessEvent(addToOverlayFn, ap.data());
-                        UObject* labelSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
-                        if (labelSlot)
-                        {
-                            auto* setHA = labelSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                            if (setHA) { int s2 = setHA->GetParmsSize(); std::vector<uint8_t> h(s2, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; labelSlot->ProcessEvent(setHA, h.data()); }
-                            auto* setVA = labelSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                            if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; labelSlot->ProcessEvent(setVA, v.data()); }
-                        }
-                        VLOG(STR("[MoriaCppMod] [MC] 'Single' label created on slot 8\n"));
+                    UObject* labelSlot = addToOverlay(m_mcSlot8Overlay, singleLabel);
+                    if (labelSlot)
+                    {
+                        umgSetHAlign(labelSlot, 2); // HAlign_Center
+                        umgSetVAlign(labelSlot, 2); // VAlign_Center
                     }
+                    VLOG(STR("[MoriaCppMod] [MC] 'Single' label created on slot 8\n"));
                 }
             }
 
             // --- Add "All" text overlay on MC slot 10 (Remove All) ---
             if (m_mcSlot10Overlay && textBlockClass)
             {
-                auto* addToOverlayFn = m_mcSlot10Overlay->GetFunctionByNameInChain(STR("AddChildToOverlay"));
-                if (addToOverlayFn)
+                FStaticConstructObjectParameters tbP(textBlockClass, outer);
+                UObject* allLabel = UObjectGlobals::StaticConstructObject(tbP);
+                if (allLabel)
                 {
-                    FStaticConstructObjectParameters tbP(textBlockClass, outer);
-                    UObject* allLabel = UObjectGlobals::StaticConstructObject(tbP);
-                    if (allLabel)
-                    {
-                        umgSetText(allLabel, L"All");
-                        umgSetTextColor(allLabel, 0.85f, 0.05f, 0.05f, 1.0f); // bright deep red
-                        umgSetFontSize(allLabel, 31); // 10% larger
+                    umgSetText(allLabel, L"All");
+                    umgSetTextColor(allLabel, 0.85f, 0.05f, 0.05f, 1.0f); // bright deep red
+                    umgSetFontSize(allLabel, 31); // 10% larger
 
-                        auto* pC = findParam(addToOverlayFn, STR("Content"));
-                        auto* pR = findParam(addToOverlayFn, STR("ReturnValue"));
-                        int sz = addToOverlayFn->GetParmsSize();
-                        std::vector<uint8_t> ap(sz, 0);
-                        if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = allLabel;
-                        m_mcSlot10Overlay->ProcessEvent(addToOverlayFn, ap.data());
-                        UObject* labelSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
-                        if (labelSlot)
-                        {
-                            auto* setHA = labelSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                            if (setHA) { int s2 = setHA->GetParmsSize(); std::vector<uint8_t> h(s2, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; labelSlot->ProcessEvent(setHA, h.data()); }
-                            auto* setVA = labelSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                            if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; labelSlot->ProcessEvent(setVA, v.data()); }
-                        }
-                        VLOG(STR("[MoriaCppMod] [MC] 'All' label created on slot 10\n"));
+                    UObject* labelSlot = addToOverlay(m_mcSlot10Overlay, allLabel);
+                    if (labelSlot)
+                    {
+                        umgSetHAlign(labelSlot, 2); // HAlign_Center
+                        umgSetVAlign(labelSlot, 2); // VAlign_Center
                     }
+                    VLOG(STR("[MoriaCppMod] [MC] 'All' label created on slot 10\n"));
                 }
             }
 

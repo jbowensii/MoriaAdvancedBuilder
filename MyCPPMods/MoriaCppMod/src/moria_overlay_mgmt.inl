@@ -4,11 +4,7 @@
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
         // Ã¢â€â‚¬Ã¢â€â‚¬ 6J: Overlay & Window Management Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // GDI+ overlay start/stop, slot display sync, input mode helpers
-        // startOverlay/stopOverlay thread lifecycle, updateOverlaySlots
-
-        // Syncs overlay slot display from m_recipeSlots[]. Loads icon PNGs from disk.
-        // Called after recipe assignment, icon extraction, or on mod startup.
+        // Sync overlay slot display from m_recipeSlots[], load icon PNGs
         void updateOverlaySlots()
         {
             if (!s_overlay.csInit) return;
@@ -41,7 +37,6 @@
             s_overlay.needsUpdate = true;
         }
 
-        // Keep old name as alias for backward compat
         void updateOverlayText()
         {
             updateOverlaySlots();
@@ -78,12 +73,8 @@
             VLOG(STR("[MoriaCppMod] Overlay thread started, icons: {}\n"), s_overlay.iconFolder);
         }
 
-        // LINT NOTE (#9 Ã¢â‚¬â€ stopOverlay race): The 3-second WaitForSingleObject timeout means the render
-        // thread could theoretically still hold slotCS when we DeleteCriticalSection below. Analyzed and
-        // intentionally skipped: this only fires during mod destructor (game shutdown). Even if the timeout
-        // expires and the CS is deleted under the render thread, the game is already closing. Changing to
-        // INFINITE wait risks hanging the game exit if the render thread is stuck in GDI+. The current
-        // pragmatic timeout works 99.9% of the time and any crash is invisible to the user.
+        // LINT NOTE (#9): 3s WaitForSingleObject may leave slotCS held at shutdown.
+        // Acceptable: INFINITE wait risks hanging if GDI+ is stuck; crash invisible.
         void stopOverlay()
         {
             s_overlay.running = false;
@@ -94,11 +85,7 @@
                 CloseHandle(s_overlay.thread);
                 s_overlay.thread = nullptr;
             }
-            // Fix #7: Reset GDI+ token so startOverlay() can re-initialize if overlay is restarted.
-            // overlayThreadProc() calls GdiplusShutdown on exit but never reset the token to 0,
-            // causing the guard `if (!s_overlay.gdipToken)` to skip re-init on restart.
-            // Matches the pattern used by configThreadProc and targetInfoThreadProc.
-            // Clean up loaded icons BEFORE shutting down GDI+ (icons hold GDI+ objects)
+            // Release icons before GDI+ shutdown, reset token for potential restart
             for (int i = 0; i < OVERLAY_SLOTS; i++)
             {
                 s_overlay.slots[i].icon.reset();
@@ -117,7 +104,7 @@
 
 
         // Ã¢â€â‚¬Ã¢â€â‚¬ Input Mode Helpers (for modal UI: Config Menu, Reposition Mode) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // Switch to UI-only input so the mouse cursor appears and game input is blocked.
+        // Switch to UI-only input mode (shows cursor, blocks game input)
         void setInputModeUI(UObject* focusWidget = nullptr)
         {
             auto* pc = findPlayerController();
@@ -152,7 +139,7 @@
             VLOG(STR("[MoriaCppMod] Input mode Ã¢â€ â€™ UI Only (mouse cursor ON)\n"));
         }
 
-        // Restore game-only input so game controls work normally.
+        // Restore game-only input mode (hides cursor)
         void setInputModeGame()
         {
             auto* pc = findPlayerController();
@@ -185,8 +172,7 @@
             if (!m_configWidget) createConfigWidget();
             if (!m_configWidget) return;
             m_cfgVisible = !m_cfgVisible;
-            auto* fn = m_configWidget->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (fn) { uint8_t p[8]{}; p[0] = m_cfgVisible ? 0 : 1; m_configWidget->ProcessEvent(fn, p); }
+            setWidgetVisibility(m_configWidget, m_cfgVisible ? 0 : 1);
             if (m_cfgVisible)
             {
                 updateConfigKeyLabels();
@@ -305,7 +291,7 @@
             m_repositionMsgWidget = nullptr;
         }
 
-        // Create a placeholder Info Box widget for repositioning (same size as real Target Info widget)
+        // Create placeholder Info Box for repositioning mode
         void createPlaceholderInfoBox()
         {
             if (m_repositionInfoBoxWidget) return;
@@ -421,20 +407,13 @@
                 rootBorder->ProcessEvent(setContentFn, sc.data());
             }
 
-            auto* addToVBoxFn = vbox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
-            if (!addToVBoxFn) return;
-            auto* vbC = findParam(addToVBoxFn, STR("Content"));
-
             auto makeTextBlock = [&](const std::wstring& text, float r, float g, float b, float a) {
                 FStaticConstructObjectParameters tbP(textBlockClass, outer);
                 UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
                 if (!tb) return;
                 umgSetText(tb, text);
                 umgSetTextColor(tb, r, g, b, a);
-                int sz = addToVBoxFn->GetParmsSize();
-                std::vector<uint8_t> ap(sz, 0);
-                if (vbC) *reinterpret_cast<UObject**>(ap.data() + vbC->GetOffset_Internal()) = tb;
-                vbox->ProcessEvent(addToVBoxFn, ap.data());
+                addToVBox(vbox, tb);
             };
 
             // Example content matching real Target Info structure
@@ -534,13 +513,8 @@
                 if (!m_toolbarsVisible)
                 {
                     m_toolbarsVisible = true;
-                    auto setWidgetVis = [](UObject* widget) {
-                        if (!widget) return;
-                        auto* fn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
-                        if (fn) { uint8_t parms[8]{}; parms[0] = 0; widget->ProcessEvent(fn, parms); }
-                    };
-                    setWidgetVis(m_umgBarWidget);
-                    setWidgetVis(m_mcBarWidget);
+                    setWidgetVisibility(m_umgBarWidget, 0);
+                    setWidgetVisibility(m_mcBarWidget, 0);
                 }
                 createRepositionMessage();
                 createPlaceholderInfoBox();

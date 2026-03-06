@@ -3,13 +3,9 @@
 // ║  #include inside MoriaCppMod class body                                    ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-        // Find the MorInventoryComponent on a character
-        // Ã¢â€â‚¬Ã¢â€â‚¬ 6E: Inventory & Toolbar System Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // Inventory component discovery, toolbar swap, BodyInventory stash containers
-        // Name-matching resolve phase
+        // ──── 6E: Inventory & Toolbar System ────────────────────────────────────
 
         // Finds the MorInventoryComponent on the player character.
-        // Searches character's components for class containing "InventoryComponent".
         UObject* findPlayerInventoryComponent(UObject* playerChar)
         {
             if (!playerChar) return nullptr;
@@ -32,7 +28,7 @@
             return nullptr;
         }
 
-        // Discover the EpicPack bag container handle Ã¢â‚¬â€ used by swapToolbar
+        // Discover the EpicPack bag container handle for swapToolbar
         bool discoverBagHandle(UObject* invComp)
         {
             auto* getContainersFunc = invComp->GetFunctionByNameInChain(STR("GetContainers"));
@@ -55,12 +51,10 @@
                 return {};
             };
 
-            // Get FItemHandle size from GetItemForHotbarSlot return
             auto* getSlotFunc = invComp->GetFunctionByNameInChain(STR("GetItemForHotbarSlot"));
             int handleSize = getSlotFunc ? findParam(getSlotFunc, L"ReturnValue").size : 0;
             if (handleSize <= 0) handleSize = 20; // fallback
 
-            // Call GetContainers() to find the EpicPack bag
             auto contRet = findParam(getContainersFunc, L"ReturnValue");
             std::vector<uint8_t> contBuf(std::max(getContainersFunc->GetParmsSize() + 32, 64), 0);
             invComp->ProcessEvent(getContainersFunc, contBuf.data());
@@ -68,11 +62,8 @@
             uint8_t* contData = *reinterpret_cast<uint8_t**>(contBuf.data() + contRet.offset);
             int32_t contNum = *reinterpret_cast<int32_t*>(contBuf.data() + contRet.offset + 8);
 
-            // Build IDÃ¢â€ â€™className map from Items.List
-            // FItemInstance struct internals (CXXHeaderDump FGK.hpp:1723, verified):
-            // Struct offsets resolved via probeItemInstanceStruct() on first use
+            // Build ID→className map from Items.List (offsets via probeItemInstanceStruct)
 
-            // Resolve Items property offset on UInventoryComponent dynamically
             static int s_off_invItems = -2;
             if (s_off_invItems == -2)
             {
@@ -174,9 +165,7 @@
             }
             VLOG(STR("[MoriaCppMod] Found {} BodyInventory containers\n"), m_bodyInvHandles.size());
 
-            // Repair stale stash containers (once per session):
-            // Trigger: more than 2 stash containers (extras accumulated from previous sessions)
-            // Drop contents + containers, let creation code rebuild exactly 2.
+            // Repair stale stash containers (>3 found): drop contents + containers, rebuild exactly 2
             if (m_bodyInvHandles.size() > 3 && !m_repairDone)
             {
                 Output::send<LogLevel::Warning>(STR("[MoriaCppMod] Found {} BodyInventory containers (expected 3) Ã¢â‚¬â€ repairing\n"),
@@ -256,7 +245,6 @@
                             if (aiMethod.offset >= 0) aiBuf[aiMethod.offset] = 1; // EAddItem::Create
                             invComp->ProcessEvent(addItemFunc, aiBuf.data());
 
-                            // Extract returned FItemHandle
                             std::vector<uint8_t> newHandle(aiBuf.data() + aiRet.offset, aiBuf.data() + aiRet.offset + handleSize);
                             int32_t newId = reinterpret_cast<const FItemHandleLocal*>(newHandle.data())->ID;
                             m_bodyInvHandles.push_back(newHandle);
@@ -289,17 +277,14 @@
             }
             if (m_bodyInvHandle.empty())
             {
-                showOnScreen(Loc::get("msg.body_inv_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
+                showOnScreen(Loc::get("msg.body_inv_not_found"), 3.0f, 1.0f, 0.3f, 0.3f);
                 return false;
             }
             return true;
         }
 
 
-        // Ã¢â€â‚¬Ã¢â€â‚¬ Toolbar Swap: PAGE_DOWN Ã¢â‚¬â€ 2 toolbars via BodyInventory containers Ã¢â€â‚¬Ã¢â€â‚¬
-        // m_bodyInvHandles[0] = hotbar, [1] = T1 stash, [2] = T2 stash
-        // Phase 0: MoveItem(hotbar items Ã¢â€ â€™ stash container) using GetItemForHotbarSlot
-        // Phase 1: MoveItem(stash items Ã¢â€ â€™ hotbar) using IHF::GetItemForSlot on stash
+        // ── Toolbar Swap: PAGE_DOWN — 2 toolbars via BodyInventory containers ──
         static constexpr int TOOLBAR_SLOTS = 8;
         int m_activeToolbar{0}; // 0 or 1 Ã¢â‚¬â€ which toolbar is currently visible
 
@@ -326,10 +311,7 @@
         UObject* m_ihfCDO{nullptr};                         // UItemHandleFunctions CDO
         UObject* m_dropItemMgr{nullptr};                    // BP_DropItemManager for GetNameForItemHandle
 
-        // Initiates toolbar swap (PageDown). Uses 2 BodyInventory containers as
-        // stash buffers. Name-matching resolve phase determines which container
-        // holds stale copies vs. the other toolbar's items. 3-phase state machine:
-        //   Resolve Ã¢â€ â€™ Phase 0 (stash hotbarÃ¢â€ â€™container) Ã¢â€ â€™ Phase 1 (restore containerÃ¢â€ â€™hotbar)
+        // Initiates toolbar swap: Resolve → Phase 0 (stash hotbar→container) → Phase 1 (restore container→hotbar)
         void swapToolbar()
         {
             VLOG(STR("[MoriaCppMod] [Swap] === swapToolbar() called ===\n"));
@@ -343,11 +325,10 @@
 
                 if (m_swap.active)
                 {
-                    showOnScreen(Loc::get("msg.swap_in_progress").c_str(), 2.0f, 1.0f, 1.0f, 0.0f);
+                    showOnScreen(Loc::get("msg.swap_in_progress"), 2.0f, 1.0f, 1.0f, 0.0f);
                     VLOG(STR("[MoriaCppMod] [Swap] BLOCKED: swap already active\n"));
                     return;
                 }
-                // Discover container handles if not cached
                 if (m_bodyInvHandle.empty())
                 {
                     VLOG(STR("[MoriaCppMod] [Swap] No cached handles, running discovery...\n"));
@@ -384,7 +365,7 @@
                 }
                 if (m_bodyInvHandle.empty())
                 {
-                    showOnScreen(Loc::get("msg.body_inv_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
+                    showOnScreen(Loc::get("msg.body_inv_not_found"), 3.0f, 1.0f, 0.3f, 0.3f);
                     VLOG(STR("[MoriaCppMod] [Swap] FAIL: m_bodyInvHandle still empty after discovery\n"));
                     return;
                 }
@@ -396,7 +377,6 @@
                     return;
                 }
 
-                // Log handle IDs for debugging
                 for (size_t hi = 0; hi < m_bodyInvHandles.size(); hi++)
                 {
                     int32_t hid = reinterpret_cast<const FItemHandleLocal*>(m_bodyInvHandles[hi].data())->ID;
@@ -436,9 +416,7 @@
             }
         }
 
-        // Called from on_update() Ã¢â‚¬â€ processes one move per tick.
-        // Phase 0: Move hotbar items Ã¢â€ â€™ stash BodyInventory container (or drop on ground)
-        // Phase 1: Move stash items from BodyInventory container Ã¢â€ â€™ hotbar
+        // Called from on_update() — processes one swap move per tick (Phase 0: stash, Phase 1: restore)
         void swapToolbarTick()
         {
             if (!m_swap.active) return;
@@ -450,7 +428,6 @@
 
             try
             {
-                // Find player + inventory each tick
                 UObject* playerChar = nullptr;
                 {
                     std::vector<UObject*> actors;
@@ -477,7 +454,7 @@
                     return;
                 }
 
-                // Look up functions Ã¢â‚¬â€ all phases use IHF::GetItemForSlot + IsValidItem
+                // Look up IHF functions for swap operations
                 auto* moveFunc = invComp->GetFunctionByNameInChain(STR("MoveItem"));
                 if (!m_ihfCDO)
                 {
@@ -527,8 +504,7 @@
 
                 auto& hotbarContainer = m_bodyInvHandles[0];
 
-                // Helper: check if a slot in a container has a valid item
-                // Returns true if valid, and slotBuf will contain the item handle at gsRet.offset
+                // Check if a container slot has a valid item; returns handle in slotBuf at gsRet.offset
                 auto readSlot = [&](const std::vector<uint8_t>& container, int slot,
                                     std::vector<uint8_t>& slotBuf) -> bool {
                     slotBuf.assign(std::max(ihfGetSlot->GetParmsSize() + 32, 64), 0);
@@ -541,12 +517,11 @@
                     return vb[ivRet.offset] != 0;
                 };
 
-                // Ã¢â€â‚¬Ã¢â€â‚¬ Resolve Phase: determine stash/restore containers by item count Ã¢â€â‚¬Ã¢â€â‚¬
+                // ── Resolve Phase: determine stash/restore containers by item count ──
                 if (!m_swap.resolved)
                 {
                     m_swap.resolved = true;
 
-                    // Count valid items in each stash container
                     auto countItems = [&](int cIdx) -> int {
                         int count = 0;
                         std::vector<uint8_t> buf;
@@ -562,27 +537,26 @@
 
                     if (c1Count == 0 && c2Count > 0)
                     {
-                        // Container[1] empty, [2] has items Ã¢â€ â€™ stash to [1], restore from [2]
+                        // Container[1] empty, [2] has items
                         m_swap.stashIdx = 1;
                         m_swap.restoreIdx = 2;
                     }
                     else if (c2Count == 0 && c1Count > 0)
                     {
-                        // Container[2] empty, [1] has items Ã¢â€ â€™ stash to [2], restore from [1]
+                        // Container[2] empty, [1] has items
                         m_swap.stashIdx = 2;
                         m_swap.restoreIdx = 1;
                     }
                     else if (c1Count > 0 && c2Count > 0)
                     {
-                        // Both containers have items Ã¢â‚¬â€ ERROR STATE
-                        // Drop hotbar items on ground, restore from whichever has more items
+                        // Both containers have items (ERROR STATE) — drop hotbar, restore from larger
                         m_swap.dropToGround = true;
                         m_swap.restoreIdx = (c1Count >= c2Count) ? 1 : 2;
                         Output::send<LogLevel::Warning>(
                             STR("[MoriaCppMod] Resolve: BOTH containers have items (c[1]={}, c[2]={}) Ã¢â‚¬â€ dropping hotbar, restoring from [{}]\n"),
                             c1Count, c2Count, m_swap.restoreIdx);
                     }
-                    // else: both empty Ã¢â‚¬â€ keep default mapping (first swap, Toolbar 2 starts empty)
+                    // else: both empty — keep default mapping (first swap, Toolbar 2 starts empty)
 
                     VLOG(STR("[MoriaCppMod] Resolve: RESULT stashIdx={} restoreIdx={} dropToGround={}\n"),
                                                     m_swap.stashIdx, m_swap.restoreIdx, m_swap.dropToGround);
@@ -593,12 +567,12 @@
                 auto& stashContainer = m_bodyInvHandles[m_swap.stashIdx];
                 auto& restoreContainer = m_bodyInvHandles[m_swap.restoreIdx];
 
-                // Ã¢â€â‚¬Ã¢â€â‚¬ Phase 0: Move hotbar items Ã¢â€ â€™ stash container (or drop on ground) Ã¢â€â‚¬Ã¢â€â‚¬
+                // ── Phase 0: Move hotbar items → stash container (or drop on ground) ──
                 if (m_swap.phase == 0)
                 {
                     if (m_swap.dropToGround)
                     {
-                        // Failsafe: both containers have items Ã¢â‚¬â€ drop hotbar items on ground
+                        // Failsafe: drop hotbar items on ground (both-containers state)
                         auto* dropFunc = invComp->GetFunctionByNameInChain(STR("DropItem"));
                         if (!dropFunc)
                         {
@@ -636,8 +610,7 @@
                     }
                     else
                     {
-                        // Normal path: stash hotbar items Ã¢â€ â€™ stash container
-                        // Clear stash destination if it has stale items (persisted from previous session)
+                        // Normal path: stash hotbar items; clear stash destination first
                         if (!m_swap.cleared)
                         {
                             m_swap.cleared = true;
@@ -674,7 +647,7 @@
                             std::memcpy(moveBuf.data() + mDest.offset, stashContainer.data(), handleSize);
                             invComp->ProcessEvent(moveFunc, moveBuf.data());
 
-                            // Validate: re-read the slot we just moved FROM
+                            // Validate slot is now empty
                             std::vector<uint8_t> verifyBuf;
                             bool stillHasItem = readSlot(hotbarContainer, slot, verifyBuf);
                             if (stillHasItem)
@@ -708,7 +681,7 @@
                     return;
                 }
 
-                // Ã¢â€â‚¬Ã¢â€â‚¬ Phase 1: Move items from restore container Ã¢â€ â€™ hotbar Ã¢â€â‚¬Ã¢â€â‚¬
+                // ── Phase 1: Move items from restore container → hotbar ──
                 if (m_swap.phase == 1)
                 {
                     for (int slot = m_swap.slot; slot < TOOLBAR_SLOTS; slot++)
@@ -729,7 +702,7 @@
                         std::memcpy(moveBuf.data() + mDest.offset, hotbarContainer.data(), handleSize);
                         invComp->ProcessEvent(moveFunc, moveBuf.data());
 
-                        // Validate: re-read the hotbar slot we just moved TO
+                        // Validate item arrived
                         std::vector<uint8_t> verifyBuf;
                         bool arrived = readSlot(hotbarContainer, slot, verifyBuf);
                         if (!arrived)
@@ -747,7 +720,7 @@
                         return;
                     }
 
-                    // Phase 1 complete Ã¢â‚¬â€ empty the restore container for cleanup
+                    // Phase 1 complete — empty the restore container for cleanup
                     auto* emptyFunc = invComp->GetFunctionByNameInChain(STR("EmptyContainer"));
                     if (emptyFunc)
                     {
@@ -761,7 +734,6 @@
                         }
                     }
 
-                    // Swap done
                     m_activeToolbar = m_swap.nextTB;
                     s_overlay.activeToolbar = m_swap.nextTB;
                     s_overlay.needsUpdate = true;
@@ -781,85 +753,4 @@
             }
         }
 
-        /* BELIEVED DEAD CODE -- experimental BuildHUD diagnostic, never called
-        void toggleBuildHUD()
-        {
-            VLOG(STR("[MoriaCppMod] === Toggle Build HUD ===\n"));
-
-            // Find WBP_MoriaHUD_C
-            std::vector<UObject*> widgets;
-            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
-            UObject* moriaHUD = nullptr;
-            for (auto* w : widgets)
-            {
-                if (!w) continue;
-                std::wstring clsName = safeClassName(w);
-                if (clsName == STR("WBP_MoriaHUD_C"))
-                {
-                    // Check if visible
-                    auto* visFunc = w->GetFunctionByNameInChain(STR("IsVisible"));
-                    if (visFunc)
-                    {
-                        struct
-                        {
-                            bool Ret{false};
-                        } vp{};
-                        w->ProcessEvent(visFunc, &vp);
-                        if (vp.Ret)
-                        {
-                            moriaHUD = w;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if (!moriaHUD)
-            {
-                VLOG(STR("[MoriaCppMod] WBP_MoriaHUD_C NOT FOUND (visible)\n"));
-                showOnScreen(Loc::get("msg.hud_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
-                return;
-            }
-
-            // First probe BuildHUDShow params
-            auto* showFunc = moriaHUD->GetFunctionByNameInChain(STR("BuildHUDShow"));
-            auto* hideFunc = moriaHUD->GetFunctionByNameInChain(STR("BuildHUDHide"));
-
-            if (showFunc)
-            {
-                VLOG(STR("[MoriaCppMod] BuildHUDShow params ({}B):\n"), showFunc->GetParmsSize());
-                for (auto* prop : showFunc->ForEachProperty())
-                {
-                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
-                                                    std::wstring(prop->GetName()),
-                                                    prop->GetOffset_Internal(),
-                                                    prop->GetSize());
-                }
-
-                // Try calling it with zeroed params
-                int parmsSize = showFunc->GetParmsSize();
-                std::vector<uint8_t> buf(parmsSize, 0);
-                moriaHUD->ProcessEvent(showFunc, buf.data());
-                VLOG(STR("[MoriaCppMod] Called BuildHUDShow!\n"));
-                showOnScreen(L"BuildHUDShow called!", 3.0f, 0.0f, 1.0f, 0.0f);
-            }
-            else
-            {
-                VLOG(STR("[MoriaCppMod] BuildHUDShow NOT FOUND\n"));
-            }
-
-            if (hideFunc)
-            {
-                VLOG(STR("[MoriaCppMod] BuildHUDHide params ({}B):\n"), hideFunc->GetParmsSize());
-                for (auto* prop : hideFunc->ForEachProperty())
-                {
-                    VLOG(STR("[MoriaCppMod]   param: {} @{} size={}\n"),
-                                                    std::wstring(prop->GetName()),
-                                                    prop->GetOffset_Internal(),
-                                                    prop->GetSize());
-                }
-            }
-
-            VLOG(STR("[MoriaCppMod] === END Toggle Build HUD ===\n"));
-        }
-        END BELIEVED DEAD CODE */
+        

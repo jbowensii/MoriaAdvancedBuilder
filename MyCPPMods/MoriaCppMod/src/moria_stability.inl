@@ -1,37 +1,24 @@
         // ════════════════════════════════════════════════════════════════════════════
-        // Section: Stability Audit
-        // MC slot 2 (Num/) scans all player-placed structures via the construction
-        // manager's AllStabilityComponents array.  Each component's State and
-        // Stability value are read to classify pieces as stable / marginal / critical.
-        //
-        // Problem pieces get:
-        //   1. A one-shot Niagara StabilityLossVFX burst (uses game's own particle)
-        //   2. A spawned PointLight actor — red for critical, amber for marginal
-        //      Tuning constants below: AUDIT_LIGHT_*
-        //
-        // Lights auto-clear after 10 seconds.  Pressing the key again clears any
-        // existing highlights before running a fresh scan.
+        // Stability Audit — scans AllStabilityComponents, highlights problem pieces
+        // with Niagara VFX + colored PointLights. Auto-clears after 10s.
         // ════════════════════════════════════════════════════════════════════════════
 
-        // EStabilityState values (from Moria_enums.hpp)
+        // EStabilityState values
         static constexpr uint8_t STAB_UNINITIALIZED = 0;
         static constexpr uint8_t STAB_INITIALIZING  = 1;
-        static constexpr uint8_t STAB_STABLE        = 2;
         static constexpr uint8_t STAB_UNSTABLE      = 3;
         static constexpr uint8_t STAB_PROVISIONAL   = 4;
         static constexpr uint8_t STAB_DECONSTRUCTED = 5;
 
-        // Stability thresholds (0-100 scale)
         static constexpr float THRESHOLD_CRITICAL = 20.0f;
         static constexpr float THRESHOLD_MARGINAL = 50.0f;
 
-        // PointLight tuning for audit highlights
+        // PointLight tuning
         static constexpr float AUDIT_LIGHT_CRITICAL_INTENSITY = 25000.0f;
         static constexpr float AUDIT_LIGHT_MARGINAL_INTENSITY = 15000.0f;
         static constexpr float AUDIT_LIGHT_RADIUS              = 10.0f;
 
         // ── Spawn a one-shot Niagara VFX at a world location ─────────────────────
-        // Used to fire the game's StabilityLossVFX particle at each problem piece.
         void spawnVfxAtLocation(UObject* worldContext, UObject* niagaraSystem,
                                 float x, float y, float z)
         {
@@ -88,10 +75,7 @@
             s_cdo->ProcessEvent(s_fn, buf.data());
         }
 
-        // ── Spawn a colored PointLight actor at a world location ─────────────────
-        // Uses BeginDeferredActorSpawnFromClass + FinishSpawningActor to create
-        // a PointLight, then configures intensity/color/radius via the root
-        // PointLightComponent.  Tracked in m_auditSpawnedActors for cleanup.
+        // Spawn a colored PointLight via deferred spawn; tracked for cleanup
         void spawnPointLightAtLocation(UObject* worldContext,
                                        float x, float y, float z, bool critical)
         {
@@ -308,8 +292,7 @@
             m_auditSpawnedActors.clear();
         }
 
-        // ── Clear all audit state (lights + locations + timer) ───────────────────
-        // Called on: re-scan, auto-clear timeout, world unload.
+        // Clear all audit state (called on re-scan, timeout, world unload)
         void clearStabilityHighlights()
         {
             destroyAuditActors();
@@ -320,13 +303,7 @@
             m_auditClearTime = 0;
         }
 
-        // ── Main audit entry point ───────────────────────────────────────────────
-        // Scans AllStabilityComponents from the construction manager.
-        // Classification:
-        //   Critical: State==Unstable OR Stability <= 20
-        //   Marginal: State==Provisional OR Stability <= 50 (but > 20)
-        //   Stable:   everything else with State==Stable and Stability > 50
-        //   Skipped:  Uninitialized / Initializing / Deconstructed
+        // Scan AllStabilityComponents, classify and highlight problems
         void runStabilityAudit()
         {
             clearStabilityHighlights();

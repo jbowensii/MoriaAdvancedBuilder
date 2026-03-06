@@ -14,8 +14,7 @@
 namespace MoriaMods
 {
     // ════════════════════════════════════════════════════════════════════════════
-    // Cached Property Offsets (resolved via ForEachProperty on first use)
-    //   -2 = not yet resolved, -1 = property not found
+    // Cached Property Offsets (-2 = unresolved, -1 = not found)
     // ════════════════════════════════════════════════════════════════════════════
     inline int s_off_widgetTree = -2;       // UUserWidget::WidgetTree
     inline int s_off_rootWidget = -2;       // UWidgetTree::RootWidget
@@ -33,43 +32,36 @@ namespace MoriaMods
     inline int s_off_selectedRecipe = -2;    // UI_WBP_Build_Tab_C::selectedRecipe
     inline int s_off_selectedName = -2;      // UI_WBP_Build_Tab_C::selectedName
     inline int s_off_recipesDataTable = -2;  // UI_WBP_Build_Tab_C::recipesDataTable
-    inline int s_off_playerCameraManager = -2; // APlayerController::PlayerCameraManager
-    inline int s_off_camSettings = -2;         // AFGKPlayerCameraManager::Settings
-    inline int s_off_probeType = -2;           // AFGKPlayerCameraManager::ProbeType
-    inline int s_off_probeRadius = -2;         // AFGKPlayerCameraManager::ProbeRadius
     inline int s_off_dtRowStruct = -2;         // UDataTable::RowStruct (UScriptStruct*)
     inline int s_off_dtRowActor = -2;          // FMorConstructionDefinition::Actor (TSoftClassPtr)
     inline int s_off_dtRowDisplayName = -2;    // FMorConstructionDefinition::DisplayName (FText)
 
-    // Validated struct-internal offsets (resolved from native struct reflection, fallback to constants)
+    // Probed struct-internal offsets (fallback to constants)
     inline int s_off_brushImageSize = -2;      // FSlateBrush::ImageSize (probed)
     inline int s_off_brushResourceObj = -2;    // FSlateBrush::ResourceObject (probed)
     inline int s_off_fontTypefaceName = -2;    // FSlateFontInfo::TypefaceFontName (probed)
     inline int s_off_fontSize = -2;            // FSlateFontInfo::Size (probed)
     inline int s_off_texParamValue = -2;       // FTextureParameterValue::ParameterValue (probed)
 
-    // FMorRecipeBlock struct field offsets (probed from bLock property's UScriptStruct)
+    // FMorRecipeBlock field offsets
     inline int s_off_rbVariants = -2;          // FMorRecipeBlock::Variants (TArray offset within struct)
     inline int s_off_rbTag = -2;               // FMorRecipeBlock::Tag (FGameplayTag)
 
-    // FMorConstructionRecipeDefinition nested offsets (probed from Variants inner type)
+    // FMorConstructionRecipeDefinition nested offsets
     inline int s_off_varResultHandle = -2;     // FMorConstructionRecipeDefinition::ResultConstructionHandle
     inline int s_off_rhRowName = -2;           // FDataTableRowHandle::RowName (FName, within ResultConstructionHandle)
     inline int s_off_variantEntrySize = -2;    // sizeof(FMorConstructionRecipeDefinition) element stride
 
-    // FItemInstance struct field offsets (probed from Items property inner type)
+    // FItemInstance field offsets
     inline int s_off_iiItem = -2;              // FItemInstance::Item (TSubclassOf)
     inline int s_off_iiID = -2;               // FItemInstance::ID (int32)
     inline int s_off_iiSize = -2;             // sizeof(FItemInstance) element stride
 
-    // FItemInstanceArray::List internal offset (probed from Items struct)
+    // FItemInstanceArray::List offset
     inline int s_off_iiaList = -2;            // FItemInstanceArray::List (TArray offset within FFastArraySerializer-derived struct)
 
-    // (FScriptArrayHelper unavailable — ScriptArrayHelper.hpp has broken include in this UE4SS build)
-
     // ════════════════════════════════════════════════════════════════════════════
-    // Resolved Struct-Internal Offsets — use probed value if available, else constant
-    // These replace direct use of hardcoded constants throughout the codebase.
+    // Resolved Struct-Internal Offsets (probed value or hardcoded fallback)
     // ════════════════════════════════════════════════════════════════════════════
     inline int brushImageSizeX() { return (s_off_brushImageSize >= 0) ? s_off_brushImageSize     : BRUSH_IMAGE_SIZE_X; }
     inline int brushImageSizeY() { return (s_off_brushImageSize >= 0) ? s_off_brushImageSize + 4 : BRUSH_IMAGE_SIZE_Y; }
@@ -79,7 +71,7 @@ namespace MoriaMods
     inline int fontStructSize()  { return FONT_STRUCT_SIZE; } // no probed alternative yet
     inline int texParamValueOff(){ return (s_off_texParamValue >= 0)    ? s_off_texParamValue     : TEX_PARAM_VALUE_PTR; }
 
-    // FMorRecipeBlock field accessors (probed value or hardcoded fallback)
+    // FMorRecipeBlock accessors
     inline int rbVariantsOff()   { return (s_off_rbVariants >= 0)      ? s_off_rbVariants        : RECIPE_BLOCK_VARIANTS; }
     inline int rbVariantsNumOff(){ return (s_off_rbVariants >= 0)      ? s_off_rbVariants + 8    : RECIPE_BLOCK_VARIANTS_NUM; }
 

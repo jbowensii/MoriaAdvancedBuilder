@@ -8,8 +8,6 @@
         // Key discovery: bLock at widget+616 is THE recipe identifier
         // State machine: open menu Ã¢â€ â€™ wait for build tab Ã¢â€ â€™ find widget Ã¢â€ â€™ select recipe
 
-        // isWidgetAlive, findWidgetByClass, getCachedBuildComp
-        // -> moved to moria_placement.inl (included first, shared by both files)
 
         // Cached Build_Tab lookup Ã¢â‚¬â€ avoids FindAllOf on every check
         UObject* getCachedBuildTab()
@@ -36,9 +34,6 @@
             }
             return m_cachedBuildTab;
         }
-        // isBuildTabShowing, isBuildTabAnimating, showBuildTab, hideBuildTab,
-        // getCachedBuildComp, getCachedBuildHUD, isPlacementActive
-        // -> moved to moria_placement.inl
 
                 // Force the game's action bar (hotbar UI) to refresh its display
         void refreshActionBar()
@@ -136,7 +131,6 @@
             file << "Language = " << s_language << "\n";
             file << "NoCollision = " << (m_noCollisionWhileFlying ? "true" : "false") << "\n";
 
-            // Only write [Positions] if user has customized at least one toolbar
             bool hasCustomPos = false;
             for (int i = 0; i < TB_COUNT; i++)
                 if (m_toolbarPosX[i] >= 0) hasCustomPos = true;
@@ -163,7 +157,6 @@
             std::ifstream file(INI_PATH);
             if (file.is_open())
             {
-                // Parse INI file
                 std::string section;
                 std::string line;
                 int loaded = 0;
@@ -280,7 +273,6 @@
                 }
                 oldFile.close();
                 VLOG(STR("[MoriaCppMod] Migrated {} keybindings from keybindings.txt\n"), loaded);
-
                 // Write new INI and rename old file
                 saveConfig();
                 std::rename(OLD_KEYBIND_PATH, "Mods/MoriaCppMod/keybindings.txt.bak");
@@ -291,9 +283,6 @@
             saveConfig();
         }
 
-        // NOTE: DXT5 decoder, saveBGRAAsPng, isRangeReadable, looksLikeDXT5, findBulkDataPtr
-        // were removed in v1.11 Ã¢â‚¬â€ dead code from the CPU texture extraction attempt.
-        // The Canvas render target pipeline (extractAndSaveIcon) replaced all of these.
 
         // Helper: find a UFunction param property by name (case-insensitive)
         static FProperty* findParam(UFunction* fn, const wchar_t* name)
@@ -318,7 +307,6 @@
         }
 
         // Extract icon via render target: draw UTexture2D to Canvas on a render target, then export
-        // Uses: CreateRenderTarget2D, BeginDrawCanvasToRenderTarget, K2_DrawTexture, EndDrawCanvasToRenderTarget, ExportRenderTarget
         bool extractAndSaveIcon(UObject* widget, const std::wstring& textureName, const std::wstring& outPath)
         {
             QBLOG(STR("[MoriaCppMod] [QB] extractAndSaveIcon ENTER: widget={:p} tex='{}' path='{}'\n"),
@@ -327,7 +315,6 @@
             try
             {
                 // --- Get UTexture2D from the widget chain ---
-                // widgetÃ¢â€ â€™Icon Ã¢â€ â€™ Brush.ResourceObject(MID) Ã¢â€ â€™ TextureParameterValues[0]+16 Ã¢â€ â€™ UTexture2D*
                 UObject* texture = nullptr;
                 {
                     uint8_t* base = reinterpret_cast<uint8_t*>(widget);
@@ -345,7 +332,6 @@
                                 std::wstring resClass = safeClassName(brushResource);
                                 if (resClass.find(L"Texture2D") != std::wstring::npos)
                                 {
-                                    // Brush holds a UTexture2D directly
                                     texture = brushResource;
                                 }
                                 else if (resClass.find(L"Material") != std::wstring::npos && isReadableMemory(brushResource, 280))
@@ -379,7 +365,6 @@
                 }
                 VLOG(STR("[MoriaCppMod] [Icon] UTexture2D: {} '{}'\n"), safeClassName(texture), std::wstring(texture->GetName()));
 
-                // --- Find required UFunctions ---
                 auto* createRTFn =
                         UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.KismetRenderingLibrary:CreateRenderTarget2D"));
                 auto* beginDrawFn =
@@ -401,7 +386,6 @@
                     VLOG(STR("[MoriaCppMod] [Icon] Missing required UFunctions\n"));
                     return false;
                 }
-
                 // Log parameter layouts for all functions (first time only)
                 static bool s_loggedParams = false;
                 if (!s_loggedParams)
@@ -421,7 +405,6 @@
                     }
                 }
 
-                // --- Get world context ---
                 UObject* worldCtx = nullptr;
                 {
                     std::vector<UObject*> pcs;
@@ -736,14 +719,9 @@
         }
 
         // Ã¢â€â‚¬Ã¢â€â‚¬ 6H: Icon Extraction & Build-from-Target Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // Extracts UTexture2D from build menu widgets via Canvas render target.
-        // Chain: widget+1104 Ã¢â€ â€™ Image+336 Ã¢â€ â€™ MID+256 Ã¢â€ â€™ TextureParamValues[0]+16
-        // Pipeline: CreateRenderTarget2D Ã¢â€ â€™ BeginDraw Ã¢â€ â€™ K2_DrawTexture Ã¢â€ â€™ EndDraw
-        //           Ã¢â€ â€™ ExportRenderTarget Ã¢â€ â€™ GDI+ PNG conversion
-        // Icons cached to <game>/Mods/MoriaCppMod/icons/*.png
+        // Canvas RT pipeline: widget chain to UTexture2D, render+export to PNG, cache in icons/
 
-        // Extract UTexture2D name from a Build_Item_Medium widget
-        // Chain: widget+1104 (Icon Image) Ã¢â€ â€™ Image+264+72 (MID) Ã¢â€ â€™ MID+256 (TextureParamValues TArray) Ã¢â€ â€™ entry+16 (UTexture2D*)
+        // Extract UTexture2D name from Build_Item_Medium (Icon -> Brush -> MID -> TextureParamValues)
         std::wstring extractIconTextureName(UObject* widget)
         {
             if (!widget) { QBLOG(STR("[MoriaCppMod] [QB] extractIconTextureName: widget=null\n")); return L""; }
@@ -767,12 +745,10 @@
                       (void*)brushResource, brushResource ? isReadableMemory(brushResource, 64) : false);
                 if (!brushResource || !isReadableMemory(brushResource, 64)) return L"";
 
-                // Check if brush resource is a UTexture2D directly (no MID traversal needed)
                 std::wstring resourceClass = safeClassName(brushResource);
                 QBLOG(STR("[MoriaCppMod] [QB] extractIconTextureName: brushResource class='{}'\n"), resourceClass);
                 if (resourceClass.find(L"Texture2D") != std::wstring::npos)
                 {
-                    // Brush holds a texture directly (not a MaterialInstanceDynamic)
                     std::wstring result(brushResource->GetName());
                     QBLOG(STR("[MoriaCppMod] [QB] extractIconTextureName: SUCCESS (direct texture) -> '{}'\n"), result);
                     return result;
@@ -794,7 +770,6 @@
                       (void*)arrData, arrNum);
                 if (arrNum < 1 || arrNum > 32 || !arrData || !isReadableMemory(arrData, 40))
                 { QBLOG(STR("[MoriaCppMod] [QB] extractIconTextureName: arrData invalid or arrNum out of range\n")); return L""; }
-                // UTexture2D* at entry+texParamValueOff()
                 UObject* texPtr = *reinterpret_cast<UObject**>(arrData + texParamValueOff());
                 QBLOG(STR("[MoriaCppMod] [QB] extractIconTextureName: texPtr={:p} readable={}\n"),
                       (void*)texPtr, texPtr ? isReadableMemory(texPtr, 64) : false);
@@ -837,8 +812,7 @@
             return nullptr;
         }
 
-        // Log bLock diagnostics for recipe differentiation.
-        // Dumps Tag, CategoryTag.Tag, Variants RowName, and hex of key regions.
+        // Log bLock diagnostics: Tag, CategoryTag, Variants RowName, hex dump
         void logBLockDiagnostics(const wchar_t* context, const std::wstring& displayName, const uint8_t* bLock)
         {
             if (!bLock)
@@ -852,7 +826,6 @@
             int32_t tagNum = *reinterpret_cast<const int32_t*>(bLock + 4);
 
             // bLock+0x20: CategoryTag.Tag (FGameplayTag = FName, 8B)
-            //   CategoryTag starts at +0x08, inherits FFGKTableRowBase (+0x18), so Tag is at +0x08+0x18=+0x20
             uint32_t catTagCI = *reinterpret_cast<const uint32_t*>(bLock + 0x20);
             int32_t catTagNum = *reinterpret_cast<const int32_t*>(bLock + 0x24);
 
@@ -925,7 +898,7 @@
                     updateBuildersBar();
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] CLEARED F{}\n"), slot + 1);
                     std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" cleared";
-                    showOnScreen(msg.c_str(), 2.0f, 1.0f, 0.5f, 0.0f);
+                    showOnScreen(msg, 2.0f, 1.0f, 0.5f, 0.0f);
                 }
                 return;
             }
@@ -947,7 +920,6 @@
             }
             m_recipeSlots[slot].used = true;
             QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: slot data set, finding widget for icon...\n"));
-
             // Try to extract the icon texture name and save as PNG
             UObject* itemWidget = findBuildItemWidget(m_lastCapturedName);
             QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: findBuildItemWidget -> {}\n"),
@@ -961,11 +933,9 @@
                 {
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] F{} icon: '{}'\n"), slot + 1, m_recipeSlots[slot].textureName);
 
-                    // Extract and save the icon as PNG for the overlay
                     if (!s_overlay.iconFolder.empty())
                     {
                         std::wstring pngPath = s_overlay.iconFolder + L"\\" + m_recipeSlots[slot].textureName + L".png";
-                        // Check if PNG already exists (skip extraction)
                         DWORD attr = GetFileAttributesW(pngPath.c_str());
                         if (attr == INVALID_FILE_ATTRIBUTES)
                         {
@@ -991,7 +961,7 @@
             logBLockDiagnostics(L"ASSIGN", m_lastCapturedName, m_recipeSlots[slot].bLockData);
 
             std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" = " + m_lastCapturedName;
-            showOnScreen(msg.c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
+            showOnScreen(msg, 3.0f, 0.0f, 1.0f, 0.0f);
             QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot(F{}) EXIT OK\n"), slot + 1);
         }
 
@@ -1014,8 +984,6 @@
             return textResult.ToString();
         }
 
-        // trySelectRecipeByHandle, cacheRecipeHandleForSlot, selectRecipeOnBuildTab
-        // -> moved to moria_placement.inl
 
         void quickBuildSlot(int slot)
         {
@@ -1024,7 +992,7 @@
             if (!m_recipeSlots[slot].used)
             {
                 std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" empty \x2014 select recipe in B menu, then " + modifierName(s_modifierVK) + L"+F" + std::to_wstring(slot + 1);
-                showOnScreen(msg.c_str(), 3.0f, 1.0f, 0.5f, 0.0f);
+                showOnScreen(msg, 3.0f, 1.0f, 0.5f, 0.0f);
                 return;
             }
 
@@ -1036,10 +1004,6 @@
                 return;
             }
 
-            // Debounce: if SM is already running, just update the target slot.
-            // The in-flight cycle will pick up the latest slot when it reaches
-            // SelectRecipe, avoiding multiple blockSelectedEvent calls that each
-            // trigger game UI transitions (HideAllScreens -> StopAnimation)
             // which corrupt MovieScene entity state cumulatively.
             if (m_qbPhase != PlacePhase::Idle)
             {
@@ -1049,10 +1013,6 @@
                 return;
             }
 
-            // Post-completion cooldown: blockSelectedEvent triggers game UI transitions
-            // (ConstructionPlacement ability -> HideAllScreens -> StopAnimation) that
-            // need time to settle. Without this, rapid F-key presses cause cumulative
-            // MovieScene entity corruption in SavePreAnimatedState.
             // Originally 300ms — increased to 500ms for additional settle time.
             {
                 ULONGLONG now = GetTickCount64();
@@ -1068,8 +1028,7 @@
             startOrSwitchBuild(slot);
         }
 
-        // Build-from-target entry point: routes through same guards as F-key quickbuild
-        // so all build triggers share one SM queue and cleanup path.
+        // Build-from-target: same guards/cooldown as F-key quickbuild
         void quickBuildFromTarget()
         {
             // Guard: block while handle resolution is in progress
@@ -1083,7 +1042,7 @@
             // Guard: check target data exists
             if (!m_lastTargetBuildable || (m_targetBuildName.empty() && m_targetBuildRecipeRef.empty()))
             {
-                showOnScreen(Loc::get("msg.no_buildable_target").c_str(), 3.0f, 1.0f, 0.5f, 0.0f);
+                showOnScreen(Loc::get("msg.no_buildable_target"), 3.0f, 1.0f, 0.5f, 0.0f);
                 return;
             }
 
@@ -1112,5 +1071,3 @@
             startBuildFromTarget();
         }
 
-        // normalizeForMatch, selectRecipeByTargetName
-        // -> moved to moria_placement.inl

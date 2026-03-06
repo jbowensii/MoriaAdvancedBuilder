@@ -15,9 +15,7 @@ namespace MoriaMods
     // Overlay Rendering
     // ════════════════════════════════════════════════════════════════════════════
 
-    // Renders the 12-slot hotbar overlay. Called from overlay thread on WM_TIMER.
-    // Layout: [F1..F8] | [F9..F12] — build recipes with icons | utility slots
-    // Scales relative to 1080p baseline. Uses UpdateLayeredWindow for per-pixel alpha.
+    // Render 12-slot hotbar overlay (WM_TIMER, scales from 1080p, UpdateLayeredWindow)
     static void renderOverlay(HWND hwnd)
     {
         if (!s_overlay.gameHwnd || !IsWindow(s_overlay.gameHwnd))
@@ -296,8 +294,7 @@ namespace MoriaMods
                     gfx.DrawString(Loc::get("ovr.config").c_str(), -1, &cfgFont, cfgRect, &centerFmt, &cfgBrush);
                 }
 
-                // Key label below slot — pulled from s_bindings via named constants
-                // Slot mapping: 0-7=QB bindings, 8=Target, 9=Rotation, 10=Swap, 11=Config
+                // Key label below slot (0-7=QB, 8=Target, 9=Rotation, 10=Swap, 11=Config)
                 std::wstring fLabel;
                 if (i <= 7)
                 {
@@ -362,7 +359,7 @@ namespace MoriaMods
 
     DWORD WINAPI overlayThreadProc(LPVOID /*param*/)
     {
-        // GDI+ already initialized in startOverlay() — ensure it's ready
+        // GDI+ fallback init (normally done in startOverlay)
         if (!s_overlay.gdipToken)
         {
             Gdiplus::GdiplusStartupInput gdipInput;

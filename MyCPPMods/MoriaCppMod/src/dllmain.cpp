@@ -24,10 +24,7 @@
 namespace MoriaMods
 {
 
-    // Sections 2, 3, 5 extracted to: moria_common.h, moria_reflection.h, moria_keybinds.h
-    // Section 4 extracted to: moria_overlay.cpp
-
-    // Forward declaration Ã¢â‚¬â€ overlay thread entry point (defined in moria_overlay.cpp)
+    // Overlay thread entry point (moria_overlay.cpp)
     DWORD WINAPI overlayThreadProc(LPVOID);
 
 
@@ -57,7 +54,7 @@ namespace MoriaMods
         // UObject* m_sysMessages{nullptr};
         std::vector<bool> m_appliedRemovals; // parallel to m_savedRemovals: true = already removed
 
-        // Real-time interval tracking (replaces FPS-dependent frame counting)
+        // Real-time interval tracking
         ULONGLONG m_lastWorldCheck{0};     // world-unload detection (~1s)
         ULONGLONG m_lastCharPoll{0};       // character detection (~0.5s)
         ULONGLONG m_lastStreamCheck{0};    // new component streaming (~3s)
@@ -66,8 +63,7 @@ namespace MoriaMods
         ULONGLONG m_lastContainerScan{0};  // container discovery retry (~2s)
         bool m_containerTimeoutLogged{false}; // one-shot flag for 65s timeout message
 
-        // Throttled replay: spread UpdateInstanceTransform across frames to avoid
-        // crashing the render thread (FStaticMeshInstanceBuffer::UpdateFromCommandBuffer_Concurrent)
+        // Throttled replay: spread hides across frames (render thread safety)
         struct ReplayState
         {
             std::vector<RC::Unreal::FWeakObjectPtr> compQueue;
@@ -103,11 +99,7 @@ namespace MoriaMods
         // Ã¢â€â‚¬Ã¢â€â‚¬ File I/O Ã¢â€â‚¬Ã¢â€â‚¬
 
         // Ã¢â€â‚¬Ã¢â€â‚¬ 6A: File I/O & Persistence Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // Save/load HISM removal data (removed_instances.txt)
-        // Save/load quick-build slots (quickbuild_slots.txt)
-        // Format: meshName|posX|posY|posZ (single instance) or @meshName (type rule)
-
-        // componentNameToMeshId Ã¢â‚¬â€ defined in moria_testable.h
+        // Save/load HISM removals + quickbuild slots; format: meshName|posX|posY|posZ or @meshName
 
         void loadSaveFile()
         {
@@ -133,7 +125,6 @@ namespace MoriaMods
                 }
             }
 
-            // Remove position entries that are redundant with type rules
             {
                 size_t before = m_savedRemovals.size();
                 std::erase_if(m_savedRemovals, [this](const SavedRemoval& sr) {
@@ -146,10 +137,7 @@ namespace MoriaMods
                 }
             }
 
-            // No dedup Ã¢â‚¬â€ stacked instances share the same position,
-            // and each entry matches a different stacked instance on replay
-
-            // Initialize tracking: all pending (not yet applied)
+            // No dedup: stacked instances share position, each matches a different one on replay
             m_appliedRemovals.assign(m_savedRemovals.size(), false);
 
             VLOG(STR("[MoriaCppMod] Loaded {} position removals + {} type rules\n"), m_savedRemovals.size(), m_typeRemovals.size());
@@ -175,8 +163,7 @@ namespace MoriaMods
                 file << sr.meshName << "|" << sr.posX << "|" << sr.posY << "|" << sr.posZ << "\n";
         }
 
-        // Re-read removed_instances.txt in file order and build display entries for config UI.
-        // Called after every loadSaveFile() and rewriteSaveFile() that changes the list.
+        // Build config UI display entries from removed_instances.txt
         void buildRemovalEntries()
         {
             std::vector<RemovalEntry> entries;
@@ -230,45 +217,7 @@ namespace MoriaMods
             }
         }
 
-        // Ã¢â€â‚¬Ã¢â€â‚¬ Helpers Ã¢â€â‚¬Ã¢â€â‚¬
-
-        // Ã¢â€â‚¬Ã¢â€â‚¬ 6B: Player & World Helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // Find player controller, pawn, location, camera ray
-
-        // Returns the first PlayerController found via FindAllOf.
-        UObject* findPlayerController()
-        {
-            std::vector<UObject*> pcs;
-            UObjectGlobals::FindAllOf(STR("PlayerController"), pcs);
-            return pcs.empty() ? nullptr : pcs[0];
-        }
-
-        UObject* getPawn()
-        {
-            auto* pc = findPlayerController();
-            if (!pc) return nullptr;
-            auto* fn = pc->GetFunctionByNameInChain(STR("K2_GetPawn"));
-            if (!fn) return nullptr;
-            struct
-            {
-                UObject* Ret{nullptr};
-            } p{};
-            pc->ProcessEvent(fn, &p);
-            return p.Ret;
-        }
-
-        FVec3f getPawnLocation()
-        {
-            FVec3f loc{0, 0, 0};
-            auto* pawn = getPawn();
-            if (!pawn) return loc;
-            auto* fn = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation"));
-            if (!fn) return loc;
-            pawn->ProcessEvent(fn, &loc);
-            return loc;
-        }
-
-        #include "moria_common.inl"    // Coordinate system (ScreenCoords) — must be first
+        #include "moria_common.inl"    // Shared utilities, coordinate system, player helpers
 
         #include "moria_debug.inl"    // 6C + 6F: Display, debug, cheat commands
 
@@ -285,36 +234,33 @@ namespace MoriaMods
         // Quick-build hotbar: F1-F12 recipe slots
         static constexpr int QUICK_BUILD_SLOTS = 12;
 
-        // Per-slot: save display name + recipe struct for activation
         static constexpr int BLOCK_DATA_SIZE = 120; // bLock struct size in blockSelectedEvent
-        // FMorConstructionRecipeRowHandle layout: 16 bytes
-        // [0-7] DataTable ptr (usually null for runtime handles), [8-15] FName RowName
+        // FMorConstructionRecipeRowHandle: [0-7] DT ptr, [8-15] FName
         static constexpr int RECIPE_HANDLE_SIZE = 16;
 
         struct RecipeSlot
         {
-            std::wstring displayName;             // display name from blockName TextBlock
-            std::wstring textureName;             // e.g. "T_UI_BuildIcon_AdornedDoor" (for PNG lookup)
-            std::wstring rowName;                 // FName RowName string (e.g. "Recipe_Beorn_Wall_3x4m_A"), persisted to disk
-            uint8_t bLockData[BLOCK_DATA_SIZE]{}; // captured recipe struct (session-only, not saved to disk)
-            bool hasBLockData{false};             // true if bLockData was captured this session
-            uint8_t recipeHandle[RECIPE_HANDLE_SIZE]{}; // FMorConstructionRecipeRowHandle (session-only)
-            bool hasHandle{false};                // true if recipeHandle was captured this session
+            std::wstring displayName;
+            std::wstring textureName;             // e.g. "T_UI_BuildIcon_AdornedDoor"
+            std::wstring rowName;                 // persisted FName RowName (e.g. "Recipe_Beorn_Wall_3x4m_A")
+            uint8_t bLockData[BLOCK_DATA_SIZE]{};  // session-only captured recipe struct
+            bool hasBLockData{false};
+            uint8_t recipeHandle[RECIPE_HANDLE_SIZE]{}; // session-only recipe handle
+            bool hasHandle{false};
             bool used{false};
         };
         RecipeSlot m_recipeSlots[QUICK_BUILD_SLOTS]{};
 
-        // Auto-capture from post-hook
+        // Last captured recipe from manual click (post-hook)
         std::wstring m_lastCapturedName;
-        uint8_t m_lastCapturedBLock[BLOCK_DATA_SIZE]{}; // last captured bLock from manual click
-        uint8_t m_lastCapturedHandle[RECIPE_HANDLE_SIZE]{}; // last captured recipe handle
+        uint8_t m_lastCapturedBLock[BLOCK_DATA_SIZE]{};
+        uint8_t m_lastCapturedHandle[RECIPE_HANDLE_SIZE]{};
         bool m_hasLastCapture{false};
         bool m_hasLastHandle{false};
-        bool m_isAutoSelecting{false}; // suppress post-hook capture during automated quickbuild
+        bool m_isAutoSelecting{false}; // suppresses post-hook capture during quickbuild
 
-        // bLock offset resolved via s_off_bLock (ForEachProperty on UI_WBP_Build_Item_C)
 
-        // Reactive quick-build state machine (replaces frame-counting)
+        // Quick-build state machine
         enum class PlacePhase { Idle, CancelGhost, CloseMenu, WaitReopen, PrimeOpen, OpenMenu, SelectRecipe };
         int m_quickBuildSwapDelay{5};  // frames to wait between close and reopen (Slate cleanup)
         // Result of selectRecipeOnBuildTab Ã¢â‚¬â€ distinguishes "still loading" from "genuinely missing"
@@ -325,7 +271,7 @@ namespace MoriaMods
         ULONGLONG m_qbRetryTime{0};          // timestamp of last retry/phase change
         int m_qbWaitCount{0};                // WaitReopen frame countdown
 
-        // Eager handle resolution state machine (runs once at toolbar creation)
+        // Eager handle resolution SM (runs once at toolbar creation)
         enum class HandleResolvePhase { None, Priming, Resolving, Done };
         HandleResolvePhase m_handleResolvePhase{HandleResolvePhase::None};
         ULONGLONG m_handleResolveStartTime{0};  // timestamp when resolve SM started
@@ -335,13 +281,13 @@ namespace MoriaMods
         ULONGLONG m_lastShowHideTime{0};        // cooldown: last Show()/Hide() on build tab (ms)
         ULONGLONG m_lastQBSelectTime{0};        // cooldown: last blockSelectedEvent completion (ms)
 
-        // Cached widget/component pointers for cheap state checks (invalidated on world unload)
+        // Cached widget/component pointers (invalidated on world unload)
         UObject* m_cachedBuildComp{nullptr}; // UMorBuildingComponent on player character
         UObject* m_cachedBuildHUD{nullptr};  // UI_WBP_BuildHUDv2_C (UBuildOverlayWidget)
         UObject* m_cachedBuildTab{nullptr};  // UI_WBP_Build_Tab_C
         UFunction* m_fnIsVisible{nullptr};   // cached IsVisible() on Build_Tab (UWidget standard)
 
-        // Target-to-build: Shift+F10 Ã¢â‚¬â€ build the last targeted buildable object
+        // Target-to-build (Shift+F10)
         std::wstring m_targetBuildName;      // display name from last F10 target
         std::wstring m_targetBuildRecipeRef; // class name sans BP_ prefix (for bLock matching)
         std::wstring m_targetBuildRowName;   // DT_Constructions row name (also key for DT_ConstructionRecipes)
@@ -351,62 +297,56 @@ namespace MoriaMods
 
         std::vector<uint8_t> m_bagHandle; // cached EpicPack bag FItemHandle
 
-        // Hotbar overlay: Win32 transparent bar at top-center of screen
-        bool m_showHotbar{true}; // ON by default
+        bool m_showHotbar{true}; // Win32 overlay bar visibility
 
-        // Experimental UMG toolbar
-        UObject* m_umgBarWidget{nullptr};           // root UUserWidget
-        UObject* m_umgStateImages[8]{};             // state icon UImage per slot
-        UObject* m_umgIconImages[8]{};              // recipe icon UImage per slot (overlaid on state)
-        UObject* m_umgIconTextures[8]{};            // cached UTexture2D* per slot (recipe icon)
-        std::wstring m_umgIconNames[8];             // texture name currently displayed per slot
-        UObject* m_umgTexEmpty{nullptr};            // cached Empty state texture
-        UObject* m_umgTexInactive{nullptr};         // cached Inactive state texture
-        UObject* m_umgTexActive{nullptr};           // cached Active state texture
+        // UMG builders bar
+        UObject* m_umgBarWidget{nullptr};
+        UObject* m_umgStateImages[8]{};
+        UObject* m_umgIconImages[8]{};
+        UObject* m_umgIconTextures[8]{};
+        std::wstring m_umgIconNames[8];
+        UObject* m_umgTexEmpty{nullptr};
+        UObject* m_umgTexInactive{nullptr};
+        UObject* m_umgTexActive{nullptr};
         enum class UmgSlotState : uint8_t { Empty, Inactive, Active, Disabled };
         UmgSlotState m_umgSlotStates[8]{};
-        int m_activeBuilderSlot{-1};               // which slot is currently Active (-1 = none)
-        UFunction* m_umgSetBrushFn{nullptr};       // cached SetBrushFromTexture function
+        int m_activeBuilderSlot{-1};
+        UFunction* m_umgSetBrushFn{nullptr};
 
         // Mod Controller toolbar Ã¢â‚¬â€ 4x3 grid, lower-right of screen
         static constexpr int MC_SLOTS = 12;
-        UObject* m_mcBarWidget{nullptr};               // root UUserWidget
-        UObject* m_mcStateImages[MC_SLOTS]{};          // state icon UImage per slot
-        UObject* m_mcIconImages[MC_SLOTS]{};           // icon UImage per slot (overlaid on state)
+        UObject* m_mcBarWidget{nullptr};
+        UObject* m_mcStateImages[MC_SLOTS]{};
+        UObject* m_mcIconImages[MC_SLOTS]{};
         UmgSlotState m_mcSlotStates[MC_SLOTS]{};
 
-        // Key label overlays Ã¢â‚¬â€ UTextBlock + background UImage per slot
-        UObject* m_umgKeyLabels[8]{};              // UTextBlock per builders bar slot
-        UObject* m_umgKeyBgImages[8]{};            // Blank_Rect UImage per builders bar slot
-        UObject* m_mcKeyLabels[MC_SLOTS]{};        // UTextBlock per MC slot
-        UObject* m_mcKeyBgImages[MC_SLOTS]{};      // Blank_Rect UImage per MC slot
-        UObject* m_umgTexBlankRect{nullptr};       // cached T_UI_Icon_Input_Blank_Rect texture
-        UObject* m_mcRotationLabel{nullptr};       // UTextBlock overlaid on MC slot 0 Ã¢â‚¬â€ "5Ã‚Â°\nT0"
-        UObject* m_mcSlot0Overlay{nullptr};        // Overlay containing state+icon for MC slot 0
-        UObject* m_mcSlot8Overlay{nullptr};        // Overlay for MC slot 8 (Remove Target)
-        UObject* m_mcSlot10Overlay{nullptr};       // Overlay for MC slot 10 (Remove All)
-        // Advanced Builder toolbar (single toggle button, lower-right corner)
-        UObject* m_abBarWidget{nullptr};           // root UUserWidget for Advanced Builder toggle
-        UObject* m_abKeyLabel{nullptr};            // UTextBlock showing key name on AB toolbar
-        UObject* m_abStateImage{nullptr};          // UImage for AB bar state frame (hover highlight)
-        bool m_toolbarsVisible{false};             // toggle state: are builders bar + MC bar visible?
-        bool m_characterHidden{false};             // toggle state: is player character hidden?
-        bool m_flyMode{false};                     // toggle state: is fly mode active?
-        bool m_snapEnabled{true};                  // toggle state: is snap enabled? (default ON)
-        float m_savedMaxSnapDistance{-1.0f};       // original MaxSnapDistance (-1 = not yet captured)
-        bool m_noCollisionWhileFlying{true};       // INI setting: disable collision when flying (default ON)
-        bool m_hasSavedCameraState{false};         // true if camera state was captured before fly
-        uint8_t m_savedCamSettings[CAM_SETTINGS_BLOB_SIZE]{}; // FFGKCameraStateSettings blob
-        uint8_t m_savedProbeType{0};               // EFGKProbeType
-        float m_savedProbeRadius{0.0f};            // ProbeRadius
-        bool m_savedProbeDisallowIntersect{false}; // bProbeDisallowIntersect
-        bool m_buildMenuPrimed{false};             // true after first build menu open has loaded widgets
-        bool m_buildTabAfterShowFired{false};      // set by OnAfterShow hook, cleared when consumed
+        // Key label overlays (UTextBlock + UImage per slot)
+        UObject* m_umgKeyLabels[8]{};
+        UObject* m_umgKeyBgImages[8]{};
+        UObject* m_mcKeyLabels[MC_SLOTS]{};
+        UObject* m_mcKeyBgImages[MC_SLOTS]{};
+        UObject* m_umgTexBlankRect{nullptr};
+        UObject* m_mcRotationLabel{nullptr};
+        UObject* m_mcSlot0Overlay{nullptr};
+        UObject* m_mcSlot8Overlay{nullptr};
+        UObject* m_mcSlot10Overlay{nullptr};
+        // Advanced Builder toolbar (toggle button)
+        UObject* m_abBarWidget{nullptr};
+        UObject* m_abKeyLabel{nullptr};
+        UObject* m_abStateImage{nullptr};
+        bool m_toolbarsVisible{false};
+        bool m_characterHidden{false};
+        bool m_flyMode{false};
+        bool m_snapEnabled{true};
+        float m_savedMaxSnapDistance{-1.0f};       // -1 = not yet captured
+        bool m_noCollisionWhileFlying{true};       // INI: disable collision when flying
+        bool m_buildMenuPrimed{false};
+        bool m_buildTabAfterShowFired{false};      // set by OnAfterShow hook
 
-        // Stash container repair Ã¢â‚¬â€ run once per character load, not on every retry scan
+        // Stash container repair (once per character load)
         bool m_repairDone{false};
 
-        // Centralized viewport / cursor / scale state (see moria_common.inl)
+        // Viewport / cursor / scale (moria_common.inl)
         ScreenCoords m_screen;
 
         // Toolbar repositioning mode
@@ -415,84 +355,69 @@ namespace MoriaMods
         float m_dragOffsetX{0}, m_dragOffsetY{0};
         bool m_hitDebugDone{false};
         UClass* m_wllClass{nullptr};
-        UObject* m_repositionMsgWidget{nullptr};   // centered instruction message
-        UObject* m_repositionInfoBoxWidget{nullptr}; // placeholder info box during reposition
-        // Toolbar positions as viewport coordinates (0.0-1.0); -1 = use default
-        // Index: 0=BuildersBar, 1=AdvancedBuilder, 2=ModController, 3=InfoBox
+        UObject* m_repositionMsgWidget{nullptr};
+        UObject* m_repositionInfoBoxWidget{nullptr};
+        // Toolbar positions as viewport fractions (0.0-1.0); -1 = default. 0=BB, 1=AB, 2=MC, 3=IB
         static constexpr int TB_COUNT = 4;
         float m_toolbarPosX[TB_COUNT]{-1, -1, -1, -1};
         float m_toolbarPosY[TB_COUNT]{-1, -1, -1, -1};
-        // Cached sizes in viewport pixels (set during creation, used for drag hit-test)
+        // Cached sizes in viewport pixels (for drag hit-test)
         float m_toolbarSizeW[TB_COUNT]{0, 0, 0, 0};
         float m_toolbarSizeH[TB_COUNT]{0, 0, 0, 0};
-        // Alignment pivots Ã¢â‚¬â€ all center-based for intuitive dragging
-        float m_toolbarAlignX[TB_COUNT]{0.5f, 0.5f, 0.5f, 0.5f};
-        float m_toolbarAlignY[TB_COUNT]{0.5f, 0.5f, 0.5f, 0.5f};
-        // Default positions (from 4K tuning): BB=top-center, AB=lower-right, MC=right-mid, IB=right-center
+        // Default positions (4K tuning)
         static constexpr float TB_DEF_X[TB_COUNT]{0.4992f, 0.7505f, 0.8492f, 0.9414f};
         static constexpr float TB_DEF_Y[TB_COUNT]{0.0287f, 0.9111f, 0.6148f, 0.5463f};
         // Toolbar click + hover state
-        int m_hoveredToolbar{-1};                  // -1=none, 0=BB, 1=AB, 2=MC
-        int m_hoveredSlot{-1};                     // slot index within hovered toolbar
-        bool m_lastClickLMB{false};                // previous frame LMB for edge detection
-        FBoolProperty* m_bpShowMouseCursor{nullptr}; // cached FBoolProperty for bShowMouseCursor
+        int m_hoveredToolbar{-1};
+        int m_hoveredSlot{-1};
+        bool m_lastClickLMB{false};
+        FBoolProperty* m_bpShowMouseCursor{nullptr};
         // UMG Target Info popup
-        UObject* m_targetInfoWidget{nullptr};      // root UUserWidget
-        UObject* m_tiTitleLabel{nullptr};           // "Target Info" title
-        UObject* m_tiClassLabel{nullptr};           // Class value
-        UObject* m_tiNameLabel{nullptr};            // Name value
-        UObject* m_tiDisplayLabel{nullptr};         // Display value
-        UObject* m_tiPathLabel{nullptr};            // Path value
-        UObject* m_tiBuildLabel{nullptr};           // Buildable value
-        UObject* m_tiRecipeLabel{nullptr};          // Recipe value
-        ULONGLONG m_tiShowTick{0};                  // GetTickCount64() when shown; 0 = hidden
+        UObject* m_targetInfoWidget{nullptr};
+        UObject* m_tiTitleLabel{nullptr};
+        UObject* m_tiClassLabel{nullptr};
+        UObject* m_tiNameLabel{nullptr};
+        UObject* m_tiDisplayLabel{nullptr};
+        UObject* m_tiPathLabel{nullptr};
+        UObject* m_tiBuildLabel{nullptr};
+        UObject* m_tiRecipeLabel{nullptr};
+        ULONGLONG m_tiShowTick{0};                  // 0 = hidden
         // BELIEVED DEAD CODE -- InfoBox popup system: widget created but never shown (showInfoBox never called)
         // UObject* m_infoBoxWidget{nullptr};          // root UUserWidget
         // UObject* m_ibTitleLabel{nullptr};            // title (e.g. "Removed", "Undo")
         // UObject* m_ibMessageLabel{nullptr};          // message body
         // ULONGLONG m_ibShowTick{0};                   // GetTickCount64() when shown; 0 = hidden
         // UMG Config Menu
-        UObject* m_configWidget{nullptr};              // root UUserWidget
-        UObject* m_cfgTabLabels[3]{};                  // tab header TextBlocks
-        UObject* m_cfgTabContent[3]{};                 // VBox per tab (content)
-        UObject* m_cfgTabImages[3]{};                  // UImage per tab (background texture)
-        UObject* m_cfgTabActiveTexture{nullptr};       // T_UI_Btn_P1_Up (active tab)
-        UObject* m_cfgTabInactiveTexture{nullptr};     // T_UI_Btn_P2_Up (inactive tab)
-        UObject* m_cfgVignetteImage{nullptr};          // UImage for vignette border frame
-        UObject* m_cfgScrollBoxes[3]{};                // UScrollBox wrappers per tab
+        UObject* m_configWidget{nullptr};
+        UObject* m_cfgTabLabels[3]{};
+        UObject* m_cfgTabContent[3]{};
+        UObject* m_cfgTabImages[3]{};
+        UObject* m_cfgTabActiveTexture{nullptr};
+        UObject* m_cfgTabInactiveTexture{nullptr};
+        UObject* m_cfgVignetteImage{nullptr};
+        UObject* m_cfgScrollBoxes[3]{};
         int m_cfgActiveTab{0};
         bool m_cfgVisible{false};
         // Tab 0: Optional Mods
         UObject* m_cfgFreeBuildLabel{nullptr};
-        UObject* m_cfgFreeBuildCheckImg{nullptr};  // check mark image (shown when ON)
+        UObject* m_cfgFreeBuildCheckImg{nullptr};
         UObject* m_cfgNoCollisionLabel{nullptr};
-        UObject* m_cfgNoCollisionCheckImg{nullptr}; // check mark image (shown when ON)
-        UObject* m_cfgUnlockBtnImg{nullptr};        // Unlock All Recipes button bg image
+        UObject* m_cfgNoCollisionCheckImg{nullptr};
+        UObject* m_cfgUnlockBtnImg{nullptr};
         // Tab 1: Key Mapping
-        UObject* m_cfgKeyValueLabels[BIND_COUNT]{};    // old text labels (kept for compat)
-        UObject* m_cfgKeyBoxLabels[BIND_COUNT]{};      // key box TextBlocks (new)
+        UObject* m_cfgKeyValueLabels[BIND_COUNT]{};
+        UObject* m_cfgKeyBoxLabels[BIND_COUNT]{};
         UObject* m_cfgModifierLabel{nullptr};
-        UObject* m_cfgModBoxLabel{nullptr};            // modifier key box TextBlock
+        UObject* m_cfgModBoxLabel{nullptr};
         // Tab 2: Hide Environment
         UObject* m_cfgRemovalHeader{nullptr};
-        UObject* m_cfgRemovalVBox{nullptr};            // VBox holding removal entry rows
+        UObject* m_cfgRemovalVBox{nullptr};
         int m_cfgLastRemovalCount{-1};
-        // Stability audit — PointLights at problem locations (red=critical, yellow=marginal)
+        // Stability audit: PointLights at problem locations
         ULONGLONG m_auditClearTime{0};
         struct AuditLoc { float x, y, z; bool critical; };
         std::vector<AuditLoc> m_auditLocations;
-        std::vector<UObject*> m_auditSpawnedActors;    // spawned PointLight actors
-        // isReadableMemory Ã¢â‚¬â€ defined in moria_testable.h
-
-        // Safe wrapper for GetClassPrivate()->GetName() Ã¢â‚¬â€ returns empty string on null
-        static std::wstring safeClassName(UObject* obj)
-        {
-            if (!obj) return L"";
-            auto* cls = obj->GetClassPrivate();
-            if (!cls) return L"";
-            return std::wstring(cls->GetName());
-        }
-
+        std::vector<UObject*> m_auditSpawnedActors;
 
         #include "moria_placement.inl"   // Build placement lifecycle, snap, ghost piece mgmt
         #include "moria_quickbuild.inl"  // 6G + 6H: Quick-build dispatch & icon extraction
@@ -503,8 +428,7 @@ namespace MoriaMods
 
       public:
         // Ã¢â€â‚¬Ã¢â€â‚¬ 6K: Public Interface Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // Constructor, destructor, on_unreal_init (keybinds + ProcessEvent hooks),
-        // on_update (per-frame tick: state machines, replay, UMG config, keybinds)
+        // Constructor, destructor, on_unreal_init, on_update
         MoriaCppMod()
         {
             ModVersion = STR("2.7");
@@ -519,11 +443,7 @@ namespace MoriaMods
 
         ~MoriaCppMod() override
         {
-            // Disable ProcessEvent hooks FIRST Ã¢â‚¬â€ before any blocking waits.
-            // The pre/post hooks check s_instance and early-return when null.
-            // Without this, hooks fire during the stopOverlay 3s wait, calling
-            // GetName()/GetClassPrivate() on UObjects mid-destruction, which can
-            // corrupt the UObject hash table and cause RemoveFromHash crashes.
+            // Null s_instance first: hooks would call GetName() on stale UObjects during shutdown
             s_instance = nullptr;
 
             stopOverlay();
@@ -534,9 +454,7 @@ namespace MoriaMods
             }
         }
 
-        // Called once when UE4SS has finished initializing Unreal Engine hooks.
-        // Discovers functions, loads save files, registers keybinds, starts overlay,
-        // and installs ProcessEvent pre/post hooks for rotation + recipe capture.
+        // Init: load config/saves, register keybinds, start overlay, install ProcessEvent hooks.
         auto on_unreal_init() -> void override
         {
             VLOG(STR("[MoriaCppMod] Unreal initialized.\n"));
@@ -600,11 +518,7 @@ namespace MoriaMods
             probePrintString();
             loadQuickBuildSlots();
 
-            // Num1/Num2/Num6 removal handlers removed Ã¢â‚¬â€ now handled by MC polling (slots 4/5/6)
-
-            // Quick-build hotbar: F1-F8 = build, Modifier+F1-F8 = assign slot
-            // Modifier key is configurable (SHIFT/CTRL/ALT) via F12 Key Mapping tab
-            // All 3 modifier variants registered; isModifierDown() gates the callback at runtime
+            // F1-F8 quickbuild; all 3 modifier variants registered, isModifierDown() gates at runtime
 
             const Input::Key fkeys[] = {Input::Key::F1, Input::Key::F2, Input::Key::F3, Input::Key::F4, Input::Key::F5, Input::Key::F6, Input::Key::F7, Input::Key::F8};
             for (int i = 0; i < 8; i++)
@@ -627,30 +541,26 @@ namespace MoriaMods
                 });
             }
 
-            // OEM_FIVE/F12/F9/F10 handlers removed Ã¢â‚¬â€ now handled by MC polling (slots 0-2, 7)
-
             // Hotbar overlay toggle: Numpad * (Multiply)
             register_keydown_event(Input::Key::MULTIPLY, [this]() {
                 if (m_cfgVisible) return;
                 m_showHotbar = !m_showHotbar;
                 s_overlay.visible = m_showHotbar;
                 s_overlay.needsUpdate = true;
-                showOnScreen(m_showHotbar ? Loc::get("msg.hotbar_overlay_on").c_str() : Loc::get("msg.hotbar_overlay_off").c_str(), 2.0f, 0.2f, 0.8f, 1.0f);
+                showOnScreen(m_showHotbar ? Loc::get("msg.hotbar_overlay_on") : Loc::get("msg.hotbar_overlay_off"), 2.0f, 0.2f, 0.8f, 1.0f);
             });
-
-            // Builders bar toggle: now handled by AB toolbar key polling (s_bindings[BIND_AB_OPEN])
 
             // Mod Controller toolbar toggle: Numpad 7
             register_keydown_event(Input::Key::NUM_SEVEN, [this]() { if (m_cfgVisible) return; createModControllerBar(); });
 
-            // Spy mode: capture ProcessEvent calls with rotation/build in the function name
+            // ProcessEvent hooks: rotation interception + recipe capture
             s_instance = this;
             Unreal::Hook::RegisterProcessEventPreCallback([](UObject* context, UFunction* func, void* parms) {
                 if (!s_instance) return;
                 if (!func) return;
 
 
-                // Intercept RotatePressed on BuildHUD: set GATA rotation step + track cumulative rotation
+                // Intercept RotatePressed/CcwPressed: set GATA rotation step + track total
                 {
                     std::wstring fn(func->GetName());
                     if (fn == STR("RotatePressed") || fn == STR("RotateCcwPressed"))
@@ -679,7 +589,7 @@ namespace MoriaMods
                     }
                 }
 
-                // Intercept BuildConstruction / TryBuild: auto-restore snap after piece placement
+                // Auto-restore snap after piece placement
                 if (!s_instance->m_snapEnabled)
                 {
                     std::wstring fn2(func->GetName());
@@ -690,11 +600,9 @@ namespace MoriaMods
                     }
                 }
 
-                // (Quick-build capture moved to post-hook below)
             });
 
-            // Post-hook: capture recipe display name from blockSelectedEvent + OnAfterShow signal
-            // Only captures from MANUAL clicks Ã¢â‚¬â€ automated quickbuild selections are suppressed
+            // Post-hook: recipe capture from manual clicks + OnAfterShow signal
             Unreal::Hook::RegisterProcessEventPostCallback([](UObject* context, UFunction* func, void* parms) {
                 if (!s_instance || !func) return;
 
@@ -756,7 +664,7 @@ namespace MoriaMods
                 QBLOG(STR("[MoriaCppMod] [QuickBuild] Captured: '{}' (with bLock data)\n"), displayName);
                 s_instance->logBLockDiagnostics(L"CAPTURE", displayName, p);
 
-                // Capture recipe handle via GetSelectedRecipeHandle (16 bytes vs 120-byte bLock)
+                // Capture recipe handle via GetSelectedRecipeHandle
                 s_instance->m_hasLastHandle = false;
                 UObject* buildHUD = s_instance->getCachedBuildHUD();
                 if (buildHUD)
@@ -788,7 +696,7 @@ namespace MoriaMods
                 s_overlay.needsUpdate = true;
                 s_instance->updateMcRotationLabel();
 
-                // ONE-TIME: resolve bLock property offset and validate BLOCK_DATA_SIZE
+                // ONE-TIME: resolve bLock offset and validate BLOCK_DATA_SIZE
                 if (s_off_bLock == -2)
                 {
                     int bLockSize = 0;
@@ -813,13 +721,7 @@ namespace MoriaMods
                     STR("[MoriaCppMod] v2.7: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
         }
 
-        // Per-frame tick. Drives all state machines and periodic tasks:
-        //   - Character load/unload detection (BP_FGKDwarf_C)
-        //   - HISM replay queue (throttled, max 3 hides/frame)
-        //   - Toolbar swap phases (resolve Ã¢â€ â€™ stash Ã¢â€ â€™ restore)
-        //   - Quick-build state machine (open menu Ã¢â€ â€™ find widget Ã¢â€ â€™ select recipe)
-        //   - Icon extraction pipeline (render target Ã¢â€ â€™ export Ã¢â€ â€™ PNG conversion)
-        //   - Config window actions, periodic rescans
+        // Per-frame tick: state machines, replay, toolbar swap, quickbuild, icons, config, rescans.
         auto on_update() -> void override
         {
 
@@ -875,13 +777,8 @@ namespace MoriaMods
                 // Hide MC + Builders bar immediately after creation (AB toggle reveals them)
                 if (justCreated && !m_toolbarsVisible)
                 {
-                    auto hideWidget = [](UObject* w) {
-                        if (!w) return;
-                        auto* fn = w->GetFunctionByNameInChain(STR("SetVisibility"));
-                        if (fn) { uint8_t p[8]{}; p[0] = 1; w->ProcessEvent(fn, p); }
-                    };
-                    hideWidget(m_mcBarWidget);
-                    hideWidget(m_umgBarWidget);
+                    setWidgetVisibility(m_mcBarWidget, 1);
+                    setWidgetVisibility(m_umgBarWidget, 1);
                 }
             }
 
@@ -912,7 +809,7 @@ namespace MoriaMods
                 VLOG(STR("[MoriaCppMod] [CFG] Failsafe: config widget lost, resetting state\n"));
             }
 
-            // Config key (MC slot 7) always polled Ã¢â‚¬â€ allows toggle even when config is visible
+            // Config key always polled (works even when config visible)
             {
                 static bool s_lastCfgKey = false;
                 uint8_t cfgVk = s_bindings[MC_BIND_BASE + 11].key;
@@ -925,12 +822,11 @@ namespace MoriaMods
                 }
             }
 
-            // MC keybind polling via GetAsyncKeyState Ã¢â‚¬â€ dispatch slot actions
-            // Always track key state to prevent stale edges; only skip ACTIONS when config visible
+            // MC keybind polling; track state always, skip actions when config visible
             if (m_mcBarWidget)
             {
                 static bool s_lastMcKey[MC_SLOTS]{};
-                // Hoist SHIFT check once before the loop (perf: avoids up to 7 GetAsyncKeyState calls)
+                // Hoist SHIFT check (avoids redundant GetAsyncKeyState calls)
                 const bool shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
                 for (int i = 0; i < MC_SLOTS; i++)
                 {
@@ -938,8 +834,7 @@ namespace MoriaMods
                     uint8_t vk = s_bindings[MC_BIND_BASE + i].key;
                     if (vk == 0) { s_lastMcKey[i] = false; continue; }
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                    // SHIFT reverses numpad keys (e.g. Num9 Ã¢â€ â€™ PageUp) Ã¢â‚¬â€ also check alternate VK.
-                    // Only when SHIFT is physically held, to avoid false positives from nav keys.
+                    // SHIFT reverses numpad keys; check alternate VK (only when physically held)
                     if (!nowDown && shiftHeld)
                     {
                         uint8_t alt = numpadShiftAlternate(vk);
@@ -965,18 +860,17 @@ namespace MoriaMods
                     toggleRepositionMode();
                 s_lastReposEsc = escDown;
 
-                // Mouse drag logic Ã¢â‚¬â€ work entirely in viewport FRACTIONS [0..1]
-                // Avoids coordinate space mismatches between Win32 and UMG entirely.
+                // Mouse drag in viewport fractions [0..1] (avoids Win32/UMG mismatch)
                 bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
 
                 // Get cursor as fraction of viewport
                 float curFracX = 0.5f, curFracY = 0.5f;
                 m_screen.getCursorFraction(curFracX, curFracY);
 
-                // Get viewport size Ã¢â‚¬â€ use cached value from widget creation (reliable)
+                // Viewport size (cached)
                 int32_t rawVW = m_screen.viewW, rawVH = m_screen.viewH;
 
-                // Get cursor in UMG slate units via GetMousePositionOnViewport
+                // Cursor in UMG slate units
                 float slateCursorX = 0.0f, slateCursorY = 0.0f;
                 bool gotMouse = getMousePositionSlate(slateCursorX, slateCursorY);
                 if (!gotMouse)
@@ -1056,9 +950,7 @@ namespace MoriaMods
                 }
             }
 
-            // AB toolbar keybind polling Ã¢â‚¬â€ toggle builders bar + MC bar visibility
-            // MODIFIER + AB_OPEN = toggle repositioning mode; AB_OPEN alone = toggle visibility
-            // Always track key state; only skip action when config is visible
+            // AB toolbar polling: toggle visibility, MODIFIER = reposition mode
             {
                 static bool s_lastAbKey = false;
                 uint8_t vk = s_bindings[BIND_AB_OPEN].key;
@@ -1079,30 +971,17 @@ namespace MoriaMods
                             VLOG(STR("[MoriaCppMod] [AB] Toggle pressed Ã¢â‚¬â€ toolbars {}\n"),
                                                             m_toolbarsVisible ? STR("VISIBLE") : STR("HIDDEN"));
 
-                            // Toggle visibility on both toolbars via SetVisibility
-                            // ESlateVisibility: 0=Visible, 1=Collapsed
                             uint8_t vis = m_toolbarsVisible ? 0 : 1;
-                            auto setWidgetVis = [vis](UObject* widget) {
-                                if (!widget) return;
-                                auto* fn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
-                                if (fn)
-                                {
-                                    uint8_t parms[8]{};
-                                    parms[0] = vis;
-                                    widget->ProcessEvent(fn, parms);
-                                }
-                            };
-                            setWidgetVis(m_umgBarWidget);
-                            setWidgetVis(m_mcBarWidget);
+                            setWidgetVisibility(m_umgBarWidget, vis);
+                            setWidgetVisibility(m_mcBarWidget, vis);
                         }
                     }
                     s_lastAbKey = nowDown; // always update -- prevents stale edge after config closes
                 }
             }
 
-            // Stability audit now handled by MC slot 2 dispatch (case 2: runStabilityAudit)
 
-            // Re-apply UI input mode after Alt-Tab (engine resets to Game on focus regain)
+            // Re-apply UI input mode after Alt-Tab
             {
                 HWND gameWnd = findGameWindow();
                 static bool s_lastGameFocused = true;
@@ -1134,20 +1013,16 @@ namespace MoriaMods
                     if (curFracX >= 0)
                         hitTestToolbarSlot(curFracX, curFracY, hitTB, hitSlot);
 
-                    // Hover highlight update
                     if (hitTB != m_hoveredToolbar || hitSlot != m_hoveredSlot)
                     {
-                        // Remove old highlight
                         UObject* oldImg = getSlotStateImage(m_hoveredToolbar, m_hoveredSlot);
                         if (oldImg) umgSetImageColor(oldImg, 1.0f, 1.0f, 1.0f, 1.0f);
-                        // Apply new highlight
                         UObject* newImg = getSlotStateImage(hitTB, hitSlot);
                         if (newImg) umgSetImageColor(newImg, 0.6f, 0.8f, 1.0f, 1.0f);
                         m_hoveredToolbar = hitTB;
                         m_hoveredSlot = hitSlot;
                     }
 
-                    // Click detection (LMB rising edge)
                     bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
                     if (lmb && !m_lastClickLMB && hitTB >= 0 && hitSlot >= 0)
                     {
@@ -1155,8 +1030,7 @@ namespace MoriaMods
                         switch (hitTB)
                         {
                         case 0: // Builders Bar — quickbuild slot 0-7
-                            // Guard: don't trigger while placement is active (LMB would also
-                            // place the piece via the game engine, causing concurrent crash)
+                            // Guard: skip while placement active (LMB would also place, causing crash)
                             if (hitSlot >= 0 && hitSlot < 8 && !isPlacementActive())
                                 quickBuildSlot(hitSlot);
                             break;
@@ -1164,17 +1038,14 @@ namespace MoriaMods
                         {
                             m_toolbarsVisible = !m_toolbarsVisible;
                             uint8_t vis = m_toolbarsVisible ? 0 : 1;
-                            auto setWidgetVis = [vis](UObject* widget) {
-                                if (!widget) return;
-                                auto* fn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
-                                if (fn) { uint8_t parms[8]{}; parms[0] = vis; widget->ProcessEvent(fn, parms); }
-                            };
-                            setWidgetVis(m_umgBarWidget);
-                            setWidgetVis(m_mcBarWidget);
+                            setWidgetVisibility(m_umgBarWidget, vis);
+                            setWidgetVisibility(m_mcBarWidget, vis);
                             break;
                         }
                         case 2: // MC bar — dispatch slot action
                             dispatchMcSlot(hitSlot);
+                            break;
+                        default:
                             break;
                         }
                     }
@@ -1219,8 +1090,8 @@ namespace MoriaMods
                         POINT cursor{curX, curY};
                         float uis = m_screen.uiScale;
                         // Config widget: pos (viewW/2, viewH/2 - 100), size 1400x900 Slate, alignment (0.5,0.5)
-                        int wLeft = static_cast<int>(viewW / 2 - 700 * uis);
-                        int wTop  = static_cast<int>(viewH / 2 - 100 - 450 * uis);
+                        int wLeft = static_cast<int>(viewW / 2.0f - 700 * uis);
+                        int wTop  = static_cast<int>(viewH / 2.0f - 100 - 450 * uis);
                         // Tab bar: ~98px from top, each tab 420x66, 40px left padding (all scaled)
                         int tabY0 = static_cast<int>(wTop + 98 * uis), tabY1 = static_cast<int>(tabY0 + 66 * uis);
                         if (cursor.y >= tabY0 && cursor.y <= tabY1)
@@ -1258,7 +1129,7 @@ namespace MoriaMods
                             }
                             // Unlock All Recipes button: centered, 420px wide
                             int ubY0 = static_cast<int>(wTop + 430 * uis), ubY1 = static_cast<int>(ubY0 + 68 * uis);
-                            int ubX0 = static_cast<int>(wLeft + (1400 - 420) / 2 * uis), ubX1 = static_cast<int>(ubX0 + 420 * uis);
+                            int ubX0 = static_cast<int>(wLeft + (1400 - 420) / 2.0f * uis), ubX1 = static_cast<int>(ubX0 + 420 * uis);
                             if (cursor.x >= ubX0 && cursor.x <= ubX1 && cursor.y >= ubY0 && cursor.y <= ubY1)
                             {
                                 s_config.pendingUnlockAllRecipes = true;
@@ -1361,9 +1232,7 @@ namespace MoriaMods
                 }
                 s_lastLMB = lmbDown;
 
-                // Key capture for rebinding (Tab 1) Ã¢â‚¬â€ uses 0x8000 edge detection (not 0x0001 transition bit)
-                // The transition bit is unreliable: UE4SS input hooks and game WndProc consume it
-                // before our scan loop, causing F-keys and numpad keys to be missed.
+                // Key capture for rebinding (Tab 1): 0x8000 edge detection (transition bit unreliable)
                 static bool s_captureKeyPrev[256]{};
                 if (s_capturingBind >= 0 && s_capturingBind < BIND_COUNT)
                 {
@@ -1488,7 +1357,6 @@ namespace MoriaMods
             }
 
             // Ã¢â€â‚¬Ã¢â€â‚¬ Config window: consume pending cheat toggle requests Ã¢â€â‚¬Ã¢â€â‚¬
-            // Retry up to 12 attempts (~2s at every-10-frame throttle) then give up.
             {
                 static int s_freeBuildRetries = 0;
                 static int s_freeBuildThrottle = 0;
@@ -1512,7 +1380,7 @@ namespace MoriaMods
                         {
                             s_config.pendingToggleFreeBuild = false;
                             s_freeBuildRetries = 0;
-                            showOnScreen(Loc::get("msg.free_build_failed").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
+                            showOnScreen(Loc::get("msg.free_build_failed"), 3.0f, 1.0f, 0.3f, 0.3f);
                             VLOG(STR("[MoriaCppMod] Toggle Free Construction FAILED after {} retries\n"), MAX_RETRIES);
                         }
                     }
@@ -1521,9 +1389,9 @@ namespace MoriaMods
             if (s_config.pendingUnlockAllRecipes)
             {
                 if (callDebugFunc(STR("BP_DebugMenu_Recipes_C"), STR("All Recipes")))
-                    showOnScreen(Loc::get("msg.all_recipes_unlocked").c_str(), 5.0f, 0.0f, 1.0f, 0.0f);
+                    showOnScreen(Loc::get("msg.all_recipes_unlocked"), 5.0f, 0.0f, 1.0f, 0.0f);
                 else
-                    showOnScreen(Loc::get("msg.recipe_actor_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
+                    showOnScreen(Loc::get("msg.recipe_actor_not_found"), 3.0f, 1.0f, 0.3f, 0.3f);
                 s_config.pendingUnlockAllRecipes = false;
             }
 
@@ -1580,8 +1448,7 @@ namespace MoriaMods
             }
 
             // ── Eager handle resolution state machine ──
-            // Runs once after toolbar creation to batch-resolve recipe handles for all
-            // populated slots loaded from disk, so every F-key uses the SelectRecipe API.
+
             if (m_handleResolvePhase == HandleResolvePhase::Priming)
             {
                 ULONGLONG now = GetTickCount64();
@@ -1620,7 +1487,7 @@ namespace MoriaMods
             }
             else if (m_handleResolvePhase == HandleResolvePhase::Resolving)
             {
-                // Resolve ONE slot per frame to avoid Slate invalidation crashes.
+                // Resolve one slot per frame (Slate invalidation safety)
                 UObject* buildHUD = getCachedBuildHUD();
                 if (!buildHUD)
                 {
@@ -1683,8 +1550,7 @@ namespace MoriaMods
                 }
             }
 
-            // Detect build menu close Ã¢â€ â€™ refresh ActionBar (fixes stale hotbar display)
-            // Uses cheap isBuildTabShowing() Ã¢â‚¬â€ cached pointer with GC-flag validation
+            // Build menu close: refresh ActionBar, invalidate cached pointers
             if (m_buildMenuWasOpen && !isBuildTabShowing())
             {
                 m_buildMenuWasOpen = false;
@@ -1720,7 +1586,7 @@ namespace MoriaMods
                     m_snapEnabled = true;            // reset snap toggle for new world
                     m_savedMaxSnapDistance = -1.0f;   // force re-capture on next use
                     m_buildMenuPrimed = false;       // force re-prime on next quickbuild
-                    // Reset reactive state machine Ã¢â‚¬â€ cached pointers are stale in new world
+                    // Reset quickbuild SM (cached pointers stale)
                     m_cachedBuildComp = nullptr;
                     m_cachedBuildHUD = nullptr;
                     m_cachedBuildTab = nullptr;
@@ -1753,7 +1619,7 @@ namespace MoriaMods
                     m_replay = {}; // stop any active replay
                     // Reset all applied flags so replay re-runs for new world
                     m_appliedRemovals.assign(m_appliedRemovals.size(), false);
-                    // Clear swap state Ã¢â‚¬â€ handles become stale on world unload
+                    // Clear swap state (handles stale on unload)
                     m_bodyInvHandle.clear();
                     m_bodyInvHandles.clear();
                     m_repairDone = false;
@@ -1847,7 +1713,7 @@ namespace MoriaMods
                     m_swap = {};
                     m_activeToolbar = 0;
                     s_overlay.activeToolbar = 0;
-                    // Reset cheat toggle states Ã¢â‚¬â€ debug menu actors are destroyed on unload
+                    // Reset cheat toggles (debug actors destroyed)
                     s_config.freeBuild = false;
                     s_config.pendingToggleFreeBuild = false;
                     s_config.pendingUnlockAllRecipes = false;
@@ -1874,7 +1740,7 @@ namespace MoriaMods
 
             ULONGLONG msSinceChar = GetTickCount64() - m_charLoadTime;
 
-            // Auto-scan containers: retry every 2s after initial 5s delay, give up after 65s
+            // Auto-scan containers: 2s retry, 5s-65s window
             if (m_bodyInvHandle.empty() && msSinceChar > 5000 && msSinceChar < 65000 && intervalElapsed(m_lastContainerScan, 2000))
             {
                 VLOG(STR("[MoriaCppMod] [Swap] Container scan attempt (frame {}). bodyInvHandle.empty={} handles.size={}\n"),
@@ -1903,22 +1769,21 @@ namespace MoriaMods
                         discoverBagHandle(invComp);
                         if (!m_bodyInvHandle.empty())
                         {
-                            showOnScreen(Loc::get("msg.containers_discovered").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
+                            showOnScreen(Loc::get("msg.containers_discovered"), 3.0f, 0.0f, 1.0f, 0.0f);
                         }
                     }
                 }
             }
 
-            // Log failure if container scan times out after 65s (one-shot via flag)
+            // 65s container scan timeout (one-shot log)
             if (m_bodyInvHandle.empty() && msSinceChar >= 65000 && !m_containerTimeoutLogged)
             {
                 m_containerTimeoutLogged = true;
                 VLOG(STR("[MoriaCppMod] [Swap] Container discovery FAILED after 65s Ã¢â‚¬â€ toolbar swap unavailable this session\n"));
-                showOnScreen(Loc::get("msg.container_discovery_failed").c_str(), 5.0f, 1.0f, 0.3f, 0.0f);
+                showOnScreen(Loc::get("msg.container_discovery_failed"), 5.0f, 1.0f, 0.3f, 0.0f);
             }
 
-            // Initial replay 15 seconds after character load
-            // Extra delay to let streaming settle before modifying instance buffers
+            // Initial replay 15s after char load (streaming settle time)
             if (!m_initialReplayDone && msSinceChar >= 15000)
             {
                 m_initialReplayDone = true;
@@ -1932,19 +1797,19 @@ namespace MoriaMods
                 syncDebugToggleState();
             }
 
-            // Process throttled replay batch (max MAX_HIDES_PER_FRAME per frame)
+            // Throttled replay batch
             if (m_replay.active)
             {
                 processReplayBatch();
             }
 
-            // Check for newly-streamed components every 3s (after initial replay, when not already replaying)
+            // Check for newly-streamed components (3s interval)
             if (m_initialReplayDone && !m_replay.active && intervalElapsed(m_lastStreamCheck, 3000))
             {
                 checkForNewComponents();
             }
 
-            // Periodic full rescan every 60s while there are pending removals
+            // Periodic full rescan (60s, only when pending)
             if (m_initialReplayDone && !m_replay.active && intervalElapsed(m_lastRescanTime, 60000) && hasPendingRemovals())
             {
                 int pending = pendingCount();

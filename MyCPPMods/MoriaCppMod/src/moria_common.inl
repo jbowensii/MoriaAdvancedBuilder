@@ -83,3 +83,140 @@ struct ScreenCoords
     float pixelToSlateX(float px)  const { return px / dpiScale; }
     float pixelToSlateY(float py)  const { return py / dpiScale; }
 };
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Shared Utility Functions
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ── Object Introspection ────────────────────────────────────────────────────
+
+// Safe class name extraction — returns L"" if obj or class is null
+static std::wstring safeClassName(UObject* obj)
+{
+    if (!obj) return L"";
+    auto* cls = obj->GetClassPrivate();
+    if (!cls) return L"";
+    return std::wstring(cls->GetName());
+}
+
+// GC-safe liveness check — not null, not pending destruction, not unreachable
+static bool isWidgetAlive(UObject* obj)
+{
+    if (!obj) return false;
+    if (obj->HasAnyFlags(static_cast<EObjectFlags>(RF_BeginDestroyed | RF_FinishDestroyed))) return false;
+    if (obj->IsUnreachable()) return false;
+    return true;
+}
+
+// ── Player & World Lookup ───────────────────────────────────────────────────
+
+UObject* findPlayerController()
+{
+    std::vector<UObject*> pcs;
+    UObjectGlobals::FindAllOf(STR("PlayerController"), pcs);
+    return pcs.empty() ? nullptr : pcs[0];
+}
+
+UObject* getPawn()
+{
+    auto* pc = findPlayerController();
+    if (!pc) return nullptr;
+    auto* fn = pc->GetFunctionByNameInChain(STR("K2_GetPawn"));
+    if (!fn) return nullptr;
+    struct
+    {
+        UObject* Ret{nullptr};
+    } p{};
+    pc->ProcessEvent(fn, &p);
+    return p.Ret;
+}
+
+FVec3f getPawnLocation()
+{
+    FVec3f loc{0, 0, 0};
+    auto* pawn = getPawn();
+    if (!pawn) return loc;
+    auto* fn = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation"));
+    if (!fn) return loc;
+    pawn->ProcessEvent(fn, &loc);
+    return loc;
+}
+
+// ── Widget Visibility ───────────────────────────────────────────────────────
+
+// Set UMG widget visibility via ProcessEvent. vis: 0=Visible, 1=Collapsed, 2=Hidden
+void setWidgetVisibility(UObject* widget, uint8_t vis)
+{
+    if (!widget) return;
+    auto* fn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
+    if (!fn) return;
+    uint8_t parms[8]{};
+    parms[0] = vis;
+    widget->ProcessEvent(fn, parms);
+}
+
+// ── Panel Child Management ──────────────────────────────────────────────────
+
+// Generic AddChild via named UFunction (AddChildToVerticalBox, etc.)
+// Returns the slot UObject* for further configuration, or nullptr on failure.
+UObject* addChildToPanel(UObject* parent, const wchar_t* fnName, UObject* child)
+{
+    if (!parent || !child) return nullptr;
+    auto* fn = parent->GetFunctionByNameInChain(fnName);
+    if (!fn) return nullptr;
+    auto* pC = findParam(fn, STR("Content"));
+    auto* pR = findParam(fn, STR("ReturnValue"));
+    int sz = fn->GetParmsSize();
+    std::vector<uint8_t> ap(sz, 0);
+    if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = child;
+    parent->ProcessEvent(fn, ap.data());
+    return pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
+}
+
+UObject* addToVBox(UObject* parent, UObject* child)
+{
+    return addChildToPanel(parent, STR("AddChildToVerticalBox"), child);
+}
+
+UObject* addToHBox(UObject* parent, UObject* child)
+{
+    return addChildToPanel(parent, STR("AddChildToHorizontalBox"), child);
+}
+
+UObject* addToOverlay(UObject* parent, UObject* child)
+{
+    return addChildToPanel(parent, STR("AddChildToOverlay"), child);
+}
+
+// ── Widget Discovery ────────────────────────────────────────────────────────
+
+// Find first UserWidget matching className. If requireVisible, skip hidden ones.
+UObject* findWidgetByClass(const wchar_t* className, bool requireVisible = false)
+{
+    std::vector<UObject*> widgets;
+    UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
+    QBLOG(STR("[MoriaCppMod] [QB] findWidgetByClass('{}') requireVisible={} total={}\n"),
+          className, requireVisible, widgets.size());
+    for (auto* w : widgets)
+    {
+        if (!w || !isWidgetAlive(w)) continue;
+        std::wstring cls = safeClassName(w);
+        if (cls.empty()) continue;
+        if (cls == className)
+        {
+            if (!requireVisible) return w;
+            auto* visFunc = w->GetFunctionByNameInChain(STR("IsVisible"));
+            if (visFunc)
+            {
+                struct
+                {
+                    bool Ret{false};
+                } vp{};
+                w->ProcessEvent(visFunc, &vp);
+                if (vp.Ret) return w;
+            }
+        }
+    }
+    QBLOG(STR("[MoriaCppMod] [QB] findWidgetByClass('{}') -> NOT FOUND\n"), className);
+    return nullptr;
+}

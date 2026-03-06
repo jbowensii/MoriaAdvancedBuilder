@@ -3,13 +3,8 @@
 // ║  #include inside MoriaCppMod class body                                    ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-        // â"€â"€ PrintString support â"€â"€
-
         // â"€â"€ 6C: Display & UI Helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // PrintString, on-screen text, chat widget, system messages
-
-        // Discovers KismetSystemLibrary::PrintString param offsets at runtime.
-        // Uses ForEachProperty() to locate params by name â€" safe across game updates.
+        // Discover PrintString param offsets via ForEachProperty
         void probePrintString()
         {
             auto* fn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:PrintString"));
@@ -46,9 +41,7 @@
             VLOG(STR("[MoriaCppMod] PrintString valid={}\n"), m_ps.valid);
         }
 
-        // Displays text on screen via KismetSystemLibrary::PrintString.
-        // Requires probePrintString() to have discovered param offsets first.
-        // Color is RGB (0.0-1.0), duration in seconds.
+        // Display text on screen via PrintString (requires probePrintString first)
         void showOnScreen(const std::wstring& text, float duration = 5.0f, float r = 0.0f, float g = 1.0f, float b = 0.5f)
         {
             if (!m_ps.valid) return;
@@ -98,56 +91,8 @@
 
         // â"€â"€ Chat/Widget display â"€â"€
 
-        /* BELIEVED DEAD CODE -- chat widget system superseded by showOnScreen()
-        void findWidgets()
-        {
-            std::vector<UObject*> widgets;
-            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
-            m_chatWidget = nullptr;
-            m_sysMessages = nullptr;
-            for (auto* w : widgets)
-            {
-                if (!w) continue;
-                std::wstring clsName = safeClassName(w);
-                if (clsName.empty()) continue;
-                if (clsName == STR("WBP_UI_ChatWidget_C") && !m_chatWidget) m_chatWidget = w;
-                if (clsName == STR("WBP_UI_Console_SystemMessages_C") && !m_sysMessages) m_sysMessages = w;
-            }
-        }
-
-        void showGameMessage(const std::wstring& text)
-        {
-            if (!m_chatWidget) findWidgets();
-            if (!m_chatWidget) return;
-
-            // Guard against stale widget pointer (GC slab reuse)
-            if (!isWidgetAlive(m_chatWidget))
-            {
-                m_chatWidget = nullptr;
-                findWidgets();
-                if (!m_chatWidget) return;
-            }
-
-            // AddToShortChat(FText) â€" the floating chat overlay
-            auto* func = m_chatWidget->GetFunctionByNameInChain(STR("AddToShortChat"));
-            if (!func)
-            {
-                VLOG(STR("[MoriaCppMod] AddToShortChat not found\n"));
-                return;
-            }
-
-            FText ftext(text.c_str());
-            std::vector<uint8_t> buf(func->GetParmsSize(), 0);
-            std::memcpy(buf.data(), &ftext, sizeof(FText));
-            m_chatWidget->ProcessEvent(func, buf.data());
-        }
-        END BELIEVED DEAD CODE */
-
-
-
-        // â"€â"€ Debug Cheat Functions â"€â"€
-        // Calls a named 0-param function on a debug menu actor.
-        // Also tries direct class search (faster than scanning all Actor instances).
+                // â"€â"€ Debug Cheat Functions â"€â"€
+        // Call a 0-param function on a debug actor (direct class search + actor scan fallback)
         bool callDebugFunc(const wchar_t* actorClass, const wchar_t* funcName)
         {
             // Try direct class search first (faster and more reliable)
@@ -199,12 +144,9 @@
         }
 
 
-        // Read debug menu bool properties to show current state
         // â"€â"€ 6F: Debug & Cheat Commands â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // Debug menu toggles (Free Build), rotation control, aimed building rotation
 
-        // Reads bool properties from BP_DebugMenu_CraftingAndConstruction_C
-        // using runtime property discovery (GetValuePtrByPropertyNameInChain).
+        // Read and display debug menu toggle states
         void showDebugMenuState()
         {
             std::vector<UObject*> actors;
@@ -231,11 +173,10 @@
                     return;
                 }
             }
-            showOnScreen(Loc::get("msg.debug_actor_not_found").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
+            showOnScreen(Loc::get("msg.debug_actor_not_found"), 3.0f, 1.0f, 0.3f, 0.3f);
         }
 
-        // Reads the actual debug menu toggle state and syncs s_config flags.
-        // Called on character load so the UI toggles match the game's real state.
+        // Sync s_config flags from actual debug menu state (called on character load)
         bool syncDebugToggleState()
         {
             // Try direct class search first
@@ -271,10 +212,7 @@
         }
 
 
-        // findBuildHUD, resolveGATA, setGATARotation, toggleSnap, restoreSnap
-        // -> moved to moria_placement.inl
-
-        // Dispatch action for MC toolbar slot (used by both keyboard and click handlers)
+        // Dispatch MC toolbar slot action (keyboard and click handlers)
         void dispatchMcSlot(int slot)
         {
             switch (slot)
@@ -294,7 +232,7 @@
                 UObject* gata = resolveGATA();
                 if (gata) setGATARotation(gata, static_cast<float>(next));
                 std::wstring msg = L"Rotation step: " + std::to_wstring(next) + L"\xB0";
-                showOnScreen(msg.c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
+                showOnScreen(msg, 2.0f, 0.0f, 1.0f, 0.0f);
                 updateMcRotationLabel();
                 break;
             }

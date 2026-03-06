@@ -6,24 +6,18 @@
         // Ã¢â€â‚¬Ã¢â€â‚¬ Camera & Trace Ã¢â€â‚¬Ã¢â€â‚¬
 
         // Ã¢â€â‚¬Ã¢â€â‚¬ 6D: HISM Removal System Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // Line trace from camera, instance hiding (UpdateInstanceTransform), undo, replay
-        // Includes: removeAimed, removeAllOfType, undoLast, dumpAimedActor (target info)
         // CRITICAL: Max 3 hides/frame to avoid render thread crash
 
-        // Constructs camera ray from viewport center, starting past the player
-        // character to avoid hitting objects between camera and pawn.
-        // Uses DeprojectScreenPositionToWorld Ã¢â€ â€™ pawn distance Ã¢â€ â€™ offset start.
+        // Construct camera ray from viewport center, offset past pawn to avoid self-hits.
         bool getCameraRay(FVec3f& outStart, FVec3f& outEnd)
         {
             auto* pc = findPlayerController();
             if (!pc) return false;
 
-            // Get viewport center for screen-space ray
             m_screen.refresh(pc);
             float centerX = m_screen.fracToPixelX(0.5f);
             float centerY = m_screen.fracToPixelY(0.5f);
 
-            // Deproject screen center to world ray (offsets resolved via reflection)
             auto* deprojFunc = pc->GetFunctionByNameInChain(STR("DeprojectScreenPositionToWorld"));
             if (!deprojFunc) return false;
             resolveDSPOffsets(deprojFunc);
@@ -37,8 +31,7 @@
             std::memcpy(&cameraLoc, buf.data() + s_dsp.WorldLocation, 12);
             std::memcpy(&worldDir, buf.data() + s_dsp.WorldDirection, 12);
 
-            // 3rd-person fix: start trace PAST the character to avoid hitting
-            // objects between the camera and the player (the "behind me" problem)
+            // Start past character to avoid hitting objects between camera and pawn
             FVec3f pawnLoc = getPawnLocation();
             float dx = pawnLoc.X - cameraLoc.X;
             float dy = pawnLoc.Y - cameraLoc.Y;
@@ -51,8 +44,7 @@
             return true;
         }
 
-        // Extracts the hit UObject* directly from FHitResult's Component FWeakObjectPtr.
-        // Faster and more accurate than searching all components by name.
+        // Extract hit UObject* from FHitResult Component FWeakObjectPtr.
         UObject* resolveHitComponent(const uint8_t* hitBuf)
         {
             auto* hit = reinterpret_cast<const FHitResultLocal*>(hitBuf);
@@ -68,7 +60,7 @@
             return clsName.find(STR("InstancedStaticMeshComponent")) != std::wstring::npos;
         }
 
-        // Hide instance by moving underground + tiny scale (safe Ã¢â‚¬â€ no crash unlike RemoveInstance)
+        // Hide instance by moving underground + tiny scale (safe, no crash unlike RemoveInstance).
         bool hideInstance(UObject* comp, int32_t instanceIndex)
         {
             auto* updateFunc = comp->GetFunctionByNameInChain(STR("UpdateInstanceTransform"));
@@ -77,7 +69,6 @@
             resolveUITOffsets(updateFunc);
             if (!uitOffsetsValid()) return false;
 
-            // Get current transform first
             auto* transFunc = comp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
             if (!transFunc) return false;
 
@@ -109,12 +100,10 @@
             comp->ProcessEvent(transFunc, &gtp);
             if (!gtp.ReturnValue) return false;
 
-            // Move deep underground, scale to near-zero
             FTransformRaw hidden = gtp.OutTransform;
             hidden.Translation.Z -= 50000.0f;
             hidden.Scale3D = {0.001f, 0.001f, 0.001f};
 
-            // UpdateInstanceTransform Ã¢â‚¬â€ offsets resolved from UFunction
             std::vector<uint8_t> params(s_uit.parmsSize, 0);
             std::memcpy(params.data() + s_uit.InstanceIndex, &instanceIndex, 4);
             std::memcpy(params.data() + s_uit.NewInstanceTransform, &hidden, 48);
@@ -144,10 +133,7 @@
             return params[s_uit.ReturnValue] != 0;
         }
 
-        // Performs KismetSystemLibrary::LineTraceSingle via ProcessEvent.
-        // Returns true if hit. Fills hitBuf (136 bytes = FHitResultLocal).
-        // debugDraw=true shows red/green trace line in-game for 5 seconds.
-        // Param offsets resolved from UFunction at runtime (s_lt struct).
+        // LineTraceSingle via ProcessEvent. Returns true + fills hitBuf (136B) on hit.
         bool doLineTrace(const FVec3f& start, const FVec3f& end, uint8_t* hitBuf, bool debugDraw = false)
         {
             auto* ltFunc = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:LineTraceSingle"));
@@ -166,7 +152,6 @@
             params[s_lt.bTraceComplex] = 1; // Per-triangle for accuracy
             params[s_lt.bIgnoreSelf] = 1;
 
-            // Add player pawn to ActorsToIgnore so trace doesn't hit the character
             auto* pawn = getPawn();
             if (pawn)
             {
@@ -203,8 +188,6 @@
         }
 
         // Ã¢â€â‚¬Ã¢â€â‚¬ Throttled Replay Ã¢â€â‚¬Ã¢â€â‚¬
-        // Spreads UpdateInstanceTransform calls across frames to avoid crashing
-        // the render thread (FStaticMeshInstanceBuffer::UpdateFromCommandBuffer_Concurrent).
 
         void startReplay()
         {
@@ -240,7 +223,6 @@
             {
                 UObject* comp = m_replay.compQueue[m_replay.compIdx].Get();
 
-                // Validity check: weak ptr expired or component no longer has functions?
                 auto* countFunc = comp ? comp->GetFunctionByNameInChain(STR("GetInstanceCount")) : nullptr;
                 if (!countFunc)
                 {
@@ -252,7 +234,6 @@
                 std::string meshId = componentNameToMeshId(std::wstring(comp->GetName()));
                 bool isTypeRule = m_typeRemovals.count(meshId) > 0;
 
-                // For position-based, check if this mesh has any pending matches
                 if (!isTypeRule)
                 {
                     bool hasPending = false;
@@ -275,7 +256,6 @@
 
                 auto* transFunc = comp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
 
-                // Get current instance count
                 GetInstanceCount_Params cp{};
                 comp->ProcessEvent(countFunc, &cp);
                 int count = cp.ReturnValue;
@@ -288,7 +268,6 @@
                     continue;
                 }
 
-                // Process instances from where we left off
                 while (m_replay.instanceIdx < count)
                 {
                     if (hidesThisBatch >= MAX_HIDES_PER_FRAME)
@@ -347,13 +326,11 @@
                     }
                 }
 
-                // Finished all instances in this component
                 m_processedComps.insert(comp);
                 m_replay.compIdx++;
                 m_replay.instanceIdx = 0;
             }
 
-            // All components processed Ã¢â‚¬â€ replay complete
             m_replay.active = false;
             int pending = pendingCount();
             VLOG(STR("[MoriaCppMod] Replay done: {} hidden, {} pending\n"), m_replay.totalHidden, pending);
@@ -368,7 +345,6 @@
             std::vector<UObject*> comps;
             UObjectGlobals::FindAllOf(STR("GlobalHierarchicalInstancedStaticMeshComponent"), comps);
 
-            // Collect new (unprocessed) components as weak pointers
             std::vector<RC::Unreal::FWeakObjectPtr> newComps;
             for (auto* comp : comps)
             {
@@ -376,7 +352,6 @@
             }
             if (newComps.empty()) return;
 
-            // Queue them as a new replay batch
             m_replay = {};
             m_replay.compQueue = std::move(newComps);
             m_replay.active = true;
@@ -402,7 +377,7 @@
             if (!doLineTrace(start, end, hitBuf, true))
             { // debugDraw=true
                 VLOG(STR("[MoriaCppMod] No hit\n"));
-                showOnScreen(Loc::get("msg.no_hit").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
+                showOnScreen(Loc::get("msg.no_hit"), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
@@ -410,7 +385,6 @@
             FVec3f impactPoint = hit->ImpactPoint;
             int32_t item = hit->Item;
 
-            // Resolve component directly via FWeakObjectPtr (fast, accurate)
             UObject* hitComp = resolveHitComponent(hitBuf);
 
             std::wstring compName = hitComp ? std::wstring(hitComp->GetName()) : L"(null)";
@@ -433,7 +407,6 @@
                                             impactPoint.Y,
                                             impactPoint.Z);
 
-            // Show instance transform if it's an HISM
             if (isHISM && item >= 0 && hitComp)
             {
                 auto* transFunc = hitComp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
@@ -454,7 +427,6 @@
                 }
             }
 
-            // On-screen display
             std::wstring screenText = fullName + L"\nClass: " + className;
             if (isHISM)
             {
@@ -465,10 +437,8 @@
             showOnScreen(screenText, 8.0f, screenR, screenG, 0.5f);
         }
 
-        // LINT NOTE (#18 Ã¢â‚¬â€ removeAimed throttle): Analyzed and intentionally skipped. This function is
-        // only called on Num1 keypress (not per-frame), so call frequency is naturally limited by keyboard
-        // repeat rate (~20 Hz). Adding a throttle risks partial stack removal (e.g., hiding 2 of 5 stacked
-        // instances, corrupting the undo stack). The automated replay path already has MAX_HIDES_PER_FRAME.
+        // LINT NOTE (#18): removeAimed is keypress-only (~20 Hz), not per-frame. Throttle would
+        // risk partial stack removal and corrupt undo. Replay path has MAX_HIDES_PER_FRAME.
         void removeAimed()
         {
             FVec3f start{}, end{};
@@ -485,7 +455,6 @@
             FVec3f impactPoint = hit->ImpactPoint;
             int32_t item = hit->Item;
 
-            // Resolve component directly
             UObject* hitComp = resolveHitComponent(hitBuf);
 
             if (!hitComp || !isHISMComponent(hitComp))
@@ -507,7 +476,6 @@
                 return;
             }
 
-            // Get transform of the aimed instance
             auto* transFunc = hitComp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
             auto* countFunc = hitComp->GetFunctionByNameInChain(STR("GetInstanceCount"));
             if (!transFunc || !countFunc) return;
@@ -541,7 +509,6 @@
                 float py = itp.OutTransform.Translation.Y;
                 float pz = itp.OutTransform.Translation.Z;
 
-                // Skip already-hidden
                 if (pz < -40000.0f) continue;
 
                 float ddx = px - targetX;
@@ -549,10 +516,9 @@
                 float ddz = pz - targetZ;
                 if (ddx * ddx + ddy * ddy + ddz * ddz < POS_TOLERANCE * POS_TOLERANCE)
                 {
-                    // Save for undo (weak ptr guards against GC between hide and undo)
+                    // Save for undo (weak ptr guards against GC)
                     m_undoStack.push_back({RC::Unreal::FWeakObjectPtr(hitComp), i, itp.OutTransform, compName});
 
-                    // Save to persistence file
                     SavedRemoval sr;
                     sr.meshName = meshId;
                     sr.posX = px;
@@ -568,7 +534,6 @@
                 }
             }
 
-            std::wstring meshIdW(meshId.begin(), meshId.end());
             VLOG(STR("[MoriaCppMod] REMOVED {} stacked at ({:.0f},{:.0f},{:.0f}) from {} | Total: {}\n"),
                                             hiddenCount,
                                             targetX,
@@ -605,7 +570,7 @@
             std::wstring compName(hitComp->GetName());
             std::string meshId = componentNameToMeshId(compName);
 
-            // Save as type rule Ã¢â‚¬â€ removes ALL of this mesh on every world
+            // Save as type rule -- removes ALL of this mesh on every world
             if (!m_typeRemovals.count(meshId))
             {
                 m_typeRemovals.insert(meshId);
@@ -614,12 +579,10 @@
                 buildRemovalEntries();
             }
 
-            // Get instance count
             GetInstanceCount_Params cp{};
             hitComp->ProcessEvent(countFunc, &cp);
             int count = cp.ReturnValue;
 
-            // Save all transforms for undo, then hide each instance
             int hidden = 0;
             for (int i = 0; i < count; i++)
             {
@@ -631,7 +594,7 @@
                     hitComp->ProcessEvent(transFunc, &tp);
                     if (tp.ReturnValue)
                     {
-                        // Skip already-hidden instances
+
                         if (tp.OutTransform.Translation.Z < -40000.0f) continue;
                         m_undoStack.push_back({RC::Unreal::FWeakObjectPtr(hitComp), i, tp.OutTransform, compName, true, meshId});
                     }
@@ -642,7 +605,6 @@
             std::wstring meshIdW(meshId.begin(), meshId.end());
             VLOG(STR("[MoriaCppMod] TYPE RULE: @{} Ã¢â‚¬â€ hidden {} instances (persists across all worlds)\n"), meshIdW, hidden);
         }
-
 
         void toggleHideCharacter()
         {
@@ -662,9 +624,9 @@
                 }
             }
             if (m_characterHidden)
-                showOnScreen(Loc::get("msg.char_hidden").c_str(), 2.0f, 0.3f, 0.8f, 1.0f);
+                showOnScreen(Loc::get("msg.char_hidden"), 2.0f, 0.3f, 0.8f, 1.0f);
             else
-                showOnScreen(Loc::get("msg.char_visible").c_str(), 2.0f, 0.3f, 1.0f, 0.3f);
+                showOnScreen(Loc::get("msg.char_visible"), 2.0f, 0.3f, 1.0f, 0.3f);
             VLOG(STR("[MoriaCppMod] Character hidden = {}\n"), m_characterHidden ? 1 : 0);
         }
 
@@ -678,57 +640,6 @@
             constexpr uint8_t MOVE_Falling = 3;
             constexpr uint8_t MOVE_Flying  = 5;
 
-            /* Ã¢â€â‚¬Ã¢â€â‚¬ Camera save/restore DISABLED for testing Ã¢â‚¬â€ SetActorEnableCollision may be sufficient Ã¢â€â‚¬Ã¢â€â‚¬
-            // Ã¢â€â‚¬Ã¢â€â‚¬ ENTERING fly: save camera state BEFORE any changes Ã¢â€â‚¬Ã¢â€â‚¬
-            if (m_flyMode && m_noCollisionWhileFlying)
-            {
-                auto* pc = findPlayerController();
-                if (pc)
-                {
-                    auto** camMgrPtr = pc->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerCameraManager"));
-                    if (camMgrPtr)
-                    {
-                        auto* camMgr = *camMgrPtr;
-                        if (camMgr)
-                        {
-                            m_hasSavedCameraState = true;
-                            VLOG(STR("[MoriaCppMod] [Camera SAVE] camMgr={:p} class={}\n"),
-                                static_cast<void*>(camMgr), safeClassName(camMgr));
-                            int camSettingsSize = 0;
-                            int setOff = resolveOffsetAndSize(camMgr, L"Settings", s_off_camSettings, camSettingsSize);
-                            if (camSettingsSize > 0 && camSettingsSize != CAM_SETTINGS_BLOB_SIZE)
-                                VLOG(STR("[MoriaCppMod] WARNING: Settings property size {} != CAM_SETTINGS_BLOB_SIZE {} — struct layout may have changed!\n"),
-                                     camSettingsSize, CAM_SETTINGS_BLOB_SIZE);
-                            VLOG(STR("[MoriaCppMod] [Camera SAVE] Settings offset={}\n"), setOff);
-                            if (setOff >= 0)
-                            {
-                                std::memcpy(m_savedCamSettings, reinterpret_cast<uint8_t*>(camMgr) + setOff, CAM_SETTINGS_BLOB_SIZE);
-                                auto* f = reinterpret_cast<float*>(m_savedCamSettings);
-                                VLOG(STR("[MoriaCppMod] [Camera SAVE] Settings: FOVScale={:.2f} CamOff=({:.1f},{:.1f},{:.1f}) PivotOff=({:.1f},{:.1f},{:.1f}) PivotSmooth={:.2f}\n"),
-                                    f[0], f[4], f[5], f[6], f[7], f[8], f[9], f[10]);
-                            }
-                            int ptOff = resolveOffset(camMgr, L"ProbeType", s_off_probeType);
-                            VLOG(STR("[MoriaCppMod] [Camera SAVE] ProbeType offset={}\n"), ptOff);
-                            if (ptOff >= 0)
-                            {
-                                m_savedProbeType = *(reinterpret_cast<uint8_t*>(camMgr) + ptOff);
-                                VLOG(STR("[MoriaCppMod] [Camera SAVE] ProbeType={}\n"), m_savedProbeType);
-                            }
-                            int prOff = resolveOffset(camMgr, L"ProbeRadius", s_off_probeRadius);
-                            VLOG(STR("[MoriaCppMod] [Camera SAVE] ProbeRadius offset={}\n"), prOff);
-                            if (prOff >= 0)
-                            {
-                                m_savedProbeRadius = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(camMgr) + prOff);
-                                VLOG(STR("[MoriaCppMod] [Camera SAVE] ProbeRadius={:.1f}\n"), m_savedProbeRadius);
-                            }
-                            m_savedProbeDisallowIntersect = getBoolProp(camMgr, L"bProbeDisallowIntersect");
-                            VLOG(STR("[MoriaCppMod] [Camera SAVE] bProbeDisallowIntersect={}\n"), m_savedProbeDisallowIntersect ? 1 : 0);
-                        }
-                    }
-                }
-            }
-            */
-
             // Ã¢â€â‚¬Ã¢â€â‚¬ Fly toggle Ã¢â€â‚¬Ã¢â€â‚¬
             for (auto* dwarf : dwarves)
             {
@@ -741,9 +652,8 @@
                     continue;
                 }
 
-                // Order matters:
-                // - Disable: clear bCheatFlying FIRST so engine allows mode transition
-                // - Enable: call SetMovementMode FIRST, then set bCheatFlying to keep it active
+                // Order: Disable clears bCheatFlying first; Enable sets movement mode first,
+                // then bCheatFlying, to satisfy engine transition requirements.
                 if (!m_flyMode)
                     setBoolProp(movComp, L"bCheatFlying", false);
 
@@ -779,93 +689,10 @@
                 }
             }
 
-            /* Ã¢â€â‚¬Ã¢â€â‚¬ Camera restore DISABLED for testing Ã¢â‚¬â€ SetActorEnableCollision may be sufficient Ã¢â€â‚¬Ã¢â€â‚¬
-            // Ã¢â€â‚¬Ã¢â€â‚¬ Restore camera to saved state after collision change Ã¢â€â‚¬Ã¢â€â‚¬
-            if (m_hasSavedCameraState)
-            {
-                auto* pc = findPlayerController();
-                if (pc)
-                {
-                    auto** camMgrPtr = pc->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerCameraManager"));
-                    if (camMgrPtr)
-                    {
-                        auto* camMgr = *camMgrPtr;
-                        if (camMgr)
-                        {
-                            VLOG(STR("[MoriaCppMod] [Camera RESTORE] flyMode={} camMgr={:p}\n"),
-                                m_flyMode ? 1 : 0, static_cast<void*>(camMgr));
-                            if (s_off_camSettings >= 0)
-                            {
-                                auto* livef = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(camMgr) + s_off_camSettings);
-                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] BEFORE: FOVScale={:.2f} CamOff=({:.1f},{:.1f},{:.1f}) PivotOff=({:.1f},{:.1f},{:.1f}) PivotSmooth={:.2f}\n"),
-                                    livef[0], livef[4], livef[5], livef[6], livef[7], livef[8], livef[9], livef[10]);
-                                std::memcpy(reinterpret_cast<uint8_t*>(camMgr) + s_off_camSettings, m_savedCamSettings, CAM_SETTINGS_BLOB_SIZE);
-                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] AFTER:  FOVScale={:.2f} CamOff=({:.1f},{:.1f},{:.1f}) PivotOff=({:.1f},{:.1f},{:.1f}) PivotSmooth={:.2f}\n"),
-                                    livef[0], livef[4], livef[5], livef[6], livef[7], livef[8], livef[9], livef[10]);
-                            }
-                            else
-                            {
-                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] Settings offset NOT RESOLVED ({})\n"), s_off_camSettings);
-                            }
-                            auto* ptPtr = camMgr->GetValuePtrByPropertyNameInChain<uint8_t>(STR("ProbeType"));
-                            if (ptPtr)
-                            {
-                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeType BEFORE={} writing={}\n"), *ptPtr, m_savedProbeType);
-                                *ptPtr = m_savedProbeType;
-                            }
-                            else
-                            {
-                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeType property NOT FOUND\n"));
-                            }
-                            auto* prPtr = camMgr->GetValuePtrByPropertyNameInChain<float>(STR("ProbeRadius"));
-                            if (prPtr)
-                            {
-                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeRadius BEFORE={:.1f} writing={:.1f}\n"), *prPtr, m_savedProbeRadius);
-                                *prPtr = m_savedProbeRadius;
-                            }
-                            else
-                            {
-                                VLOG(STR("[MoriaCppMod] [Camera RESTORE] ProbeRadius property NOT FOUND\n"));
-                            }
-                            bool liveDI = getBoolProp(camMgr, L"bProbeDisallowIntersect");
-                            VLOG(STR("[MoriaCppMod] [Camera RESTORE] bProbeDisallowIntersect BEFORE={} writing={}\n"),
-                                liveDI ? 1 : 0, m_savedProbeDisallowIntersect ? 1 : 0);
-                            setBoolProp(camMgr, L"bProbeDisallowIntersect", m_savedProbeDisallowIntersect);
-                        }
-                    }
-
-                    // Tell camera to follow the player character
-                    if (!dwarves.empty())
-                    {
-                        auto* svtFn = pc->GetFunctionByNameInChain(STR("SetViewTargetWithBlend"));
-                        if (svtFn)
-                        {
-                            struct {
-                                UObject* NewViewTarget;
-                                float BlendTime;
-                                uint8_t BlendFunc;  // 0=Linear
-                                float BlendExp;
-                                bool bLockOutgoing;
-                            } svtParams{};
-                            svtParams.NewViewTarget = dwarves[0];
-                            svtParams.BlendTime = 0.0f;
-                            svtParams.BlendFunc = 0;
-                            svtParams.BlendExp = 1.0f;
-                            svtParams.bLockOutgoing = false;
-                            pc->ProcessEvent(svtFn, &svtParams);
-                            VLOG(STR("[MoriaCppMod] [Camera RESTORE] SetViewTargetWithBlend -> dwarf {:p}\n"),
-                                static_cast<void*>(dwarves[0]));
-                        }
-                    }
-                }
-                if (!m_flyMode) m_hasSavedCameraState = false;
-            }
-            */
-
             if (m_flyMode)
                 showOnScreen(m_noCollisionWhileFlying ? L"Fly + Noclip ON" : L"Fly ON", 2.0f, 0.3f, 0.8f, 1.0f);
             else
-                showOnScreen(Loc::get("msg.fly_off").c_str(), 2.0f, 0.3f, 1.0f, 0.3f);
+                showOnScreen(Loc::get("msg.fly_off"), 2.0f, 0.3f, 1.0f, 0.3f);
             VLOG(STR("[MoriaCppMod] Fly mode = {}, noCollision = {}\n"), m_flyMode ? 1 : 0, m_noCollisionWhileFlying ? 1 : 0);
         }
 
@@ -880,7 +707,7 @@
                 return;
             }
 
-            // Use a wider trace Ã¢â‚¬â€ we want to hit actors, not just HISM instances
+            // Simple trace (bTraceComplex=0) to hit actors, not just HISM instances
             auto* ltFunc = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:LineTraceSingle"));
             auto* kslCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Engine.Default__KismetSystemLibrary"));
             auto* pc = findPlayerController();
@@ -920,14 +747,13 @@
             if (!bHit)
             {
                 VLOG(STR("[MoriaCppMod] No hit\n"));
-                showOnScreen(Loc::get("msg.actor_dump_no_hit").c_str(), 3.0f, 1.0f, 0.3f, 0.3f);
+                showOnScreen(Loc::get("msg.actor_dump_no_hit"), 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
 
             uint8_t hitBuf[136]{};
             std::memcpy(hitBuf, params.data() + s_lt.OutHit, 136);
 
-            // Get the hit component and its owning actor
             UObject* hitComp = resolveHitComponent(hitBuf);
             if (!hitComp)
             {
@@ -939,7 +765,6 @@
             std::wstring compClass = safeClassName(hitComp);
             VLOG(STR("[MoriaCppMod] Hit component: {} ({})\n"), compName, compClass);
 
-            // Get the owning actor via GetOwner
             auto* ownerFunc = hitComp->GetFunctionByNameInChain(STR("GetOwner"));
             UObject* actor = nullptr;
             if (ownerFunc)
@@ -962,12 +787,9 @@
             std::wstring actorName(actor->GetName());
             std::wstring actorClassName = safeClassName(actor);
 
-            // Get asset path via GetPathName()
             std::wstring assetPath(actor->GetPathName());
 
-            // Try to get display name via GetDisplayName() (returns FText)
-            // Available on: UFGKCharacterBase, AInventoryItem, AMorInteractable, and others
-            // NOTE: AMorBreakable (building pieces) does NOT have this Ã¢â‚¬â€ they need DataTable lookup
+            // NOTE: AMorBreakable lacks GetDisplayName -- needs DataTable lookup
             std::wstring displayName;
             auto* getDispFn = actor->GetFunctionByNameInChain(STR("GetDisplayName"));
             if (getDispFn)
@@ -986,11 +808,10 @@
             }
             if (displayName.empty())
             {
-                // Fallback: generate readable name from class name
-                // BP_Suburbs_Wall_Thick_4x1m_A_C Ã¢â€ â€™ Suburbs Wall Thick 4x1m A
+                // Fallback: strip BP_ prefix and _C suffix, replace underscores with spaces
                 std::wstring cleaned = actorClassName;
-                if (cleaned.size() > 3 && cleaned.substr(0, 3) == L"BP_") cleaned = cleaned.substr(3);
-                if (cleaned.size() > 2 && cleaned.substr(cleaned.size() - 2) == L"_C") cleaned = cleaned.substr(0, cleaned.size() - 2);
+                if (cleaned.size() > 3 && cleaned.substr(0, 3) == L"BP_") cleaned.erase(0, 3);
+                if (cleaned.size() > 2 && cleaned.substr(cleaned.size() - 2) == L"_C") cleaned.resize(cleaned.size() - 2);
                 for (auto& c : cleaned)
                 {
                     if (c == L'_') c = L' ';
@@ -1003,14 +824,14 @@
             VLOG(STR("[MoriaCppMod] Display: {}\n"), displayName);
             VLOG(STR("[MoriaCppMod] Path: {}\n"), assetPath);
 
-            // Detect if player-buildable by checking class hierarchy for construction components
+            // Detect if player-buildable via construction components/base classes
             bool isBuildable = false;
             std::wstring recipeRef;
             auto* actorCls = actor->GetClassPrivate();
             if (actorCls)
             {
                 auto* actorStruct = static_cast<UStruct*>(actorCls);
-                // Check properties for construction-related components
+
                 for (auto* prop : actorStruct->ForEachPropertyInChain())
                 {
                     if (!prop) continue;
@@ -1022,7 +843,7 @@
                         break;
                     }
                 }
-                // Walk super class chain for construction base classes
+
                 if (!isBuildable)
                 {
                     for (auto* super = actorCls->GetSuperStruct(); super; super = super->GetSuperStruct())
@@ -1036,12 +857,12 @@
                         }
                     }
                 }
-                // Build recipe reference from class name
+
                 if (isBuildable)
                 {
-                    // Strip _C suffix to get blueprint asset name
+
                     recipeRef = actorClassName;
-                    if (recipeRef.size() > 2 && recipeRef.substr(recipeRef.size() - 2) == L"_C") recipeRef = recipeRef.substr(0, recipeRef.size() - 2);
+                    if (recipeRef.size() > 2 && recipeRef.substr(recipeRef.size() - 2) == L"_C") recipeRef.resize(recipeRef.size() - 2);
                 }
             }
 
@@ -1057,7 +878,6 @@
                     dumpFile << L"=== DT_Constructions SCAN for: " << actorClassName << L" ===\n";
                     dumpFile << L"Actor path: " << assetPath << L"\n";
 
-                    // Get actor class path (the blueprint path, not the instance path)
                     std::wstring classPath;
                     if (actorCls)
                     {
@@ -1067,7 +887,6 @@
                     dumpFile << L"\n";
                     dumpFile.flush();
 
-                    // Find DT_Constructions
                     std::vector<UObject*> dataTables;
                     UObjectGlobals::FindAllOf(STR("DataTable"), dataTables);
                     UObject* dtConst = nullptr;
@@ -1101,7 +920,6 @@
                         constexpr int SET_ELEMENT_SIZE = 24;
                         constexpr int FNAME_SIZE = 8;
 
-                        // Resolve row struct field offsets dynamically (replaces hardcoded constants)
                         if (s_off_dtRowActor == -2)
                         {
                             resolveOffset(dtConst, L"RowStruct", s_off_dtRowStruct);
@@ -1115,7 +933,7 @@
                                 }
                             }
                         }
-                        // Actor field offset + FName AssetPathName at +0x10 within TSoftClassPtr
+
                         constexpr int SOFTCLASSPTR_ASSETPATH_FNAME = 0x10;
                         int actorFNameOff = (s_off_dtRowActor >= 0)
                             ? s_off_dtRowActor + SOFTCLASSPTR_ASSETPATH_FNAME
@@ -1135,12 +953,8 @@
                         dumpFile << L"RowMap: " << elemArray.Num << L" rows\n\n";
                         dumpFile.flush();
 
-                        // TSoftClassPtr = TPersistentObjectPtr<FSoftObjectPath> layout:
-                        //   +0x00 (row+0x50): TWeakObjectPtr (8 bytes) Ã¢â‚¬â€ cached resolved ptr
-                        //   +0x08 (row+0x58): int32 TagAtLastTest (4 bytes) + 4 bytes padding
-                        //   +0x10 (row+0x60): FName AssetPathName (8 bytes) Ã¢â‚¬â€ the asset path
-                        //   +0x18 (row+0x68): FString SubPathString (16 bytes) Ã¢â‚¬â€ usually empty
-                        // DT_ROW_ACTOR_FNAME defined in struct-internal constants section
+                        // TSoftClassPtr layout: +0x00 TWeakObjectPtr(8B), +0x08 TagAtLastTest(4B)+pad,
+                        //   +0x10 FName AssetPathName(8B), +0x18 FString SubPathString(16B)
 
                         int matchCount = 0;
 
@@ -1152,7 +966,7 @@
                             uint8_t* rowData = *reinterpret_cast<uint8_t**>(elem + FNAME_SIZE);
                             if (!rowData || !isReadableMemory(rowData, 0x78)) continue;
 
-                            // Read Actor AssetPathName FName (resolved dynamically, fallback 0x60)
+                            // Actor AssetPathName FName (dynamic resolve, fallback 0x60)
                             FName assetFName;
                             std::memcpy(&assetFName, rowData + actorFNameOff, FNAME_SIZE);
                             std::wstring rowAssetPath;
@@ -1165,7 +979,6 @@
                                 continue;
                             }
 
-                            // Match: classPath contains assetPath or assetPath contains recipeRef
                             bool isMatch = false;
                             if (!rowAssetPath.empty())
                             {
@@ -1179,7 +992,6 @@
                                 }
                             }
 
-                            // Dump first 3 rows + any matches for diagnostics
                             if (i < 3 || isMatch)
                             {
                                 FName rowName;
@@ -1235,7 +1047,6 @@
                 }
             }
 
-            // Use DT_Constructions display name if found, overriding the fallback
             if (!dtDisplayName.empty())
             {
                 displayName = dtDisplayName;
@@ -1259,7 +1070,7 @@
                 m_targetBuildName.clear();
             }
 
-            // Non-buildable: do a second HISM-aware trace and show component/mesh info instead
+            // Non-buildable: second HISM-aware trace for component/mesh inspect
             if (!isBuildable)
             {
                 uint8_t inspectHitBuf[136]{};
@@ -1272,16 +1083,13 @@
                     if (inspComp)
                     {
                         std::wstring inspCompName(inspComp->GetName());
-                        std::wstring inspFullName(inspComp->GetFullName());
                         std::wstring inspClassName = safeClassName(inspComp);
                         bool inspIsHISM = isHISMComponent(inspComp);
                         std::string inspMeshId = componentNameToMeshId(inspCompName);
                         std::wstring inspMeshIdW(inspMeshId.begin(), inspMeshId.end());
 
-                        // Extract friendly name from mesh ID (first segment before '-')
                         std::wstring friendlyName = extractFriendlyName(inspMeshId);
 
-                        // Get instance position if HISM
                         std::wstring posInfo;
                         if (inspIsHISM && instItem >= 0)
                         {
@@ -1310,7 +1118,6 @@
                         VLOG(STR("[MoriaCppMod] [F10] Non-buildable inspect: {} | HISM={} | MeshID={}\n"),
                                                         inspCompName, inspIsHISM, inspMeshIdW);
 
-                        // Show inspect data in target info popup instead of actor data
                         showTargetInfo(inspCompName, friendlyName, inspMeshIdW, inspClassName, false, posInfo, L"");
                         VLOG(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
                         return;
@@ -1318,10 +1125,7 @@
                 }
             }
 
-            // Show target info popup window (buildable objects or inspect fallback failed)
             showTargetInfo(actorName, displayName, assetPath, actorClassName, isBuildable, recipeRef, dtRowName);
 
             VLOG(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
         }
-
-
