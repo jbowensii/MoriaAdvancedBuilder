@@ -218,6 +218,7 @@ namespace MoriaMods
         }
 
         #include "moria_common.inl"    // Shared utilities, coordinate system, player helpers
+        #include "moria_datatable.inl" // DataTable CRUD utility (read/write/add/remove rows)
 
         #include "moria_debug.inl"    // 6C + 6F: Display, debug, cheat commands
 
