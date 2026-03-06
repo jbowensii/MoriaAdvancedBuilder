@@ -95,7 +95,6 @@ namespace MoriaMods
     static constexpr int FONT_TYPEFACE_NAME = 0x40;     // FSlateFontInfo::TypefaceFontName
     static constexpr int FONT_SIZE = 0x48;              // FSlateFontInfo::Size
     static constexpr int FONT_STRUCT_SIZE = 0x58;       // sizeof(FSlateFontInfo)
-    static constexpr int CONSTRUCTION_DISPLAY_NAME = 0x18;  // FMorConstructionDefinition::DisplayName (FText)
     static constexpr int RECIPE_BLOCK_VARIANTS = 0x68;   // FMorRecipeBlock::Variants (TArray data ptr)
     static constexpr int RECIPE_BLOCK_VARIANTS_NUM = 0x70; // FMorRecipeBlock::Variants.Num (int32)
     static constexpr int VARIANT_ROW_CI = 0xE0;         // FMorConstructionRecipeDefinition::ResultConstructionHandle.RowName.ComparisonIndex
@@ -104,7 +103,7 @@ namespace MoriaMods
     static constexpr int TEX_PARAM_VALUE_PTR = 0x10;     // FTextureParameterValue::ParameterValue (UTexture*)
     static constexpr int VK_BUILD_MENU = 0x42;          // Virtual key code for 'B' (build menu toggle)
     static constexpr int DT_ROWMAP_OFFSET = 0x30;       // UDataTable internal RowMap offset
-    static constexpr int DT_ROW_ACTOR_FNAME = 0x60;     // FSoftObjectPath.AssetPathName within construction row
+    static constexpr int SOFTCLASSPTR_ASSETPATH_FNAME = 0x10; // TSoftClassPtr internal: AssetPathName FName offset
 
     // ════════════════════════════════════════════════════════════════════════════
     // Raw UE4.27 Types (floats, not doubles)

@@ -631,3 +631,41 @@ void unbindAllDataTables()
     m_dtTools.unbind();
     m_dtArmor.unbind();
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Cross-table lookups: DT_ConstructionRecipes → DT_Constructions
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Extract the DT_Constructions row name from a DT_ConstructionRecipes row
+// by reading ResultConstructionHandle.RowName (FName at handle + 0x08)
+std::wstring resolveConstructionRowName(const wchar_t* recipeRowName)
+{
+    if (!m_dtConstructionRecipes.isBound()) return L"";
+    uint8_t* rowData = m_dtConstructionRecipes.findRowData(recipeRowName);
+    if (!rowData) return L"";
+    int handleOff = m_dtConstructionRecipes.resolvePropertyOffset(L"ResultConstructionHandle");
+    if (handleOff < 0) return L"";
+    // FDataTableRowHandle::RowName at +0x08 (UE4 engine struct, standard layout)
+    if (!isReadableMemory(rowData + handleOff + 0x08, 8)) return L"";
+    FName rowName;
+    std::memcpy(&rowName, rowData + handleOff + 0x08, 8);
+    try { return rowName.ToString(); } catch (...) { return L""; }
+}
+
+// Look up the UTexture2D* icon from DT_Constructions for a given recipe row name
+UObject* lookupRecipeIcon(const wchar_t* recipeRowName)
+{
+    if (!m_dtConstructions.isBound()) return nullptr;
+    std::wstring constrName = resolveConstructionRowName(recipeRowName);
+    if (constrName.empty()) return nullptr;
+    return m_dtConstructions.readObjectPtr(constrName.c_str(), L"Icon");
+}
+
+// Get the display name from DT_Constructions for a given recipe row name
+std::wstring lookupRecipeDisplayName(const wchar_t* recipeRowName)
+{
+    if (!m_dtConstructions.isBound()) return L"";
+    std::wstring constrName = resolveConstructionRowName(recipeRowName);
+    if (constrName.empty()) return L"";
+    return m_dtConstructions.readFText(constrName.c_str(), L"DisplayName");
+}

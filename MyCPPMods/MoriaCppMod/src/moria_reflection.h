@@ -32,9 +32,6 @@ namespace MoriaMods
     inline int s_off_selectedRecipe = -2;    // UI_WBP_Build_Tab_C::selectedRecipe
     inline int s_off_selectedName = -2;      // UI_WBP_Build_Tab_C::selectedName
     inline int s_off_recipesDataTable = -2;  // UI_WBP_Build_Tab_C::recipesDataTable
-    inline int s_off_dtRowStruct = -2;         // UDataTable::RowStruct (UScriptStruct*)
-    inline int s_off_dtRowActor = -2;          // FMorConstructionDefinition::Actor (TSoftClassPtr)
-    inline int s_off_dtRowDisplayName = -2;    // FMorConstructionDefinition::DisplayName (FText)
 
     // Probed struct-internal offsets (fallback to constants)
     inline int s_off_brushImageSize = -2;      // FSlateBrush::ImageSize (probed)

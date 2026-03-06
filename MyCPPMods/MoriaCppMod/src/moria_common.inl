@@ -10,10 +10,10 @@
 // Coordinate spaces used in this mod:
 //   Viewport Fraction (0.0–1.0) — resolution-independent, used for toolbar positions/sizes
 //   Raw Pixels                  — Win32 client rect and UE4 GetViewportSize()
-//   Slate Units                 — UMG logical coordinates (raw pixels / dpiScale)
+//   Slate Units                 — UMG logical coordinates (raw pixels / viewportScale)
 //
 // Usage:
-//   m_screen.refresh(findPlayerController());  // call once, caches viewW/viewH/uiScale
+//   m_screen.refresh(findPlayerController());  // caches viewW/viewH/viewportScale/slateW/slateH
 //   float fx, fy;
 //   if (m_screen.getCursorFraction(fx, fy)) { ... }
 //   setWidgetPosition(w, m_screen.fracToPixelX(fx), m_screen.fracToPixelY(fy), true);
@@ -21,14 +21,35 @@
 struct ScreenCoords
 {
     // ── Cached State ──
-    int32_t viewW{1920};    // raw pixel viewport width  (from GetViewportSize)
-    int32_t viewH{1080};    // raw pixel viewport height (from GetViewportSize)
-    float   dpiScale{1.0f}; // rawPixels / slateUnits (computed during DPI probe)
-    float   uiScale{1.0f};  // viewH / 2160.0f, min 0.5 (base 4K design scale)
+    int32_t viewW{1920};            // raw pixel viewport width  (from GetViewportSize)
+    int32_t viewH{1080};            // raw pixel viewport height (from GetViewportSize)
+    float   viewportScale{1.0f};    // raw pixels per slate unit (from GetViewportScale)
+    float   slateW{1920.0f};        // viewW / viewportScale — viewport width in slate units
+    float   slateH{1080.0f};        // viewH / viewportScale — viewport height in slate units
+    float   aspectRatio{16.0f/9.0f};// viewW / viewH
+    float   uiScale{1.0f};          // viewH / 2160.0f, min 0.5 (base 4K design scale)
+
+    // ── Query UE4 viewport scale via reflection ──
+    static float queryViewportScale(UObject* worldContext)
+    {
+        static UFunction* s_fn  = nullptr;
+        static UObject*   s_cdo = nullptr;
+        if (!s_fn)
+        {
+            s_fn  = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
+                      STR("/Script/UMG.WidgetLayoutLibrary:GetViewportScale"));
+            s_cdo = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr,
+                      STR("/Script/UMG.Default__WidgetLayoutLibrary"));
+        }
+        if (!s_fn || !s_cdo || !worldContext) return 1.0f;
+        struct { UObject* WCO{nullptr}; float RV{1.0f}; } p{worldContext};
+        s_cdo->ProcessEvent(s_fn, &p);
+        return (p.RV > 0.1f) ? p.RV : 1.0f;
+    }
 
     // ── Refresh ──
     // Call once per widget creation or per-frame in tick.
-    // Queries PlayerController::GetViewportSize(), updates viewW/viewH/uiScale.
+    // Queries GetViewportSize + GetViewportScale, derives all cached fields.
     // Returns false if PlayerController is null or GetViewportSize fails.
     bool refresh(UObject* playerController)
     {
@@ -39,14 +60,18 @@ struct ScreenCoords
         playerController->ProcessEvent(fn, &params);
         if (params.SizeX > 0) viewW = params.SizeX;
         if (params.SizeY > 0) viewH = params.SizeY;
+
+        viewportScale = queryViewportScale(playerController);
+        slateW = static_cast<float>(viewW) / viewportScale;
+        slateH = static_cast<float>(viewH) / viewportScale;
+        aspectRatio = (viewH > 0) ? static_cast<float>(viewW) / static_cast<float>(viewH)
+                                  : 16.0f / 9.0f;
         uiScale = static_cast<float>(viewH) / 2160.0f;
         if (uiScale < 0.5f) uiScale = 0.5f;
         return true;
     }
 
     // ── Cursor: Win32 → Viewport Fraction ──
-    // Returns cursor position as fraction of game window (0.0–1.0).
-    // Returns false if game window not found or client rect is degenerate.
     bool getCursorFraction(float& outFracX, float& outFracY) const
     {
         HWND gw = findGameWindow();
@@ -60,8 +85,6 @@ struct ScreenCoords
     }
 
     // ── Cursor: Win32 → Raw Client Pixels ──
-    // Returns cursor position and client dimensions in raw pixels.
-    // Used by config menu hit-test (needs pixel-level precision).
     bool getCursorClientPixels(int& outX, int& outY,
                                int& outClientW, int& outClientH) const
     {
@@ -75,13 +98,33 @@ struct ScreenCoords
         return true;
     }
 
-    // ── Conversions ──
+    // ── Cursor: Win32 → Slate Units ──
+    bool getCursorSlate(float& outX, float& outY) const
+    {
+        int cx, cy, cw, ch;
+        if (!getCursorClientPixels(cx, cy, cw, ch)) return false;
+        outX = static_cast<float>(cx) / viewportScale;
+        outY = static_cast<float>(cy) / viewportScale;
+        return true;
+    }
+
+    // ── Conversions: Fraction ↔ Pixel ──
     float fracToPixelX(float frac) const { return frac * static_cast<float>(viewW); }
     float fracToPixelY(float frac) const { return frac * static_cast<float>(viewH); }
     float pixelToFracX(float px)   const { return (viewW > 0) ? px / static_cast<float>(viewW) : 0.0f; }
     float pixelToFracY(float py)   const { return (viewH > 0) ? py / static_cast<float>(viewH) : 0.0f; }
-    float pixelToSlateX(float px)  const { return px / dpiScale; }
-    float pixelToSlateY(float py)  const { return py / dpiScale; }
+
+    // ── Conversions: Pixel ↔ Slate ──
+    float pixelToSlateX(float px)  const { return px / viewportScale; }
+    float pixelToSlateY(float py)  const { return py / viewportScale; }
+    float slateToPixelX(float sx)  const { return sx * viewportScale; }
+    float slateToPixelY(float sy)  const { return sy * viewportScale; }
+
+    // ── Conversions: Fraction ↔ Slate ──
+    float fracToSlateX(float frac) const { return frac * slateW; }
+    float fracToSlateY(float frac) const { return frac * slateH; }
+    float slateToFracX(float sx)   const { return (slateW > 0.0f) ? sx / slateW : 0.0f; }
+    float slateToFracY(float sy)   const { return (slateH > 0.0f) ? sy / slateH : 0.0f; }
 };
 
 // ════════════════════════════════════════════════════════════════════════════════

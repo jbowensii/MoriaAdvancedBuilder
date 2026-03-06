@@ -887,138 +887,57 @@
                     dumpFile << L"\n";
                     dumpFile.flush();
 
-                    std::vector<UObject*> dataTables;
-                    UObjectGlobals::FindAllOf(STR("DataTable"), dataTables);
-                    UObject* dtConst = nullptr;
-                    for (auto* dt : dataTables)
-                    {
-                        if (!dt) continue;
-                        try
-                        {
-                            std::wstring name(dt->GetName());
-                            if (name == STR("DT_Constructions"))
-                            {
-                                dtConst = dt;
-                                break;
-                            }
-                        }
-                        catch (...)
-                        {
-                        }
-                    }
+                    // Use DataTableUtil for DT_Constructions lookup
+                    if (!m_dtConstructions.isBound()) m_dtConstructions.bind(L"DT_Constructions");
 
-                    if (!dtConst)
+                    if (!m_dtConstructions.isBound())
                     {
                         dumpFile << L"DT_Constructions NOT FOUND\n";
                     }
                     else
                     {
-                        dumpFile << L"Found DT_Constructions at " << dtConst << L"\n\n";
+                        dumpFile << L"Found DT_Constructions at " << m_dtConstructions.table << L"\n\n";
 
-                        // Read RowMap: DT_ROWMAP_OFFSET, TSet<TPair<FName, uint8*>>
-                        uint8_t* dtBase = reinterpret_cast<uint8_t*>(dtConst);
-                        constexpr int SET_ELEMENT_SIZE = 24;
-                        constexpr int FNAME_SIZE = 8;
+                        auto names = m_dtConstructions.getRowNames();
+                        int actorOff = m_dtConstructions.resolvePropertyOffset(L"Actor");
 
-                        if (s_off_dtRowActor == -2)
-                        {
-                            resolveOffset(dtConst, L"RowStruct", s_off_dtRowStruct);
-                            if (s_off_dtRowStruct >= 0)
-                            {
-                                auto* rowStruct = *reinterpret_cast<UStruct**>(dtBase + s_off_dtRowStruct);
-                                if (rowStruct)
-                                {
-                                    resolveStructFieldOffset(rowStruct, L"Actor", s_off_dtRowActor);
-                                    resolveStructFieldOffset(rowStruct, L"DisplayName", s_off_dtRowDisplayName);
-                                }
-                            }
-                        }
-
-                        constexpr int SOFTCLASSPTR_ASSETPATH_FNAME = 0x10;
-                        int actorFNameOff = (s_off_dtRowActor >= 0)
-                            ? s_off_dtRowActor + SOFTCLASSPTR_ASSETPATH_FNAME
-                            : DT_ROW_ACTOR_FNAME;
-                        int displayNameOff = (s_off_dtRowDisplayName >= 0)
-                            ? s_off_dtRowDisplayName
-                            : CONSTRUCTION_DISPLAY_NAME;
-
-                        struct
-                        {
-                            uint8_t* Data;
-                            int32_t Num;
-                            int32_t Max;
-                        } elemArray{};
-                        std::memcpy(&elemArray, dtBase + DT_ROWMAP_OFFSET, 16);
-
-                        dumpFile << L"RowMap: " << elemArray.Num << L" rows\n\n";
+                        dumpFile << L"DT_Constructions: " << names.size() << L" rows, Actor@0x"
+                                 << std::hex << actorOff << std::dec << L"\n\n";
                         dumpFile.flush();
-
-                        // TSoftClassPtr layout: +0x00 TWeakObjectPtr(8B), +0x08 TagAtLastTest(4B)+pad,
-                        //   +0x10 FName AssetPathName(8B), +0x18 FString SubPathString(16B)
 
                         int matchCount = 0;
 
-                        for (int i = 0; i < elemArray.Num; i++)
+                        for (size_t i = 0; i < names.size(); i++)
                         {
-                            uint8_t* elem = elemArray.Data + i * SET_ELEMENT_SIZE;
-                            if (!isReadableMemory(elem, SET_ELEMENT_SIZE)) continue;
+                            const auto& rowNameStr = names[i];
+                            uint8_t* rowData = m_dtConstructions.findRowData(rowNameStr.c_str());
+                            if (!rowData) continue;
 
-                            uint8_t* rowData = *reinterpret_cast<uint8_t**>(elem + FNAME_SIZE);
-                            if (!rowData || !isReadableMemory(rowData, 0x78)) continue;
-
-                            // Actor AssetPathName FName (dynamic resolve, fallback 0x60)
-                            FName assetFName;
-                            std::memcpy(&assetFName, rowData + actorFNameOff, FNAME_SIZE);
+                            // Actor is TSoftClassPtr — AssetPathName FName at sub-offset +0x10
                             std::wstring rowAssetPath;
-                            try
+                            if (actorOff >= 0 && isReadableMemory(rowData + actorOff + SOFTCLASSPTR_ASSETPATH_FNAME, 8))
                             {
-                                rowAssetPath = assetFName.ToString();
+                                FName assetFName;
+                                std::memcpy(&assetFName, rowData + actorOff + SOFTCLASSPTR_ASSETPATH_FNAME, 8);
+                                try { rowAssetPath = assetFName.ToString(); } catch (...) { continue; }
                             }
-                            catch (...)
-                            {
-                                continue;
-                            }
+                            else continue;
 
                             bool isMatch = false;
                             if (!rowAssetPath.empty())
                             {
                                 if (!classPath.empty() && classPath.find(rowAssetPath) != std::wstring::npos)
-                                {
                                     isMatch = true;
-                                }
                                 if (!isMatch && !recipeRef.empty() && rowAssetPath.find(recipeRef) != std::wstring::npos)
-                                {
                                     isMatch = true;
-                                }
                             }
 
                             if (i < 3 || isMatch)
                             {
-                                FName rowName;
-                                std::memcpy(&rowName, elem, FNAME_SIZE);
-                                std::wstring rowNameStr;
-                                try
-                                {
-                                    rowNameStr = rowName.ToString();
-                                }
-                                catch (...)
-                                {
-                                    rowNameStr = L"(err)";
-                                }
+                                std::wstring dispName = m_dtConstructions.readFText(rowNameStr.c_str(), L"DisplayName");
 
-                                std::wstring dispName;
-                                try
-                                {
-                                    FText* txt = reinterpret_cast<FText*>(rowData + displayNameOff);
-                                    if (txt && txt->Data && isReadableMemory(txt->Data, 8)) dispName = txt->ToString();
-                                }
-                                catch (...)
-                                {
-                                    dispName = L"(err)";
-                                }
-
-                                dumpFile << (isMatch ? L">>> MATCH" : L"   ") << L" [" << i << L"] " << rowNameStr << L"  Display=\"" << dispName
-                                         << L"\"  ActorPath=\"" << rowAssetPath << L"\"\n";
+                                dumpFile << (isMatch ? L">>> MATCH" : L"   ") << L" [" << i << L"] " << rowNameStr
+                                         << L"  Display=\"" << dispName << L"\"  ActorPath=\"" << rowAssetPath << L"\"\n";
                                 dumpFile.flush();
 
                                 if (isMatch && dtDisplayName.empty())
@@ -1031,15 +950,11 @@
                             if (isMatch) matchCount++;
                         }
 
-                        dumpFile << L"\n=== RESULTS: " << elemArray.Num << L" rows scanned, " << matchCount << L" matches ===\n";
+                        dumpFile << L"\n=== RESULTS: " << names.size() << L" rows scanned, " << matchCount << L" matches ===\n";
                         if (!dtDisplayName.empty())
-                        {
                             dumpFile << L"MATCHED: row='" << dtRowName << L"' display='" << dtDisplayName << L"'\n";
-                        }
                         else
-                        {
                             dumpFile << L"NO MATCH FOUND for classPath='" << classPath << L"'\n";
-                        }
                     }
                     dumpFile.close();
 

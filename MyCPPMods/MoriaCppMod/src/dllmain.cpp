@@ -1089,16 +1089,16 @@ namespace MoriaMods
                     if (m_screen.getCursorClientPixels(curX, curY, viewW, viewH))
                     {
                         POINT cursor{curX, curY};
-                        float uis = m_screen.uiScale;
+                        float s2p = m_screen.viewportScale;
                         // Config widget: pos (viewW/2, viewH/2 - 100), size 1400x900 Slate, alignment (0.5,0.5)
-                        int wLeft = static_cast<int>(viewW / 2.0f - 700 * uis);
-                        int wTop  = static_cast<int>(viewH / 2.0f - 100 - 450 * uis);
+                        int wLeft = static_cast<int>(viewW / 2.0f - 700.0f * s2p);
+                        int wTop  = static_cast<int>(viewH / 2.0f - 100.0f - 450.0f * s2p);
                         // Tab bar: ~98px from top, each tab 420x66, 40px left padding (all scaled)
-                        int tabY0 = static_cast<int>(wTop + 98 * uis), tabY1 = static_cast<int>(tabY0 + 66 * uis);
+                        int tabY0 = static_cast<int>(wTop + 98.0f * s2p), tabY1 = static_cast<int>(tabY0 + 66.0f * s2p);
                         if (cursor.y >= tabY0 && cursor.y <= tabY1)
                         {
-                            int tabX0 = static_cast<int>(wLeft + 40 * uis);
-                            int tabW = static_cast<int>(420 * uis);
+                            int tabX0 = static_cast<int>(wLeft + 40.0f * s2p);
+                            int tabW = static_cast<int>(420.0f * s2p);
                             for (int t = 0; t < 3; t++)
                             {
                                 if (cursor.x >= tabX0 + t * tabW && cursor.x < tabX0 + (t + 1) * tabW)
@@ -1111,16 +1111,16 @@ namespace MoriaMods
                         // Tab 0: Free Build checkbox click Ã¢â‚¬â€ entire row
                         if (m_cfgActiveTab == 0)
                         {
-                            int cbX0 = static_cast<int>(wLeft + 20 * uis), cbX1 = static_cast<int>(wLeft + (1400 - 20) * uis);
+                            int cbX0 = static_cast<int>(wLeft + 20.0f * s2p), cbX1 = static_cast<int>(wLeft + (1400.0f - 20.0f) * s2p);
                             // Free Build: checkbox row + description text (generous Y range)
-                            int cbY0 = static_cast<int>(wTop + 210 * uis), cbY1 = static_cast<int>(wTop + 310 * uis);
+                            int cbY0 = static_cast<int>(wTop + 210.0f * s2p), cbY1 = static_cast<int>(wTop + 310.0f * s2p);
                             if (cursor.x >= cbX0 && cursor.x <= cbX1 && cursor.y >= cbY0 && cursor.y <= cbY1)
                             {
                                 s_config.pendingToggleFreeBuild = true;
                                 VLOG(STR("[MoriaCppMod] [CFG] Free Build toggle via mouse click\n"));
                             }
                             // No Collision: checkbox row + description text (generous Y range)
-                            int ncY0 = static_cast<int>(wTop + 310 * uis), ncY1 = static_cast<int>(wTop + 410 * uis);
+                            int ncY0 = static_cast<int>(wTop + 310.0f * s2p), ncY1 = static_cast<int>(wTop + 410.0f * s2p);
                             if (cursor.x >= cbX0 && cursor.x <= cbX1 && cursor.y >= ncY0 && cursor.y <= ncY1)
                             {
                                 m_noCollisionWhileFlying = !m_noCollisionWhileFlying;
@@ -1129,8 +1129,8 @@ namespace MoriaMods
                                 VLOG(STR("[MoriaCppMod] [CFG] No Collision toggle: {}\n"), m_noCollisionWhileFlying ? 1 : 0);
                             }
                             // Unlock All Recipes button: centered, 420px wide
-                            int ubY0 = static_cast<int>(wTop + 430 * uis), ubY1 = static_cast<int>(ubY0 + 68 * uis);
-                            int ubX0 = static_cast<int>(wLeft + (1400 - 420) / 2.0f * uis), ubX1 = static_cast<int>(ubX0 + 420 * uis);
+                            int ubY0 = static_cast<int>(wTop + 430.0f * s2p), ubY1 = static_cast<int>(ubY0 + 68.0f * s2p);
+                            int ubX0 = static_cast<int>(wLeft + (1400.0f - 420.0f) / 2.0f * s2p), ubX1 = static_cast<int>(ubX0 + 420.0f * s2p);
                             if (cursor.x >= ubX0 && cursor.x <= ubX1 && cursor.y >= ubY0 && cursor.y <= ubY1)
                             {
                                 s_config.pendingUnlockAllRecipes = true;
@@ -1140,13 +1140,13 @@ namespace MoriaMods
                         // Tab 1: Key box click for rebinding
                         if (m_cfgActiveTab == 1)
                         {
-                            // Key boxes are right-aligned within the uis-scaled widget
-                            int kbX0 = static_cast<int>(wLeft + 1050 * uis);
-                            int kbX1 = static_cast<int>(wLeft + 1400 * uis);
+                            // Key boxes are right-aligned within the slate-scaled widget
+                            int kbX0 = static_cast<int>(wLeft + 1050.0f * s2p);
+                            int kbX1 = static_cast<int>(wLeft + 1400.0f * s2p);
                             // First key row starts after tabs+seps (~190px from top)
-                            int contentY = static_cast<int>(wTop + 190 * uis);
-                            int rowHeight = static_cast<int>(44 * uis);
-                            int sectionHeight = static_cast<int>(48 * uis);
+                            int contentY = static_cast<int>(wTop + 190.0f * s2p);
+                            int rowHeight = static_cast<int>(44.0f * s2p);
+                            int sectionHeight = static_cast<int>(48.0f * s2p);
                             // Get ScrollBox scroll offset to account for scrolled content
                             float scrollOff = 0.0f;
                             if (m_cfgScrollBoxes[1])
@@ -1164,7 +1164,7 @@ namespace MoriaMods
                             if (cursor.x >= kbX0 && cursor.x <= kbX1)
                             {
                                 // Add scroll offset: screen click maps to content position + scroll
-                                int y = cursor.y - contentY + static_cast<int>(scrollOff * uis);
+                                int y = cursor.y - contentY + static_cast<int>(scrollOff * s2p);
                                 if (y >= 0)
                                 {
                                     // Walk through bindings to find which row was clicked
@@ -1215,9 +1215,9 @@ namespace MoriaMods
                         if (m_cfgActiveTab == 2)
                         {
                             // Danger icons are in the left 60px of the content area
-                            int iconX0 = static_cast<int>(wLeft + 40 * uis), iconX1 = static_cast<int>(iconX0 + 70 * uis);
-                            int entryStart = static_cast<int>(wTop + 230 * uis);
-                            int entryHeight = static_cast<int>(70 * uis);
+                            int iconX0 = static_cast<int>(wLeft + 40.0f * s2p), iconX1 = static_cast<int>(iconX0 + 70.0f * s2p);
+                            int entryStart = static_cast<int>(wTop + 230.0f * s2p);
+                            int entryHeight = static_cast<int>(70.0f * s2p);
                             if (cursor.x >= iconX0 && cursor.x <= iconX1 && cursor.y >= entryStart)
                             {
                                 int entryIdx = (cursor.y - entryStart) / entryHeight;

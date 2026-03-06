@@ -107,36 +107,6 @@
             widget->ProcessEvent(fn, buf.data());
         }
 
-        // Helper: returns the engine DPI scale so we can convert physical viewport pixels to
-        // UMG logical pixels.  UE4 maps logical height Ã¢â€°Ë† 1080 at all resolutions via this scale.
-        // WidgetLayoutLibrary::GetViewportScale(WorldContextObject) -> float
-        float getViewportDpiScale(UObject* worldContext)
-        {
-            auto* fn  = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
-                            STR("/Script/UMG.WidgetLayoutLibrary:GetViewportScale"));
-            auto* cdo = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr,
-                            STR("/Script/UMG.Default__WidgetLayoutLibrary"));
-            if (!fn || !cdo || !worldContext) return 1.0f;
-            auto* pWC = findParam(fn, STR("WorldContextObject"));
-            auto* pRV = findParam(fn, STR("ReturnValue"));
-            int sz = fn->GetParmsSize();
-            std::vector<uint8_t> buf(sz, 0);
-            if (pWC) *reinterpret_cast<UObject**>(buf.data() + pWC->GetOffset_Internal()) = worldContext;
-            cdo->ProcessEvent(fn, buf.data());
-            float scale = pRV ? *reinterpret_cast<float*>(buf.data() + pRV->GetOffset_Internal()) : 1.0f;
-            return (scale > 0.1f) ? scale : 1.0f; // guard against 0 / garbage
-        }
-
-        // Compute the UI scale factor that maps design-space sizes (authored at 1080p logical)
-        // to the current viewport.  physicalH comes from GetViewportSize(); dpiScale from
-        // getViewportDpiScale().  Result Ã¢â€°Ë† 1.0 at all standard 16:9 resolutions.
-        float computeUiScale(int32_t physicalH, float dpiScale)
-        {
-            float logicalH = static_cast<float>(physicalH) / dpiScale;
-            float s = logicalH / 1080.0f;
-            return (s < 0.5f) ? 0.5f : s; // minimum 0.5 for readability
-        }
-
         // Helper: get mouse position in slate units via PlayerController::GetMousePositionScaledByDPI
         // This is the correct UE4 API Ã¢â‚¬â€ returns cursor in DPI-adjusted viewport coordinates
         bool getMousePositionSlate(float& outX, float& outY)
@@ -992,86 +962,18 @@
             }
 
             // --- Phase D: Size frame from icon dimensions and center on screen ---
-            // Get viewport size early for uiScale computation
             m_screen.refresh(findPlayerController());
             int32_t viewW = m_screen.viewW, viewH = m_screen.viewH;
-            VLOG(STR("[MoriaCppMod] [UMG] Viewport: {}x{}\n"), viewW, viewH);
 
-            // --- DEBUG: Query engine DPI scale via GetViewportScale and WidgetLayoutLibrary ---
-            // UUserWidget::GetViewportScale()
-            float engineDpiScale = -1.0f;
-            if (userWidget)
+            // Cache WLL class for mouse queries in drag hit-test
+            if (!m_wllClass)
             {
-                auto* gvsFn = userWidget->GetFunctionByNameInChain(STR("GetViewportScale"));
-                if (gvsFn)
-                {
-                    struct { float ReturnValue{0.0f}; } gvsParams{};
-                    userWidget->ProcessEvent(gvsFn, &gvsParams);
-                    engineDpiScale = gvsParams.ReturnValue;
-                }
+                auto* wllClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                                    STR("/Script/UMG.WidgetLayoutLibrary"));
+                if (wllClass) m_wllClass = wllClass;
             }
-            // Also try WidgetLayoutLibrary::GetViewportScale(WorldContextObject)
-            float wllDpiScale = -1.0f;
-            auto* wllClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetLayoutLibrary"));
-            if (wllClass) m_wllClass = wllClass; // cache for drag hit-test mouse queries
-            if (wllClass)
-            {
-                auto* wllCDO = wllClass->GetClassDefaultObject();
-                auto* wllFn = wllClass->GetFunctionByNameInChain(STR("GetViewportScale"));
-                if (wllCDO && wllFn)
-                {
-                    auto* pWC2 = findParam(wllFn, STR("WorldContextObject"));
-                    auto* pRV2 = findParam(wllFn, STR("ReturnValue"));
-                    int sz2 = wllFn->GetParmsSize();
-                    std::vector<uint8_t> wb(sz2, 0);
-                    auto* pcForScale = findPlayerController();
-                    if (pWC2 && pcForScale) *reinterpret_cast<UObject**>(wb.data() + pWC2->GetOffset_Internal()) = pcForScale;
-                    wllCDO->ProcessEvent(wllFn, wb.data());
-                    if (pRV2) wllDpiScale = *reinterpret_cast<float*>(wb.data() + pRV2->GetOffset_Internal());
-                }
-            }
-            VLOG(STR("[MoriaCppMod] [UMG] DPI scale: UserWidget::GetViewportScale={:.4f}  WLL::GetViewportScale={:.4f}\n"),
-                engineDpiScale, wllDpiScale);
-            // --- END DEBUG ---
-
-            // --- Compute true engine DPI scale: compare WLL slate viewport vs raw client pixels ---
-            // WLL::GetViewportSize returns FVector2D in SLATE units; GetClientRect gives raw pixels.
-            // dpiScale = rawPixels / slateUnits (e.g. 1.0 at 100% DPI, 1.5 at 150% DPI)
-            float wllSlateW = -1.0f, wllSlateH = -1.0f;
-            if (wllClass)
-            {
-                auto* wllCDO2 = wllClass->GetClassDefaultObject();
-                auto* wllSizeFn = wllClass->GetFunctionByNameInChain(STR("GetViewportSize"));
-                if (wllCDO2 && wllSizeFn)
-                {
-                    auto* pWC3 = findParam(wllSizeFn, STR("WorldContextObject"));
-                    auto* pSZ  = findParam(wllSizeFn, STR("Size"));
-                    int sz3 = wllSizeFn->GetParmsSize();
-                    std::vector<uint8_t> sb3(sz3, 0);
-                    auto* pcForSize = findPlayerController();
-                    if (pWC3 && pcForSize) *reinterpret_cast<UObject**>(sb3.data() + pWC3->GetOffset_Internal()) = pcForSize;
-                    wllCDO2->ProcessEvent(wllSizeFn, sb3.data());
-                    if (pSZ)
-                    {
-                        auto* sv = reinterpret_cast<float*>(sb3.data() + pSZ->GetOffset_Internal());
-                        wllSlateW = sv[0]; wllSlateH = sv[1];
-                    }
-                }
-            }
-            // Compute dpiScale from slate vs raw pixels; fall back to GetViewportScale results
-            if (wllSlateW > 0.0f && viewW > 0)
-                m_screen.dpiScale = static_cast<float>(viewW) / wllSlateW;
-            else if (engineDpiScale > 0.0f)
-                m_screen.dpiScale = engineDpiScale;
-            else if (wllDpiScale > 0.0f)
-                m_screen.dpiScale = wllDpiScale;
-            else
-                m_screen.dpiScale = 1.0f; // fallback
-
-            VLOG(STR("[MoriaCppMod] [UMG] DPI: slateVP={:.1f}x{:.1f} rawVP={}x{} dpiScale={:.4f}\n"),
-                wllSlateW, wllSlateH, viewW, viewH, m_screen.dpiScale);
-            showOnScreen(std::format(L"DPI scale={:.3f}  slate={:.0f}x{:.0f}  raw={}x{}",
-                m_screen.dpiScale, wllSlateW, wllSlateH, viewW, viewH).c_str(), 8.0f, 1.0f, 1.0f, 0.0f);
+            VLOG(STR("[MoriaCppMod] [UMG] Viewport: {}x{} viewportScale={:.3f} slate={:.0f}x{:.0f} aspect={:.3f}\n"),
+                viewW, viewH, m_screen.viewportScale, m_screen.slateW, m_screen.slateH, m_screen.aspectRatio);
 
             // SetRenderScale: constant uniform scale Ã¢â‚¬â€ engine DPI handles resolution differences
             // Do NOT multiply by uiScale here Ã¢â‚¬â€ the engine already scales slate units to pixels
@@ -1141,8 +1043,8 @@
             }
 
             // Cache size as FRACTION of viewport for resolution-independent hit-testing
-            m_toolbarSizeW[0] = m_screen.pixelToFracX(totalW);
-            m_toolbarSizeH[0] = m_screen.pixelToFracY(totalH);
+            m_toolbarSizeW[0] = m_screen.slateToFracX(totalW);
+            m_toolbarSizeH[0] = m_screen.slateToFracY(totalH);
             m_umgBarWidget = userWidget;
             showOnScreen(Loc::get("msg.builders_bar_created").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [UMG] === Builders bar creation complete ===\n"));
@@ -1601,8 +1503,8 @@
             }
 
             // Cache size for repositioning hit-test
-            m_toolbarSizeW[1] = m_screen.pixelToFracX(abTotalW);
-            m_toolbarSizeH[1] = m_screen.pixelToFracY(abTotalH);
+            m_toolbarSizeW[1] = m_screen.slateToFracX(abTotalW);
+            m_toolbarSizeH[1] = m_screen.slateToFracY(abTotalH);
             m_abBarWidget = userWidget;
             showOnScreen(L"Advanced Builder toolbar created!", 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [AB] === Advanced Builder toolbar created ({}x{}) ===\n"),
@@ -2095,8 +1997,8 @@
             }
 
             // Cache size for repositioning hit-test
-            m_toolbarSizeW[3] = m_screen.pixelToFracX((400.0f * uiScale));
-            m_toolbarSizeH[3] = m_screen.pixelToFracY((80.0f * uiScale));
+            m_toolbarSizeW[3] = m_screen.slateToFracX(400.0f * m_screen.uiScale);
+            m_toolbarSizeH[3] = m_screen.slateToFracY(80.0f * m_screen.uiScale);
 
             // Start hidden
             auto* setVisFn = userWidget->GetFunctionByNameInChain(STR("SetVisibility"));
@@ -3717,8 +3619,8 @@
             }
 
             // Cache size for repositioning hit-test
-            m_toolbarSizeW[2] = m_screen.pixelToFracX(mcTotalW);
-            m_toolbarSizeH[2] = m_screen.pixelToFracY(mcTotalH);
+            m_toolbarSizeW[2] = m_screen.slateToFracX(mcTotalW);
+            m_toolbarSizeH[2] = m_screen.slateToFracY(mcTotalH);
             m_mcBarWidget = userWidget;
 
             // Snap Toggle (slot 5) starts Disabled — no ghost piece at creation time

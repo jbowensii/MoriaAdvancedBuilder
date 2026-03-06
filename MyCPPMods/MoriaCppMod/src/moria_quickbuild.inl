@@ -307,15 +307,19 @@
         }
 
         // Extract icon via render target: draw UTexture2D to Canvas on a render target, then export
-        bool extractAndSaveIcon(UObject* widget, const std::wstring& textureName, const std::wstring& outPath)
+        // textureOverride: if non-null, skip widget chain walk and use this UTexture2D directly
+        bool extractAndSaveIcon(UObject* widget, const std::wstring& textureName,
+                                const std::wstring& outPath, UObject* textureOverride = nullptr)
         {
-            QBLOG(STR("[MoriaCppMod] [QB] extractAndSaveIcon ENTER: widget={:p} tex='{}' path='{}'\n"),
-                  (void*)widget, textureName, outPath);
-            if (!widget || textureName.empty()) return false;
+            QBLOG(STR("[MoriaCppMod] [QB] extractAndSaveIcon ENTER: widget={:p} tex='{}' path='{}' override={:p}\n"),
+                  (void*)widget, textureName, outPath, (void*)textureOverride);
+            if (textureName.empty()) return false;
+            if (!textureOverride && !widget) return false;
             try
             {
-                // --- Get UTexture2D from the widget chain ---
-                UObject* texture = nullptr;
+                // --- Get UTexture2D: prefer override, fall back to widget chain ---
+                UObject* texture = textureOverride;
+                if (!texture && widget)
                 {
                     uint8_t* base = reinterpret_cast<uint8_t*>(widget);
                     if (s_off_icon == -2) resolveOffset(widget, L"Icon", s_off_icon);
@@ -919,35 +923,60 @@
                       m_recipeSlots[slot].rowName, slot + 1);
             }
             m_recipeSlots[slot].used = true;
-            QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: slot data set, finding widget for icon...\n"));
-            // Try to extract the icon texture name and save as PNG
-            UObject* itemWidget = findBuildItemWidget(m_lastCapturedName);
-            QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: findBuildItemWidget -> {}\n"),
-                  itemWidget ? STR("FOUND") : STR("NOT FOUND"));
-            if (itemWidget)
-            {
-                QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: calling extractIconTextureName...\n"));
-                m_recipeSlots[slot].textureName = extractIconTextureName(itemWidget);
-                QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: textureName='{}'\n"), m_recipeSlots[slot].textureName);
-                if (!m_recipeSlots[slot].textureName.empty())
-                {
-                    QBLOG(STR("[MoriaCppMod] [QuickBuild] F{} icon: '{}'\n"), slot + 1, m_recipeSlots[slot].textureName);
+            QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: slot data set, looking up icon...\n"));
 
-                    if (!s_overlay.iconFolder.empty())
+            // Try DataTable shortcut first: DT_ConstructionRecipes → DT_Constructions Icon
+            UObject* dtIcon = nullptr;
+            if (!m_recipeSlots[slot].rowName.empty())
+            {
+                if (!m_dtConstructions.isBound()) m_dtConstructions.bind(L"DT_Constructions");
+                if (!m_dtConstructionRecipes.isBound()) m_dtConstructionRecipes.bind(L"DT_ConstructionRecipes");
+                dtIcon = lookupRecipeIcon(m_recipeSlots[slot].rowName.c_str());
+                if (dtIcon && isReadableMemory(dtIcon, 64))
+                {
+                    m_recipeSlots[slot].textureName = std::wstring(dtIcon->GetName());
+                    QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: DataTable icon='{}'\n"), m_recipeSlots[slot].textureName);
+                }
+                else
+                {
+                    dtIcon = nullptr;
+                    QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: DataTable icon lookup failed, falling back to widget\n"));
+                }
+            }
+
+            // Fallback: extract from widget chain
+            UObject* itemWidget = nullptr;
+            if (!dtIcon)
+            {
+                itemWidget = findBuildItemWidget(m_lastCapturedName);
+                QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: findBuildItemWidget -> {}\n"),
+                      itemWidget ? STR("FOUND") : STR("NOT FOUND"));
+                if (itemWidget)
+                {
+                    m_recipeSlots[slot].textureName = extractIconTextureName(itemWidget);
+                    QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: textureName='{}'\n"), m_recipeSlots[slot].textureName);
+                }
+            }
+
+            // Save icon as PNG if we have a texture name
+            if (!m_recipeSlots[slot].textureName.empty())
+            {
+                QBLOG(STR("[MoriaCppMod] [QuickBuild] F{} icon: '{}'\n"), slot + 1, m_recipeSlots[slot].textureName);
+
+                if (!s_overlay.iconFolder.empty())
+                {
+                    std::wstring pngPath = s_overlay.iconFolder + L"\\" + m_recipeSlots[slot].textureName + L".png";
+                    DWORD attr = GetFileAttributesW(pngPath.c_str());
+                    if (attr == INVALID_FILE_ATTRIBUTES)
                     {
-                        std::wstring pngPath = s_overlay.iconFolder + L"\\" + m_recipeSlots[slot].textureName + L".png";
-                        DWORD attr = GetFileAttributesW(pngPath.c_str());
-                        if (attr == INVALID_FILE_ATTRIBUTES)
-                        {
-                            QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: extracting PNG to '{}'\n"), pngPath);
-                            bool iconOk = extractAndSaveIcon(itemWidget, m_recipeSlots[slot].textureName, pngPath);
-                            QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: extractAndSaveIcon -> {}\n"),
-                                  iconOk ? STR("OK") : STR("FAILED"));
-                        }
-                        else
-                        {
-                            VLOG(STR("[MoriaCppMod] [Icon] PNG already exists: {}\n"), pngPath);
-                        }
+                        QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: extracting PNG to '{}'\n"), pngPath);
+                        bool iconOk = extractAndSaveIcon(itemWidget, m_recipeSlots[slot].textureName, pngPath, dtIcon);
+                        QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: extractAndSaveIcon -> {}\n"),
+                              iconOk ? STR("OK") : STR("FAILED"));
+                    }
+                    else
+                    {
+                        VLOG(STR("[MoriaCppMod] [Icon] PNG already exists: {}\n"), pngPath);
                     }
                 }
             }

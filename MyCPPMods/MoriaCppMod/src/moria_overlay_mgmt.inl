@@ -482,8 +482,8 @@
                                           m_screen.fracToPixelY(fracY), true);
 
             // Cache size for hit-test -- matches real Target Info dimensions
-            m_toolbarSizeW[3] = m_screen.pixelToFracX(1100.0f * uiScale);
-            m_toolbarSizeH[3] = m_screen.pixelToFracY(320.0f * uiScale);
+            m_toolbarSizeW[3] = m_screen.slateToFracX(1100.0f * uiScale);
+            m_toolbarSizeH[3] = m_screen.slateToFracY(320.0f * uiScale);
 
             m_repositionInfoBoxWidget = userWidget;
             VLOG(STR("[MoriaCppMod] Created placeholder Info Box for repositioning\n"));
