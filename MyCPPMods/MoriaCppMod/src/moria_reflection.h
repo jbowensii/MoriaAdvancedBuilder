@@ -52,6 +52,7 @@ namespace MoriaMods
     // FItemInstance field offsets
     inline int s_off_iiItem = -2;              // FItemInstance::Item (TSubclassOf)
     inline int s_off_iiID = -2;               // FItemInstance::ID (int32)
+    inline int s_off_iiDur = -2;              // FItemInstance::Durability (float)
     inline int s_off_iiSize = -2;             // sizeof(FItemInstance) element stride
 
     // FItemInstanceArray::List offset
@@ -88,6 +89,7 @@ namespace MoriaMods
     // FItemInstance field accessors (probed value or hardcoded fallback)
     inline int iiItemOff()  { return (s_off_iiItem >= 0)  ? s_off_iiItem : 0x10; }
     inline int iiIDOff()    { return (s_off_iiID >= 0)    ? s_off_iiID   : 0x20; }
+    inline int iiDurOff()   { return (s_off_iiDur >= 0)   ? s_off_iiDur  : 0x24; }
     inline int iiSize()     { return (s_off_iiSize >= 0)  ? s_off_iiSize : 0x30; }
 
     // FItemInstanceArray::List offset accessor
@@ -419,6 +421,7 @@ namespace MoriaMods
         if (s_off_iiItem != -2) return; // already probed
         s_off_iiItem = -1;
         s_off_iiID = -1;
+        s_off_iiDur = -1;
         s_off_iiSize = -1;
         s_off_iiaList = -1;
 
@@ -457,8 +460,9 @@ namespace MoriaMods
                 s_off_iiSize = iiStruct->GetPropertiesSize();
                 resolveStructFieldOffset(iiStruct, L"Item", s_off_iiItem);
                 resolveStructFieldOffset(iiStruct, L"ID", s_off_iiID);
-                VLOG(STR("[MoriaCppMod] [Validate] FItemInstance: size=0x{:02X} Item@0x{:02X} ID@0x{:02X} (expected size=0x30 Item@0x10 ID@0x20)\n"),
-                     s_off_iiSize, s_off_iiItem >= 0 ? s_off_iiItem : 0x10, s_off_iiID >= 0 ? s_off_iiID : 0x20);
+                resolveStructFieldOffset(iiStruct, L"Durability", s_off_iiDur);
+                VLOG(STR("[MoriaCppMod] [Validate] FItemInstance: size=0x{:02X} Item@0x{:02X} ID@0x{:02X} Dur@0x{:02X} (expected 0x30 0x10 0x20 0x24)\n"),
+                     s_off_iiSize, s_off_iiItem >= 0 ? s_off_iiItem : 0x10, s_off_iiID >= 0 ? s_off_iiID : 0x20, s_off_iiDur >= 0 ? s_off_iiDur : 0x24);
                 break;
             }
         }

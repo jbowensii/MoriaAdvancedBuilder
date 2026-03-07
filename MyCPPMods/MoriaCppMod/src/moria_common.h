@@ -65,7 +65,7 @@ namespace MoriaMods
     // ════════════════════════════════════════════════════════════════════════════
 
     // Verbose logging gate (false = short-circuits all VLOG calls)
-    inline bool s_verbose = false;
+    inline bool s_verbose = true;
     inline std::string s_language = "en";
     // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
     #define VLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)

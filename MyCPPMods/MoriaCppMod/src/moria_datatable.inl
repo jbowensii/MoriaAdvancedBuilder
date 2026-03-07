@@ -609,6 +609,9 @@ DataTableUtil m_dtItemRecipes;
 DataTableUtil m_dtWeapons;
 DataTableUtil m_dtTools;
 DataTableUtil m_dtArmor;
+DataTableUtil m_dtConsumables;
+DataTableUtil m_dtContainerItems;
+DataTableUtil m_dtOres;
 
 void bindAllDataTables()
 {
@@ -619,6 +622,9 @@ void bindAllDataTables()
     m_dtWeapons.bind(L"DT_Weapons");
     m_dtTools.bind(L"DT_Tools");
     m_dtArmor.bind(L"DT_Armor");
+    m_dtConsumables.bind(L"DT_Consumables");
+    m_dtContainerItems.bind(L"DT_ContainerItems");
+    m_dtOres.bind(L"DT_Ores");
 }
 
 void unbindAllDataTables()
@@ -630,6 +636,9 @@ void unbindAllDataTables()
     m_dtWeapons.unbind();
     m_dtTools.unbind();
     m_dtArmor.unbind();
+    m_dtConsumables.unbind();
+    m_dtContainerItems.unbind();
+    m_dtOres.unbind();
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

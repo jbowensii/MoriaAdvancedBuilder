@@ -60,8 +60,6 @@ namespace MoriaMods
         ULONGLONG m_lastStreamCheck{0};    // new component streaming (~3s)
         ULONGLONG m_lastRescanTime{0};     // full rescan (~60s)
         ULONGLONG m_charLoadTime{0};       // timestamp when character first detected
-        ULONGLONG m_lastContainerScan{0};  // container discovery retry (~2s)
-        bool m_containerTimeoutLogged{false}; // one-shot flag for 65s timeout message
 
         // Throttled replay: spread hides across frames (render thread safety)
         struct ReplayState
@@ -262,21 +260,18 @@ namespace MoriaMods
 
 
         // Quick-build state machine
-        enum class PlacePhase { Idle, CancelGhost, CloseMenu, WaitReopen, PrimeOpen, OpenMenu, SelectRecipe };
-        int m_quickBuildSwapDelay{5};  // frames to wait between close and reopen (Slate cleanup)
+        // Event-driven: Idle | CancelGhost (ESC→OnAfterHide) | WaitingForShow (→OnAfterShow) | SelectRecipeWalk
+        enum class PlacePhase { Idle, CancelGhost, WaitingForShow, SelectRecipeWalk };
         // Result of selectRecipeOnBuildTab Ã¢â‚¬â€ distinguishes "still loading" from "genuinely missing"
         enum class SelectResult { Found, Loading, NotFound };
         int m_pendingQuickBuildSlot{-1};     // which F1-F8 slot is pending (-1 = none)
         PlacePhase m_qbPhase{PlacePhase::Idle};    // quickbuild phase
-        ULONGLONG m_qbStartTime{0};          // timestamp when SM entered non-idle
-        ULONGLONG m_qbRetryTime{0};          // timestamp of last retry/phase change
-        int m_qbWaitCount{0};                // WaitReopen frame countdown
+        ULONGLONG m_qbStartTime{0};          // timestamp when SM entered non-idle (watchdog only)
 
         // Eager handle resolution SM (runs once at toolbar creation)
         enum class HandleResolvePhase { None, Priming, Resolving, Done };
         HandleResolvePhase m_handleResolvePhase{HandleResolvePhase::None};
         ULONGLONG m_handleResolveStartTime{0};  // timestamp when resolve SM started
-        ULONGLONG m_handleResolveRetryTime{0};  // timestamp of last retry in Priming phase
         int m_handleResolveSlotIdx{0};          // which slot we're resolving next in Resolving phase
         ULONGLONG m_lastDirectSelectTime{0};    // cooldown: last SelectRecipe via DIRECT path (ms)
         ULONGLONG m_lastShowHideTime{0};        // cooldown: last Show()/Hide() on build tab (ms)
@@ -296,9 +291,11 @@ namespace MoriaMods
         bool m_isTargetBuild{false};          // true when SM is running a target-build (vs F-key)
         bool m_buildMenuWasOpen{false};      // tracks build menu open/close for ActionBar refresh
 
-        std::vector<uint8_t> m_bagHandle; // cached EpicPack bag FItemHandle
-
         bool m_showHotbar{true}; // Win32 overlay bar visibility
+
+        // Character rename (ALT+Ins experimental feature)
+        std::atomic<bool> m_pendingCharNameReady{false};
+        std::wstring m_pendingCharName;
 
         // UMG builders bar
         UObject* m_umgBarWidget{nullptr};
@@ -344,8 +341,6 @@ namespace MoriaMods
         bool m_buildMenuPrimed{false};
         bool m_buildTabAfterShowFired{false};      // set by OnAfterShow hook
 
-        // Stash container repair (once per character load)
-        bool m_repairDone{false};
 
         // Viewport / cursor / scale (moria_common.inl)
         ScreenCoords m_screen;
@@ -554,6 +549,12 @@ namespace MoriaMods
             // Mod Controller toolbar toggle: Numpad 7
             register_keydown_event(Input::Key::NUM_SEVEN, [this]() { if (m_cfgVisible) return; createModControllerBar(); });
 
+            // Character rename: ALT+Insert
+            register_keydown_event(Input::Key::INS, {Input::ModifierKey::ALT}, [this]() {
+                if (m_cfgVisible) return;
+                promptCharacterRename();
+            });
+
             // ProcessEvent hooks: rotation interception + recipe capture
             s_instance = this;
             Unreal::Hook::RegisterProcessEventPreCallback([](UObject* context, UFunction* func, void* parms) {
@@ -609,26 +610,46 @@ namespace MoriaMods
 
                 std::wstring fn(func->GetName());
 
-                // OnAfterShow on Build_Tab: signal that menu is fully initialized
+                // OnAfterShow on Build_Tab: event-driven SM transition
                 if (fn == STR("OnAfterShow"))
                 {
                     std::wstring cls = safeClassName(context);
                     if (cls == STR("UI_WBP_Build_Tab_C"))
                     {
                         s_instance->m_buildTabAfterShowFired = true;
+                        s_instance->m_buildMenuPrimed = true;
                         QBLOG(STR("[MoriaCppMod] [QuickBuild] OnAfterShow fired on Build_Tab\n"));
+
+                        // Event-driven: transition WaitingForShow -> SelectRecipeWalk
+                        if (s_instance->m_qbPhase == PlacePhase::WaitingForShow)
+                        {
+                            QBLOG(STR("[MoriaCppMod] [QuickBuild] OnAfterShow: transitioning to SelectRecipeWalk\n"));
+                            s_instance->m_qbPhase = PlacePhase::SelectRecipeWalk;
+                        }
                     }
                     return;
                 }
 
-                // OnAfterHide on BuildHUD or Build_Tab: ghost piece gone, grey out snap slot
+                // OnAfterHide on BuildHUD or Build_Tab: event-driven ghost/cancel handling
                 if (fn == STR("OnAfterHide"))
                 {
                     std::wstring cls = safeClassName(context);
                     if (cls == STR("UI_WBP_BuildHUDv2_C") || cls == STR("UI_WBP_Build_Tab_C"))
                     {
                         QBLOG(STR("[MoriaCppMod] [Placement] OnAfterHide fired on {}\n"), cls);
-                        s_instance->onGhostDisappeared();
+
+                        // Event-driven: CancelGhost complete -> activate build mode
+                        if (s_instance->m_qbPhase == PlacePhase::CancelGhost)
+                        {
+                            QBLOG(STR("[MoriaCppMod] [QuickBuild] OnAfterHide: ghost cancelled, activating build mode\n"));
+                            if (s_instance->activateBuildMode())
+                                s_instance->m_qbPhase = PlacePhase::WaitingForShow;
+                            // else: safety timeout will catch it
+                        }
+                        else
+                        {
+                            s_instance->onGhostDisappeared();
+                        }
                     }
                     return;
                 }
@@ -725,7 +746,6 @@ namespace MoriaMods
         // Per-frame tick: state machines, replay, toolbar swap, quickbuild, icons, config, rescans.
         auto on_update() -> void override
         {
-
             // Create all three toolbars when character loads
             {
                 bool justCreated = false;
@@ -760,7 +780,8 @@ namespace MoriaMods
                             QBLOG(STR("[MoriaCppMod] [HandleResolve] Toolbar created, starting eager handle resolution\n"));
                             m_handleResolvePhase = HandleResolvePhase::Priming;
                             m_handleResolveStartTime = GetTickCount64();
-                            m_handleResolveRetryTime = m_handleResolveStartTime;
+                            m_buildTabAfterShowFired = false;
+                            activateBuildMode();
                         }
                         else
                         {
@@ -789,6 +810,10 @@ namespace MoriaMods
                 refreshKeyLabels();
                 if (m_cfgVisible) updateConfigKeyLabels();
             }
+
+            // Pick up pending character rename from Win32 dialog thread
+            if (m_pendingCharNameReady.exchange(false))
+                applyPendingCharacterName();
 
             // Target Info auto-close (10 seconds)
             if (m_tiShowTick > 0 && (GetTickCount64() - m_tiShowTick) >= 10000)
@@ -1453,7 +1478,6 @@ namespace MoriaMods
             if (m_handleResolvePhase == HandleResolvePhase::Priming)
             {
                 ULONGLONG now = GetTickCount64();
-                ULONGLONG sinceLast = now - m_handleResolveRetryTime;
                 ULONGLONG elapsed = now - m_handleResolveStartTime;
 
                 if (elapsed > 5000)
@@ -1462,29 +1486,15 @@ namespace MoriaMods
                     if (isBuildTabShowing()) hideBuildTab();
                     m_handleResolvePhase = HandleResolvePhase::Done;
                 }
-                else if (m_buildTabAfterShowFired)
+                else if (m_buildTabAfterShowFired || isBuildTabShowing())
                 {
-                    QBLOG(STR("[MoriaCppMod] [HandleResolve] OnAfterShow fired, primed in {}ms\n"), elapsed);
+                    QBLOG(STR("[MoriaCppMod] [HandleResolve] Build tab ready ({}ms)\n"), elapsed);
                     m_buildTabAfterShowFired = false;
                     m_buildMenuPrimed = true;
                     m_handleResolveSlotIdx = 0;
                     m_handleResolvePhase = HandleResolvePhase::Resolving;
                 }
-                else if (isBuildTabShowing() && sinceLast > 2000)
-                {
-                    QBLOG(STR("[MoriaCppMod] [HandleResolve] 2s fallback, entering Resolving\n"));
-                    m_buildMenuPrimed = true;
-                    m_handleResolveSlotIdx = 0;
-                    m_handleResolvePhase = HandleResolvePhase::Resolving;
-                }
-                else if (!isBuildTabShowing() && sinceLast > 500) // originally 417ms
-                {
-                    QBLOG(STR("[MoriaCppMod] [HandleResolve] Sending B key to prime build menu\n"));
-                    m_buildTabAfterShowFired = false;
-                    keybd_event(0x42, 0, 0, 0);
-                    keybd_event(0x42, 0, KEYEVENTF_KEYUP, 0);
-                    m_handleResolveRetryTime = now;
-                }
+                // No retry — activateBuildMode() was called once at start, OnAfterShow handles the rest
             }
             else if (m_handleResolvePhase == HandleResolvePhase::Resolving)
             {
@@ -1566,8 +1576,6 @@ namespace MoriaMods
             // Placement state machines (quickbuild + target-build)
             placementTick();
 
-            // Toolbar swap state machine: one item per tick
-            swapToolbarTick();
 
 
             if (!m_replayActive) return;
@@ -1612,21 +1620,17 @@ namespace MoriaMods
                     m_stuckLogCount = 0;
                     m_lastRescanTime = 0;
                     m_lastStreamCheck = 0;
-                    m_lastContainerScan = 0;
-                    m_containerTimeoutLogged = false;
-                    // BELIEVED DEAD CODE -- chat widget system
-                    // m_chatWidget = nullptr;
-                    // m_sysMessages = nullptr;
                     m_replay = {}; // stop any active replay
                     // Reset all applied flags so replay re-runs for new world
                     m_appliedRemovals.assign(m_appliedRemovals.size(), false);
-                    // Clear swap state (handles stale on unload)
-                    m_bodyInvHandle.clear();
-                    m_bodyInvHandles.clear();
-                    m_repairDone = false;
-                    m_bagHandle.clear();
+                    // Clear swap state for new world
                     m_ihfCDO = nullptr;
-                    m_dropItemMgr = nullptr;
+                    m_playerGuidStr.clear();
+                    m_toolbarFileLoaded = false;
+                    m_classCache.clear();
+                    m_lastSwapTime = 0;
+                    m_swapInProgress = false;
+                    m_deferredRefreshFrames = 0;
                     // UMG builders bar destroyed with world
                     m_umgBarWidget = nullptr;
                     for (int i = 0; i < 8; i++)
@@ -1711,14 +1715,13 @@ namespace MoriaMods
                     m_cfgRemovalHeader = nullptr;
                     m_cfgRemovalVBox = nullptr;
                     m_cfgLastRemovalCount = -1;
-                    m_swap = {};
                     m_activeToolbar = 0;
                     s_overlay.activeToolbar = 0;
                     // Reset cheat toggles (debug actors destroyed)
                     s_config.freeBuild = false;
                     s_config.pendingToggleFreeBuild = false;
                     s_config.pendingUnlockAllRecipes = false;
-                    VLOG(STR("[MoriaCppMod] [Swap] Cleared all container handles, swap state, and cheat toggles\n"));
+                    VLOG(STR("[MoriaCppMod] Cleared swap state and cheat toggles\n"));
                 }
             }
 
@@ -1741,48 +1744,9 @@ namespace MoriaMods
 
             ULONGLONG msSinceChar = GetTickCount64() - m_charLoadTime;
 
-            // Auto-scan containers: 2s retry, 5s-65s window
-            if (m_bodyInvHandle.empty() && msSinceChar > 5000 && msSinceChar < 65000 && intervalElapsed(m_lastContainerScan, 2000))
-            {
-                VLOG(STR("[MoriaCppMod] [Swap] Container scan attempt (frame {}). bodyInvHandle.empty={} handles.size={}\n"),
-                                                m_frameCounter,
-                                                m_bodyInvHandle.empty(),
-                                                m_bodyInvHandles.size());
-                UObject* playerChar = nullptr;
-                {
-                    std::vector<UObject*> actors;
-                    UObjectGlobals::FindAllOf(STR("Character"), actors);
-                    for (auto* a : actors)
-                    {
-                        if (a && safeClassName(a).find(STR("Dwarf")) != std::wstring::npos)
-                        {
-                            playerChar = a;
-                            break;
-                        }
-                    }
-                }
-                if (playerChar)
-                {
-                    auto* invComp = findPlayerInventoryComponent(playerChar);
-                    if (invComp)
-                    {
-                        VLOG(STR("[MoriaCppMod] === Auto-scan containers (retry) ===\n"));
-                        discoverBagHandle(invComp);
-                        if (!m_bodyInvHandle.empty())
-                        {
-                            showOnScreen(Loc::get("msg.containers_discovered"), 3.0f, 0.0f, 1.0f, 0.0f);
-                        }
-                    }
-                }
-            }
-
-            // 65s container scan timeout (one-shot log)
-            if (m_bodyInvHandle.empty() && msSinceChar >= 65000 && !m_containerTimeoutLogged)
-            {
-                m_containerTimeoutLogged = true;
-                VLOG(STR("[MoriaCppMod] [Swap] Container discovery FAILED after 65s Ã¢â‚¬â€ toolbar swap unavailable this session\n"));
-                showOnScreen(Loc::get("msg.container_discovery_failed"), 5.0f, 1.0f, 0.3f, 0.0f);
-            }
+            // Read PlayerGuid once after character loads (for toolbar stash files)
+            if (m_playerGuidStr.empty() && msSinceChar > 3000)
+                readPlayerGuid();
 
             // Initial replay 15s after char load (streaming settle time)
             if (!m_initialReplayDone && msSinceChar >= 15000)

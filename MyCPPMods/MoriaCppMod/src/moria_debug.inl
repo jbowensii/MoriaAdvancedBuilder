@@ -212,6 +212,173 @@
         }
 
 
+        // Character rename — Win32 dialog on background thread, result picked up in on_update
+        static DWORD WINAPI charNameDialogProc(LPVOID param)
+        {
+            auto* self = static_cast<MoriaCppMod*>(param);
+            HWND owner = findGameWindow();
+
+            // Build a simple modal dialog from a DLGTEMPLATE in memory
+            // Layout: label + edit + OK/Cancel
+            alignas(4) BYTE dlgBuf[512]{};
+            auto* dlg = reinterpret_cast<DLGTEMPLATE*>(dlgBuf);
+            dlg->style = DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE;
+            dlg->cdit = 3; // 3 controls: static label, edit, OK button
+            dlg->cx = 200;
+            dlg->cy = 60;
+
+            // Use DialogBoxIndirectParam with a dlgproc instead — simpler with InputBox approach
+            // Actually, simplest: use a message-loop dialog via CreateWindowEx
+
+            // Simplest reliable approach: TaskDialog is Vista+ but no edit control.
+            // Use a plain Win32 window with an edit control.
+
+            const wchar_t* className = L"MoriaCppModCharNameDlg";
+            WNDCLASSEXW wc{};
+            wc.cbSize = sizeof(wc);
+            wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) -> LRESULT {
+                switch (msg) {
+                case WM_CREATE: {
+                    auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
+                    HFONT font = CreateFontW(-28, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                        0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+                    CreateWindowExW(0, L"STATIC", L"Character Name (max 22 chars):",
+                        WS_CHILD | WS_VISIBLE, 20, 20, 560, 40, hwnd, nullptr, nullptr, nullptr);
+                    HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 20, 68, 560, 48,
+                        hwnd, reinterpret_cast<HMENU>(101), nullptr, nullptr);
+                    CreateWindowExW(0, L"BUTTON", L"OK",
+                        WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 220, 132, 160, 56,
+                        hwnd, reinterpret_cast<HMENU>(IDOK), nullptr, nullptr);
+                    SendMessageW(edit, EM_SETLIMITTEXT, 22, 0);
+                    // Apply font to all children
+                    EnumChildWindows(hwnd, [](HWND child, LPARAM f) -> BOOL {
+                        SendMessageW(child, WM_SETFONT, static_cast<WPARAM>(f), TRUE);
+                        return TRUE;
+                    }, reinterpret_cast<LPARAM>(font));
+                    SetFocus(edit);
+                    return 0;
+                }
+                case WM_COMMAND:
+                    if (LOWORD(wp) == IDOK) {
+                        wchar_t buf[24]{};
+                        HWND edit = GetDlgItem(hwnd, 101);
+                        GetWindowTextW(edit, buf, 23);
+                        auto* self = reinterpret_cast<MoriaCppMod*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+                        if (self && buf[0] != L'\0') {
+                            self->m_pendingCharName = buf;
+                            self->m_pendingCharNameReady.store(true);
+                        }
+                        DestroyWindow(hwnd);
+                    }
+                    return 0;
+                case WM_KEYDOWN:
+                    if (wp == VK_ESCAPE) { DestroyWindow(hwnd); return 0; }
+                    break;
+                case WM_DESTROY:
+                    PostQuitMessage(0);
+                    return 0;
+                }
+                return DefWindowProcW(hwnd, msg, wp, lp);
+            };
+            wc.hInstance = GetModuleHandleW(nullptr);
+            wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+            wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+            wc.lpszClassName = className;
+            RegisterClassExW(&wc);
+
+            HWND dlgWnd = CreateWindowExW(WS_EX_TOPMOST, className, L"Rename Character",
+                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+                CW_USEDEFAULT, CW_USEDEFAULT, 632, 268,
+                owner, nullptr, wc.hInstance, self);
+
+            if (dlgWnd) {
+                MSG m;
+                while (GetMessageW(&m, nullptr, 0, 0) > 0) {
+                    if (!IsDialogMessageW(dlgWnd, &m)) {
+                        TranslateMessage(&m);
+                        DispatchMessageW(&m);
+                    }
+                }
+            }
+            UnregisterClassW(className, wc.hInstance);
+            return 0;
+        }
+
+        void promptCharacterRename()
+        {
+            if (!m_characterLoaded) {
+                showOnScreen(L"Character not loaded", 2.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+            CreateThread(nullptr, 0, charNameDialogProc, this, 0, nullptr);
+        }
+
+        void applyPendingCharacterName()
+        {
+            std::wstring newName = m_pendingCharName;
+            m_pendingCharName.clear();
+            if (newName.empty()) return;
+
+            // Find CustomizationManager component
+            std::vector<UObject*> mgrs;
+            UObjectGlobals::FindAllOf(STR("CustomizationManager"), mgrs);
+
+            // Filter to our player's component
+            UObject* pawn = getPawn();
+            UObject* target = nullptr;
+            for (auto* mgr : mgrs) {
+                if (!mgr) continue;
+                auto* outer = mgr->GetOuterPrivate();
+                if (outer == pawn) { target = mgr; break; }
+            }
+            if (!target && !mgrs.empty()) target = mgrs[0]; // fallback: first found
+
+            if (!target) {
+                showOnScreen(L"CustomizationManager not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                VLOG(STR("[MoriaCppMod] applyPendingCharacterName: no CustomizationManager\n"));
+                return;
+            }
+
+            auto* fn = target->GetFunctionByNameInChain(STR("SetCharacterName"));
+            if (!fn) {
+                showOnScreen(L"SetCharacterName not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                VLOG(STR("[MoriaCppMod] applyPendingCharacterName: SetCharacterName not found\n"));
+                return;
+            }
+
+            // Build FString param: { wchar_t* Data, int32 Num, int32 Max }
+            int32_t parmsSize = fn->GetParmsSize();
+            std::vector<uint8_t> buf(parmsSize, 0);
+
+            // Find the NewCharacterName param offset
+            int nameOffset = -1;
+            for (auto* prop : fn->ForEachProperty()) {
+                if (prop->GetName() == STR("NewCharacterName")) {
+                    nameOffset = prop->GetOffset_Internal();
+                    break;
+                }
+            }
+            if (nameOffset < 0) {
+                showOnScreen(L"SetCharacterName param not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+
+            const wchar_t* ptr = newName.c_str();
+            int32_t len = static_cast<int32_t>(newName.size() + 1);
+            uintptr_t ptrVal = reinterpret_cast<uintptr_t>(ptr);
+            std::memcpy(buf.data() + nameOffset, &ptrVal, 8);
+            std::memcpy(buf.data() + nameOffset + 8, &len, 4);
+            std::memcpy(buf.data() + nameOffset + 12, &len, 4);
+
+            target->ProcessEvent(fn, buf.data());
+
+            std::wstring msg = L"Character renamed to: " + newName;
+            showOnScreen(msg, 5.0f, 0.0f, 1.0f, 0.5f);
+            VLOG(STR("[MoriaCppMod] SetCharacterName('{}') called\n"), newName);
+        }
+
         // Dispatch MC toolbar slot action (keyboard and click handlers)
         void dispatchMcSlot(int slot)
         {
