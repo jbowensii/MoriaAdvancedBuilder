@@ -140,7 +140,7 @@ struct DataTableUtil
         for (int32_t i = 0; i < hdr.Num; i++)
         {
             uint8_t* elem = hdr.Data + i * SET_ELEMENT_SIZE;
-            if (!isReadableMemory(elem, SET_ELEMENT_SIZE)) continue;
+            if (!isReadableMemory(elem, SET_ELEMENT_SIZE)) { VLOG(STR("[MoriaCppMod] DataTable readRow: row {} unreadable\n"), i); continue; }
             if (std::memcmp(elem, &searchName, FNAME_SIZE) == 0)
             {
                 uint8_t* rowData = *reinterpret_cast<uint8_t**>(elem + FNAME_SIZE);
@@ -497,7 +497,7 @@ struct DataTableUtil
         for (int32_t i = 0; i < hdr.Num; i++)
         {
             uint8_t* elem = hdr.Data + i * SET_ELEMENT_SIZE;
-            if (!isReadableMemory(elem, SET_ELEMENT_SIZE)) continue;
+            if (!isReadableMemory(elem, SET_ELEMENT_SIZE)) { VLOG(STR("[MoriaCppMod] DataTable removeRow: row {} unreadable\n"), i); continue; }
             if (std::memcmp(elem, &searchName, FNAME_SIZE) == 0)
             {
                 // Move last element into this slot (swap-and-pop)

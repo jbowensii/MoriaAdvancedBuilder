@@ -218,10 +218,11 @@
                     for (auto* a : directObjs)
                     {
                         if (!a) continue;
+                        if (!isWidgetAlive(a)) continue;
                         auto* fn = a->GetFunctionByNameInChain(funcName);
                         if (fn)
                         {
-                            a->ProcessEvent(fn, nullptr);
+                            safeProcessEvent(a, fn, nullptr);
                             VLOG(STR("[MoriaCppMod] Called {}::{} (direct find)\n"),
                                                             std::wstring(actorClass), std::wstring(funcName));
                             return true;
@@ -239,10 +240,11 @@
                 std::wstring cls = safeClassName(a);
                 if (cls == actorClass)
                 {
+                    if (!isWidgetAlive(a)) continue;
                     auto* fn = a->GetFunctionByNameInChain(funcName);
                     if (fn)
                     {
-                        a->ProcessEvent(fn, nullptr);
+                        safeProcessEvent(a, fn, nullptr);
                         VLOG(STR("[MoriaCppMod] Called {}::{} (actor scan)\n"), cls, std::wstring(funcName));
                         return true;
                     }
