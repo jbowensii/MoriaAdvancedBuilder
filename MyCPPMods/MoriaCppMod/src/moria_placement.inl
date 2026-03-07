@@ -125,9 +125,11 @@
         {
             static bool s_lastState = false;
             UObject* tab = getCachedBuildTab();
-            if (!tab || !m_fnIsVisible) { s_lastState = false; return false; }
+            if (!tab) { s_lastState = false; return false; }
+            auto* visFunc = tab->GetFunctionByNameInChain(STR("IsVisible"));
+            if (!visFunc) { s_lastState = false; return false; }
             struct { bool Ret{false}; } params{};
-            tab->ProcessEvent(m_fnIsVisible, &params);
+            tab->ProcessEvent(visFunc, &params);
             if (params.Ret != s_lastState)
             {
                 QBLOG(STR("[MoriaCppMod] [QB] isBuildTabShowing -> {}\n"), params.Ret ? STR("true") : STR("false"));
@@ -229,6 +231,7 @@
         // Set rotation increment on GATA via runtime property discovery
         bool setGATARotation(UObject* gata, float step)
         {
+            if (!gata) return false;
             float* snap = gata->GetValuePtrByPropertyNameInChain<float>(STR("SnapRotateIncrement"));
             float* free = gata->GetValuePtrByPropertyNameInChain<float>(STR("FreePlaceRotateIncrement"));
             if (!snap || !free) return false;
@@ -249,7 +252,7 @@
             if (!gata)
             {
                 VLOG(STR("[MoriaCppMod] [Snap] resolveGATA returned nullptr — no piece being placed\n"));
-                showOnScreen(L"Snap: place a piece first", 2.0f, 1.0f, 0.5f, 0.0f);
+                showErrorBox(L"Snap: place a piece first");
                 return;
             }
 
@@ -738,7 +741,7 @@
             if (!matchedWidget)
             {
                 if (visibleCount == 0) return SelectResult::Loading;
-                showOnScreen((L"Recipe '" + m_targetBuildName + L"' not found in build menu").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
+                showErrorBox(L"Recipe '" + m_targetBuildName + L"' not found in build menu");
                 return SelectResult::NotFound;
             }
 
@@ -883,7 +886,7 @@
                 else
                 {
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] activateBuildMode failed\n"));
-                    showOnScreen(L"Build: failed to open menu", 3.0f, 1.0f, 0.3f, 0.0f);
+                    showErrorBox(L"Build: failed to open menu");
                     m_qbPhase = PlacePhase::Idle;
                 }
             }
@@ -920,7 +923,7 @@
                 else
                 {
                     QBLOG(STR("[MoriaCppMod] [TargetBuild] activateBuildMode failed\n"));
-                    showOnScreen(L"Build: failed to open menu", 3.0f, 1.0f, 0.3f, 0.0f);
+                    showErrorBox(L"Build: failed to open menu");
                     m_qbPhase = PlacePhase::Idle;
                 }
             }
@@ -940,7 +943,7 @@
             {
                 QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: TIMEOUT at {}ms phase {}\n"),
                       elapsed, static_cast<int>(m_qbPhase));
-                showOnScreen(Loc::get("msg.build_menu_timeout"), 3.0f, 1.0f, 0.3f, 0.0f);
+                showErrorBox(Loc::get("msg.build_menu_timeout"));
                 hideBuildTab();
                 m_pendingQuickBuildSlot = -1;
                 m_isTargetBuild = false;
@@ -1002,7 +1005,7 @@
                     if (!m_isTargetBuild && m_pendingQuickBuildSlot >= 0)
                     {
                         const std::wstring& targetName = m_recipeSlots[m_pendingQuickBuildSlot].displayName;
-                        showOnScreen((L"Recipe '" + targetName + L"' not found in menu!").c_str(), 3.0f, 1.0f, 0.3f, 0.0f);
+                        showErrorBox(L"Recipe '" + targetName + L"' not found in menu!");
                     }
                     m_pendingQuickBuildSlot = -1;
                     m_isTargetBuild = false;

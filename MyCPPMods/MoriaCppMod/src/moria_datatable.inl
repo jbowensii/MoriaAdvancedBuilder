@@ -116,7 +116,7 @@ struct DataTableUtil
         for (int32_t i = 0; i < hdr.Num; i++)
         {
             uint8_t* elem = hdr.Data + i * SET_ELEMENT_SIZE;
-            if (!isReadableMemory(elem, SET_ELEMENT_SIZE)) continue;
+            if (!isReadableMemory(elem, SET_ELEMENT_SIZE)) { VLOG(STR("[MoriaCppMod] DataTable row {} unreadable\n"), i); continue; }
             FName rowName;
             std::memcpy(&rowName, elem, FNAME_SIZE);
             try { names.push_back(rowName.ToString()); }
@@ -131,10 +131,12 @@ struct DataTableUtil
 
     uint8_t* findRowData(const wchar_t* rowName) const
     {
+        if (!rowName || !rowName[0]) return nullptr;
         RowMapHeader hdr{};
         if (!getRowMapHeader(hdr)) return nullptr;
+        if (hdr.Num < 0 || hdr.Num > 100000) return nullptr;
 
-        FName searchName(rowName);
+        FName searchName(rowName, FNAME_Add);
         for (int32_t i = 0; i < hdr.Num; i++)
         {
             uint8_t* elem = hdr.Data + i * SET_ELEMENT_SIZE;
@@ -345,7 +347,7 @@ struct DataTableUtil
     {
         auto [data, off] = locateField(row, prop);
         if (!data || !isReadableMemory(data + off, FNAME_SIZE)) return false;
-        FName fname(val);
+        FName fname(val, FNAME_Add);
         std::memcpy(data + off, &fname, FNAME_SIZE);
         return true;
     }
@@ -392,7 +394,7 @@ struct DataTableUtil
         catch (...) { /* zero-fill is acceptable fallback */ }
 
         // Insert into RowMap via raw memory TMap manipulation
-        FName fname(rowName);
+        FName fname(rowName, FNAME_Add);
         auto* base = reinterpret_cast<uint8_t*>(table);
         RowMapHeader hdr{};
         std::memcpy(&hdr, base + DT_ROWMAP_OFFSET, 16);
@@ -452,7 +454,7 @@ struct DataTableUtil
         std::memcpy(newRow, srcData, rowSize);
 
         // Insert via same mechanism as addRow
-        FName fname(newRowName);
+        FName fname(newRowName, FNAME_Add);
         auto* base = reinterpret_cast<uint8_t*>(table);
         RowMapHeader hdr{};
         std::memcpy(&hdr, base + DT_ROWMAP_OFFSET, 16);
@@ -491,7 +493,7 @@ struct DataTableUtil
         std::memcpy(&hdr, base + DT_ROWMAP_OFFSET, 16);
         if (hdr.Num <= 0 || !hdr.Data) return false;
 
-        FName searchName(rowName);
+        FName searchName(rowName, FNAME_Add);
         for (int32_t i = 0; i < hdr.Num; i++)
         {
             uint8_t* elem = hdr.Data + i * SET_ELEMENT_SIZE;

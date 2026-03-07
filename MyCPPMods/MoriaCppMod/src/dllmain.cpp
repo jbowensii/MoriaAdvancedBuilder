@@ -1,5 +1,5 @@
 // Ã¢â€¢â€Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢â€”
-// Ã¢â€¢â€˜  MoriaCppMod v2.7 Ã¢â‚¬â€ Advanced Builder & HISM Removal for Return to Moria   Ã¢â€¢â€˜
+// Ã¢â€¢â€˜  MoriaCppMod v3.0 Ã¢â‚¬â€ Advanced Builder & HISM Removal for Return to Moria   Ã¢â€¢â€˜
 // Ã¢â€¢â€˜                                                                            Ã¢â€¢â€˜
 // Ã¢â€¢â€˜  A UE4SS C++ mod for Return to Moria (UE4.27) providing:                  Ã¢â€¢â€˜
 // Ã¢â€¢â€˜    - HISM instance hiding with persistence across sessions/worlds          Ã¢â€¢â€˜
@@ -281,7 +281,6 @@ namespace MoriaMods
         UObject* m_cachedBuildComp{nullptr}; // UMorBuildingComponent on player character
         UObject* m_cachedBuildHUD{nullptr};  // UI_WBP_BuildHUDv2_C (UBuildOverlayWidget)
         UObject* m_cachedBuildTab{nullptr};  // UI_WBP_Build_Tab_C
-        UFunction* m_fnIsVisible{nullptr};   // cached IsVisible() on Build_Tab (UWidget standard)
 
         // Target-to-build (Shift+F10)
         std::wstring m_targetBuildName;      // display name from last F10 target
@@ -295,6 +294,7 @@ namespace MoriaMods
 
         // Character rename (ALT+Ins experimental feature)
         std::atomic<bool> m_pendingCharNameReady{false};
+        std::mutex m_charNameMutex;
         std::wstring m_pendingCharName;
 
         // UMG builders bar
@@ -378,11 +378,11 @@ namespace MoriaMods
         UObject* m_tiBuildLabel{nullptr};
         UObject* m_tiRecipeLabel{nullptr};
         ULONGLONG m_tiShowTick{0};                  // 0 = hidden
-        // BELIEVED DEAD CODE -- InfoBox popup system: widget created but never shown (showInfoBox never called)
-        // UObject* m_infoBoxWidget{nullptr};          // root UUserWidget
-        // UObject* m_ibTitleLabel{nullptr};            // title (e.g. "Removed", "Undo")
-        // UObject* m_ibMessageLabel{nullptr};          // message body
-        // ULONGLONG m_ibShowTick{0};                   // GetTickCount64() when shown; 0 = hidden
+        // Error Box — UMG popup for error/status messages (auto-fades after 5s)
+        UObject* m_errorBoxWidget{nullptr};            // root UUserWidget
+        UObject* m_ebMessageLabel{nullptr};            // message text
+        ULONGLONG m_ebShowTick{0};                     // GetTickCount64() when shown; 0 = hidden
+        static constexpr ULONGLONG ERROR_BOX_DURATION_MS = 5000;
         // UMG Config Menu
         UObject* m_configWidget{nullptr};
         UObject* m_cfgTabLabels[3]{};
@@ -427,14 +427,14 @@ namespace MoriaMods
         // Constructor, destructor, on_unreal_init, on_update
         MoriaCppMod()
         {
-            ModVersion = STR("2.7");
+            ModVersion = STR("3.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
             // Init removal list CS before loadSaveFile can be called
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v2.7\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v3.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -673,7 +673,7 @@ namespace MoriaMods
                 // Extract display name from selfRef widget's blockName TextBlock
                 QBLOG(STR("[MoriaCppMod] [QB] POST-HOOK: s_bse.selfRef={} s_bse.bLock={}\n"),
                       s_bse.selfRef, s_bse.bLock);
-                if (s_bse.selfRef < 0) return;
+                if (s_bse.selfRef < 0 || s_bse.selfRef + (int)sizeof(UObject*) > sz) return;
                 UObject* selfRef = *reinterpret_cast<UObject**>(p + s_bse.selfRef);
                 if (!selfRef) return;
 
@@ -702,9 +702,11 @@ namespace MoriaMods
                             std::memcpy(s_instance->m_lastCapturedHandle, hParams.data(), RECIPE_HANDLE_SIZE);
                             s_instance->m_hasLastHandle = true;
                             // Log the handle's RowName for diagnostics
-                            uint32_t handleCI = *reinterpret_cast<uint32_t*>(hParams.data() + 8);
-                            int32_t handleNum = *reinterpret_cast<int32_t*>(hParams.data() + 12);
-                            QBLOG(STR("[MoriaCppMod] [QuickBuild] Captured handle: RowName CI={} Num={}\n"), handleCI, handleNum);
+                            if (hParams.size() >= 16) {
+                                uint32_t handleCI = *reinterpret_cast<uint32_t*>(hParams.data() + 8);
+                                int32_t handleNum = *reinterpret_cast<int32_t*>(hParams.data() + 12);
+                                QBLOG(STR("[MoriaCppMod] [QuickBuild] Captured handle: RowName CI={} Num={}\n"), handleCI, handleNum);
+                            }
                         }
                     }
                     else
@@ -740,7 +742,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v2.7: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v3.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
         }
 
         // Per-frame tick: state machines, replay, toolbar swap, quickbuild, icons, config, rescans.
@@ -791,9 +793,8 @@ namespace MoriaMods
                 }
                 if (m_characterLoaded && !m_targetInfoWidget)
                     createTargetInfoWidget();
-                // BELIEVED DEAD CODE -- InfoBox popup never shown
-                // if (m_characterLoaded && !m_infoBoxWidget)
-                //     createInfoBox();
+                if (m_characterLoaded && !m_errorBoxWidget)
+                    createErrorBox();
                 if (m_characterLoaded && !m_configWidget)
                     createConfigWidget();
                 // Hide MC + Builders bar immediately after creation (AB toggle reveals them)
@@ -819,13 +820,13 @@ namespace MoriaMods
             if (m_tiShowTick > 0 && (GetTickCount64() - m_tiShowTick) >= 10000)
                 hideTargetInfo();
 
+            // Error Box auto-close (5 seconds)
+            if (m_ebShowTick > 0 && (GetTickCount64() - m_ebShowTick) >= ERROR_BOX_DURATION_MS)
+                hideErrorBox();
+
             // Stability audit — auto-clear PointLights after timeout
             if (m_auditClearTime > 0 && GetTickCount64() >= m_auditClearTime)
                 clearStabilityHighlights();
-
-            // BELIEVED DEAD CODE -- InfoBox popup never shown, m_ibShowTick always 0
-            // if (m_ibShowTick > 0 && (GetTickCount64() - m_ibShowTick) >= 10000)
-            //     hideInfoBox();
 
             // Failsafe: if config is flagged visible but widget is gone, reset state
             if (m_cfgVisible && !m_configWidget)
@@ -1183,7 +1184,8 @@ namespace MoriaMods
                                     std::vector<uint8_t> sp(sz, 0);
                                     m_cfgScrollBoxes[1]->ProcessEvent(getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
-                                    if (pRV) scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
+                                    if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= sz)
+                                        scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
                                 }
                             }
                             if (cursor.x >= kbX0 && cursor.x <= kbX1)
@@ -1406,7 +1408,7 @@ namespace MoriaMods
                         {
                             s_config.pendingToggleFreeBuild = false;
                             s_freeBuildRetries = 0;
-                            showOnScreen(Loc::get("msg.free_build_failed"), 3.0f, 1.0f, 0.3f, 0.3f);
+                            showErrorBox(Loc::get("msg.free_build_failed"));
                             VLOG(STR("[MoriaCppMod] Toggle Free Construction FAILED after {} retries\n"), MAX_RETRIES);
                         }
                     }
@@ -1417,7 +1419,7 @@ namespace MoriaMods
                 if (callDebugFunc(STR("BP_DebugMenu_Recipes_C"), STR("All Recipes")))
                     showOnScreen(Loc::get("msg.all_recipes_unlocked"), 5.0f, 0.0f, 1.0f, 0.0f);
                 else
-                    showOnScreen(Loc::get("msg.recipe_actor_not_found"), 3.0f, 1.0f, 0.3f, 0.3f);
+                    showErrorBox(Loc::get("msg.recipe_actor_not_found"));
                 s_config.pendingUnlockAllRecipes = false;
             }
 
@@ -1569,14 +1571,14 @@ namespace MoriaMods
                 m_cachedBuildComp = nullptr;
                 m_cachedBuildTab = nullptr;
                 m_cachedBuildHUD = nullptr;
-                m_fnIsVisible = nullptr;
                 refreshActionBar();
             }
 
             // Placement state machines (quickbuild + target-build)
             placementTick();
 
-
+            // Multi-frame toolbar swap state machine
+            tickSwap();
 
             if (!m_replayActive) return;
             m_frameCounter++;
@@ -1599,7 +1601,6 @@ namespace MoriaMods
                     m_cachedBuildComp = nullptr;
                     m_cachedBuildHUD = nullptr;
                     m_cachedBuildTab = nullptr;
-                    m_fnIsVisible = nullptr;
                     m_bpShowMouseCursor = nullptr;
                     m_qbPhase = PlacePhase::Idle;
                     m_isTargetBuild = false;
@@ -1630,7 +1631,8 @@ namespace MoriaMods
                     m_classCache.clear();
                     m_lastSwapTime = 0;
                     m_swapInProgress = false;
-                    m_deferredRefreshFrames = 0;
+                    m_swapPhase = SwapPhase::Idle;
+                    m_swapStash = {};
                     // UMG builders bar destroyed with world
                     m_umgBarWidget = nullptr;
                     for (int i = 0; i < 8; i++)
@@ -1687,11 +1689,10 @@ namespace MoriaMods
                     m_tiBuildLabel = nullptr;
                     m_tiRecipeLabel = nullptr;
                     m_tiShowTick = 0;
-                    // BELIEVED DEAD CODE -- InfoBox popup system
-                    // m_infoBoxWidget = nullptr;
-                    // m_ibTitleLabel = nullptr;
-                    // m_ibMessageLabel = nullptr;
-                    // m_ibShowTick = 0;
+                    // Error Box destroyed with world
+                    m_errorBoxWidget = nullptr;
+                    m_ebMessageLabel = nullptr;
+                    m_ebShowTick = 0;
                     // Stability audit highlights cleared with world
                     clearStabilityHighlights();
                     // Config Menu destroyed with world

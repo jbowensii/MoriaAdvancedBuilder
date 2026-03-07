@@ -338,7 +338,7 @@
 
             // ── Read AllStabilityComponents TArray ───────────────────────────────
             void* arrPtr = mgr->GetValuePtrByPropertyNameInChain(STR("AllStabilityComponents"));
-            if (!arrPtr) return;
+            if (!arrPtr || !isReadableMemory(arrPtr, 16)) return;
 
             UObject** arrData = *reinterpret_cast<UObject***>(arrPtr);
             int32_t arrNum = *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(arrPtr) + 8);

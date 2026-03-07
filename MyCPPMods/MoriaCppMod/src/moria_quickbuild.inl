@@ -19,7 +19,6 @@
                     QBLOG(STR("[MoriaCppMod] [QB] getCachedBuildTab: cached tab invalidated (alive={} cls='{}')\n"),
                           isWidgetAlive(m_cachedBuildTab), m_cachedBuildTab ? safeClassName(m_cachedBuildTab) : L"null");
                     m_cachedBuildTab = nullptr;
-                    m_fnIsVisible = nullptr;
                 }
             }
             if (!m_cachedBuildTab)
@@ -27,8 +26,6 @@
                 m_cachedBuildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", false);
                 if (m_cachedBuildTab && !isWidgetAlive(m_cachedBuildTab))
                     m_cachedBuildTab = nullptr;
-                if (m_cachedBuildTab)
-                    m_fnIsVisible = m_cachedBuildTab->GetFunctionByNameInChain(STR("IsVisible"));
                 QBLOG(STR("[MoriaCppMod] [QB] getCachedBuildTab: fresh lookup -> {}\n"),
                       m_cachedBuildTab ? STR("FOUND") : STR("NOT FOUND"));
             }
@@ -53,7 +50,7 @@
         void saveQuickBuildSlots()
         {
             std::ofstream file("Mods/MoriaCppMod/quickbuild_slots.txt", std::ios::trunc);
-            if (!file.is_open()) return;
+            if (!file.is_open()) { VLOG(STR("[MoriaCppMod] saveQuickBuildSlots: failed to open file for writing\n")); return; }
             file << "# MoriaCppMod quick-build slots (F1-F8)\n";
             file << "# slot|displayName|textureName|rowName\n";
             for (int i = 0; i < OVERLAY_BUILD_SLOTS; i++)
@@ -74,7 +71,7 @@
         void loadQuickBuildSlots()
         {
             std::ifstream file("Mods/MoriaCppMod/quickbuild_slots.txt");
-            if (!file.is_open()) return;
+            if (!file.is_open()) { VLOG(STR("[MoriaCppMod] loadQuickBuildSlots: file not found or unreadable\n")); return; }
             std::string line;
             int loaded = 0;
             while (std::getline(file, line))
@@ -104,7 +101,7 @@
         void saveConfig()
         {
             std::ofstream file(INI_PATH, std::ios::trunc);
-            if (!file.is_open()) return;
+            if (!file.is_open()) { VLOG(STR("[MoriaCppMod] saveConfig: failed to open INI for writing\n")); return; }
 
             file << "; MoriaCppMod Configuration\n";
             file << "; Key names: F1-F12, Num0-Num9, Num+, Num-, Num*, Num/, A-Z, 0-9,\n";
@@ -902,7 +899,7 @@
                     updateBuildersBar();
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] CLEARED F{}\n"), slot + 1);
                     std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" cleared";
-                    showOnScreen(msg, 2.0f, 1.0f, 0.5f, 0.0f);
+                    showErrorBox(msg);
                 }
                 return;
             }
@@ -1017,11 +1014,12 @@
         void quickBuildSlot(int slot)
         {
             if (slot < 0 || slot >= OVERLAY_BUILD_SLOTS) return; // F1-F8 only
+            logGameState(STR("QB-pre"));
 
             if (!m_recipeSlots[slot].used)
             {
                 std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" empty \x2014 select recipe in B menu, then " + modifierName(s_modifierVK) + L"+F" + std::to_wstring(slot + 1);
-                showOnScreen(msg, 3.0f, 1.0f, 0.5f, 0.0f);
+                showErrorBox(msg);
                 return;
             }
 
@@ -1055,6 +1053,7 @@
 
             // Delegate to placement manager (owns DIRECT path, SM start, menu mgmt)
             startOrSwitchBuild(slot);
+            logGameState(STR("QB-post"));
         }
 
         // Build-from-target: same guards/cooldown as F-key quickbuild
@@ -1071,7 +1070,7 @@
             // Guard: check target data exists
             if (!m_lastTargetBuildable || (m_targetBuildName.empty() && m_targetBuildRecipeRef.empty()))
             {
-                showOnScreen(Loc::get("msg.no_buildable_target"), 3.0f, 1.0f, 0.5f, 0.0f);
+                showErrorBox(Loc::get("msg.no_buildable_target"));
                 return;
             }
 

@@ -89,6 +89,120 @@
             VLOG(STR("[MoriaCppMod] showOnScreen: '{}' dur={:.1f}\n"), text, duration);
         }
 
+        // ── Game State Diagnostic Logger ──
+        // Queries UMoriaUtils::GetMoriaGameState() and logs IsWorldReady / GetShadersFinishedCompiling.
+        // Also queries GetManager() for the construction manager and compares with our cached resolution.
+        void logGameState(const wchar_t* label)
+        {
+            // Resolve UMoriaUtils CDO + functions once
+            static UObject* s_utilsCDO = nullptr;
+            static UFunction* s_fnGetGameState = nullptr;
+            static UFunction* s_fnGetManager = nullptr;
+            static int s_gsWorldCtx = -1, s_gsRet = -1;
+            static int s_gmWorldCtx = -1, s_gmClass = -1, s_gmRet = -1;
+            static int s_gsParmsSize = 0, s_gmParmsSize = 0;
+            static bool s_resolved = false;
+
+            if (!s_resolved)
+            {
+                s_resolved = true;
+                s_utilsCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr,
+                    STR("/Script/Moria.Default__MoriaUtils"));
+                s_fnGetGameState = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
+                    STR("/Script/Moria.MoriaUtils:GetMoriaGameState"));
+                s_fnGetManager = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
+                    STR("/Script/Moria.MoriaUtils:GetManager"));
+
+                if (s_fnGetGameState)
+                {
+                    s_gsParmsSize = s_fnGetGameState->GetParmsSize();
+                    for (auto* prop : s_fnGetGameState->ForEachProperty())
+                    {
+                        auto name = prop->GetName();
+                        if (name == STR("WorldContextObject")) s_gsWorldCtx = prop->GetOffset_Internal();
+                        else if (name == STR("ReturnValue"))   s_gsRet = prop->GetOffset_Internal();
+                    }
+                }
+
+                if (s_fnGetManager)
+                {
+                    s_gmParmsSize = s_fnGetManager->GetParmsSize();
+                    for (auto* prop : s_fnGetManager->ForEachProperty())
+                    {
+                        auto name = prop->GetName();
+                        if (name == STR("WorldContextObject")) s_gmWorldCtx = prop->GetOffset_Internal();
+                        else if (name == STR("ManagerClass"))  s_gmClass = prop->GetOffset_Internal();
+                        else if (name == STR("ReturnValue"))   s_gmRet = prop->GetOffset_Internal();
+                    }
+                }
+
+                VLOG(STR("[MoriaCppMod] [GS] Resolved: utilsCDO={} fnGetGS={} fnGetMgr={}\n"),
+                    (void*)s_utilsCDO, (void*)s_fnGetGameState, (void*)s_fnGetManager);
+                VLOG(STR("[MoriaCppMod] [GS]   GetGameState: parmsSize={} worldCtx={} ret={}\n"),
+                    s_gsParmsSize, s_gsWorldCtx, s_gsRet);
+                VLOG(STR("[MoriaCppMod] [GS]   GetManager: parmsSize={} worldCtx={} class={} ret={}\n"),
+                    s_gmParmsSize, s_gmWorldCtx, s_gmClass, s_gmRet);
+            }
+
+            auto* pc = findPlayerController();
+            if (!s_utilsCDO || !pc)
+            {
+                VLOG(STR("[MoriaCppMod] [GS] [{}] SKIP — utilsCDO={} pc={}\n"),
+                    label, (void*)s_utilsCDO, (void*)pc);
+                return;
+            }
+
+            // ── GetMoriaGameState ──
+            UObject* gameState = nullptr;
+            if (s_fnGetGameState && s_gsWorldCtx >= 0 && s_gsRet >= 0)
+            {
+                std::vector<uint8_t> buf(s_gsParmsSize, 0);
+                std::memcpy(buf.data() + s_gsWorldCtx, &pc, sizeof(UObject*));
+                s_utilsCDO->ProcessEvent(s_fnGetGameState, buf.data());
+                gameState = *reinterpret_cast<UObject**>(buf.data() + s_gsRet);
+            }
+
+            bool worldReady = false;
+            bool shadersCompiled = false;
+            if (gameState)
+            {
+                auto* fnReady = gameState->GetFunctionByNameInChain(STR("IsWorldReady"));
+                if (fnReady)
+                {
+                    struct { bool Ret{false}; } p{};
+                    gameState->ProcessEvent(fnReady, &p);
+                    worldReady = p.Ret;
+                }
+                auto* fnShaders = gameState->GetFunctionByNameInChain(STR("GetShadersFinishedCompiling"));
+                if (fnShaders)
+                {
+                    struct { bool Ret{false}; } p{};
+                    gameState->ProcessEvent(fnShaders, &p);
+                    shadersCompiled = p.Ret;
+                }
+            }
+
+            VLOG(STR("[MoriaCppMod] [GS] [{}] GameState={} WorldReady={} ShadersCompiled={}\n"),
+                label, (void*)gameState, worldReady, shadersCompiled);
+
+            // ── GetManager (construction manager) ──
+            if (s_fnGetManager && s_gmWorldCtx >= 0 && s_gmClass >= 0 && s_gmRet >= 0)
+            {
+                auto* cmClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                    STR("/Script/Moria.MorConstructionManager"));
+                if (cmClass)
+                {
+                    std::vector<uint8_t> buf(s_gmParmsSize, 0);
+                    std::memcpy(buf.data() + s_gmWorldCtx, &pc, sizeof(UObject*));
+                    std::memcpy(buf.data() + s_gmClass, &cmClass, sizeof(UClass*));
+                    s_utilsCDO->ProcessEvent(s_fnGetManager, buf.data());
+                    UObject* mgr = *reinterpret_cast<UObject**>(buf.data() + s_gmRet);
+                    VLOG(STR("[MoriaCppMod] [GS] [{}] ConstructionManager via GetManager={}\n"),
+                        label, (void*)mgr);
+                }
+            }
+        }
+
         // â"€â"€ Chat/Widget display â"€â"€
 
                 // â"€â"€ Debug Cheat Functions â"€â"€
@@ -173,7 +287,7 @@
                     return;
                 }
             }
-            showOnScreen(Loc::get("msg.debug_actor_not_found"), 3.0f, 1.0f, 0.3f, 0.3f);
+            showErrorBox(Loc::get("msg.debug_actor_not_found"));
         }
 
         // Sync s_config flags from actual debug menu state (called on character load)
@@ -267,8 +381,8 @@
                         GetWindowTextW(edit, buf, 23);
                         auto* self = reinterpret_cast<MoriaCppMod*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
                         if (self && buf[0] != L'\0') {
-                            self->m_pendingCharName = buf;
-                            self->m_pendingCharNameReady.store(true);
+                            { std::scoped_lock lock(self->m_charNameMutex); self->m_pendingCharName = buf; }
+                            self->m_pendingCharNameReady.store(true, std::memory_order_release);
                         }
                         DestroyWindow(hwnd);
                     }
@@ -309,16 +423,17 @@
         void promptCharacterRename()
         {
             if (!m_characterLoaded) {
-                showOnScreen(L"Character not loaded", 2.0f, 1.0f, 0.3f, 0.3f);
+                showErrorBox(L"Character not loaded");
                 return;
             }
-            CreateThread(nullptr, 0, charNameDialogProc, this, 0, nullptr);
+            HANDLE h = CreateThread(nullptr, 0, charNameDialogProc, this, 0, nullptr);
+            if (h) CloseHandle(h);
         }
 
         void applyPendingCharacterName()
         {
-            std::wstring newName = m_pendingCharName;
-            m_pendingCharName.clear();
+            std::wstring newName;
+            { std::scoped_lock lock(m_charNameMutex); newName = m_pendingCharName; m_pendingCharName.clear(); }
             if (newName.empty()) return;
 
             // Find CustomizationManager component
@@ -336,14 +451,14 @@
             if (!target && !mgrs.empty()) target = mgrs[0]; // fallback: first found
 
             if (!target) {
-                showOnScreen(L"CustomizationManager not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                showErrorBox(L"CustomizationManager not found");
                 VLOG(STR("[MoriaCppMod] applyPendingCharacterName: no CustomizationManager\n"));
                 return;
             }
 
             auto* fn = target->GetFunctionByNameInChain(STR("SetCharacterName"));
             if (!fn) {
-                showOnScreen(L"SetCharacterName not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                showErrorBox(L"SetCharacterName not found");
                 VLOG(STR("[MoriaCppMod] applyPendingCharacterName: SetCharacterName not found\n"));
                 return;
             }
@@ -361,7 +476,7 @@
                 }
             }
             if (nameOffset < 0) {
-                showOnScreen(L"SetCharacterName param not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                showErrorBox(L"SetCharacterName param not found");
                 return;
             }
 
@@ -382,6 +497,8 @@
         // Dispatch MC toolbar slot action (keyboard and click handlers)
         void dispatchMcSlot(int slot)
         {
+            VLOG(STR("[MoriaCppMod] [MC] dispatchMcSlot({}) BEGIN\n"), slot);
+            logGameState(STR("MC-pre"));
             switch (slot)
             {
             case 0: // Rotation
@@ -440,4 +557,5 @@
             default:
                 break;
             }
+            logGameState(STR("MC-post"));
         }

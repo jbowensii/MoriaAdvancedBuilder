@@ -211,9 +211,12 @@ UObject* addChildToPanel(UObject* parent, const wchar_t* fnName, UObject* child)
     auto* pR = findParam(fn, STR("ReturnValue"));
     int sz = fn->GetParmsSize();
     std::vector<uint8_t> ap(sz, 0);
-    if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = child;
+    if (pC && pC->GetOffset_Internal() >= 0 && pC->GetOffset_Internal() + (int)sizeof(UObject*) <= sz)
+        *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = child;
     parent->ProcessEvent(fn, ap.data());
-    return pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
+    if (pR && pR->GetOffset_Internal() >= 0 && pR->GetOffset_Internal() + (int)sizeof(UObject*) <= sz)
+        return *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal());
+    return nullptr;
 }
 
 UObject* addToVBox(UObject* parent, UObject* child)

@@ -563,7 +563,7 @@
                                             texBlankRect ? STR("OK") : STR("NO"));
             if (!texFrame || !texEmpty)
             {
-                showOnScreen(L"UMG: textures not found!", 3.0f, 1.0f, 0.3f, 0.0f);
+                showErrorBox(L"UMG: textures not found!");
                 return;
             }
             m_umgTexEmpty = texEmpty;
@@ -581,18 +581,18 @@
             auto* textBlockClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
             if (!userWidgetClass || !imageClass || !hboxClass || !vboxClass || !borderClass || !overlayClass)
             {
-                showOnScreen(L"UMG: missing widget classes!", 3.0f, 1.0f, 0.3f, 0.0f);
+                showErrorBox(L"UMG: missing widget classes!");
                 return;
             }
 
             // --- Phase C1: Create UserWidget ---
             auto* pc = findPlayerController();
-            if (!pc) { showOnScreen(L"UMG: no PlayerController!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!pc) { showErrorBox(L"UMG: no PlayerController!"); return; }
             auto* createFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
             auto* wblClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
-            if (!createFn || !wblClass) { showOnScreen(L"UMG: WBL not found!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!createFn || !wblClass) { showErrorBox(L"UMG: WBL not found!"); return; }
             UObject* wblCDO = wblClass->GetClassDefaultObject();
-            if (!wblCDO) { showOnScreen(L"UMG: WBL CDO null!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!wblCDO) { showErrorBox(L"UMG: WBL CDO null!"); return; }
 
             int csz = createFn->GetParmsSize();
             std::vector<uint8_t> cp(csz, 0);
@@ -605,7 +605,7 @@
             if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
             wblCDO->ProcessEvent(createFn, cp.data());
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
-            if (!userWidget) { showOnScreen(L"UMG: CreateWidget null!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!userWidget) { showErrorBox(L"UMG: CreateWidget null!"); return; }
 
             // --- Phase C2: Get WidgetTree ---
             auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
@@ -615,13 +615,13 @@
             // --- Phase C3: Build widget tree ---
             // Two nested Borders: outer = solid white line (2px padding), inner = fully transparent
             auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
-            if (!setBrushFn) { showOnScreen(L"UMG: SetBrushFromTexture missing!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!setBrushFn) { showErrorBox(L"UMG: SetBrushFromTexture missing!"); return; }
             m_umgSetBrushFn = setBrushFn; // cache for runtime state updates
 
             // Outer border: visible white outline
             FStaticConstructObjectParameters outerBorderP(borderClass, outer);
             UObject* outerBorder = UObjectGlobals::StaticConstructObject(outerBorderP);
-            if (!outerBorder) { showOnScreen(L"UMG: outer border failed!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!outerBorder) { showErrorBox(L"UMG: outer border failed!"); return; }
 
             // Set as WidgetTree root
             if (widgetTree)
@@ -659,7 +659,7 @@
             // Inner border: fully transparent (hides outer's white fill behind content)
             FStaticConstructObjectParameters innerBorderP(borderClass, outer);
             UObject* innerBorder = UObjectGlobals::StaticConstructObject(innerBorderP);
-            if (!innerBorder) { showOnScreen(L"UMG: inner border failed!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!innerBorder) { showErrorBox(L"UMG: inner border failed!"); return; }
 
             // Inner border: transparent black
             auto* setBrushColorFn2 = innerBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
@@ -690,7 +690,7 @@
             // Create HBox inside inner border
             FStaticConstructObjectParameters hboxP(hboxClass, outer);
             UObject* hbox = UObjectGlobals::StaticConstructObject(hboxP);
-            if (!hbox) { showOnScreen(L"UMG: HBox failed!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!hbox) { showErrorBox(L"UMG: HBox failed!"); return; }
 
             auto* setContentFn2 = innerBorder->GetFunctionByNameInChain(STR("SetContent"));
             if (setContentFn2)
@@ -1103,7 +1103,7 @@
             }
             if (!texFrame || !texActive)
             {
-                showOnScreen(L"AB: textures not found!", 3.0f, 1.0f, 0.3f, 0.0f);
+                showErrorBox(L"AB: textures not found!");
                 return;
             }
 
@@ -1116,16 +1116,16 @@
             auto* textBlockClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
             if (!userWidgetClass || !imageClass || !vboxClass || !borderClass || !overlayClass)
             {
-                showOnScreen(L"AB: missing widget classes!", 3.0f, 1.0f, 0.3f, 0.0f);
+                showErrorBox(L"AB: missing widget classes!");
                 return;
             }
 
             // --- Phase C: Create UserWidget ---
             auto* pc = findPlayerController();
-            if (!pc) { showOnScreen(L"AB: no PlayerController!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!pc) { showErrorBox(L"AB: no PlayerController!"); return; }
             auto* createFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
             auto* wblClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
-            if (!createFn || !wblClass) { showOnScreen(L"AB: WBL not found!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!createFn || !wblClass) { showErrorBox(L"AB: WBL not found!"); return; }
             UObject* wblCDO = wblClass->GetClassDefaultObject();
             if (!wblCDO) return;
 
@@ -1140,7 +1140,7 @@
             if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
             wblCDO->ProcessEvent(createFn, cp.data());
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
-            if (!userWidget) { showOnScreen(L"AB: CreateWidget null!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!userWidget) { showErrorBox(L"AB: CreateWidget null!"); return; }
 
             // --- Get WidgetTree ---
             auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
@@ -1149,7 +1149,7 @@
 
             // --- Cache SetBrushFromTexture ---
             auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
-            if (!setBrushFn) { showOnScreen(L"AB: SetBrushFromTexture missing!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!setBrushFn) { showErrorBox(L"AB: SetBrushFromTexture missing!"); return; }
             if (!m_umgSetBrushFn) m_umgSetBrushFn = setBrushFn;
 
             // --- Outer border (transparent) ---
@@ -1825,7 +1825,7 @@
 
         // Ã¢â€â‚¬Ã¢â€â‚¬ UMG Info Box Popup (removal messages) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-        /* BELIEVED DEAD CODE -- InfoBox popup system: widget created but never shown (showInfoBox never called)
+        /* REMOVED: Old InfoBox popup system replaced by Error Box below
         void destroyInfoBox()
         {
             if (!m_infoBoxWidget) return;
@@ -2041,7 +2041,213 @@
 
             m_ibShowTick = GetTickCount64();
         }
-        END BELIEVED DEAD CODE */
+        END REMOVED OLD INFOBOX */
+
+        // ── Error Box ── UMG popup for error/status messages (auto-fades after 5s) ──
+
+        void destroyErrorBox()
+        {
+            if (!m_errorBoxWidget) return;
+            auto* removeFn = m_errorBoxWidget->GetFunctionByNameInChain(STR("RemoveFromViewport"));
+            if (removeFn) m_errorBoxWidget->ProcessEvent(removeFn, nullptr);
+            m_errorBoxWidget = nullptr;
+            m_ebMessageLabel = nullptr;
+            m_ebShowTick = 0;
+        }
+
+        void createErrorBox()
+        {
+            if (m_errorBoxWidget) return;
+            VLOG(STR("[MoriaCppMod] [EB] === Creating Error Box UMG widget ===\n"));
+
+            auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
+            auto* vboxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.VerticalBox"));
+            auto* borderClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Border"));
+            auto* textBlockClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+            if (!userWidgetClass || !vboxClass || !borderClass || !textBlockClass) return;
+
+            auto* pc = findPlayerController();
+            if (!pc) return;
+            auto* createFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
+            auto* wblClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
+            if (!createFn || !wblClass) return;
+            UObject* wblCDO = wblClass->GetClassDefaultObject();
+            if (!wblCDO) return;
+
+            int csz = createFn->GetParmsSize();
+            std::vector<uint8_t> cp(csz, 0);
+            auto* pWC = findParam(createFn, STR("WorldContextObject"));
+            auto* pWT = findParam(createFn, STR("WidgetType"));
+            auto* pOP = findParam(createFn, STR("OwningPlayer"));
+            auto* pRV = findParam(createFn, STR("ReturnValue"));
+            if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
+            if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = userWidgetClass;
+            if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
+            wblCDO->ProcessEvent(createFn, cp.data());
+            UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
+            if (!userWidget) return;
+
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
+            UObject* outer = widgetTree ? widgetTree : userWidget;
+
+            // Root border (dark red-tinted background)
+            FStaticConstructObjectParameters borderP(borderClass, outer);
+            UObject* rootBorder = UObjectGlobals::StaticConstructObject(borderP);
+            if (!rootBorder) return;
+            if (widgetTree)
+                setRootWidget(widgetTree, rootBorder);
+
+            auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
+            if (setBrushColorFn)
+            {
+                auto* pColor = findParam(setBrushColorFn, STR("InBrushColor"));
+                if (pColor)
+                {
+                    int sz = setBrushColorFn->GetParmsSize();
+                    std::vector<uint8_t> cb(sz, 0);
+                    auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
+                    c[0] = 0.22f; c[1] = 0.06f; c[2] = 0.06f; c[3] = 0.88f; // dark red bg
+                    rootBorder->ProcessEvent(setBrushColorFn, cb.data());
+                }
+            }
+            auto* setBorderPadFn = rootBorder->GetFunctionByNameInChain(STR("SetPadding"));
+            if (setBorderPadFn)
+            {
+                auto* pPad = findParam(setBorderPadFn, STR("InPadding"));
+                if (pPad)
+                {
+                    int sz = setBorderPadFn->GetParmsSize();
+                    std::vector<uint8_t> pp(sz, 0);
+                    auto* m = reinterpret_cast<float*>(pp.data() + pPad->GetOffset_Internal());
+                    m[0] = 12.0f; m[1] = 8.0f; m[2] = 12.0f; m[3] = 8.0f;
+                    rootBorder->ProcessEvent(setBorderPadFn, pp.data());
+                }
+            }
+
+            // VBox
+            FStaticConstructObjectParameters vboxP(vboxClass, outer);
+            UObject* vbox = UObjectGlobals::StaticConstructObject(vboxP);
+            if (!vbox) return;
+            auto* setContentFn = rootBorder->GetFunctionByNameInChain(STR("SetContent"));
+            if (setContentFn)
+            {
+                auto* pContent = findParam(setContentFn, STR("Content"));
+                int sz = setContentFn->GetParmsSize();
+                std::vector<uint8_t> sc(sz, 0);
+                if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = vbox;
+                rootBorder->ProcessEvent(setContentFn, sc.data());
+            }
+
+            auto* addToVBoxFn = vbox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
+            if (!addToVBoxFn) return;
+            auto* vbC = findParam(addToVBoxFn, STR("Content"));
+
+            // Message text (warm amber on dark red)
+            FStaticConstructObjectParameters tbP(textBlockClass, outer);
+            UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
+            if (!tb) return;
+            umgSetText(tb, L"");
+            umgSetTextColor(tb, 1.0f, 0.85f, 0.6f, 1.0f);
+            auto* wrapFn = tb->GetFunctionByNameInChain(STR("SetAutoWrapText"));
+            if (wrapFn) { int ws = wrapFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapFn, STR("InAutoWrapText")); if (pw) *reinterpret_cast<bool*>(wp.data() + pw->GetOffset_Internal()) = true; tb->ProcessEvent(wrapFn, wp.data()); }
+            auto* wrapAtFn = tb->GetFunctionByNameInChain(STR("SetWrapTextAt"));
+            if (wrapAtFn) { int ws = wrapAtFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapAtFn, STR("InWrapTextAt")); if (pw) *reinterpret_cast<float*>(wp.data() + pw->GetOffset_Internal()) = 380.0f; tb->ProcessEvent(wrapAtFn, wp.data()); }
+            int sz = addToVBoxFn->GetParmsSize();
+            std::vector<uint8_t> ap(sz, 0);
+            if (vbC) *reinterpret_cast<UObject**>(ap.data() + vbC->GetOffset_Internal()) = tb;
+            vbox->ProcessEvent(addToVBoxFn, ap.data());
+            m_ebMessageLabel = tb;
+
+            // Add to viewport (high Z-order)
+            auto* addToViewportFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
+            if (addToViewportFn)
+            {
+                auto* pZOrder = findParam(addToViewportFn, STR("ZOrder"));
+                int vsz = addToViewportFn->GetParmsSize();
+                std::vector<uint8_t> vp(vsz, 0);
+                if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 110;
+                userWidget->ProcessEvent(addToViewportFn, vp.data());
+            }
+
+            m_screen.refresh(findPlayerController());
+            float uiScale = m_screen.uiScale;
+
+            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
+            if (setDesiredSizeFn)
+            {
+                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
+                if (pSize)
+                {
+                    int ssz = setDesiredSizeFn->GetParmsSize();
+                    std::vector<uint8_t> sb(ssz, 0);
+                    auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
+                    v[0] = 420.0f * uiScale; v[1] = 60.0f * uiScale;
+                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
+                }
+            }
+
+            auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
+            if (setAlignFn)
+            {
+                auto* pAlign = findParam(setAlignFn, STR("Alignment"));
+                if (pAlign)
+                {
+                    int asz = setAlignFn->GetParmsSize();
+                    std::vector<uint8_t> al(asz, 0);
+                    auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
+                    v[0] = 0.5f; v[1] = 0.0f;
+                    userWidget->ProcessEvent(setAlignFn, al.data());
+                }
+            }
+
+            // Position: same location as Target Info (slot 3)
+            {
+                float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
+                float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
+                setWidgetPosition(userWidget, m_screen.fracToPixelX(fracX),
+                                              m_screen.fracToPixelY(fracY), true);
+            }
+
+            // Start hidden
+            auto* setVisFn = userWidget->GetFunctionByNameInChain(STR("SetVisibility"));
+            if (setVisFn) { uint8_t p[8]{}; p[0] = 1; userWidget->ProcessEvent(setVisFn, p); }
+
+            m_errorBoxWidget = userWidget;
+            VLOG(STR("[MoriaCppMod] [EB] Error Box UMG widget created\n"));
+        }
+
+        void hideErrorBox()
+        {
+            if (!m_errorBoxWidget) return;
+            auto* fn = m_errorBoxWidget->GetFunctionByNameInChain(STR("SetVisibility"));
+            if (fn) { uint8_t p[8]{}; p[0] = 1; m_errorBoxWidget->ProcessEvent(fn, p); }
+            m_ebShowTick = 0;
+        }
+
+        void showErrorBox(const std::wstring& message)
+        {
+            if (!s_verbose) return;
+            if (!m_errorBoxWidget) createErrorBox();
+            if (!m_errorBoxWidget) { showOnScreen(message, 5.0f, 1.0f, 0.3f, 0.3f); return; }
+
+            umgSetText(m_ebMessageLabel, message);
+
+            // Reposition
+            {
+                m_screen.refresh(findPlayerController());
+                float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
+                float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
+                setWidgetPosition(m_errorBoxWidget, m_screen.fracToPixelX(fracX),
+                                                    m_screen.fracToPixelY(fracY), true);
+            }
+
+            auto* fn = m_errorBoxWidget->GetFunctionByNameInChain(STR("SetVisibility"));
+            if (fn) { uint8_t p[8]{}; p[0] = 0; m_errorBoxWidget->ProcessEvent(fn, p); }
+
+            m_ebShowTick = GetTickCount64();
+            VLOG(STR("[MoriaCppMod] [EB] showErrorBox: '{}'\n"), message);
+        }
 
         // Ã¢â€â‚¬Ã¢â€â‚¬ UMG Config Menu (first pass) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
@@ -3113,7 +3319,7 @@
             }
             if (!texFrame || !texEmpty)
             {
-                showOnScreen(L"MC: textures not found!", 3.0f, 1.0f, 0.3f, 0.0f);
+                showErrorBox(L"MC: textures not found!");
                 return;
             }
             if (!m_umgTexBlankRect && texBlankRect) m_umgTexBlankRect = texBlankRect; // cache if not yet cached
@@ -3157,16 +3363,16 @@
             auto* textBlockClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
             if (!userWidgetClass || !imageClass || !hboxClass || !vboxClass || !borderClass || !overlayClass)
             {
-                showOnScreen(L"MC: missing widget classes!", 3.0f, 1.0f, 0.3f, 0.0f);
+                showErrorBox(L"MC: missing widget classes!");
                 return;
             }
 
             // --- Create UserWidget ---
             auto* pc = findPlayerController();
-            if (!pc) { showOnScreen(L"MC: no PlayerController!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!pc) { showErrorBox(L"MC: no PlayerController!"); return; }
             auto* createFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
             auto* wblClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
-            if (!createFn || !wblClass) { showOnScreen(L"MC: WBL not found!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!createFn || !wblClass) { showErrorBox(L"MC: WBL not found!"); return; }
             UObject* wblCDO = wblClass->GetClassDefaultObject();
             if (!wblCDO) return;
 
@@ -3181,7 +3387,7 @@
             if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
             wblCDO->ProcessEvent(createFn, cp.data());
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
-            if (!userWidget) { showOnScreen(L"MC: CreateWidget null!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!userWidget) { showErrorBox(L"MC: CreateWidget null!"); return; }
 
             // --- Get WidgetTree ---
             auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
@@ -3190,7 +3396,7 @@
 
             // --- Cache SetBrushFromTexture ---
             auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
-            if (!setBrushFn) { showOnScreen(L"MC: SetBrushFromTexture missing!", 3.0f, 1.0f, 0.3f, 0.0f); return; }
+            if (!setBrushFn) { showErrorBox(L"MC: SetBrushFromTexture missing!"); return; }
             // Reuse m_umgSetBrushFn if not already set
             if (!m_umgSetBrushFn) m_umgSetBrushFn = setBrushFn;
 

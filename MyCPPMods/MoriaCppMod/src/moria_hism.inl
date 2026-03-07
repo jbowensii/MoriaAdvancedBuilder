@@ -222,8 +222,14 @@
             while (m_replay.compIdx < m_replay.compQueue.size())
             {
                 UObject* comp = m_replay.compQueue[m_replay.compIdx].Get();
+                if (!comp)
+                {
+                    m_replay.compIdx++;
+                    m_replay.instanceIdx = 0;
+                    continue;
+                }
 
-                auto* countFunc = comp ? comp->GetFunctionByNameInChain(STR("GetInstanceCount")) : nullptr;
+                auto* countFunc = comp->GetFunctionByNameInChain(STR("GetInstanceCount"));
                 if (!countFunc)
                 {
                     m_replay.compIdx++;
@@ -377,7 +383,7 @@
             if (!doLineTrace(start, end, hitBuf, true))
             { // debugDraw=true
                 VLOG(STR("[MoriaCppMod] No hit\n"));
-                showOnScreen(Loc::get("msg.no_hit"), 3.0f, 1.0f, 0.3f, 0.3f);
+                showErrorBox(Loc::get("msg.no_hit"));
                 return;
             }
 
@@ -747,7 +753,7 @@
             if (!bHit)
             {
                 VLOG(STR("[MoriaCppMod] No hit\n"));
-                showOnScreen(Loc::get("msg.actor_dump_no_hit"), 3.0f, 1.0f, 0.3f, 0.3f);
+                showErrorBox(Loc::get("msg.actor_dump_no_hit"));
                 return;
             }
 

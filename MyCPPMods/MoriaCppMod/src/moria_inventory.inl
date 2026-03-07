@@ -35,7 +35,7 @@
                 {
                     UObject* Ret{nullptr};
                 } op{};
-                c->ProcessEvent(ownerFunc, &op);
+                if (!safeProcessEvent(c, ownerFunc, &op)) continue;
                 if (op.Ret != playerChar) continue;
                 std::wstring cls = safeClassName(c);
                 if (cls == STR("MorInventoryComponent")) return c;
@@ -43,13 +43,20 @@
             return nullptr;
         }
 
-        // ---- Toolbar Swap v2: serialize + recreate ----------------------------
+        // ---- Toolbar Swap v3: multi-frame state machine -------------------------
+        // Splits remove/add across frames so MovieScene can settle between them.
+        // Prevents FEntityManager::FreeEntities crash from stale latent actions.
         static constexpr int TOOLBAR_SLOTS = 8;
         int m_activeToolbar{0};          // 0 or 1 -- for overlay T1/T2 display
         UObject* m_ihfCDO{nullptr};      // UItemHandleFunctions CDO
         ULONGLONG m_lastSwapTime{0};     // GetTickCount64() of last successful swap
         bool m_swapInProgress{false};    // blocks re-entrant swaps during retry loop
-        int m_deferredRefreshFrames{0};  // countdown frames before deferred refreshActionBar
+
+        // Multi-frame swap state machine
+        enum class SwapPhase { Idle = 0, WaitAfterRemove, Add, WaitAfterAdd, Finish };
+        SwapPhase m_swapPhase{SwapPhase::Idle};
+        int m_swapFrameWait{0};
+        static constexpr int SWAP_SETTLE_FRAMES = 5;  // frames to wait for MovieScene
 
         struct StashedContentItem {
             std::wstring className;
@@ -74,6 +81,9 @@
             bool valid{false};
             int32_t itemId{-1};          // transient — runtime item ID, not serialized
         };
+
+        // Stashed items for multi-frame swap (persists between remove and add phases)
+        std::array<StashedItem, TOOLBAR_SLOTS> m_swapStash{};
 
         // Persistent class cache: name -> UClass*, survives across swaps
         std::unordered_map<std::wstring, UObject*> m_classCache;
@@ -138,9 +148,10 @@
                     if (n == L"ReturnValue") s_retOff = p->GetOffset_Internal();
                 }
             }
+            if (s_itemOff < 0 || s_retOff < 0) return false;
             std::vector<uint8_t> buf(std::max(s_fn->GetParmsSize() + 32, 64), 0);
             std::memcpy(buf.data() + s_itemOff, handleData, handleSize);
-            m_ihfCDO->ProcessEvent(s_fn, buf.data());
+            if (!safeProcessEvent(m_ihfCDO, s_fn, buf.data())) return false;
             return buf[s_retOff] != 0;
         }
 
@@ -159,9 +170,10 @@
                     if (n == L"ReturnValue") s_retOff = p->GetOffset_Internal();
                 }
             }
+            if (s_itemOff < 0 || s_retOff < 0) return 0;
             std::vector<uint8_t> buf(std::max(s_fn->GetParmsSize() + 32, 64), 0);
             std::memcpy(buf.data() + s_itemOff, handleData, handleSize);
-            m_ihfCDO->ProcessEvent(s_fn, buf.data());
+            if (!safeProcessEvent(m_ihfCDO, s_fn, buf.data())) return 0;
             return *reinterpret_cast<int32_t*>(buf.data() + s_retOff);
         }
 
@@ -182,10 +194,11 @@
                     if (n == L"ReturnValue") { s_retOff = p->GetOffset_Internal(); s_retSize = p->GetSize(); }
                 }
             }
+            if (s_itemOff < 0 || s_slotOff < 0 || s_retOff < 0 || s_retSize <= 0) return {};
             std::vector<uint8_t> buf(std::max(s_fn->GetParmsSize() + 32, 64), 0);
             std::memcpy(buf.data() + s_itemOff, containerHandle, handleSize);
             *reinterpret_cast<int32_t*>(buf.data() + s_slotOff) = slot;
-            m_ihfCDO->ProcessEvent(s_fn, buf.data());
+            if (!safeProcessEvent(m_ihfCDO, s_fn, buf.data())) return {};
             std::vector<uint8_t> result(s_retSize, 0);
             std::memcpy(result.data(), buf.data() + s_retOff, s_retSize);
             return result;
@@ -211,9 +224,10 @@
                     if (n == L"ReturnValue") s_retOff = p->GetOffset_Internal();
                 }
             }
+            if (s_itemOff < 0 || s_retOff < 0) return nullptr;
             std::vector<uint8_t> buf(std::max(s_fn->GetParmsSize() + 32, 64), 0);
             std::memcpy(buf.data() + s_itemOff, handleData, handleSize);
-            s_cdo->ProcessEvent(s_fn, buf.data());
+            if (!safeProcessEvent(s_cdo, s_fn, buf.data())) return nullptr;
             return *reinterpret_cast<UObject**>(buf.data() + s_retOff);
         }
 
@@ -929,8 +943,8 @@
             *reinterpret_cast<float*>(newEntry + 0x18) = 0.0f; // permanent
 
             // EffectPrimaryAssetId = { FName(typeName), FName(assetName) }
-            RC::Unreal::FName typeFName(eff.typeName.c_str());
-            RC::Unreal::FName assetFName(eff.assetName.c_str());
+            RC::Unreal::FName typeFName(eff.typeName.c_str(), FNAME_Add);
+            RC::Unreal::FName assetFName(eff.assetName.c_str(), FNAME_Add);
             std::memcpy(newEntry + 0x1C, &typeFName, 8);
             std::memcpy(newEntry + 0x24, &assetFName, 8);
 
@@ -1151,49 +1165,51 @@
         // ---- Main swap entry point ------------------------------------------
         void swapToolbar()
         {
-            if (!m_characterLoaded) { showOnScreen(L"Not loaded", 2.0f, 1.0f, 0.3f, 0.3f); return; }
+            if (!m_characterLoaded) { showErrorBox(L"Not loaded"); return; }
             if (m_playerGuidStr.empty()) {
                 readPlayerGuid();
-                if (m_playerGuidStr.empty()) { showOnScreen(L"PlayerGuid not found", 3.0f, 1.0f, 0.3f, 0.3f); return; }
+                if (m_playerGuidStr.empty()) { showErrorBox(L"PlayerGuid not found"); return; }
             }
 
-            // Block if swap already in progress (retry loop running)
+            // Block if swap already in progress (multi-frame SM running)
             if (m_swapInProgress) {
-                showOnScreen(L"Swap in progress", 1.0f, 1.0f, 0.8f, 0.3f);
+                showErrorBox(L"Swap in progress");
                 return;
             }
 
             // Cooldown: game needs time to process inventory changes
-            // (animations, Blueprint callbacks, asset loading, equip visuals)
-            // 3s confirmed stable, testing 2s
             ULONGLONG now = GetTickCount64();
             if (m_lastSwapTime > 0 && (now - m_lastSwapTime) < 2000) {
                 ULONGLONG remaining = 2000 - (now - m_lastSwapTime);
                 std::wstring msg = std::format(L"Swap cooldown ({:.1f}s)", remaining / 1000.0);
-                showOnScreen(msg, 1.0f, 1.0f, 0.8f, 0.3f);
+                showErrorBox(msg);
                 return;
             }
 
             m_swapInProgress = true;
-            try { swapToolbarInner(); }
+            try { swapPhaseRemove(); }
             catch (const std::exception& e) {
-                VLOG(STR("[MoriaCppMod] [Swap] EXCEPTION: {}\n"), std::wstring(e.what(), e.what() + strlen(e.what())));
-                showOnScreen(L"Swap failed (exception)", 5.0f, 1.0f, 0.3f, 0.3f);
+                VLOG(STR("[MoriaCppMod] [Swap] EXCEPTION in remove phase: {}\n"), std::wstring(e.what(), e.what() + strlen(e.what())));
+                showErrorBox(L"Swap failed (exception)");
+                m_swapInProgress = false;
+                m_swapPhase = SwapPhase::Idle;
             }
             catch (...) {
-                VLOG(STR("[MoriaCppMod] [Swap] UNKNOWN EXCEPTION\n"));
-                showOnScreen(L"Swap failed (unknown)", 5.0f, 1.0f, 0.3f, 0.3f);
+                VLOG(STR("[MoriaCppMod] [Swap] UNKNOWN EXCEPTION in remove phase\n"));
+                showErrorBox(L"Swap failed (unknown)");
+                m_swapInProgress = false;
+                m_swapPhase = SwapPhase::Idle;
             }
-            m_swapInProgress = false;
         }
 
-        void swapToolbarInner()
+        // Phase 1: Stop animations, read/save hotbar, remove all items, then wait for MovieScene
+        void swapPhaseRemove()
         {
-            stopActionBarAnimations();  // pre-swap: clear existing animations
+            stopActionBarAnimations();
 
             UObject* pawn = getPawn();
             auto* invComp = findPlayerInventoryComponent(pawn);
-            if (!invComp) { showOnScreen(L"No inventory component", 3.0f, 1.0f, 0.3f, 0.3f); return; }
+            if (!invComp) { showErrorBox(L"No inventory component"); m_swapInProgress = false; return; }
             probeItemInstanceStruct(invComp);
 
             // 1. Snapshot current hotbar
@@ -1201,42 +1217,39 @@
             int curCount = 0;
             for (auto& item : currentItems) if (item.valid) curCount++;
 
-            // 2. Load stash from file
-            auto stashedItems = loadStashFile();
+            // 2. Load stash from file into member storage (persists across frames)
+            m_swapStash = loadStashFile();
             int stashCount = 0;
-            for (auto& item : stashedItems) if (item.valid) stashCount++;
+            for (auto& item : m_swapStash) if (item.valid) stashCount++;
 
             VLOG(STR("[MoriaCppMod] [Swap] Current hotbar: {} items, stash file: {} items\n"), curCount, stashCount);
 
             // 2b. Pre-resolve all stashed item classes BEFORE removing anything
-            //     After RemoveItem, the UClass* for removed items may no longer be findable
             for (int i = 0; i < TOOLBAR_SLOTS; i++)
             {
-                if (!stashedItems[i].valid) continue;
-                UObject* cls = resolveItemClass(stashedItems[i].className);
+                if (!m_swapStash[i].valid) continue;
+                UObject* cls = resolveItemClass(m_swapStash[i].className);
                 if (cls)
-                    VLOG(STR("[MoriaCppMod] [Swap] Pre-cached class for stash slot {}: {}\n"), i, stashedItems[i].className);
-                // Also pre-cache container content classes
-                for (auto& ci : stashedItems[i].contents)
+                    VLOG(STR("[MoriaCppMod] [Swap] Pre-cached class for stash slot {}: {}\n"), i, m_swapStash[i].className);
+                for (auto& ci : m_swapStash[i].contents)
                     resolveItemClass(ci.className);
             }
 
-            // 2c. Log stashed effects (restoration happens after AddItem via restoreEffectDirect)
+            // 2c. Log stashed effects
             for (int i = 0; i < TOOLBAR_SLOTS; i++)
             {
-                if (!stashedItems[i].valid || stashedItems[i].effects.empty()) continue;
-                for (auto& eff : stashedItems[i].effects)
+                if (!m_swapStash[i].valid || m_swapStash[i].effects.empty()) continue;
+                for (auto& eff : m_swapStash[i].effects)
                     VLOG(STR("[MoriaCppMod] [Swap] Stash slot {} has effect '{}:{}' — will restore after recreation\n"), i, eff.typeName, eff.assetName);
             }
 
             // 3. Save current hotbar to file
-            VLOG(STR("[MoriaCppMod] [Swap] Saving stash file...\n"));
             saveStashFile(currentItems);
             VLOG(STR("[MoriaCppMod] [Swap] Stash file saved. Proceeding to remove...\n"));
 
             // 4. Destroy current hotbar items via RemoveItem
             auto* removeFn = invComp->GetFunctionByNameInChain(STR("RemoveItem"));
-            if (!removeFn) { showOnScreen(L"RemoveItem not found", 3.0f, 1.0f, 0.3f, 0.3f); return; }
+            if (!removeFn) { showErrorBox(L"RemoveItem not found"); m_swapInProgress = false; return; }
             int rmItemOff = -1, rmCountOff = -1, rmFromOff = -1;
             for (auto* p : removeFn->ForEachProperty()) {
                 std::wstring n(p->GetName());
@@ -1248,7 +1261,6 @@
             for (int i = 0; i < TOOLBAR_SLOTS; i++)
             {
                 if (!currentItems[i].valid) continue;
-                // Remove this item's effect entries before RemoveItem
                 if (currentItems[i].itemId > 0)
                     removeEffectsForItem(invComp, currentItems[i].itemId);
                 UObject* cls = resolveItemClass(currentItems[i].className);
@@ -1256,7 +1268,7 @@
                     VLOG(STR("[MoriaCppMod] [Swap] WARN: cannot resolve class '{}' for removal\n"), currentItems[i].className);
                     continue;
                 }
-                // Remove container contents first (they're inside the main item)
+                // Remove container contents first
                 for (auto& ci : currentItems[i].contents)
                 {
                     UObject* contentCls = resolveItemClass(ci.className);
@@ -1264,7 +1276,7 @@
                     std::vector<uint8_t> rmBuf(std::max(removeFn->GetParmsSize() + 32, 64), 0);
                     *reinterpret_cast<UObject**>(rmBuf.data() + rmItemOff) = contentCls;
                     *reinterpret_cast<int32_t*>(rmBuf.data() + rmCountOff) = ci.count;
-                    if (rmFromOff >= 0) rmBuf[rmFromOff] = 0; // EInventoryQuery::All
+                    if (rmFromOff >= 0) rmBuf[rmFromOff] = 0;
                     if (!safeProcessEvent(invComp, removeFn, rmBuf.data()))
                         VLOG(STR("[MoriaCppMod] [Swap] SEH crash removing container content '{}' — continuing\n"), ci.className);
                 }
@@ -1278,16 +1290,25 @@
                 VLOG(STR("[MoriaCppMod] [Swap] Removed: {} x{}\n"), currentItems[i].className, currentItems[i].count);
             }
 
-            // Purge orphaned Effects.List entries left by RemoveItem
-            // (game bug: RemoveItem doesn't always clean up effect entries,
-            //  leaving stale UObject* that crash CanAutoConsumeItem during AddItem)
             purgeOrphanedEffects(invComp);
 
-            VLOG(STR("[MoriaCppMod] [Swap] Step 5: looking up AddItem function...\n"));
+            // Transition to wait phase — let MovieScene settle before adding items
+            m_swapPhase = SwapPhase::WaitAfterRemove;
+            m_swapFrameWait = 0;
+            VLOG(STR("[MoriaCppMod] [Swap] Remove phase complete, waiting {} frames for MovieScene settle\n"), SWAP_SETTLE_FRAMES);
+        }
 
-            // 5. Recreate stashed items via AddItem + patch durability
+        // Phase 3: Recreate stashed items (called after MovieScene settle)
+        void swapPhaseAdd()
+        {
+            VLOG(STR("[MoriaCppMod] [Swap] Add phase starting...\n"));
+
+            UObject* pawn = getPawn();
+            auto* invComp = findPlayerInventoryComponent(pawn);
+            if (!invComp) { showErrorBox(L"No inventory component"); m_swapInProgress = false; m_swapPhase = SwapPhase::Idle; return; }
+
             auto* addFn = invComp->GetFunctionByNameInChain(STR("AddItem"));
-            if (!addFn) { showOnScreen(L"AddItem not found", 3.0f, 1.0f, 0.3f, 0.3f); return; }
+            if (!addFn) { showErrorBox(L"AddItem not found"); m_swapInProgress = false; m_swapPhase = SwapPhase::Idle; return; }
             int aiItemOff = -1, aiCountOff = -1, aiMethodOff = -1, aiRetOff = -1;
             for (auto* p : addFn->ForEachProperty()) {
                 std::wstring n(p->GetName());
@@ -1296,11 +1317,7 @@
                 if (n == L"Method") aiMethodOff = p->GetOffset_Internal();
                 if (n == L"ReturnValue") aiRetOff = p->GetOffset_Internal();
             }
-            VLOG(STR("[MoriaCppMod] [Swap] AddItem resolved: itemOff={} countOff={} methodOff={} retOff={}\n"),
-                 aiItemOff, aiCountOff, aiMethodOff, aiRetOff);
 
-            // GetItemForHotbarSlot -- resolve once for finding handles of recreated items
-            VLOG(STR("[MoriaCppMod] [Swap] Looking up GetItemForHotbarSlot...\n"));
             auto* getSlotFn = invComp->GetFunctionByNameInChain(STR("GetItemForHotbarSlot"));
             int gsIndexOff = -1, gsRetOff = -1, handleSize = 0;
             if (getSlotFn) {
@@ -1310,11 +1327,7 @@
                     if (n == L"ReturnValue") { gsRetOff = p->GetOffset_Internal(); handleSize = p->GetSize(); }
                 }
             }
-            VLOG(STR("[MoriaCppMod] [Swap] GetItemForHotbarSlot: fn={} indexOff={} retOff={} handleSize={}\n"),
-                 (void*)getSlotFn, gsIndexOff, gsRetOff, handleSize);
 
-            // MoveItem for container recreation
-            VLOG(STR("[MoriaCppMod] [Swap] Looking up MoveItem...\n"));
             auto* moveFn = invComp->GetFunctionByNameInChain(STR("MoveItem"));
             int mvItemOff = -1, mvDestOff = -1, mvAddTypeOff = -1;
             if (moveFn) {
@@ -1325,14 +1338,10 @@
                     if (n == L"AddType") mvAddTypeOff = p->GetOffset_Internal();
                 }
             }
-            VLOG(STR("[MoriaCppMod] [Swap] MoveItem: fn={}\n"), (void*)moveFn);
 
-            // Items.List offset for durability patching
-            VLOG(STR("[MoriaCppMod] [Swap] Resolving Items.List offset for durability patching...\n"));
             static int s_off_invItems3 = -2;
             if (s_off_invItems3 == -2) resolveOffset(invComp, L"Items", s_off_invItems3);
             int itemsListOffset = (s_off_invItems3 >= 0) ? s_off_invItems3 + iiaListOff() : 0x0330;
-            VLOG(STR("[MoriaCppMod] [Swap] Items.List offset: {} (invItems3={} iiaListOff={})\n"), itemsListOffset, s_off_invItems3, iiaListOff());
 
             // Lambda: read Items.List snapshot
             auto readItemsList = [&]() {
@@ -1343,7 +1352,6 @@
                 return lst;
             };
 
-            // Lambda: patch durability for item by ID
             auto patchDurability = [&](int32_t newId, float dur) {
                 if (newId <= 0 || dur <= 0.0f) return;
                 auto lst = readItemsList();
@@ -1360,13 +1368,10 @@
                 }
             };
 
-            // Lambda: find the FItemHandle for a freshly-added item by ID
             auto findHandleForId = [&](int32_t targetId) -> std::vector<uint8_t> {
                 if (!getSlotFn || gsRetOff < 0 || handleSize <= 0) return {};
-                // Walk Items.List to find which hotbar slot has this ID
                 auto lst = readItemsList();
                 if (!lst.Data || lst.Num <= 0) return {};
-                // Actually we can build a handle from the ID -- FItemHandle first int32 is the ID
                 std::vector<uint8_t> handle(handleSize, 0);
                 *reinterpret_cast<int32_t*>(handle.data()) = targetId;
                 if (callIsValidItem(handle.data(), handleSize))
@@ -1374,116 +1379,98 @@
                 return {};
             };
 
-            // Lambda: attempt to recreate one stashed item, returns true on success
-            // Uses safeProcessEvent to catch SEH access violations from async loader crashes
             auto recreateItem = [&](int i) -> bool {
-                if (!stashedItems[i].valid) return false;
-                UObject* cls = resolveItemClass(stashedItems[i].className);
+                if (!m_swapStash[i].valid) return false;
+                UObject* cls = resolveItemClass(m_swapStash[i].className);
                 if (!cls) {
-                    VLOG(STR("[MoriaCppMod] [Swap] WARN: cannot resolve class '{}' for creation -- skipping\n"), stashedItems[i].className);
+                    VLOG(STR("[MoriaCppMod] [Swap] WARN: cannot resolve class '{}' for creation -- skipping\n"), m_swapStash[i].className);
                     return false;
                 }
 
                 std::vector<uint8_t> aiBuf(std::max(addFn->GetParmsSize() + 32, 128), 0);
                 *reinterpret_cast<UObject**>(aiBuf.data() + aiItemOff) = cls;
-                *reinterpret_cast<int32_t*>(aiBuf.data() + aiCountOff) = stashedItems[i].count;
+                *reinterpret_cast<int32_t*>(aiBuf.data() + aiCountOff) = m_swapStash[i].count;
                 if (aiMethodOff >= 0) aiBuf[aiMethodOff] = 1; // EAddItem::Create
 
                 if (!safeProcessEvent(invComp, addFn, aiBuf.data())) {
-                    VLOG(STR("[MoriaCppMod] [Swap] SEH crash in AddItem for slot {} '{}' — will retry\n"), i, stashedItems[i].className);
+                    VLOG(STR("[MoriaCppMod] [Swap] SEH crash in AddItem for slot {} '{}' — will retry\n"), i, m_swapStash[i].className);
                     return false;
                 }
 
                 int32_t newId = (aiRetOff >= 0) ? *reinterpret_cast<int32_t*>(aiBuf.data() + aiRetOff) : -1;
-                VLOG(STR("[MoriaCppMod] [Swap] Added: {} x{} -> newId={} (Create)\n"), stashedItems[i].className, stashedItems[i].count, newId);
+                VLOG(STR("[MoriaCppMod] [Swap] Added: {} x{} -> newId={} (Create)\n"), m_swapStash[i].className, m_swapStash[i].count, newId);
 
-                // If Create failed, try Silent (bypasses equip/auto-consume checks)
                 if (newId <= 0 && aiMethodOff >= 0) {
                     std::memset(aiBuf.data(), 0, aiBuf.size());
                     *reinterpret_cast<UObject**>(aiBuf.data() + aiItemOff) = cls;
-                    *reinterpret_cast<int32_t*>(aiBuf.data() + aiCountOff) = stashedItems[i].count;
+                    *reinterpret_cast<int32_t*>(aiBuf.data() + aiCountOff) = m_swapStash[i].count;
                     aiBuf[aiMethodOff] = 2; // EAddItem::Silent
                     if (safeProcessEvent(invComp, addFn, aiBuf.data()))
                         newId = (aiRetOff >= 0) ? *reinterpret_cast<int32_t*>(aiBuf.data() + aiRetOff) : -1;
-                    VLOG(STR("[MoriaCppMod] [Swap] Retry with Silent: {} -> newId={}\n"), stashedItems[i].className, newId);
+                    VLOG(STR("[MoriaCppMod] [Swap] Retry with Silent: {} -> newId={}\n"), m_swapStash[i].className, newId);
                 }
 
-                if (newId <= 0) return false; // AddItem failed both methods
+                if (newId <= 0) return false;
 
-                patchDurability(newId, stashedItems[i].durability);
+                patchDurability(newId, m_swapStash[i].durability);
 
                 // Restore container contents via MoveItem
-                if (!stashedItems[i].contents.empty() && moveFn && mvItemOff >= 0 && mvDestOff >= 0)
+                if (!m_swapStash[i].contents.empty() && moveFn && mvItemOff >= 0 && mvDestOff >= 0)
                 {
                     auto containerHandle = findHandleForId(newId);
                     if (containerHandle.empty()) {
                         VLOG(STR("[MoriaCppMod] [Swap] WARN: cannot find handle for container newId={}\n"), newId);
                     } else {
                         int contentRestored = 0;
-                        for (auto& ci : stashedItems[i].contents)
+                        for (auto& ci : m_swapStash[i].contents)
                         {
                             UObject* contentCls = resolveItemClass(ci.className);
-                            if (!contentCls) {
-                                VLOG(STR("[MoriaCppMod] [Swap] WARN: cannot resolve content class '{}'\n"), ci.className);
-                                continue;
-                            }
+                            if (!contentCls) continue;
 
-                            // Create content item loose in inventory
                             std::vector<uint8_t> ciBuf(std::max(addFn->GetParmsSize() + 32, 128), 0);
                             *reinterpret_cast<UObject**>(ciBuf.data() + aiItemOff) = contentCls;
                             *reinterpret_cast<int32_t*>(ciBuf.data() + aiCountOff) = ci.count;
-                            if (aiMethodOff >= 0) ciBuf[aiMethodOff] = 1; // EAddItem::Create
+                            if (aiMethodOff >= 0) ciBuf[aiMethodOff] = 1;
                             if (!safeProcessEvent(invComp, addFn, ciBuf.data())) continue;
 
                             int32_t contentNewId = (aiRetOff >= 0)
                                 ? *reinterpret_cast<int32_t*>(ciBuf.data() + aiRetOff) : -1;
-                            // Silent fallback
                             if (contentNewId <= 0 && aiMethodOff >= 0) {
                                 std::memset(ciBuf.data(), 0, ciBuf.size());
                                 *reinterpret_cast<UObject**>(ciBuf.data() + aiItemOff) = contentCls;
                                 *reinterpret_cast<int32_t*>(ciBuf.data() + aiCountOff) = ci.count;
-                                ciBuf[aiMethodOff] = 2; // EAddItem::Silent
+                                ciBuf[aiMethodOff] = 2;
                                 if (safeProcessEvent(invComp, addFn, ciBuf.data()))
                                     contentNewId = (aiRetOff >= 0)
                                         ? *reinterpret_cast<int32_t*>(ciBuf.data() + aiRetOff) : -1;
                             }
-                            if (contentNewId <= 0) {
-                                VLOG(STR("[MoriaCppMod] [Swap] WARN: AddItem failed for content '{}' x{}\n"), ci.className, ci.count);
-                                continue;
-                            }
+                            if (contentNewId <= 0) continue;
 
                             patchDurability(contentNewId, ci.durability);
 
                             auto contentHandle = findHandleForId(contentNewId);
-                            if (contentHandle.empty()) {
-                                VLOG(STR("[MoriaCppMod] [Swap] WARN: cannot find handle for content newId={}\n"), contentNewId);
-                                continue;
-                            }
+                            if (contentHandle.empty()) continue;
 
-                            // MoveItem(contentHandle, containerHandle, EAddItem::Normal)
                             std::vector<uint8_t> mvBuf(std::max(moveFn->GetParmsSize() + 32, 128), 0);
                             std::memcpy(mvBuf.data() + mvItemOff, contentHandle.data(),
                                         std::min((int)contentHandle.size(), handleSize));
                             std::memcpy(mvBuf.data() + mvDestOff, containerHandle.data(),
                                         std::min((int)containerHandle.size(), handleSize));
-                            if (mvAddTypeOff >= 0) mvBuf[mvAddTypeOff] = 0; // EAddItem::Normal
+                            if (mvAddTypeOff >= 0) mvBuf[mvAddTypeOff] = 0;
 
-                            if (!safeProcessEvent(invComp, moveFn, mvBuf.data())) {
-                                VLOG(STR("[MoriaCppMod] [Swap] SEH crash in MoveItem for content '{}' into container\n"), ci.className);
-                                continue;
+                            if (safeProcessEvent(invComp, moveFn, mvBuf.data())) {
+                                contentRestored++;
+                                VLOG(STR("[MoriaCppMod] [Swap] Moved '{}' x{} into container (slot {})\n"), ci.className, ci.count, i);
                             }
-
-                            contentRestored++;
-                            VLOG(STR("[MoriaCppMod] [Swap] Moved '{}' x{} into container (slot {})\n"), ci.className, ci.count, i);
                         }
                         VLOG(STR("[MoriaCppMod] [Swap] Container slot {}: restored {}/{} content items\n"),
-                             i, contentRestored, stashedItems[i].contents.size());
+                             i, contentRestored, m_swapStash[i].contents.size());
                     }
                 }
 
-                if (!stashedItems[i].effects.empty())
+                if (!m_swapStash[i].effects.empty())
                 {
-                    for (auto& eff : stashedItems[i].effects)
+                    for (auto& eff : m_swapStash[i].effects)
                     {
                         VLOG(STR("[MoriaCppMod] [Swap] Restoring effect '{}:{}' for slot {} newId={}\n"), eff.typeName, eff.assetName, i, newId);
                         restoreEffectDirect(invComp, newId, eff);
@@ -1492,53 +1479,93 @@
                 return true;
             };
 
-            VLOG(STR("[MoriaCppMod] [Swap] Starting recreation loop...\n"));
-            constexpr int MAX_ATTEMPTS = 3;
             int recreated = 0;
             std::vector<int> failed;
             for (int i = 0; i < TOOLBAR_SLOTS; i++)
             {
-                if (!stashedItems[i].valid) continue;
-                VLOG(STR("[MoriaCppMod] [Swap] Recreating slot {}: '{}' x{}\n"), i, stashedItems[i].className, stashedItems[i].count);
+                if (!m_swapStash[i].valid) continue;
+                VLOG(STR("[MoriaCppMod] [Swap] Recreating slot {}: '{}' x{}\n"), i, m_swapStash[i].className, m_swapStash[i].count);
                 if (recreateItem(i))
                     recreated++;
-                else if (stashedItems[i].valid)
+                else if (m_swapStash[i].valid)
                     failed.push_back(i);
             }
 
-            // Retry failed items (SEH crash or newId=0) up to MAX_ATTEMPTS-1 more times, 1s apart
-            for (int attempt = 2; attempt <= MAX_ATTEMPTS && !failed.empty(); attempt++)
-            {
-                VLOG(STR("[MoriaCppMod] [Swap] {} items failed AddItem, retry attempt {}/{} in 1s...\n"), failed.size(), attempt, MAX_ATTEMPTS);
-                Sleep(1000);
-                purgeOrphanedEffects(invComp); // clean up any stale state from prior crash
-                std::vector<int> stillFailed;
-                for (int i : failed)
-                {
-                    VLOG(STR("[MoriaCppMod] [Swap] Retry {}/{} slot {}: '{}'\n"), attempt, MAX_ATTEMPTS, i, stashedItems[i].className);
-                    if (recreateItem(i))
-                        recreated++;
-                    else
-                        stillFailed.push_back(i);
-                }
-                failed = std::move(stillFailed);
-            }
-
-            // Report any permanently lost items
+            // Report failures (no more blocking retry loop — retries removed to avoid Sleep on game thread)
             for (int i : failed)
-                VLOG(STR("[MoriaCppMod] [Swap] FAILED after {} attempts: slot {} '{}' — item lost\n"), MAX_ATTEMPTS, i, stashedItems[i].className);
+                VLOG(STR("[MoriaCppMod] [Swap] FAILED: slot {} '{}' — item lost\n"), i, m_swapStash[i].className);
 
-            stopActionBarAnimations();  // post-swap: kill animations triggered by RemoveItem/AddItem delegates
+            // Store recreated count for finish phase
+            m_swapRecreated = recreated;
 
-            // 6. Toggle toolbar indicator
-            //    Game's own ItemChanged delegates update the action bar naturally.
+            // Transition to wait phase — let MovieScene settle before finishing
+            m_swapPhase = SwapPhase::WaitAfterAdd;
+            m_swapFrameWait = 0;
+            VLOG(STR("[MoriaCppMod] [Swap] Add phase complete ({} items), waiting {} frames for MovieScene settle\n"), recreated, SWAP_SETTLE_FRAMES);
+        }
+
+        int m_swapRecreated{0};  // count from add phase, used by finish phase
+
+        // Phase 5: Stop animations, toggle toolbar indicator
+        void swapPhaseFinish()
+        {
+            VLOG(STR("[MoriaCppMod] [Swap] Finish phase — stopping animations\n"));
+            stopActionBarAnimations();
+
             m_activeToolbar = 1 - m_activeToolbar;
             s_overlay.activeToolbar = m_activeToolbar;
             s_overlay.needsUpdate = true;
 
             m_lastSwapTime = GetTickCount64();
+            m_swapInProgress = false;
+            m_swapPhase = SwapPhase::Idle;
 
-            std::wstring msg = std::format(L"Toolbar {} ({} items)", m_activeToolbar + 1, recreated);
+            // Clear stash to free memory
+            m_swapStash = {};
+
+            std::wstring msg = std::format(L"Toolbar {} ({} items)", m_activeToolbar + 1, m_swapRecreated);
             showOnScreen(msg, 3.0f, 0.0f, 1.0f, 0.5f);
             VLOG(STR("[MoriaCppMod] [Swap] Swap complete: {}\n"), msg);
+        }
+
+        // Called from on_update() every frame — drives the multi-frame swap SM
+        void tickSwap()
+        {
+            switch (m_swapPhase)
+            {
+            case SwapPhase::Idle:
+                return;
+
+            case SwapPhase::WaitAfterRemove:
+                if (++m_swapFrameWait >= SWAP_SETTLE_FRAMES) {
+                    m_swapPhase = SwapPhase::Add;
+                }
+                return;
+
+            case SwapPhase::Add:
+                try { swapPhaseAdd(); }
+                catch (const std::exception& e) {
+                    VLOG(STR("[MoriaCppMod] [Swap] EXCEPTION in add phase: {}\n"), std::wstring(e.what(), e.what() + strlen(e.what())));
+                    showErrorBox(L"Swap failed (add exception)");
+                    m_swapInProgress = false;
+                    m_swapPhase = SwapPhase::Idle;
+                }
+                catch (...) {
+                    VLOG(STR("[MoriaCppMod] [Swap] UNKNOWN EXCEPTION in add phase\n"));
+                    showErrorBox(L"Swap failed (add unknown)");
+                    m_swapInProgress = false;
+                    m_swapPhase = SwapPhase::Idle;
+                }
+                return;
+
+            case SwapPhase::WaitAfterAdd:
+                if (++m_swapFrameWait >= SWAP_SETTLE_FRAMES) {
+                    m_swapPhase = SwapPhase::Finish;
+                }
+                return;
+
+            case SwapPhase::Finish:
+                swapPhaseFinish();
+                return;
+            }
         }
