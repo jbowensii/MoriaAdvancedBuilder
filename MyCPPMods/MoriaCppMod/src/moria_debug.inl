@@ -539,11 +539,11 @@
                 else
                     toggleHideCharacter();
                 break;
-            case 4: // Toolbar Swap
-                swapToolbar();
+            case 4: // (empty)
                 break;
-            case 5: // Snap Toggle
-                toggleSnap();
+            case 5: // Snap Toggle (only while placing a piece)
+                if (resolveGATA())
+                    toggleSnap();
                 break;
             case 8: // Remove Target
                 removeAimed();

@@ -231,18 +231,6 @@ namespace MoriaMods
                     gfx.DrawString(totalStr.c_str(), -1, &totalFont, botRect, &botFmt, &totalBrush);
                 }
 
-                // Slot 10 (Toolbar Swap): show active toolbar number
-                if (i == 10)
-                {
-                    int tb = s_overlay.activeToolbar;
-                    std::wstring tbStr = L"T" + std::to_wstring(tb + 1);
-                    float tbFontSz = slotSize * 0.35f;
-                    Gdiplus::Font tbFont(&fontFamily, tbFontSz, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-                    Gdiplus::SolidBrush tbBrush(Gdiplus::Color(220, 180, 210, 255));
-                    Gdiplus::RectF tbRect((float)sx, (float)sy, (float)slotSize, (float)slotSize);
-                    gfx.DrawString(tbStr.c_str(), -1, &tbFont, tbRect, &centerFmt, &tbBrush);
-                }
-
                 // Slot 11 (Configuration): gear/cog icon + CFG text
                 if (i == 11)
                 {
@@ -307,10 +295,6 @@ namespace MoriaMods
                 else if (i == 9)
                 {
                     fLabel = keyName(s_bindings[BIND_ROTATION].key); // Rotation
-                }
-                else if (i == 10)
-                {
-                    fLabel = keyName(s_bindings[BIND_SWAP].key); // Toolbar Swap
                 }
                 else if (i == 11)
                 {

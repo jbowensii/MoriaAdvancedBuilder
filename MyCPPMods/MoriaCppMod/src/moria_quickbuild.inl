@@ -42,7 +42,7 @@
             auto* refreshFunc = actionBar->GetFunctionByNameInChain(STR("Set All Action Bar Items"));
             if (refreshFunc)
             {
-                actionBar->ProcessEvent(refreshFunc, nullptr);
+                safeProcessEvent(actionBar, refreshFunc, nullptr);
                 VLOG(STR("[MoriaCppMod] ActionBar: Set All Action Bar Items called\n"));
             }
         }
@@ -119,6 +119,8 @@
                 std::string name;
                 for (auto wc : wname) name += static_cast<char>(wc); // ASCII-safe narrow
                 file << iniKey << " = " << name << "\n";
+                if (!s_bindings[i].enabled)
+                    file << iniKey << "_Enabled = false\n";
             }
             file << "ModifierKey = " << modifierToIniName(s_modifierVK) << "\n";
 
@@ -127,6 +129,9 @@
             file << "RotationStep = " << s_overlay.rotationStep.load() << "\n";
             file << "Language = " << s_language << "\n";
             file << "NoCollision = " << (m_noCollisionWhileFlying ? "true" : "false") << "\n";
+            file << "TrashItem = " << (m_trashItemEnabled ? "true" : "false") << "\n";
+            file << "ReplenishItem = " << (m_replenishItemEnabled ? "true" : "false") << "\n";
+            file << "RemoveAttributes = " << (m_removeAttrsEnabled ? "true" : "false") << "\n";
 
             bool hasCustomPos = false;
             for (int i = 0; i < TB_COUNT; i++)
@@ -176,21 +181,37 @@
                             }
                             else
                             {
-                                int idx = iniKeyToBindIndex(kv->key);
-                                if (idx >= 0)
+                                // Check for _Enabled suffix
+                                std::string k = kv->key;
+                                bool isEnabledKey = false;
+                                if (k.size() > 8 && strEqualCI(k.substr(k.size() - 8), "_Enabled"))
                                 {
-                                    std::wstring wval(kv->value.begin(), kv->value.end());
-                                    auto vk = nameToVK(wval);
-                                    if (vk)
+                                    std::string base = k.substr(0, k.size() - 8);
+                                    int idx = iniKeyToBindIndex(base);
+                                    if (idx >= 0)
                                     {
-                                        s_bindings[idx].key = *vk;
-                                        loaded++;
+                                        s_bindings[idx].enabled = !(kv->value == "false" || kv->value == "0" || kv->value == "no");
+                                        isEnabledKey = true;
                                     }
-                                    else
+                                }
+                                if (!isEnabledKey)
+                                {
+                                    int idx = iniKeyToBindIndex(kv->key);
+                                    if (idx >= 0)
                                     {
-                                        VLOG(STR("[MoriaCppMod] INI: unrecognized key '{}' for {}\n"),
-                                             std::wstring(kv->value.begin(), kv->value.end()),
-                                             std::wstring(kv->key.begin(), kv->key.end()));
+                                        std::wstring wval(kv->value.begin(), kv->value.end());
+                                        auto vk = nameToVK(wval);
+                                        if (vk)
+                                        {
+                                            s_bindings[idx].key = *vk;
+                                            loaded++;
+                                        }
+                                        else
+                                        {
+                                            VLOG(STR("[MoriaCppMod] INI: unrecognized key '{}' for {}\n"),
+                                                 std::wstring(kv->value.begin(), kv->value.end()),
+                                                 std::wstring(kv->key.begin(), kv->key.end()));
+                                        }
                                     }
                                 }
                             }
@@ -217,6 +238,18 @@
                             else if (strEqualCI(kv->key, "NoCollision"))
                             {
                                 m_noCollisionWhileFlying = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                            else if (strEqualCI(kv->key, "TrashItem"))
+                            {
+                                m_trashItemEnabled = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                            else if (strEqualCI(kv->key, "ReplenishItem"))
+                            {
+                                m_replenishItemEnabled = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                            else if (strEqualCI(kv->key, "RemoveAttributes"))
+                            {
+                                m_removeAttrsEnabled = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
                             }
                         }
                         else if (strEqualCI(section, "Positions"))

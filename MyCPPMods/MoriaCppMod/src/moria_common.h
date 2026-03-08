@@ -13,7 +13,6 @@
 #include <cstring>
 #include <fstream>
 #include <format>
-#include <iomanip>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -245,7 +244,6 @@ namespace MoriaMods
         std::wstring iconFolder;
         std::atomic<int> rotationStep{5};
         std::atomic<int> totalRotation{0};
-        std::atomic<int> activeToolbar{0};
     };
     inline OverlayState s_overlay;
 

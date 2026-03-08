@@ -1,6 +1,6 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║  moria_keybinds.h — Keybinding system & window discovery                  ║
-// ║  22 rebindable keys (8 quickbuild + 12 MC slots + 2 extra),              ║
+// ║  25 rebindable keys (8 quickbuild + 12 MC slots + 5 extra),              ║
 // ║  VK code ↔ string conversion, findGameWindow() for overlay               ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 #pragma once
@@ -17,17 +17,20 @@ namespace MoriaMods
     static constexpr int MC_BIND_BASE = 8;     // s_bindings[8..19] = MC slots 0..11
     static constexpr int BIND_ROTATION = 8;    // "Rotation" — MC slot 0
     static constexpr int BIND_TARGET   = 9;    // "Target" — MC slot 1
-    static constexpr int BIND_SWAP     = 12;   // "Toolbar Swap" — MC slot 4
     static constexpr int BIND_CONFIG   = 19;   // "Configuration" — MC slot 11
     static constexpr int BIND_AB_OPEN  = 20;   // "Advanced Builder Open"
     static constexpr int BIND_STABILITY = 10;  // "Stability Check" — MC slot 2
     static constexpr int BIND_SNAP      = 13;  // "Snap Toggle" — MC slot 5
+    static constexpr int BIND_TRASH_ITEM     = 22;  // "Trash Item"
+    static constexpr int BIND_REPLENISH_ITEM = 23;  // "Replenish Item"
+    static constexpr int BIND_REMOVE_ATTRS   = 24;  // "Remove Attributes"
 
     struct KeyBind
     {
         const wchar_t* label;
         const wchar_t* section;
         uint8_t key; // Input::Key value (same as VK code)
+        bool enabled = true; // false = keybind suppressed even if key is set
     };
 
     inline KeyBind s_bindings[BIND_COUNT] = {
@@ -43,7 +46,7 @@ namespace MoriaMods
             {L"Target", L"Mod Controller", Input::Key::OEM_SIX},                       // 9  (BIND_TARGET, MC slot 1)
             {L"Integrity Check", L"Mod Controller", Input::Key::DIVIDE},               // 10 (BIND_STABILITY, MC slot 2)
             {L"Super Dwarf", L"Mod Controller", Input::Key::OEM_FIVE},                 // 11 (MC slot 3)
-            {L"Toolbar Swap", L"Mod Controller", Input::Key::PAGE_DOWN},               // 12 (BIND_SWAP, MC slot 4)
+            {L"Empty", L"Mod Controller", 0},                                           // 12 (MC slot 4 — empty)
             {L"Snap Toggle", L"Mod Controller", Input::Key::OEM_FOUR},                    // 13 (BIND_SNAP, MC slot 5)
             {L"Empty", L"Mod Controller", 0},                                           // 14 (MC slot 6 — empty)
             {L"Empty", L"Mod Controller", 0},                                           // 15 (MC slot 7 — empty)
@@ -53,6 +56,9 @@ namespace MoriaMods
             {L"Configuration", L"Mod Controller", Input::Key::F12},                    // 19 (BIND_CONFIG, MC slot 11)
             {L"Advanced Builder Open", L"Advanced Builder", Input::Key::ADD},           // 20 (BIND_AB_OPEN)
             {L"Reserved", L"Diagnostics", 0},                                          // 21 (placeholder — no key, no action)
+            {L"Trash Item", L"Game Options", VK_DELETE},                                  // 22 (BIND_TRASH_ITEM)
+            {L"Replenish Item", L"Game Options", VK_INSERT},                              // 23 (BIND_REPLENISH_ITEM)
+            {L"Remove Attributes", L"Game Options", VK_END},                              // 24 (BIND_REMOVE_ATTRS)
     };
 
     inline std::atomic<int> s_capturingBind{-1};

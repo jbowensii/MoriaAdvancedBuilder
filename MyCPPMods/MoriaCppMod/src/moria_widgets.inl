@@ -324,6 +324,42 @@
             textBlock->ProcessEvent(setFontFn, buf.data());
         }
 
+        // Patch font object + size on a TextBlock in one call
+        void umgSetFontAndSize(UObject* textBlock, UObject* fontObj, int32_t fontSize)
+        {
+            if (!textBlock) return;
+            auto* setFontFn = textBlock->GetFunctionByNameInChain(STR("SetFont"));
+            if (!setFontFn) return;
+            int fontOff = resolveOffset(textBlock, L"Font", s_off_font);
+            if (fontOff < 0) return;
+            auto* pFontInfo = findParam(setFontFn, STR("InFontInfo"));
+            if (!pFontInfo) return;
+            probeFontStruct(textBlock);
+            uint8_t* raw = reinterpret_cast<uint8_t*>(textBlock);
+            uint8_t fontBuf[FONT_STRUCT_SIZE];
+            std::memcpy(fontBuf, raw + fontOff, FONT_STRUCT_SIZE);
+            if (fontObj) *reinterpret_cast<UObject**>(fontBuf + 0x00) = fontObj;
+            std::memcpy(fontBuf + fontSizeOff(), &fontSize, sizeof(int32_t));
+            int sz = setFontFn->GetParmsSize();
+            std::vector<uint8_t> buf(sz, 0);
+            std::memcpy(buf.data() + pFontInfo->GetOffset_Internal(), fontBuf, FONT_STRUCT_SIZE);
+            textBlock->ProcessEvent(setFontFn, buf.data());
+        }
+
+        // Create a styled UTextBlock (class-level helper, usable outside toggleFontTestPanel)
+        UObject* createTextBlock(const std::wstring& text, float r, float g, float b, float a, int32_t fontSize)
+        {
+            auto* tbClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+            if (!tbClass) return nullptr;
+            FStaticConstructObjectParameters tbP(tbClass, nullptr);
+            UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
+            if (!tb) return nullptr;
+            umgSetText(tb, text);
+            umgSetTextColor(tb, r, g, b, a);
+            umgSetFontSize(tb, fontSize);
+            return tb;
+        }
+
         // Refresh key labels on all UMG toolbars from current s_bindings
         void refreshKeyLabels()
         {
@@ -2249,998 +2285,6 @@
             VLOG(STR("[MoriaCppMod] [EB] showErrorBox: '{}'\n"), message);
         }
 
-        // Ã¢â€â‚¬Ã¢â€â‚¬ UMG Config Menu (first pass) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-
-        void destroyConfigWidget()
-        {
-            if (!m_configWidget) return;
-            auto* removeFn = m_configWidget->GetFunctionByNameInChain(STR("RemoveFromViewport"));
-            if (removeFn) m_configWidget->ProcessEvent(removeFn, nullptr);
-            m_configWidget = nullptr;
-            for (auto& t : m_cfgTabLabels) t = nullptr;
-            for (auto& t : m_cfgTabContent) t = nullptr;
-            for (auto& t : m_cfgTabImages) t = nullptr;
-            m_cfgTabActiveTexture = nullptr;
-            m_cfgTabInactiveTexture = nullptr;
-            m_cfgVignetteImage = nullptr;
-            for (auto& s : m_cfgScrollBoxes) s = nullptr;
-            m_cfgFreeBuildLabel = nullptr;
-            m_cfgFreeBuildCheckImg = nullptr;
-            m_cfgNoCollisionLabel = nullptr;
-            m_cfgNoCollisionCheckImg = nullptr;
-            m_cfgUnlockBtnImg = nullptr;
-            for (auto& k : m_cfgKeyValueLabels) k = nullptr;
-            for (auto& k : m_cfgKeyBoxLabels) k = nullptr;
-            m_cfgModifierLabel = nullptr;
-            m_cfgModBoxLabel = nullptr;
-            m_cfgRemovalHeader = nullptr;
-            m_cfgRemovalVBox = nullptr;
-            m_cfgLastRemovalCount = -1;
-            m_cfgVisible = false;
-            m_cfgActiveTab = 0;
-        }
-
-        void switchConfigTab(int tab)
-        {
-            if (tab < 0 || tab >= 3 || tab == m_cfgActiveTab) return;
-            m_cfgActiveTab = tab;
-            auto* sBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
-            for (int i = 0; i < 3; i++)
-            {
-                // Show/hide ScrollBoxes (which wrap the tab VBoxes)
-                UObject* target = m_cfgScrollBoxes[i] ? m_cfgScrollBoxes[i] : m_cfgTabContent[i];
-                if (target)
-                {
-                    auto* fn = target->GetFunctionByNameInChain(STR("SetVisibility"));
-                    if (fn) { uint8_t p[8]{}; p[0] = (i == tab) ? 0 : 1; target->ProcessEvent(fn, p); }
-                }
-                // Update tab label colors
-                if (m_cfgTabLabels[i])
-                {
-                    if (i == tab)
-                        umgSetTextColor(m_cfgTabLabels[i], 0.78f, 0.86f, 1.0f, 1.0f); // bright
-                    else
-                        umgSetTextColor(m_cfgTabLabels[i], 0.47f, 0.55f, 0.71f, 0.7f); // dim
-                }
-                // Swap tab background textures
-                if (m_cfgTabImages[i] && sBrushFn)
-                {
-                    UObject* tex = (i == tab) ? m_cfgTabActiveTexture : m_cfgTabInactiveTexture;
-                    if (tex) umgSetBrushNoMatch(m_cfgTabImages[i], tex, sBrushFn);
-                }
-            }
-            // Cancel any active key capture when switching away from Tab 1
-            if (tab != 1 && s_capturingBind >= 0)
-            {
-                s_capturingBind = -1;
-                updateConfigKeyLabels();
-            }
-            // Refresh removal list when switching to Tab 2
-            if (tab == 2)
-            {
-                int curCount = s_config.removalCount.load();
-                if (curCount != m_cfgLastRemovalCount)
-                    rebuildRemovalList();
-            }
-        }
-
-        void updateConfigKeyLabels()
-        {
-            int capturing = s_capturingBind.load();
-            for (int i = 0; i < BIND_COUNT; i++)
-            {
-                // Update old-style labels (kept for compat)
-                if (m_cfgKeyValueLabels[i])
-                {
-                    std::wstring row = std::wstring(s_bindings[i].label) + Loc::get("ui.key_separator") + keyName(s_bindings[i].key);
-                    umgSetText(m_cfgKeyValueLabels[i], row);
-                }
-                // Update new key box labels
-                if (m_cfgKeyBoxLabels[i])
-                {
-                    if (capturing == i)
-                    {
-                        umgSetText(m_cfgKeyBoxLabels[i], Loc::get("ui.press_key"));
-                        umgSetTextColor(m_cfgKeyBoxLabels[i], 1.0f, 0.9f, 0.0f, 1.0f); // yellow
-                    }
-                    else
-                    {
-                        umgSetText(m_cfgKeyBoxLabels[i], keyName(s_bindings[i].key));
-                        umgSetTextColor(m_cfgKeyBoxLabels[i], 1.0f, 1.0f, 1.0f, 1.0f); // white
-                    }
-                }
-            }
-            if (m_cfgModifierLabel)
-            {
-                std::wstring modText = Loc::get("ui.set_modifier_key") + std::wstring(modifierName(s_modifierVK));
-                umgSetText(m_cfgModifierLabel, modText);
-            }
-            // Update modifier key box label
-            if (m_cfgModBoxLabel)
-            {
-                umgSetText(m_cfgModBoxLabel, std::wstring(modifierName(s_modifierVK)));
-            }
-        }
-
-        void updateConfigFreeBuild()
-        {
-            bool on = s_config.freeBuild;
-            if (m_cfgFreeBuildLabel)
-            {
-                umgSetText(m_cfgFreeBuildLabel, on ? Loc::get("ui.free_build_on") : Loc::get("ui.free_build"));
-                umgSetTextColor(m_cfgFreeBuildLabel, on ? 0.31f : 0.55f, on ? 0.86f : 0.55f, on ? 0.47f : 0.55f, 1.0f);
-            }
-            // Show/hide check mark image
-            if (m_cfgFreeBuildCheckImg)
-            {
-                auto* visFn = m_cfgFreeBuildCheckImg->GetFunctionByNameInChain(STR("SetVisibility"));
-                if (visFn) { uint8_t p[8]{}; p[0] = on ? 0 : 1; m_cfgFreeBuildCheckImg->ProcessEvent(visFn, p); }
-            }
-        }
-
-        void updateConfigNoCollision()
-        {
-            bool on = m_noCollisionWhileFlying;
-            if (m_cfgNoCollisionLabel)
-            {
-                umgSetText(m_cfgNoCollisionLabel, on ? Loc::get("ui.no_collision_on") : Loc::get("ui.no_collision"));
-                umgSetTextColor(m_cfgNoCollisionLabel, on ? 0.31f : 0.55f, on ? 0.86f : 0.55f, on ? 0.47f : 0.55f, 1.0f);
-            }
-            if (m_cfgNoCollisionCheckImg)
-            {
-                auto* visFn = m_cfgNoCollisionCheckImg->GetFunctionByNameInChain(STR("SetVisibility"));
-                if (visFn) { uint8_t p[8]{}; p[0] = on ? 0 : 1; m_cfgNoCollisionCheckImg->ProcessEvent(visFn, p); }
-            }
-        }
-
-        void updateConfigRemovalCount()
-        {
-            if (m_cfgRemovalHeader)
-            {
-                int count = s_config.removalCount.load();
-                umgSetText(m_cfgRemovalHeader, Loc::get("ui.saved_removals_prefix") + std::to_wstring(count) + Loc::get("ui.saved_removals_suffix"));
-            }
-        }
-
-        void rebuildRemovalList()
-        {
-            if (!m_cfgRemovalVBox) return;
-
-            auto* imageClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Image"));
-            auto* hboxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.HorizontalBox"));
-            auto* vboxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.VerticalBox"));
-            auto* textBlockClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
-            auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
-            if (!imageClass || !hboxClass || !vboxClass || !textBlockClass) return;
-
-            // Get the outer from the VBox
-            UObject* outer = m_cfgRemovalVBox->GetOuterPrivate();
-            if (!outer) outer = m_cfgRemovalVBox;
-
-            // Clear existing entry rows (all children after the header)
-            // Use ClearChildren then re-add header
-            auto* clearFn = m_cfgRemovalVBox->GetFunctionByNameInChain(STR("ClearChildren"));
-            if (clearFn) m_cfgRemovalVBox->ProcessEvent(clearFn, nullptr);
-
-            // Re-add header
-            int count = s_config.removalCount.load();
-            if (m_cfgRemovalHeader)
-            {
-                umgSetText(m_cfgRemovalHeader, Loc::get("ui.saved_removals_prefix") + std::to_wstring(count) + Loc::get("ui.saved_removals_suffix"));
-                addToVBox(m_cfgRemovalVBox, m_cfgRemovalHeader);
-            }
-
-            UObject* texDanger = findTexture2DByName(L"T_UI_Icon_Danger");
-
-            if (s_config.removalCSInit)
-            {
-                CriticalSectionLock removalLock(s_config.removalCS);
-                for (size_t i = 0; i < s_config.removalEntries.size(); i++)
-                {
-                    const auto& entry = s_config.removalEntries[i];
-
-                    // Each row: HBox { Image(danger, 40x40) + VBox { TextBlock(name, bold 24pt), TextBlock(coords, 18pt gray) } }
-                    FStaticConstructObjectParameters rowP(hboxClass, outer);
-                    UObject* rowHBox = UObjectGlobals::StaticConstructObject(rowP);
-                    if (!rowHBox) continue;
-
-                    // Danger icon
-                    if (texDanger && setBrushFn)
-                    {
-                        FStaticConstructObjectParameters imgP(imageClass, outer);
-                        UObject* dangerImg = UObjectGlobals::StaticConstructObject(imgP);
-                        if (dangerImg)
-                        {
-                            umgSetBrushNoMatch(dangerImg, texDanger, setBrushFn);
-                            umgSetBrushSize(dangerImg, 56.0f, 56.0f);
-                            addToHBox(rowHBox, dangerImg);
-                        }
-                    }
-
-                    // Info VBox: name + coords
-                    FStaticConstructObjectParameters infoP(vboxClass, outer);
-                    UObject* infoVBox = UObjectGlobals::StaticConstructObject(infoP);
-                    if (infoVBox)
-                    {
-                        // Name (bold)
-                        FStaticConstructObjectParameters tbP1(textBlockClass, outer);
-                        UObject* nameTB = UObjectGlobals::StaticConstructObject(tbP1);
-                        if (nameTB)
-                        {
-                            umgSetText(nameTB, entry.friendlyName);
-                            umgSetTextColor(nameTB, 0.3f, 0.85f, 0.3f, 1.0f); // medium green
-                            umgSetFontSize(nameTB, 24);
-                            umgSetBold(nameTB);
-                            addToVBox(infoVBox, nameTB);
-                        }
-                        // Coords or "TYPE RULE"
-                        FStaticConstructObjectParameters tbP2(textBlockClass, outer);
-                        UObject* coordsTB = UObjectGlobals::StaticConstructObject(tbP2);
-                        if (coordsTB)
-                        {
-                            std::wstring coordText = entry.isTypeRule ? Loc::get("ui.type_rule") : entry.coordsW;
-                            umgSetText(coordsTB, coordText);
-                            umgSetTextColor(coordsTB, 0.85f, 0.25f, 0.25f, 1.0f); // medium red
-                            umgSetFontSize(coordsTB, 18);
-                            addToVBox(infoVBox, coordsTB);
-                        }
-
-                        addToHBox(rowHBox, infoVBox);
-                    }
-
-                    addToVBox(m_cfgRemovalVBox, rowHBox);
-                }
-            }
-            m_cfgLastRemovalCount = count;
-        }
-
-        void createConfigWidget()
-        {
-            if (m_configWidget) return;
-            VLOG(STR("[MoriaCppMod] [CFG] === Creating Config UMG widget ===\n"));
-
-            auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
-            auto* vboxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.VerticalBox"));
-            auto* hboxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.HorizontalBox"));
-            auto* borderClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Border"));
-            auto* textBlockClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
-            auto* overlayClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Overlay"));
-            auto* imageClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Image"));
-            auto* scrollBoxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.ScrollBox"));
-            auto* sizeBoxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.SizeBox"));
-            auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
-            if (!userWidgetClass || !vboxClass || !hboxClass || !borderClass || !textBlockClass) return;
-            if (!overlayClass || !imageClass || !scrollBoxClass || !sizeBoxClass || !setBrushFn) return;
-
-            auto* pc = findPlayerController();
-            if (!pc) return;
-            auto* createFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
-            auto* wblClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
-            if (!createFn || !wblClass) return;
-            UObject* wblCDO = wblClass->GetClassDefaultObject();
-            if (!wblCDO) return;
-
-            int csz = createFn->GetParmsSize();
-            std::vector<uint8_t> cp(csz, 0);
-            auto* pWC = findParam(createFn, STR("WorldContextObject"));
-            auto* pWT = findParam(createFn, STR("WidgetType"));
-            auto* pOP = findParam(createFn, STR("OwningPlayer"));
-            auto* pRV = findParam(createFn, STR("ReturnValue"));
-            if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
-            if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = userWidgetClass;
-            if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
-            wblCDO->ProcessEvent(createFn, cp.data());
-            UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
-            if (!userWidget) return;
-
-            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
-            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
-            UObject* outer = widgetTree ? widgetTree : userWidget;
-
-            // Make widget focusable for modal input mode (via FBoolProperty API)
-            setBoolProp(userWidget, L"bIsFocusable", true);
-
-            // Root SizeBox to enforce fixed 1400x450 size
-            FStaticConstructObjectParameters rootSbP(sizeBoxClass, outer);
-            UObject* rootSizeBox = UObjectGlobals::StaticConstructObject(rootSbP);
-            if (!rootSizeBox) return;
-            if (widgetTree)
-                setRootWidget(widgetTree, rootSizeBox);
-            // SetWidthOverride(1400) and SetHeightOverride(900)
-            auto* setWidthOvFn = rootSizeBox->GetFunctionByNameInChain(STR("SetWidthOverride"));
-            if (setWidthOvFn) { int sz = setWidthOvFn->GetParmsSize(); std::vector<uint8_t> wp(sz, 0); auto* p = findParam(setWidthOvFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = 1400.0f; rootSizeBox->ProcessEvent(setWidthOvFn, wp.data()); }
-            auto* setHeightOvFn = rootSizeBox->GetFunctionByNameInChain(STR("SetHeightOverride"));
-            if (setHeightOvFn) { int sz = setHeightOvFn->GetParmsSize(); std::vector<uint8_t> hp(sz, 0); auto* p = findParam(setHeightOvFn, STR("InHeightOverride")); if (p) *reinterpret_cast<float*>(hp.data() + p->GetOffset_Internal()) = 900.0f; rootSizeBox->ProcessEvent(setHeightOvFn, hp.data()); }
-            // SetClipping(ClipToBounds) Ã¢â‚¬â€ clip overflow content to SizeBox bounds
-            auto* setClipFn = rootSizeBox->GetFunctionByNameInChain(STR("SetClipping"));
-            if (setClipFn) { int sz = setClipFn->GetParmsSize(); std::vector<uint8_t> cp(sz, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp.data() + p->GetOffset_Internal()) = 1; /* ClipToBounds */ rootSizeBox->ProcessEvent(setClipFn, cp.data()); }
-
-            // Root Overlay (stacks vignette image behind content) Ã¢â‚¬â€ child of SizeBox
-            FStaticConstructObjectParameters rootOlP(overlayClass, outer);
-            UObject* rootOverlay = UObjectGlobals::StaticConstructObject(rootOlP);
-            if (!rootOverlay) return;
-            // Add overlay as SizeBox content
-            auto* setSbContentFn = rootSizeBox->GetFunctionByNameInChain(STR("SetContent"));
-            if (setSbContentFn)
-            {
-                auto* pC = findParam(setSbContentFn, STR("Content"));
-                int sz = setSbContentFn->GetParmsSize();
-                std::vector<uint8_t> sc(sz, 0);
-                if (pC) *reinterpret_cast<UObject**>(sc.data() + pC->GetOffset_Internal()) = rootOverlay;
-                rootSizeBox->ProcessEvent(setSbContentFn, sc.data());
-            }
-
-            // Layer 0: Vignette border image (tinted dark blue)
-            UObject* texVignette = findTexture2DByName(L"T_UI_Waypoint_Vignette_White_Optimized");
-            if (texVignette)
-            {
-                FStaticConstructObjectParameters vigP(imageClass, outer);
-                UObject* vigImg = UObjectGlobals::StaticConstructObject(vigP);
-                if (vigImg)
-                {
-                    umgSetBrush(vigImg, texVignette, setBrushFn);
-                    // Tint to dark blue
-                    auto* setColorFn = vigImg->GetFunctionByNameInChain(STR("SetColorAndOpacity"));
-                    if (setColorFn)
-                    {
-                        auto* pColor = findParam(setColorFn, STR("InColorAndOpacity"));
-                        if (pColor)
-                        {
-                            int sz = setColorFn->GetParmsSize();
-                            std::vector<uint8_t> cb(sz, 0);
-                            auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
-                            c[0] = 0.059f; c[1] = 0.071f; c[2] = 0.110f; c[3] = 0.92f;
-                            vigImg->ProcessEvent(setColorFn, cb.data());
-                        }
-                    }
-                    addToOverlay(rootOverlay, vigImg);
-                    m_cfgVignetteImage = vigImg;
-                }
-            }
-            else
-                VLOG(STR("[MoriaCppMod] [CFG] Vignette texture not found, skipping border\n"));
-
-            // Layer 1: Transparent Border with padding (content container)
-            FStaticConstructObjectParameters borderP(borderClass, outer);
-            UObject* rootBorder = UObjectGlobals::StaticConstructObject(borderP);
-            if (!rootBorder) return;
-            auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
-            if (setBrushColorFn)
-            {
-                auto* pColor = findParam(setBrushColorFn, STR("InBrushColor"));
-                if (pColor)
-                {
-                    int sz = setBrushColorFn->GetParmsSize();
-                    std::vector<uint8_t> cb(sz, 0);
-                    // Semi-transparent dark blue background (50% opacity)
-                    auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
-                    c[0] = 0.059f; c[1] = 0.071f; c[2] = 0.110f; c[3] = 0.50f;
-                    rootBorder->ProcessEvent(setBrushColorFn, cb.data());
-                }
-            }
-            auto* setBorderPadFn = rootBorder->GetFunctionByNameInChain(STR("SetPadding"));
-            if (setBorderPadFn)
-            {
-                auto* pPad = findParam(setBorderPadFn, STR("InPadding"));
-                if (pPad)
-                {
-                    int sz = setBorderPadFn->GetParmsSize();
-                    std::vector<uint8_t> pp(sz, 0);
-                    auto* m = reinterpret_cast<float*>(pp.data() + pPad->GetOffset_Internal());
-                    m[0] = 40.0f; m[1] = 28.0f; m[2] = 40.0f; m[3] = 28.0f;
-                    rootBorder->ProcessEvent(setBorderPadFn, pp.data());
-                }
-            }
-            // Add border to overlay layer 1
-            addToOverlay(rootOverlay, rootBorder);
-
-            // Main VBox inside the border
-            FStaticConstructObjectParameters mainVP(vboxClass, outer);
-            UObject* mainVBox = UObjectGlobals::StaticConstructObject(mainVP);
-            if (!mainVBox) return;
-            auto* setContentFn = rootBorder->GetFunctionByNameInChain(STR("SetContent"));
-            if (setContentFn)
-            {
-                auto* pContent = findParam(setContentFn, STR("Content"));
-                int sz = setContentFn->GetParmsSize();
-                std::vector<uint8_t> sc(sz, 0);
-                if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = mainVBox;
-                rootBorder->ProcessEvent(setContentFn, sc.data());
-            }
-
-            // Helper: create TextBlock with optional font size (0 = default)
-            auto makeTB = [&](const std::wstring& text, float r, float g, float b, float a, int32_t fontSize = 0) -> UObject* {
-                FStaticConstructObjectParameters tbP(textBlockClass, outer);
-                UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
-                if (!tb) return nullptr;
-                umgSetText(tb, text);
-                umgSetTextColor(tb, r, g, b, a);
-                if (fontSize > 0) umgSetFontSize(tb, fontSize);
-                return tb;
-            };
-
-            // Helper: add TextBlock to a VBox and return it
-            auto addTB = [&](UObject* vbox, const std::wstring& text, float r, float g, float b, float a, int32_t fontSize = 0) -> UObject* {
-                UObject* tb = makeTB(text, r, g, b, a, fontSize);
-                if (tb) addToVBox(vbox, tb);
-                return tb;
-            };
-
-            // Helper: add child to a ScrollBox (uses UPanelWidget::AddChild)
-            auto addToScrollBox = [&](UObject* scrollBox, UObject* child) {
-                addChildToPanel(scrollBox, STR("AddChild"), child);
-            };
-
-            // Title
-            addTB(mainVBox, Loc::get("ui.config_title"), 0.78f, 0.86f, 1.0f, 1.0f, 36);
-            addTB(mainVBox, L"--------------------------------------------", 0.31f, 0.51f, 0.78f, 0.4f, 20);
-
-            // Tab bar: HBox with texture-backed tabs
-            UObject* texP1 = findTexture2DByName(L"T_UI_Btn_P1_Up");
-            UObject* texP2 = findTexture2DByName(L"T_UI_Btn_P2_Up");
-            if (!texP1) texP1 = findTexture2DByName(L"T_UI_Btn_HUD_EpicAB_Focused");   // fallback
-            if (!texP2) texP2 = findTexture2DByName(L"T_UI_Btn_HUD_EpicAB_Disabled");   // fallback
-            m_cfgTabActiveTexture = texP1;
-            m_cfgTabInactiveTexture = texP2;
-
-            {
-                FStaticConstructObjectParameters hbP(hboxClass, outer);
-                UObject* tabHBox = UObjectGlobals::StaticConstructObject(hbP);
-                if (tabHBox)
-                {
-                    addToVBox(mainVBox, tabHBox);
-                    const wchar_t* tabNames[3] = {CONFIG_TAB_NAMES[0], CONFIG_TAB_NAMES[1], CONFIG_TAB_NAMES[2]};
-
-                    for (int t = 0; t < 3; t++)
-                    {
-                        // Each tab = Overlay { UImage(texture) + TextBlock(label) }
-                        FStaticConstructObjectParameters tolP(overlayClass, outer);
-                        UObject* tabOl = UObjectGlobals::StaticConstructObject(tolP);
-                        if (!tabOl) continue;
-
-                        // Layer 0: tab background image (sized to cover text)
-                        FStaticConstructObjectParameters imgP(imageClass, outer);
-                        UObject* tabImg = UObjectGlobals::StaticConstructObject(imgP);
-                        m_cfgTabImages[t] = tabImg;
-                        if (tabImg)
-                        {
-                            UObject* tex = (t == 0) ? texP1 : texP2; // tab 0 active by default
-                            if (tex) umgSetBrushNoMatch(tabImg, tex, setBrushFn);
-                            umgSetBrushSize(tabImg, 420.0f, 66.0f);
-                            addToOverlay(tabOl, tabImg);
-                        }
-
-                        // Layer 1: tab label text
-                        UObject* tabLabel = makeTB(tabNames[t],
-                                                   (t == 0) ? 0.78f : 0.47f,
-                                                   (t == 0) ? 0.86f : 0.55f,
-                                                   (t == 0) ? 1.0f  : 0.71f,
-                                                   (t == 0) ? 1.0f  : 0.7f,
-                                                   28);
-                        m_cfgTabLabels[t] = tabLabel;
-                        if (tabLabel)
-                        {
-                            UObject* labelSlot = addToOverlay(tabOl, tabLabel);
-                            if (labelSlot)
-                            {
-                                auto* setHA = labelSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                if (setHA) { int s2 = setHA->GetParmsSize(); std::vector<uint8_t> h(s2, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; labelSlot->ProcessEvent(setHA, h.data()); }
-                                auto* setVA = labelSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; labelSlot->ProcessEvent(setVA, v.data()); }
-                            }
-                        }
-
-                        // Add tab overlay to HBox
-                        addToHBox(tabHBox, tabOl);
-                    }
-                }
-            }
-
-            addTB(mainVBox, L"-------------------------------------------------------------", 0.31f, 0.51f, 0.78f, 0.4f, 20);
-
-            // Helper: configure ScrollBox to always show scrollbar
-            auto configureScrollBox = [&](UObject* scrollBox) {
-                auto* fn = scrollBox->GetFunctionByNameInChain(STR("SetAlwaysShowScrollbar"));
-                if (fn) {
-                    auto* p = findParam(fn, STR("NewAlwaysShowScrollbar"));
-                    int sz = fn->GetParmsSize();
-                    std::vector<uint8_t> buf(sz, 0);
-                    if (p) *reinterpret_cast<bool*>(buf.data() + p->GetOffset_Internal()) = true;
-                    scrollBox->ProcessEvent(fn, buf.data());
-                }
-            };
-
-            // Tab 0: Optional Mods (in ScrollBox)
-            {
-                FStaticConstructObjectParameters sbP(scrollBoxClass, outer);
-                UObject* scrollBox = UObjectGlobals::StaticConstructObject(sbP);
-                m_cfgScrollBoxes[0] = scrollBox;
-
-                FStaticConstructObjectParameters vP(vboxClass, outer);
-                UObject* tab0VBox = UObjectGlobals::StaticConstructObject(vP);
-                m_cfgTabContent[0] = tab0VBox;
-
-                if (scrollBox && tab0VBox)
-                {
-                    configureScrollBox(scrollBox);
-                    addToScrollBox(scrollBox, tab0VBox);
-                    { UObject* slot = addToVBox(mainVBox, scrollBox); if (slot) umgSetSlotSize(slot, 1.0f, 1); /* Fill */ }
-
-                    addTB(tab0VBox, Loc::get("ui.cheat_toggles"), 0.78f, 0.86f, 1.0f, 1.0f, 32);
-
-                    // Free Build checkbox row: HBox { Overlay{checkbox+check} + TextBlock }
-                    {
-                        FStaticConstructObjectParameters hbP(hboxClass, outer);
-                        UObject* cbRow = UObjectGlobals::StaticConstructObject(hbP);
-                        if (cbRow)
-                        {
-                            addToVBox(tab0VBox, cbRow);
-
-                            // Checkbox overlay: background + check mark
-                            FStaticConstructObjectParameters olP(overlayClass, outer);
-                            UObject* cbOl = UObjectGlobals::StaticConstructObject(olP);
-                            if (cbOl)
-                            {
-                                // Layer 0: checkbox background (always visible)
-                                UObject* texCB = findTexture2DByName(L"T_UI_Icon_Checkbox_DiamondBG");
-                                if (texCB)
-                                {
-                                    FStaticConstructObjectParameters imgP2(imageClass, outer);
-                                    UObject* cbBgImg = UObjectGlobals::StaticConstructObject(imgP2);
-                                    if (cbBgImg)
-                                    {
-                                        umgSetBrushNoMatch(cbBgImg, texCB, setBrushFn);
-                                        umgSetBrushSize(cbBgImg, 48.0f, 48.0f);
-                                        addToOverlay(cbOl, cbBgImg);
-                                    }
-                                }
-                                // Layer 1: check mark (shown/hidden based on state)
-                                UObject* texCheck = findTexture2DByName(L"T_UI_Icon_Check");
-                                if (texCheck)
-                                {
-                                    FStaticConstructObjectParameters imgP2(imageClass, outer);
-                                    UObject* checkImg = UObjectGlobals::StaticConstructObject(imgP2);
-                                    if (checkImg)
-                                    {
-                                        umgSetBrushNoMatch(checkImg, texCheck, setBrushFn);
-                                        umgSetBrushSize(checkImg, 48.0f, 48.0f);
-                                        addToOverlay(cbOl, checkImg);
-                                        m_cfgFreeBuildCheckImg = checkImg;
-                                        // Start hidden (will be shown by updateConfigFreeBuild)
-                                        auto* visFn = checkImg->GetFunctionByNameInChain(STR("SetVisibility"));
-                                        if (visFn) { uint8_t p[8]{}; p[0] = 1; checkImg->ProcessEvent(visFn, p); }
-                                    }
-                                }
-
-                                // Add checkbox overlay to HBox
-                                addToHBox(cbRow, cbOl);
-                            }
-
-                            // Label: "Free Build" text next to checkbox
-                            UObject* fbLabel = makeTB(Loc::get("ui.free_build"), 0.55f, 0.55f, 0.55f, 1.0f, 26);
-                            m_cfgFreeBuildLabel = fbLabel;
-                            if (fbLabel)
-                            {
-                                addToHBox(cbRow, fbLabel);
-                            }
-                        }
-                    }
-
-                    addTB(tab0VBox, Loc::get("ui.free_build_desc"), 0.47f, 0.55f, 0.71f, 0.6f, 24);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 12);
-
-                    // No Collision (Flying) checkbox row: HBox { Overlay{checkbox+check} + TextBlock }
-                    {
-                        FStaticConstructObjectParameters hbP(hboxClass, outer);
-                        UObject* ncRow = UObjectGlobals::StaticConstructObject(hbP);
-                        if (ncRow)
-                        {
-                            addToVBox(tab0VBox, ncRow);
-
-                            // Checkbox overlay: background + check mark
-                            FStaticConstructObjectParameters olP(overlayClass, outer);
-                            UObject* ncOl = UObjectGlobals::StaticConstructObject(olP);
-                            if (ncOl)
-                            {
-                                // Layer 0: checkbox background (always visible)
-                                UObject* texCB = findTexture2DByName(L"T_UI_Icon_Checkbox_DiamondBG");
-                                if (texCB)
-                                {
-                                    FStaticConstructObjectParameters imgP2(imageClass, outer);
-                                    UObject* cbBgImg = UObjectGlobals::StaticConstructObject(imgP2);
-                                    if (cbBgImg)
-                                    {
-                                        umgSetBrushNoMatch(cbBgImg, texCB, setBrushFn);
-                                        umgSetBrushSize(cbBgImg, 48.0f, 48.0f);
-                                        addToOverlay(ncOl, cbBgImg);
-                                    }
-                                }
-                                // Layer 1: check mark (shown/hidden based on state)
-                                UObject* texCheck = findTexture2DByName(L"T_UI_Icon_Check");
-                                if (texCheck)
-                                {
-                                    FStaticConstructObjectParameters imgP2(imageClass, outer);
-                                    UObject* checkImg = UObjectGlobals::StaticConstructObject(imgP2);
-                                    if (checkImg)
-                                    {
-                                        umgSetBrushNoMatch(checkImg, texCheck, setBrushFn);
-                                        umgSetBrushSize(checkImg, 48.0f, 48.0f);
-                                        addToOverlay(ncOl, checkImg);
-                                        m_cfgNoCollisionCheckImg = checkImg;
-                                        // Start hidden (will be shown by updateConfigNoCollision)
-                                        auto* visFn = checkImg->GetFunctionByNameInChain(STR("SetVisibility"));
-                                        if (visFn) { uint8_t p[8]{}; p[0] = 1; checkImg->ProcessEvent(visFn, p); }
-                                    }
-                                }
-
-                                // Add checkbox overlay to HBox
-                                addToHBox(ncRow, ncOl);
-                            }
-
-                            // Label: "No Collision (Flying)" text next to checkbox
-                            UObject* ncLabel = makeTB(Loc::get("ui.no_collision"), 0.55f, 0.55f, 0.55f, 1.0f, 26);
-                            m_cfgNoCollisionLabel = ncLabel;
-                            if (ncLabel)
-                            {
-                                addToHBox(ncRow, ncLabel);
-                            }
-                        }
-                    }
-
-                    addTB(tab0VBox, Loc::get("ui.no_collision_desc"), 0.47f, 0.55f, 0.71f, 0.6f, 24);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 12);
-
-                    // "Unlock All Recipes" button with T_UI_Btn_P2_Active texture
-                    {
-                        UObject* texBtn = findTexture2DByName(L"T_UI_Btn_P2_Active");
-                        FStaticConstructObjectParameters olP(overlayClass, outer);
-                        UObject* btnOl = UObjectGlobals::StaticConstructObject(olP);
-                        if (btnOl)
-                        {
-                            if (texBtn)
-                            {
-                                // Layer 0: button background image
-                                FStaticConstructObjectParameters imgP2(imageClass, outer);
-                                UObject* btnImg = UObjectGlobals::StaticConstructObject(imgP2);
-                                if (btnImg)
-                                {
-                                    umgSetBrushNoMatch(btnImg, texBtn, setBrushFn);
-                                    umgSetBrushSize(btnImg, 420.0f, 66.0f);
-                                    addToOverlay(btnOl, btnImg);
-                                    m_cfgUnlockBtnImg = btnImg;
-                                }
-                            }
-                            {
-                                // Layer 1: "Unlock All Recipes" label
-                                UObject* btnLabel = makeTB(Loc::get("ui.unlock_all_recipes"), 0.86f, 0.90f, 1.0f, 0.95f, 26);
-                                if (btnLabel)
-                                {
-                                    // Center the label on the button
-                                    UObject* labelSlot = addToOverlay(btnOl, btnLabel);
-                                    if (labelSlot)
-                                    {
-                                        auto* setHA = labelSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                        if (setHA) { int s2 = setHA->GetParmsSize(); std::vector<uint8_t> h(s2, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; labelSlot->ProcessEvent(setHA, h.data()); }
-                                        auto* setVA = labelSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                        if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; labelSlot->ProcessEvent(setVA, v.data()); }
-                                    }
-                                }
-                            }
-                            // Add button to VBox center-justified
-                            {
-                                UObject* btnSlot = addToVBox(tab0VBox, btnOl);
-                                if (btnSlot)
-                                {
-                                    // Center-justify the button
-                                    auto* setHA = btnSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                    if (setHA) { int s2 = setHA->GetParmsSize(); std::vector<uint8_t> h(s2, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; /* HAlign_Center */ btnSlot->ProcessEvent(setHA, h.data()); }
-                                }
-                            }
-                        }
-                    }
-
-                    // Pad tab 0 content Ã¢â‚¬â€ add spacer lines so it visually fills the scroll area like other tabs
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 32);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 32);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 32);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 32);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 32);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 32);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 32);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 32);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 32);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 32);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 32);
-                    addTB(tab0VBox, L"", 0.0f, 0.0f, 0.0f, 0.0f, 32);
-                }
-            }
-
-            // Tab 1: Key Mapping (in ScrollBox)
-            {
-                FStaticConstructObjectParameters sbP(scrollBoxClass, outer);
-                UObject* scrollBox = UObjectGlobals::StaticConstructObject(sbP);
-                m_cfgScrollBoxes[1] = scrollBox;
-
-                FStaticConstructObjectParameters vP(vboxClass, outer);
-                UObject* tab1VBox = UObjectGlobals::StaticConstructObject(vP);
-                m_cfgTabContent[1] = tab1VBox;
-
-                if (scrollBox && tab1VBox)
-                {
-                    configureScrollBox(scrollBox);
-                    addToScrollBox(scrollBox, tab1VBox);
-                    { UObject* slot = addToVBox(mainVBox, scrollBox); if (slot) umgSetSlotSize(slot, 1.0f, 1); /* Fill */ }
-
-                    // Section heading background texture
-                    UObject* texSectionBg = findTexture2DByName(L"T_UI_Map_LocationName_HUD");
-                    // Key box background texture
-                    UObject* texKeyBox = findTexture2DByName(L"T_UI_Btn_P1_Active");
-
-                    const wchar_t* lastSection = nullptr;
-                    for (int b = 0; b < BIND_COUNT; b++)
-                    {
-                        // Skip reserved/placeholder entries (no visible action, clutters UI)
-                        if (wcscmp(s_bindings[b].label, L"Reserved") == 0) continue;
-
-                        // Section header with background texture
-                        if (!lastSection || wcscmp(lastSection, s_bindings[b].section) != 0)
-                        {
-                            lastSection = s_bindings[b].section;
-                            if (texSectionBg)
-                            {
-                                FStaticConstructObjectParameters solP(overlayClass, outer);
-                                UObject* secOl = UObjectGlobals::StaticConstructObject(solP);
-                                if (secOl)
-                                {
-                                    // Layer 0: background image
-                                    FStaticConstructObjectParameters imgP2(imageClass, outer);
-                                    UObject* secBgImg = UObjectGlobals::StaticConstructObject(imgP2);
-                                    if (secBgImg)
-                                    {
-                                        umgSetBrushNoMatch(secBgImg, texSectionBg, setBrushFn);
-                                        umgSetBrushSize(secBgImg, 1300.0f, 40.0f);
-                                        addToOverlay(secOl, secBgImg);
-                                    }
-                                    // Layer 1: section name text
-                                    UObject* secLabel = makeTB(std::wstring(lastSection), 0.78f, 0.86f, 1.0f, 1.0f, 32);
-                                    if (secLabel)
-                                    {
-                                        umgSetBold(secLabel);
-                                        // Center vertically, left-align
-                                        UObject* secSlot = addToOverlay(secOl, secLabel);
-                                        if (secSlot)
-                                        {
-                                            auto* setVA = secSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                            if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; secSlot->ProcessEvent(setVA, v.data()); }
-                                        }
-                                    }
-                                    addToVBox(tab1VBox, secOl);
-                                }
-                            }
-                            else
-                            {
-                                addTB(tab1VBox, std::wstring(lastSection), 0.78f, 0.86f, 1.0f, 1.0f, 32);
-                            }
-                        }
-
-                        // Key binding row: HBox { Label(left) + Overlay{KeyBoxImg+KeyText}(right) }
-                        FStaticConstructObjectParameters rowHbP(hboxClass, outer);
-                        UObject* rowHBox = UObjectGlobals::StaticConstructObject(rowHbP);
-                        if (rowHBox)
-                        {
-                            // Left: binding label
-                            UObject* bindLabel = makeTB(std::wstring(s_bindings[b].label), 0.86f, 0.90f, 0.96f, 0.85f, 26);
-                            if (bindLabel)
-                            {
-                                // Make label fill available space (push key box to right)
-                                UObject* labelSlot = addToHBox(rowHBox, bindLabel);
-                                if (labelSlot)
-                                {
-                                    auto* setFill = labelSlot->GetFunctionByNameInChain(STR("SetSize"));
-                                    if (setFill) { int s2 = setFill->GetParmsSize(); std::vector<uint8_t> fp(s2, 0); auto* p = findParam(setFill, STR("InSize")); if (p) { *reinterpret_cast<float*>(fp.data() + p->GetOffset_Internal()) = 1.0f; fp[p->GetOffset_Internal() + 4] = 1; /* SizeRule=Fill */ } labelSlot->ProcessEvent(setFill, fp.data()); }
-                                }
-                            }
-
-                            // Right: key box = Overlay { Image(key box bg) + TextBlock(key name) }
-                            FStaticConstructObjectParameters kbOlP(overlayClass, outer);
-                            UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
-                            if (kbOl)
-                            {
-                                if (texKeyBox)
-                                {
-                                    // Layer 0: key box background
-                                    FStaticConstructObjectParameters imgP2(imageClass, outer);
-                                    UObject* kbBgImg = UObjectGlobals::StaticConstructObject(imgP2);
-                                    if (kbBgImg)
-                                    {
-                                        umgSetBrushNoMatch(kbBgImg, texKeyBox, setBrushFn);
-                                        umgSetBrushSize(kbBgImg, 220.0f, 42.0f);
-                                        addToOverlay(kbOl, kbBgImg);
-                                    }
-                                }
-                                {
-                                    // Layer 1: key name text
-                                    UObject* kbLabel = makeTB(keyName(s_bindings[b].key), 1.0f, 1.0f, 1.0f, 1.0f, 24);
-                                    m_cfgKeyBoxLabels[b] = kbLabel;
-                                    if (kbLabel)
-                                    {
-                                        // Center text on key box
-                                        UObject* kbSlot = addToOverlay(kbOl, kbLabel);
-                                        if (kbSlot)
-                                        {
-                                            auto* setHA = kbSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                            if (setHA) { int s2 = setHA->GetParmsSize(); std::vector<uint8_t> h(s2, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; kbSlot->ProcessEvent(setHA, h.data()); }
-                                            auto* setVA = kbSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                            if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; kbSlot->ProcessEvent(setVA, v.data()); }
-                                        }
-                                    }
-                                }
-                                // Add key box overlay to row HBox
-                                addToHBox(rowHBox, kbOl);
-                            }
-
-                            addToVBox(tab1VBox, rowHBox);
-                        }
-                    }
-
-                    // Modifier key row (same layout as regular rows)
-                    {
-                        FStaticConstructObjectParameters rowHbP2(hboxClass, outer);
-                        UObject* modRow = UObjectGlobals::StaticConstructObject(rowHbP2);
-                        if (modRow)
-                        {
-                            // Left: "Set Modifier Key" label
-                            UObject* modLabel = makeTB(Loc::get("ui.set_modifier_key_short"), 0.86f, 0.90f, 0.96f, 0.85f, 26);
-                            if (modLabel)
-                            {
-                                UObject* labelSlot = addToHBox(modRow, modLabel);
-                                if (labelSlot)
-                                {
-                                    auto* setFill = labelSlot->GetFunctionByNameInChain(STR("SetSize"));
-                                    if (setFill) { int s2 = setFill->GetParmsSize(); std::vector<uint8_t> fp(s2, 0); auto* p = findParam(setFill, STR("InSize")); if (p) { *reinterpret_cast<float*>(fp.data() + p->GetOffset_Internal()) = 1.0f; fp[p->GetOffset_Internal() + 4] = 1; /* SizeRule=Fill */ } labelSlot->ProcessEvent(setFill, fp.data()); }
-                                }
-                            }
-
-                            // Right: modifier key box
-                            FStaticConstructObjectParameters kbOlP2(overlayClass, outer);
-                            UObject* modKbOl = UObjectGlobals::StaticConstructObject(kbOlP2);
-                            if (modKbOl)
-                            {
-                                UObject* texKeyBox2 = findTexture2DByName(L"T_UI_Btn_P1_Active");
-                                if (texKeyBox2)
-                                {
-                                    FStaticConstructObjectParameters imgP2(imageClass, outer);
-                                    UObject* kbBgImg = UObjectGlobals::StaticConstructObject(imgP2);
-                                    if (kbBgImg)
-                                    {
-                                        umgSetBrushNoMatch(kbBgImg, texKeyBox2, setBrushFn);
-                                        umgSetBrushSize(kbBgImg, 220.0f, 42.0f);
-                                        addToOverlay(modKbOl, kbBgImg);
-                                    }
-                                }
-                                {
-                                    UObject* modKbLabel = makeTB(std::wstring(modifierName(s_modifierVK)), 1.0f, 1.0f, 1.0f, 1.0f, 24);
-                                    m_cfgModBoxLabel = modKbLabel;
-                                    if (modKbLabel)
-                                    {
-                                        UObject* modKbSlot = addToOverlay(modKbOl, modKbLabel);
-                                        if (modKbSlot)
-                                        {
-                                            auto* setHA = modKbSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                            if (setHA) { int s2 = setHA->GetParmsSize(); std::vector<uint8_t> h(s2, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; modKbSlot->ProcessEvent(setHA, h.data()); }
-                                            auto* setVA = modKbSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                            if (setVA) { int s2 = setVA->GetParmsSize(); std::vector<uint8_t> v(s2, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; modKbSlot->ProcessEvent(setVA, v.data()); }
-                                        }
-                                    }
-                                }
-                                addToHBox(modRow, modKbOl);
-                            }
-
-                            addToVBox(tab1VBox, modRow);
-                        }
-                    }
-
-                    // Start hidden (ScrollBox hides, not inner VBox)
-                    auto* visFn = scrollBox->GetFunctionByNameInChain(STR("SetVisibility"));
-                    if (visFn) { uint8_t p[8]{}; p[0] = 1; scrollBox->ProcessEvent(visFn, p); }
-                }
-            }
-
-            // Tab 2: Hide Environment (in ScrollBox)
-            {
-                FStaticConstructObjectParameters sbP(scrollBoxClass, outer);
-                UObject* scrollBox = UObjectGlobals::StaticConstructObject(sbP);
-                m_cfgScrollBoxes[2] = scrollBox;
-
-                FStaticConstructObjectParameters vP(vboxClass, outer);
-                UObject* tab2VBox = UObjectGlobals::StaticConstructObject(vP);
-                m_cfgTabContent[2] = tab2VBox;
-
-                if (scrollBox && tab2VBox)
-                {
-                    configureScrollBox(scrollBox);
-                    addToScrollBox(scrollBox, tab2VBox);
-                    { UObject* slot = addToVBox(mainVBox, scrollBox); if (slot) umgSetSlotSize(slot, 1.0f, 1); /* Fill */ }
-                    m_cfgRemovalVBox = tab2VBox;
-
-                    int count = s_config.removalCount.load();
-                    m_cfgRemovalHeader = addTB(tab2VBox, Loc::get("ui.saved_removals_prefix") + std::to_wstring(count) + Loc::get("ui.saved_removals_suffix"),
-                                               0.78f, 0.86f, 1.0f, 1.0f, 32);
-                    m_cfgLastRemovalCount = count;
-
-                    // Populate removal entries with danger icons
-                    rebuildRemovalList();
-
-                    // Start hidden
-                    auto* visFn = scrollBox->GetFunctionByNameInChain(STR("SetVisibility"));
-                    if (visFn) { uint8_t p[8]{}; p[0] = 1; scrollBox->ProcessEvent(visFn, p); }
-                }
-            }
-
-            // Add to viewport
-            auto* addToViewportFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
-            if (addToViewportFn)
-            {
-                auto* pZOrder = findParam(addToViewportFn, STR("ZOrder"));
-                int sz = addToViewportFn->GetParmsSize();
-                std::vector<uint8_t> vp(sz, 0);
-                if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 200;
-                userWidget->ProcessEvent(addToViewportFn, vp.data());
-            }
-
-            // Get viewport size for uiScale
-            m_screen.refresh(findPlayerController());
-            int32_t viewW = m_screen.viewW, viewH = m_screen.viewH;
-            float uiScale = m_screen.uiScale; // minimum scale for readability at sub-1080p
-
-            // Render scale 1.0 -- engine DPI handles resolution scaling via Slate
-            if (rootSizeBox) umgSetRenderScale(rootSizeBox, 1.0f, 1.0f);
-
-            // Set desired size in Slate units (engine DPI scales to physical pixels)
-            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
-            if (setDesiredSizeFn)
-            {
-                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
-                if (pSize)
-                {
-                    int sz = setDesiredSizeFn->GetParmsSize();
-                    std::vector<uint8_t> sb(sz, 0);
-                    auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
-                    v[0] = 1400.0f; v[1] = 900.0f;
-                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
-                }
-            }
-
-            auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
-            if (setAlignFn)
-            {
-                auto* pAlign = findParam(setAlignFn, STR("Alignment"));
-                if (pAlign)
-                {
-                    int sz = setAlignFn->GetParmsSize();
-                    std::vector<uint8_t> al(sz, 0);
-                    auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
-                    v[0] = 0.5f; v[1] = 0.5f; // centered
-                    userWidget->ProcessEvent(setAlignFn, al.data());
-                }
-            }
-
-            // Position: centered, slight Y offset
-            {
-                float posX = m_screen.fracToPixelX(0.5f);
-                float posY = m_screen.fracToPixelY(0.5f) - 100.0f;
-                setWidgetPosition(userWidget, posX, posY, true);
-            }
-
-            // Start hidden
-            auto* setVisFn = userWidget->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (setVisFn) { uint8_t p[8]{}; p[0] = 1; userWidget->ProcessEvent(setVisFn, p); }
-
-            m_configWidget = userWidget;
-            updateConfigFreeBuild();
-            updateConfigNoCollision();
-            VLOG(STR("[MoriaCppMod] [CFG] Config UMG widget created\n"));
-        }
 
         // Ã¢â€â‚¬Ã¢â€â‚¬ Mod Controller Toolbar (4x3, lower-right) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
@@ -3285,7 +2329,6 @@
             UObject* texBlankRect = nullptr;
             UObject* texRotation = nullptr;     // T_UI_Refresh Ã¢â‚¬â€ MC slot 0 (Rotation)
             UObject* texTarget = nullptr;       // T_UI_Search Ã¢â‚¬â€ MC slot 1 (Target)
-            UObject* texToolbarSwap = nullptr;  // Swap-Bag_Icon Ã¢â‚¬â€ MC slot 4 (Toolbar Swap)
             UObject* texRemoveTarget = nullptr; // T_UI_Icon_GoodPlace2 Ã¢â‚¬â€ MC slot 8 (Remove Target)
             UObject* texUndoLast = nullptr;     // T_UI_Alert_BakedIcon Ã¢â‚¬â€ MC slot 9 (Undo Last)
             UObject* texRemoveAll = nullptr;    // T_UI_Icon_Filled_GoodPlace2 Ã¢â‚¬â€ MC slot 10 (Remove All)
@@ -3307,7 +2350,6 @@
                     else if (name == STR("T_UI_Icon_Input_Blank_Rect")) texBlankRect = t;
                     else if (name == STR("T_UI_Refresh")) texRotation = t;
                     else if (name == STR("T_UI_Search")) texTarget = t;
-                    else if (name == STR("Swap-Bag_Icon")) texToolbarSwap = t;
                     else if (name == STR("T_UI_Icon_GoodPlace2")) texRemoveTarget = t;
                     else if (name == STR("T_UI_Alert_BakedIcon")) texUndoLast = t;
                     else if (name == STR("T_UI_Icon_Filled_GoodPlace2")) texRemoveAll = t;
@@ -3330,7 +2372,6 @@
             // (some textures may not be loaded yet; StaticFindObject with full path can locate them)
             struct TexFallback { UObject*& ref; const TCHAR* path; const wchar_t* name; };
             TexFallback fallbacks[] = {
-                {texToolbarSwap, STR("/Game/UI/textures/Interactables/Swap-Bag_Icon.Swap-Bag_Icon"), L"Swap-Bag_Icon"},
                 {texRemoveTarget, STR("/Game/UI/textures/_Icons/Waypoints/T_UI_Icon_GoodPlace2.T_UI_Icon_GoodPlace2"), L"T_UI_Icon_GoodPlace2"},
                 {texUndoLast, STR("/Game/UI/textures/_Shared/Icons/T_UI_Alert_BakedIcon.T_UI_Alert_BakedIcon"), L"T_UI_Alert_BakedIcon"},
                 {texRemoveAll, STR("/Game/UI/textures/_Icons/Waypoints/FilledIcons/T_UI_Icon_Filled_GoodPlace2.T_UI_Icon_Filled_GoodPlace2"), L"T_UI_Icon_Filled_GoodPlace2"},
@@ -3622,12 +2663,12 @@
             {
                 UObject* mcSlotTextures[MC_SLOTS] = {
                     texRotation, texTarget, texStability, texHideChar,         // row 0: Rotation, Target, StabilityCheck, SuperDwarf
-                    texToolbarSwap, texSnapToggle, nullptr, nullptr,        // row 1: ToolbarSwap, SnapToggle, Empty6, Empty7
+                    nullptr, texSnapToggle, nullptr, nullptr,               // row 1: Empty, SnapToggle, Empty6, Empty7
                     texRemoveTarget, texUndoLast, texRemoveAll, texSettings  // row 2: RemoveTarget, UndoLast, RemoveAll, Config
                 };
                 const wchar_t* mcSlotNames[MC_SLOTS] = {
                     L"T_UI_Refresh", L"T_UI_Search", L"T_UI_Icon_Craft", L"T_UI_Eye_Open",
-                    L"Swap-Bag_Icon", L"T_UI_Icon_Build", L"Empty6", L"Empty7",
+                    L"Empty4", L"T_UI_Icon_Build", L"Empty6", L"Empty7",
                     L"T_UI_Icon_GoodPlace2", L"T_UI_Alert_BakedIcon", L"T_UI_Icon_Filled_GoodPlace2", L"T_UI_Icon_Settings"
                 };
                 for (int i = 0; i < MC_SLOTS; i++)
@@ -3835,5 +2876,1502 @@
             showOnScreen(Loc::get("msg.mod_controller_created").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [MC] === Mod Controller bar creation complete ({}x{}) ===\n"),
                                             mcTotalW, mcTotalH);
+        }
+
+        // ── Settings Panel (F12) ──────────────────────────────────────────────
+        // Modal settings panel: tabbed left column (Key Bindings, Game Options,
+        // Environment), scrollable keybinding rows on right with checkbox + label
+        // + key capture button.  Enters UI input mode (mouse cursor).
+
+        void toggleFontTestPanel()
+        {
+            // Toggle off: remove existing panel and restore game input
+            if (m_ftVisible && m_fontTestWidget && isWidgetAlive(m_fontTestWidget))
+            {
+                auto* fn = m_fontTestWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
+                if (fn) safeProcessEvent(m_fontTestWidget, fn, nullptr);
+                m_fontTestWidget = nullptr;
+                m_ftVisible = false;
+                for (auto& t : m_ftTabImages) t = nullptr;
+                for (auto& t : m_ftTabLabels) t = nullptr;
+                m_ftTabActiveTexture = nullptr;
+                m_ftTabInactiveTexture = nullptr;
+                m_ftSelectedTab = 0;
+                m_ftScrollBox = nullptr;
+                for (auto& c : m_ftTabContent) c = nullptr;
+                for (auto& l : m_ftKeyBoxLabels) l = nullptr;
+                for (auto& c : m_ftCheckImages) c = nullptr;
+                m_ftModBoxLabel = nullptr;
+                m_ftFreeBuildCheckImg = nullptr;
+                m_ftFreeBuildLabel = nullptr;
+                m_ftFreeBuildKeyLabel = nullptr;
+                m_ftNoCollisionCheckImg = nullptr;
+                m_ftNoCollisionLabel = nullptr;
+                m_ftNoCollisionKeyLabel = nullptr;
+                m_ftRemovalVBox = nullptr;
+                m_ftRemovalHeader = nullptr;
+                m_ftLastRemovalCount = -1;
+                if (s_capturingBind >= 0) { s_capturingBind = -1; }
+                setInputModeGame();
+                showOnScreen(L"Settings panel closed", 2.0f, 0.8f, 0.8f, 0.8f);
+                return;
+            }
+
+            VLOG(STR("[MoriaCppMod] [Settings] Creating settings panel...\n"));
+
+            // --- Phase A: Find textures ---
+            UObject* texBG = findTexture2DByName(L"T_UI_Pnl_Craft_BG");
+            UObject* texTab = findTexture2DByName(L"T_UI_Btn_P2_Up");
+            UObject* texTabFocused = findTexture2DByName(L"T_UI_Btn_P1_Focused");
+            UObject* texKeyBox = findTexture2DByName(L"T_UI_Btn_P1_Active");
+            UObject* texSectionBg = findTexture2DByName(L"T_UI_Map_LocationName_HUD");
+            UObject* texCB = findTexture2DByName(L"T_UI_Icon_Checkbox_DiamondBG");
+            UObject* texCheck = findTexture2DByName(L"T_UI_Icon_Check");
+            if (!texBG) { showErrorBox(L"Settings: BG not found!"); return; }
+            if (!texTab) { showErrorBox(L"Settings: Tab texture not found!"); return; }
+            if (!texTabFocused) texTabFocused = texTab;
+            m_ftTabActiveTexture = texTabFocused;
+            m_ftTabInactiveTexture = texTab;
+
+            // --- Phase B: Find UClasses ---
+            auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
+            auto* imageClass      = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Image"));
+            auto* hboxClass       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.HorizontalBox"));
+            auto* vboxClass       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.VerticalBox"));
+            auto* overlayClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Overlay"));
+            auto* textBlockClass  = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+            auto* borderClass     = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Border"));
+            auto* sizeBoxClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.SizeBox"));
+            auto* scrollBoxClass  = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.ScrollBox"));
+            if (!userWidgetClass || !imageClass || !hboxClass || !vboxClass || !overlayClass ||
+                !textBlockClass || !borderClass || !sizeBoxClass || !scrollBoxClass)
+            {
+                showErrorBox(L"FontTest: missing UMG classes!");
+                return;
+            }
+
+            // --- Phase C: Create UserWidget ---
+            auto* pc = findPlayerController();
+            if (!pc) { showErrorBox(L"FontTest: no PlayerController!"); return; }
+            auto* createFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
+            auto* wblClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
+            if (!createFn || !wblClass) { showErrorBox(L"FontTest: WBL not found!"); return; }
+            UObject* wblCDO = wblClass->GetClassDefaultObject();
+            if (!wblCDO) { showErrorBox(L"FontTest: WBL CDO null!"); return; }
+
+            int csz = createFn->GetParmsSize();
+            std::vector<uint8_t> cp(csz, 0);
+            auto* pWC = findParam(createFn, STR("WorldContextObject"));
+            auto* pWT = findParam(createFn, STR("WidgetType"));
+            auto* pOP = findParam(createFn, STR("OwningPlayer"));
+            auto* pRV = findParam(createFn, STR("ReturnValue"));
+            if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
+            if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = userWidgetClass;
+            if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
+            wblCDO->ProcessEvent(createFn, cp.data());
+            UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
+            if (!userWidget) { showErrorBox(L"FontTest: CreateWidget failed!"); return; }
+
+            // WidgetTree + outer
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
+            UObject* outer = widgetTree ? widgetTree : userWidget;
+
+            // SetBrushFromTexture function
+            auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
+            if (!setBrushFn) { showErrorBox(L"FontTest: SetBrushFromTexture missing!"); return; }
+
+            // --- Phase D: Build widget tree ---
+            // Root: Overlay (layers BG image behind content)
+            FStaticConstructObjectParameters olP(overlayClass, outer);
+            UObject* rootOverlay = UObjectGlobals::StaticConstructObject(olP);
+            if (!rootOverlay) { showErrorBox(L"FontTest: overlay failed!"); return; }
+            if (widgetTree) setRootWidget(widgetTree, rootOverlay);
+
+            // Clip overflow to panel bounds
+            {
+                auto* setClipFn = rootOverlay->GetFunctionByNameInChain(STR("SetClipping"));
+                if (setClipFn) { int sz = setClipFn->GetParmsSize(); std::vector<uint8_t> cp(sz, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp.data() + p->GetOffset_Internal()) = 1; rootOverlay->ProcessEvent(setClipFn, cp.data()); }
+            }
+
+            // Layer 0: Blue border frame (0.5px dark blue around the panel)
+            {
+                FStaticConstructObjectParameters borderFrameP(imageClass, outer);
+                UObject* borderFrame = UObjectGlobals::StaticConstructObject(borderFrameP);
+                if (borderFrame)
+                {
+                    umgSetBrushSize(borderFrame, 1440.0f, 880.0f);
+                    umgSetImageColor(borderFrame, 0.08f, 0.14f, 0.32f, 0.55f); // darker blue, semi-transparent
+                    addToOverlay(rootOverlay, borderFrame);
+                }
+            }
+
+            // Layer 1: Background image (inset 0.5px for border, 50% opacity)
+            {
+                FStaticConstructObjectParameters imgP(imageClass, outer);
+                UObject* bgImg = UObjectGlobals::StaticConstructObject(imgP);
+                if (bgImg)
+                {
+                    umgSetBrush(bgImg, texBG, setBrushFn);
+                    umgSetBrushSize(bgImg, 1439.0f, 879.0f); // 1440-1, 880-1 (0.5px border each side)
+                    umgSetOpacity(bgImg, 0.5f);
+                    UObject* bgSlot = addToOverlay(rootOverlay, bgImg);
+                    if (bgSlot) { umgSetHAlign(bgSlot, 2); umgSetVAlign(bgSlot, 2); } // center inside border
+                }
+            }
+
+            // Layer 2: Content HBox (tabs left, font list right)
+            FStaticConstructObjectParameters hbP(hboxClass, outer);
+            UObject* contentHBox = UObjectGlobals::StaticConstructObject(hbP);
+            if (!contentHBox) { showErrorBox(L"FontTest: hbox failed!"); return; }
+            {
+                UObject* slot = addToOverlay(rootOverlay, contentHBox);
+                if (slot)
+                {
+                    umgSetSlotPadding(slot, 30.0f, 30.0f, 30.0f, 30.0f);
+                    umgSetHAlign(slot, 0); // HAlign_Fill
+                    umgSetVAlign(slot, 0); // VAlign_Fill — constrain height to overlay
+                }
+            }
+
+            // Find DefaultRegularFont for all text
+            UObject* defaultFont = nullptr;
+            {
+                std::vector<UObject*> fonts;
+                UObjectGlobals::FindAllOf(STR("Font"), fonts);
+                for (auto* f : fonts)
+                {
+                    if (f && std::wstring(f->GetName()) == L"DefaultRegularFont")
+                    { defaultFont = f; break; }
+                }
+            }
+
+            // Helper: create styled TextBlock
+            auto makeTB = [&](const std::wstring& text, float r, float g, float b, float a, int32_t size) -> UObject* {
+                FStaticConstructObjectParameters tbP(textBlockClass, outer);
+                UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
+                if (!tb) return nullptr;
+                umgSetText(tb, text);
+                umgSetTextColor(tb, r, g, b, a);
+                if (defaultFont) umgSetFontAndSize(tb, defaultFont, size);
+                else umgSetFontSize(tb, size);
+                return tb;
+            };
+
+            // Left column: VBox with 3 tabs (512x128 each)
+            {
+                FStaticConstructObjectParameters vbP(vboxClass, outer);
+                UObject* tabVBox = UObjectGlobals::StaticConstructObject(vbP);
+                if (tabVBox)
+                {
+                    UObject* slot = addToHBox(contentHBox, tabVBox);
+                    if (slot) umgSetSlotPadding(slot, 2.5f, 10.0f, 2.5f, 0.0f);
+
+                    const wchar_t* tabNames[] = { L"Key Bindings", L"Game Options", L"Environment" };
+                    for (int i = 0; i < 3; i++)
+                    {
+                        FStaticConstructObjectParameters olTabP(overlayClass, outer);
+                        UObject* tabOl = UObjectGlobals::StaticConstructObject(olTabP);
+                        if (!tabOl) continue;
+
+                        // Tab background image (512x128, tab 0 = focused)
+                        FStaticConstructObjectParameters imgP(imageClass, outer);
+                        UObject* tabImg = UObjectGlobals::StaticConstructObject(imgP);
+                        if (tabImg)
+                        {
+                            UObject* tex = (i == 0) ? texTabFocused : texTab;
+                            umgSetBrushNoMatch(tabImg, tex, setBrushFn);
+                            umgSetBrushSize(tabImg, 512.0f, 128.0f);
+                            addToOverlay(tabOl, tabImg);
+                            m_ftTabImages[i] = tabImg;
+                        }
+
+                        // Centered text label
+                        UObject* tabLabel = makeTB(tabNames[i],
+                            (i == 0) ? 0.9f : 0.55f,
+                            (i == 0) ? 0.88f : 0.55f,
+                            (i == 0) ? 0.78f : 0.65f,
+                            (i == 0) ? 1.0f : 0.7f, 24);
+                        if (tabLabel)
+                        {
+                            m_ftTabLabels[i] = tabLabel;
+                            UObject* txtSlot = addToOverlay(tabOl, tabLabel);
+                            if (txtSlot)
+                            {
+                                umgSetHAlign(txtSlot, 2); // HAlign_Center
+                                umgSetVAlign(txtSlot, 2); // VAlign_Center
+                            }
+                        }
+
+                        UObject* tabSlot = addToVBox(tabVBox, tabOl);
+                        if (tabSlot) umgSetSlotPadding(tabSlot, 0.0f, 2.0f, 0.0f, 2.0f);
+                    }
+                }
+            }
+
+            // Separator line between tabs and right pane
+            {
+                // Try known separator texture names from _Shared folder
+                UObject* texSep = findTexture2DByName(L"T_UI_Shared_Line");
+                if (!texSep) texSep = findTexture2DByName(L"T_UI_Pnl_Separator");
+                if (!texSep) texSep = findTexture2DByName(L"T_UI_Line");
+                if (!texSep) texSep = findTexture2DByName(L"T_UI_Separator");
+                if (!texSep) texSep = findTexture2DByName(L"T_UI_Shared_Separator");
+                if (!texSep) texSep = findTexture2DByName(L"T_UI_Pnl_Line");
+                if (!texSep) texSep = findTexture2DByName(L"T_UI_Shared_LineSeparator");
+                if (!texSep) texSep = findTexture2DByName(L"T_UI_Shared_VerticalLine");
+
+                FStaticConstructObjectParameters sepImgP(imageClass, outer);
+                UObject* sepImg = UObjectGlobals::StaticConstructObject(sepImgP);
+                if (sepImg)
+                {
+                    if (texSep)
+                    {
+                        umgSetBrush(sepImg, texSep, setBrushFn);
+                        umgSetBrushSize(sepImg, 32.0f, 820.0f);
+                        umgSetRenderScale(sepImg, 1.0f, -1.0f); // mirror vertically
+                    }
+                    else
+                    {
+                        // Fallback: thin line matching border color
+                        umgSetBrushSize(sepImg, 6.0f, 820.0f);
+                        umgSetImageColor(sepImg, 0.08f, 0.14f, 0.32f, 0.55f);
+                    }
+                    UObject* sepSlot = addToHBox(contentHBox, sepImg);
+                    if (sepSlot) umgSetSlotPadding(sepSlot, 2.0f, 0.0f, 2.0f, 0.0f);
+                }
+
+                if (!texSep)
+                {
+                    VLOG(STR("[MoriaCppMod] [Settings] Separator texture not found. Textures with 'Shared'/'Line'/'Sep':\n"));
+                    std::vector<UObject*> allTex;
+                    UObjectGlobals::FindAllOf(STR("Texture2D"), allTex);
+                    for (auto* t : allTex)
+                    {
+                        if (!t) continue;
+                        std::wstring n(t->GetName());
+                        if (n.find(L"Shared") != std::wstring::npos || n.find(L"shared") != std::wstring::npos ||
+                            n.find(L"Line") != std::wstring::npos || n.find(L"Sep") != std::wstring::npos)
+                            VLOG(STR("[MoriaCppMod] [Settings]   TEX: {}\n"), n);
+                    }
+                }
+            }
+
+            // Right column: Overlay[Border(bg) + SizeBox→ScrollBox] — SizeBox directly constrains scroll height
+            {
+                // Overlay to layer border behind scrollbox
+                FStaticConstructObjectParameters rightOlP(overlayClass, outer);
+                UObject* rightOverlay = UObjectGlobals::StaticConstructObject(rightOlP);
+                if (rightOverlay)
+                {
+                    // Layer 0: Border (visual background only)
+                    FStaticConstructObjectParameters borderP(borderClass, outer);
+                    UObject* frameBorder = UObjectGlobals::StaticConstructObject(borderP);
+                    if (frameBorder)
+                    {
+                        auto* setBrushColorFn = frameBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
+                        if (setBrushColorFn)
+                        {
+                            auto* pColor = findParam(setBrushColorFn, STR("InBrushColor"));
+                            if (pColor)
+                            {
+                                int sz = setBrushColorFn->GetParmsSize();
+                                std::vector<uint8_t> cb(sz, 0);
+                                auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
+                                c[0] = 0.05f; c[1] = 0.05f; c[2] = 0.08f; c[3] = 0.4f;
+                                frameBorder->ProcessEvent(setBrushColorFn, cb.data());
+                            }
+                        }
+                        addToOverlay(rightOverlay, frameBorder);
+                    }
+
+                    // Layer 1: SizeBox → ScrollBox (SizeBox directly constrains scroll height)
+                    FStaticConstructObjectParameters sbxP(sizeBoxClass, outer);
+                    UObject* rightSizeBox = UObjectGlobals::StaticConstructObject(sbxP);
+                    FStaticConstructObjectParameters sbP(scrollBoxClass, outer);
+                    UObject* scrollBox = UObjectGlobals::StaticConstructObject(sbP);
+                    if (rightSizeBox && scrollBox)
+                    {
+                        m_ftScrollBox = scrollBox;
+                        // Height = panel 880 - 30 top pad - 30 bottom pad - 5 top nudge = 815
+                        auto* setHOvFn = rightSizeBox->GetFunctionByNameInChain(STR("SetHeightOverride"));
+                        if (setHOvFn) { int sz = setHOvFn->GetParmsSize(); std::vector<uint8_t> hp(sz, 0); auto* p = findParam(setHOvFn, STR("InHeightOverride")); if (p) *reinterpret_cast<float*>(hp.data() + p->GetOffset_Internal()) = 815.0f; rightSizeBox->ProcessEvent(setHOvFn, hp.data()); }
+                        // Put ScrollBox directly inside SizeBox
+                        auto* setChildFn = rightSizeBox->GetFunctionByNameInChain(STR("SetContent"));
+                        if (!setChildFn) setChildFn = rightSizeBox->GetFunctionByNameInChain(STR("AddChild"));
+                        if (setChildFn)
+                        {
+                            auto* pChild = findParam(setChildFn, STR("Content"));
+                            if (!pChild) pChild = findParam(setChildFn, STR("InContent"));
+                            if (pChild) { int sz = setChildFn->GetParmsSize(); std::vector<uint8_t> cp(sz, 0); *reinterpret_cast<UObject**>(cp.data() + pChild->GetOffset_Internal()) = scrollBox; rightSizeBox->ProcessEvent(setChildFn, cp.data()); }
+                        }
+                        UObject* sbSlot = addToOverlay(rightOverlay, rightSizeBox);
+                        if (sbSlot)
+                        {
+                            umgSetHAlign(sbSlot, 0); // HAlign_Fill — scrollbar reaches right edge
+                            umgSetVAlign(sbSlot, 0); // VAlign_Fill
+                            umgSetSlotPadding(sbSlot, 10.0f, 15.0f, 10.0f, 10.0f); // 15 top = 10 pad + 5 nudge down
+                        }
+
+                        auto* alwaysShowFn = scrollBox->GetFunctionByNameInChain(STR("SetAlwaysShowScrollbar"));
+                        if (alwaysShowFn)
+                        {
+                            auto* p = findParam(alwaysShowFn, STR("NewAlwaysShowScrollbar"));
+                            int sz = alwaysShowFn->GetParmsSize();
+                            std::vector<uint8_t> buf(sz, 0);
+                            if (p) *reinterpret_cast<bool*>(buf.data() + p->GetOffset_Internal()) = true;
+                            scrollBox->ProcessEvent(alwaysShowFn, buf.data());
+                        }
+                    }
+                    UObject* borderSlot = addToHBox(contentHBox, rightOverlay);
+                    if (borderSlot)
+                    {
+                        umgSetSlotSize(borderSlot, 1.0f, 1); // Fill remaining width
+                        umgSetVAlign(borderSlot, 0); // VAlign_Fill — fill parent height
+                    }
+
+                    // Populate scroll content (guarded by scrollBox creation)
+                    if (scrollBox)
+                    {
+                        // Create 3 tab content VBoxes (one per tab, only tab 0 added to ScrollBox initially)
+                        for (int t = 0; t < 3; t++)
+                        {
+                            FStaticConstructObjectParameters tcP(vboxClass, outer);
+                            UObject* tcVBox = UObjectGlobals::StaticConstructObject(tcP);
+                            if (tcVBox)
+                            {
+                                m_ftTabContent[t] = tcVBox;
+                                if (t == 0) addChildToPanel(scrollBox, STR("AddChild"), tcVBox);
+                            }
+                        }
+
+                        // ── Tab 1: Game Options ──────────────────────────
+                        if (m_ftTabContent[1])
+                        {
+                            UObject* t1 = m_ftTabContent[1];
+
+                            // Section header: "Cheat Toggles"
+                            if (texSectionBg)
+                            {
+                                FStaticConstructObjectParameters secOlP(overlayClass, outer);
+                                UObject* secOl = UObjectGlobals::StaticConstructObject(secOlP);
+                                if (secOl)
+                                {
+                                    FStaticConstructObjectParameters secImgP(imageClass, outer);
+                                    UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
+                                    if (secImg) { umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn); umgSetBrushSize(secImg, 900.0f, 80.0f); addToOverlay(secOl, secImg); }
+                                    UObject* secLabel = makeTB(Loc::get("ui.cheat_toggles"), 0.78f, 0.86f, 1.0f, 1.0f, 28);
+                                    if (secLabel) { umgSetBold(secLabel); UObject* ts = addToOverlay(secOl, secLabel); if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); } }
+                                    addToVBox(t1, secOl);
+                                }
+                            }
+
+                            // Free Build row: HBox { Checkbox | Label (fill) | greyed-out KeyBox }
+                            {
+                                FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                UObject* fbRow = UObjectGlobals::StaticConstructObject(rowP);
+                                if (fbRow)
+                                {
+                                    // Checkbox
+                                    if (texCB)
+                                    {
+                                        FStaticConstructObjectParameters olP(overlayClass, outer);
+                                        UObject* cbOl = UObjectGlobals::StaticConstructObject(olP);
+                                        if (cbOl)
+                                        {
+                                            FStaticConstructObjectParameters imgP(imageClass, outer);
+                                            UObject* cbBg = UObjectGlobals::StaticConstructObject(imgP);
+                                            if (cbBg) { umgSetBrushNoMatch(cbBg, texCB, setBrushFn); umgSetBrushSize(cbBg, 80.0f, 80.0f); addToOverlay(cbOl, cbBg); }
+                                            if (texCheck)
+                                            {
+                                                FStaticConstructObjectParameters chkP(imageClass, outer);
+                                                UObject* chkImg = UObjectGlobals::StaticConstructObject(chkP);
+                                                if (chkImg)
+                                                {
+                                                    umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
+                                                    umgSetBrushSize(chkImg, 80.0f, 80.0f);
+                                                    addToOverlay(cbOl, chkImg);
+                                                    m_ftFreeBuildCheckImg = chkImg;
+                                                    // Start hidden — updateFtFreeBuild will sync
+                                                    auto* visFn = chkImg->GetFunctionByNameInChain(STR("SetVisibility"));
+                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = 1; chkImg->ProcessEvent(visFn, vp); }
+                                                }
+                                            }
+                                            UObject* cbSlot = addToHBox(fbRow, cbOl);
+                                            if (cbSlot) umgSetSlotPadding(cbSlot, 4.0f, 24.0f, 8.0f, 24.0f);
+                                        }
+                                    }
+                                    // Label
+                                    UObject* fbLabel = makeTB(Loc::get("ui.free_build"), 0.55f, 0.55f, 0.55f, 1.0f, 24);
+                                    m_ftFreeBuildLabel = fbLabel;
+                                    if (fbLabel)
+                                    {
+                                        UObject* ls = addToHBox(fbRow, fbLabel);
+                                        if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 0.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
+                                    }
+                                    // Key box showing OFF/ON state
+                                    if (texKeyBox)
+                                    {
+                                        FStaticConstructObjectParameters kbOlP(overlayClass, outer);
+                                        UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
+                                        if (kbOl)
+                                        {
+                                            FStaticConstructObjectParameters kbImgP(imageClass, outer);
+                                            UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
+                                            if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
+                                            UObject* kbLabel = makeTB(L"OFF", 0.7f, 0.3f, 0.3f, 1.0f, 24);
+                                            if (kbLabel) { umgSetBold(kbLabel); m_ftFreeBuildKeyLabel = kbLabel; UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
+                                            UObject* kbSlot = addToHBox(fbRow, kbOl);
+                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                        }
+                                    }
+                                    addToVBox(t1, fbRow);
+                                }
+                            }
+
+                            // No Collision (Flying) row: HBox { Checkbox | Label (fill) | greyed-out KeyBox }
+                            {
+                                FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                UObject* ncRow = UObjectGlobals::StaticConstructObject(rowP);
+                                if (ncRow)
+                                {
+                                    // Checkbox
+                                    if (texCB)
+                                    {
+                                        FStaticConstructObjectParameters olP(overlayClass, outer);
+                                        UObject* cbOl = UObjectGlobals::StaticConstructObject(olP);
+                                        if (cbOl)
+                                        {
+                                            FStaticConstructObjectParameters imgP(imageClass, outer);
+                                            UObject* cbBg = UObjectGlobals::StaticConstructObject(imgP);
+                                            if (cbBg) { umgSetBrushNoMatch(cbBg, texCB, setBrushFn); umgSetBrushSize(cbBg, 80.0f, 80.0f); addToOverlay(cbOl, cbBg); }
+                                            if (texCheck)
+                                            {
+                                                FStaticConstructObjectParameters chkP(imageClass, outer);
+                                                UObject* chkImg = UObjectGlobals::StaticConstructObject(chkP);
+                                                if (chkImg)
+                                                {
+                                                    umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
+                                                    umgSetBrushSize(chkImg, 80.0f, 80.0f);
+                                                    addToOverlay(cbOl, chkImg);
+                                                    m_ftNoCollisionCheckImg = chkImg;
+                                                    auto* visFn = chkImg->GetFunctionByNameInChain(STR("SetVisibility"));
+                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = 1; chkImg->ProcessEvent(visFn, vp); }
+                                                }
+                                            }
+                                            UObject* cbSlot = addToHBox(ncRow, cbOl);
+                                            if (cbSlot) umgSetSlotPadding(cbSlot, 4.0f, 24.0f, 8.0f, 24.0f);
+                                        }
+                                    }
+                                    // Label
+                                    UObject* ncLabel = makeTB(Loc::get("ui.no_collision"), 0.55f, 0.55f, 0.55f, 1.0f, 24);
+                                    m_ftNoCollisionLabel = ncLabel;
+                                    if (ncLabel)
+                                    {
+                                        UObject* ls = addToHBox(ncRow, ncLabel);
+                                        if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 0.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
+                                    }
+                                    // Key box showing OFF/ON state
+                                    if (texKeyBox)
+                                    {
+                                        FStaticConstructObjectParameters kbOlP(overlayClass, outer);
+                                        UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
+                                        if (kbOl)
+                                        {
+                                            FStaticConstructObjectParameters kbImgP(imageClass, outer);
+                                            UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
+                                            if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
+                                            UObject* kbLabel = makeTB(L"OFF", 0.7f, 0.3f, 0.3f, 1.0f, 24);
+                                            if (kbLabel) { umgSetBold(kbLabel); m_ftNoCollisionKeyLabel = kbLabel; UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
+                                            UObject* kbSlot = addToHBox(ncRow, kbOl);
+                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                        }
+                                    }
+                                    addToVBox(t1, ncRow);
+                                }
+                            }
+
+                            // Unlock All Recipes row: HBox { no checkbox (92px pad) | Label (fill) | UNLOCK button }
+                            {
+                                FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                UObject* ulRow = UObjectGlobals::StaticConstructObject(rowP);
+                                if (ulRow)
+                                {
+                                    UObject* ulLabel = makeTB(Loc::get("ui.unlock_all_recipes"), 0.86f, 0.90f, 0.96f, 0.85f, 24);
+                                    if (ulLabel)
+                                    {
+                                        UObject* ls = addToHBox(ulRow, ulLabel);
+                                        if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 92.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
+                                    }
+                                    if (texKeyBox)
+                                    {
+                                        FStaticConstructObjectParameters kbOlP(overlayClass, outer);
+                                        UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
+                                        if (kbOl)
+                                        {
+                                            FStaticConstructObjectParameters kbImgP(imageClass, outer);
+                                            UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
+                                            if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
+                                            UObject* kbLabel = makeTB(L"UNLOCK", 0.9f, 0.75f, 0.2f, 1.0f, 24);
+                                            if (kbLabel) { umgSetBold(kbLabel); UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
+                                            UObject* kbSlot = addToHBox(ulRow, kbOl);
+                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                        }
+                                    }
+                                    addToVBox(t1, ulRow);
+                                }
+                            }
+
+                            // Rename Character row: HBox { no checkbox (92px pad) | Label (fill) | RENAME button }
+                            {
+                                FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                UObject* rcRow = UObjectGlobals::StaticConstructObject(rowP);
+                                if (rcRow)
+                                {
+                                    UObject* rcLabel = makeTB(L"Rename Character", 0.86f, 0.90f, 0.96f, 0.85f, 24);
+                                    if (rcLabel)
+                                    {
+                                        UObject* ls = addToHBox(rcRow, rcLabel);
+                                        if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 92.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
+                                    }
+                                    if (texKeyBox)
+                                    {
+                                        FStaticConstructObjectParameters kbOlP(overlayClass, outer);
+                                        UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
+                                        if (kbOl)
+                                        {
+                                            FStaticConstructObjectParameters kbImgP(imageClass, outer);
+                                            UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
+                                            if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
+                                            UObject* kbLabel = makeTB(L"RENAME", 0.9f, 0.75f, 0.2f, 1.0f, 24);
+                                            if (kbLabel) { umgSetBold(kbLabel); UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
+                                            UObject* kbSlot = addToHBox(rcRow, kbOl);
+                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                        }
+                                    }
+                                    addToVBox(t1, rcRow);
+                                }
+                            }
+
+                            // Checkbox + keybind rows: Trash Item, Replenish Item, Remove Attributes
+                            {
+                                struct GameOptBind { int bindIdx; UObject** checkImgPtr; bool* enabledPtr; };
+                                GameOptBind gameOptBinds[] = {
+                                    { BIND_TRASH_ITEM,     &m_ftTrashCheckImg,      &m_trashItemEnabled },
+                                    { BIND_REPLENISH_ITEM, &m_ftReplenishCheckImg,  &m_replenishItemEnabled },
+                                    { BIND_REMOVE_ATTRS,   &m_ftRemoveAttrsCheckImg,&m_removeAttrsEnabled },
+                                };
+                                for (auto& gob : gameOptBinds)
+                                {
+                                    int bi = gob.bindIdx;
+                                    FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                    UObject* goRow = UObjectGlobals::StaticConstructObject(rowP);
+                                    if (!goRow) continue;
+                                    // Checkbox
+                                    if (texCB)
+                                    {
+                                        FStaticConstructObjectParameters olP(overlayClass, outer);
+                                        UObject* cbOl = UObjectGlobals::StaticConstructObject(olP);
+                                        if (cbOl)
+                                        {
+                                            FStaticConstructObjectParameters imgP(imageClass, outer);
+                                            UObject* cbBg = UObjectGlobals::StaticConstructObject(imgP);
+                                            if (cbBg) { umgSetBrushNoMatch(cbBg, texCB, setBrushFn); umgSetBrushSize(cbBg, 80.0f, 80.0f); addToOverlay(cbOl, cbBg); }
+                                            if (texCheck)
+                                            {
+                                                FStaticConstructObjectParameters chkP(imageClass, outer);
+                                                UObject* chkImg = UObjectGlobals::StaticConstructObject(chkP);
+                                                if (chkImg)
+                                                {
+                                                    umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
+                                                    umgSetBrushSize(chkImg, 80.0f, 80.0f);
+                                                    addToOverlay(cbOl, chkImg);
+                                                    *gob.checkImgPtr = chkImg;
+                                                    // Start hidden — update function will sync
+                                                    auto* visFn = chkImg->GetFunctionByNameInChain(STR("SetVisibility"));
+                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = 1; chkImg->ProcessEvent(visFn, vp); }
+                                                }
+                                            }
+                                            UObject* cbSlot = addToHBox(goRow, cbOl);
+                                            if (cbSlot) umgSetSlotPadding(cbSlot, 4.0f, 24.0f, 8.0f, 24.0f);
+                                        }
+                                    }
+                                    // Label
+                                    UObject* goLabel = makeTB(s_bindings[bi].label, 0.86f, 0.90f, 0.96f, 0.85f, 24);
+                                    if (goLabel)
+                                    {
+                                        UObject* ls = addToHBox(goRow, goLabel);
+                                        if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 0.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
+                                    }
+                                    // Rebindable key box (same as Tab 0 pattern)
+                                    if (texKeyBox)
+                                    {
+                                        FStaticConstructObjectParameters kbOlP(overlayClass, outer);
+                                        UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
+                                        if (kbOl)
+                                        {
+                                            FStaticConstructObjectParameters kbImgP(imageClass, outer);
+                                            UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
+                                            if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
+                                            UObject* kbLabel = makeTB(keyName(s_bindings[bi].key), 1.0f, 1.0f, 1.0f, 1.0f, 24);
+                                            if (kbLabel)
+                                            {
+                                                m_ftKeyBoxLabels[bi] = kbLabel;
+                                                UObject* ks = addToOverlay(kbOl, kbLabel);
+                                                if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); }
+                                            }
+                                            UObject* kbSlot = addToHBox(goRow, kbOl);
+                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                        }
+                                    }
+                                    addToVBox(t1, goRow);
+                                }
+                            }
+                        }
+
+                        // ── Tab 2: Environment ──────────────────────────
+                        if (m_ftTabContent[2])
+                        {
+                            UObject* t2 = m_ftTabContent[2];
+
+                            // Header: "Saved Removals: N"
+                            int remCount = s_config.removalCount.load();
+                            UObject* hdr = makeTB(Loc::get("ui.saved_removals_prefix") + std::to_wstring(remCount) + Loc::get("ui.saved_removals_suffix"),
+                                                  0.78f, 0.86f, 1.0f, 1.0f, 24);
+                            if (hdr) { umgSetBold(hdr); addToVBox(t2, hdr); }
+                            m_ftRemovalHeader = hdr;
+
+                            // Removal entries VBox (rebuilt dynamically)
+                            FStaticConstructObjectParameters rvP(vboxClass, outer);
+                            UObject* remVBox = UObjectGlobals::StaticConstructObject(rvP);
+                            if (remVBox) { m_ftRemovalVBox = remVBox; addToVBox(t2, remVBox); }
+
+                            // Populate removal entries
+                            UObject* texDanger = findTexture2DByName(L"T_UI_Icon_Danger");
+                            if (remVBox && s_config.removalCSInit)
+                            {
+                                CriticalSectionLock removalLock(s_config.removalCS);
+                                for (size_t i = 0; i < s_config.removalEntries.size(); i++)
+                                {
+                                    const auto& entry = s_config.removalEntries[i];
+                                    FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                    UObject* rowHBox = UObjectGlobals::StaticConstructObject(rowP);
+                                    if (!rowHBox) continue;
+
+                                    // Danger icon (clickable)
+                                    if (texDanger && setBrushFn)
+                                    {
+                                        FStaticConstructObjectParameters imgP(imageClass, outer);
+                                        UObject* dangerImg = UObjectGlobals::StaticConstructObject(imgP);
+                                        if (dangerImg)
+                                        {
+                                            umgSetBrushNoMatch(dangerImg, texDanger, setBrushFn);
+                                            umgSetBrushSize(dangerImg, 56.0f, 56.0f);
+                                            UObject* imgSlot = addToHBox(rowHBox, dangerImg);
+                                            if (imgSlot) umgSetSlotPadding(imgSlot, 4.0f, 8.0f, 8.0f, 8.0f);
+                                        }
+                                    }
+
+                                    // Info VBox: name (bold) + coords (smaller)
+                                    FStaticConstructObjectParameters infoP(vboxClass, outer);
+                                    UObject* infoVBox = UObjectGlobals::StaticConstructObject(infoP);
+                                    if (infoVBox)
+                                    {
+                                        UObject* nameTB = makeTB(entry.friendlyName, 0.3f, 0.85f, 0.3f, 1.0f, 22);
+                                        if (nameTB) { umgSetBold(nameTB); addToVBox(infoVBox, nameTB); }
+                                        std::wstring coordText = entry.isTypeRule ? Loc::get("ui.type_rule") : entry.coordsW;
+                                        UObject* coordsTB = makeTB(coordText, 0.85f, 0.25f, 0.25f, 1.0f, 16);
+                                        if (coordsTB) addToVBox(infoVBox, coordsTB);
+                                        UObject* infoSlot = addToHBox(rowHBox, infoVBox);
+                                        if (infoSlot) umgSetVAlign(infoSlot, 2);
+                                    }
+
+                                    addToVBox(remVBox, rowHBox);
+                                }
+                            }
+                            m_ftLastRemovalCount = remCount;
+                        }
+
+                        // Populate keybinding rows into tab 0 content
+                        UObject* tab0Content = m_ftTabContent[0];
+                        const wchar_t* lastSection = nullptr;
+                        for (int b = 0; b < BIND_COUNT; b++)
+                        {
+                            if (wcscmp(s_bindings[b].label, L"Reserved") == 0) continue;
+                            // Skip binds that belong on the Game Options tab
+                            if (wcscmp(s_bindings[b].section, L"Game Options") == 0) continue;
+
+                            // Section header when section changes
+                            if (!lastSection || wcscmp(lastSection, s_bindings[b].section) != 0)
+                            {
+                                lastSection = s_bindings[b].section;
+                                if (texSectionBg)
+                                {
+                                    FStaticConstructObjectParameters secOlP(overlayClass, outer);
+                                    UObject* secOl = UObjectGlobals::StaticConstructObject(secOlP);
+                                    if (secOl)
+                                    {
+                                        FStaticConstructObjectParameters secImgP(imageClass, outer);
+                                        UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
+                                        if (secImg)
+                                        {
+                                            umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn);
+                                            umgSetBrushSize(secImg, 900.0f, 80.0f);
+                                            addToOverlay(secOl, secImg);
+                                        }
+                                        UObject* secLabel = makeTB(lastSection, 0.78f, 0.86f, 1.0f, 1.0f, 28);
+                                        if (secLabel)
+                                        {
+                                            umgSetBold(secLabel);
+                                            UObject* ts = addToOverlay(secOl, secLabel);
+                                            if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); }
+                                        }
+                                        addChildToPanel(tab0Content ? tab0Content : scrollBox, STR("AddChild"), secOl);
+                                    }
+                                }
+                            }
+
+                            // Keybinding row: HBox { Checkbox | Label (fill) | KeyBox (right) }
+                            FStaticConstructObjectParameters rowHbP(hboxClass, outer);
+                            UObject* rowHBox = UObjectGlobals::StaticConstructObject(rowHbP);
+                            if (!rowHBox) continue;
+
+                            // Checkbox: Overlay with DiamondBG(80x80) + Check
+                            if (texCB)
+                            {
+                                FStaticConstructObjectParameters cbOlP(overlayClass, outer);
+                                UObject* cbOl = UObjectGlobals::StaticConstructObject(cbOlP);
+                                if (cbOl)
+                                {
+                                    FStaticConstructObjectParameters cbImgP(imageClass, outer);
+                                    UObject* cbBg = UObjectGlobals::StaticConstructObject(cbImgP);
+                                    if (cbBg)
+                                    {
+                                        umgSetBrushNoMatch(cbBg, texCB, setBrushFn);
+                                        umgSetBrushSize(cbBg, 80.0f, 80.0f);
+                                        addToOverlay(cbOl, cbBg);
+                                    }
+                                    if (texCheck)
+                                    {
+                                        FStaticConstructObjectParameters chkImgP(imageClass, outer);
+                                        UObject* chkImg = UObjectGlobals::StaticConstructObject(chkImgP);
+                                        if (chkImg)
+                                        {
+                                            umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
+                                            umgSetBrushSize(chkImg, 80.0f, 80.0f);
+                                            addToOverlay(cbOl, chkImg);
+                                            m_ftCheckImages[b] = chkImg;
+                                            // Hide check if binding is disabled
+                                            if (!s_bindings[b].enabled)
+                                            {
+                                                auto* visFn = chkImg->GetFunctionByNameInChain(STR("SetVisibility"));
+                                                if (visFn) { uint8_t vp[8]{}; vp[0] = 2; chkImg->ProcessEvent(visFn, vp); }
+                                            }
+                                        }
+                                    }
+                                    UObject* cbSlot = addToHBox(rowHBox, cbOl);
+                                    if (cbSlot) umgSetSlotPadding(cbSlot, 4.0f, 24.0f, 8.0f, 24.0f);
+                                }
+                            }
+
+                            // Binding label (fills middle)
+                            UObject* bindLabel = makeTB(s_bindings[b].label, 0.86f, 0.90f, 0.96f, 0.85f, 24);
+                            if (bindLabel)
+                            {
+                                UObject* lblSlot = addToHBox(rowHBox, bindLabel);
+                                if (lblSlot)
+                                {
+                                    umgSetSlotSize(lblSlot, 1.0f, 1); // Fill
+                                    umgSetSlotPadding(lblSlot, 0.0f, 24.0f, 0.0f, 24.0f);
+                                    umgSetVAlign(lblSlot, 2); // VAlign_Center
+                                }
+                            }
+
+                            // Key box: Overlay(400x128) with image + centered key name
+                            if (texKeyBox)
+                            {
+                                FStaticConstructObjectParameters kbOlP(overlayClass, outer);
+                                UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
+                                if (kbOl)
+                                {
+                                    FStaticConstructObjectParameters kbImgP(imageClass, outer);
+                                    UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
+                                    if (kbImg)
+                                    {
+                                        umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn);
+                                        umgSetBrushSize(kbImg, 400.0f, 128.0f);
+                                        addToOverlay(kbOl, kbImg);
+                                    }
+                                    UObject* kbLabel = makeTB(keyName(s_bindings[b].key), 1.0f, 1.0f, 1.0f, 1.0f, 24);
+                                    if (kbLabel)
+                                    {
+                                        m_ftKeyBoxLabels[b] = kbLabel;
+                                        UObject* ks = addToOverlay(kbOl, kbLabel);
+                                        if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); }
+                                    }
+                                    UObject* kbSlot = addToHBox(rowHBox, kbOl);
+                                    if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                }
+                            }
+
+                            addChildToPanel(tab0Content ? tab0Content : scrollBox, STR("AddChild"), rowHBox);
+                        }
+
+                        // Modifier key row at the end
+                        {
+                            FStaticConstructObjectParameters modHbP(hboxClass, outer);
+                            UObject* modRow = UObjectGlobals::StaticConstructObject(modHbP);
+                            if (modRow)
+                            {
+                                UObject* modLabel = makeTB(Loc::get("ui.set_modifier_key_short"), 0.86f, 0.90f, 0.96f, 0.85f, 24);
+                                if (modLabel)
+                                {
+                                    UObject* ls = addToHBox(modRow, modLabel);
+                                    if (ls)
+                                    {
+                                        umgSetSlotSize(ls, 1.0f, 1);
+                                        umgSetSlotPadding(ls, 92.0f, 24.0f, 0.0f, 24.0f);
+                                        umgSetVAlign(ls, 2);
+                                    }
+                                }
+                                if (texKeyBox)
+                                {
+                                    FStaticConstructObjectParameters mkOlP(overlayClass, outer);
+                                    UObject* mkOl = UObjectGlobals::StaticConstructObject(mkOlP);
+                                    if (mkOl)
+                                    {
+                                        FStaticConstructObjectParameters mkImgP(imageClass, outer);
+                                        UObject* mkImg = UObjectGlobals::StaticConstructObject(mkImgP);
+                                        if (mkImg)
+                                        {
+                                            umgSetBrushNoMatch(mkImg, texKeyBox, setBrushFn);
+                                            umgSetBrushSize(mkImg, 400.0f, 128.0f);
+                                            addToOverlay(mkOl, mkImg);
+                                        }
+                                        UObject* mkLabel = makeTB(std::wstring(modifierName(s_modifierVK)), 1.0f, 1.0f, 1.0f, 1.0f, 24);
+                                        if (mkLabel)
+                                        {
+                                            m_ftModBoxLabel = mkLabel;
+                                            UObject* ms = addToOverlay(mkOl, mkLabel);
+                                            if (ms) { umgSetHAlign(ms, 2); umgSetVAlign(ms, 2); }
+                                        }
+                                        UObject* mkSlot = addToHBox(modRow, mkOl);
+                                        if (mkSlot) umgSetSlotPadding(mkSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                    }
+                                }
+                                addChildToPanel(tab0Content ? tab0Content : scrollBox, STR("AddChild"), modRow);
+                            }
+                        }
+
+                        VLOG(STR("[MoriaCppMod] [Settings] Keybinding rows populated\n"));
+                    }
+                }
+            }
+
+            // --- Phase E: Add to viewport, center on screen ---
+            auto* addToViewportFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
+            if (addToViewportFn)
+            {
+                auto* pZOrder = findParam(addToViewportFn, STR("ZOrder"));
+                int sz = addToViewportFn->GetParmsSize();
+                std::vector<uint8_t> vp(sz, 0);
+                if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 200;
+                userWidget->ProcessEvent(addToViewportFn, vp.data());
+            }
+
+            // Set desired size in Slate units (1440x880 panel)
+            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
+            if (setDesiredSizeFn)
+            {
+                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
+                if (pSize)
+                {
+                    int sz = setDesiredSizeFn->GetParmsSize();
+                    std::vector<uint8_t> sb(sz, 0);
+                    auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
+                    v[0] = 1440.0f; v[1] = 880.0f;
+                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
+                }
+            }
+
+            // Center alignment
+            auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
+            if (setAlignFn)
+            {
+                auto* pAlign = findParam(setAlignFn, STR("Alignment"));
+                if (pAlign)
+                {
+                    int sz = setAlignFn->GetParmsSize();
+                    std::vector<uint8_t> al(sz, 0);
+                    auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
+                    v[0] = 0.5f; v[1] = 0.5f;
+                    userWidget->ProcessEvent(setAlignFn, al.data());
+                }
+            }
+
+            // Center position (50% of viewport)
+            setWidgetPosition(userWidget, m_screen.fracToPixelX(0.5f),
+                                          m_screen.fracToPixelY(0.5f), true);
+
+            m_fontTestWidget = userWidget;
+            m_ftSelectedTab = 0;
+            m_ftVisible = true;
+            setInputModeUI(userWidget);
+            // Sync Game Options checkboxes to current state
+            updateFtFreeBuild();
+            updateFtNoCollision();
+            updateFtGameOptCheckboxes();
+            showOnScreen(L"Settings panel opened (ALT+INS to close)", 3.0f, 0.0f, 1.0f, 0.0f);
+            VLOG(STR("[MoriaCppMod] [Settings] Panel created and displayed\n"));
+        }
+
+        // Switch settings panel tab (highlight + content visibility)
+        void selectFontTestTab(int tab)
+        {
+            if (tab < 0 || tab >= 3) return;
+            if (tab == m_ftSelectedTab) return;
+            m_ftSelectedTab = tab;
+
+            auto* sBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(
+                nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
+
+            for (int i = 0; i < 3; i++)
+            {
+                // Swap tab background texture
+                if (m_ftTabImages[i] && sBrushFn)
+                {
+                    UObject* tex = (i == tab) ? m_ftTabActiveTexture : m_ftTabInactiveTexture;
+                    if (tex) umgSetBrushNoMatch(m_ftTabImages[i], tex, sBrushFn);
+                }
+                // Swap tab label color
+                if (m_ftTabLabels[i])
+                {
+                    if (i == tab)
+                        umgSetTextColor(m_ftTabLabels[i], 0.9f, 0.88f, 0.78f, 1.0f);
+                    else
+                        umgSetTextColor(m_ftTabLabels[i], 0.55f, 0.55f, 0.65f, 0.7f);
+                }
+            }
+            // Swap ScrollBox child: remove old tab VBox, add new one
+            if (m_ftScrollBox)
+            {
+                auto* clearFn = m_ftScrollBox->GetFunctionByNameInChain(STR("ClearChildren"));
+                if (clearFn) m_ftScrollBox->ProcessEvent(clearFn, nullptr);
+                if (m_ftTabContent[tab])
+                    addChildToPanel(m_ftScrollBox, STR("AddChild"), m_ftTabContent[tab]);
+                // Reset scroll to top
+                auto* setScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("SetScrollOffset"));
+                if (setScrollFn)
+                {
+                    auto* pOff = findParam(setScrollFn, STR("NewScrollOffset"));
+                    if (pOff) { int sz = setScrollFn->GetParmsSize(); std::vector<uint8_t> sp(sz, 0); *reinterpret_cast<float*>(sp.data() + pOff->GetOffset_Internal()) = 0.0f; m_ftScrollBox->ProcessEvent(setScrollFn, sp.data()); }
+                }
+            }
+            // Cancel key capture when switching tabs
+            if (s_capturingBind >= 0)
+            {
+                s_capturingBind = -1;
+                updateFontTestKeyLabels();
+            }
+        }
+
+        // Update key box labels on the settings panel
+        void updateFontTestKeyLabels()
+        {
+            int capturing = s_capturingBind.load();
+            for (int i = 0; i < BIND_COUNT; i++)
+            {
+                if (!m_ftKeyBoxLabels[i]) continue;
+                if (capturing == i)
+                {
+                    umgSetText(m_ftKeyBoxLabels[i], Loc::get("ui.press_key"));
+                    umgSetTextColor(m_ftKeyBoxLabels[i], 1.0f, 0.9f, 0.0f, 1.0f);
+                }
+                else
+                {
+                    umgSetText(m_ftKeyBoxLabels[i], keyName(s_bindings[i].key));
+                    umgSetTextColor(m_ftKeyBoxLabels[i], 1.0f, 1.0f, 1.0f, 1.0f);
+                }
+            }
+            if (m_ftModBoxLabel)
+                umgSetText(m_ftModBoxLabel, std::wstring(modifierName(s_modifierVK)));
+        }
+
+        // Update Game Options tab checkboxes to match current state
+        void updateFtFreeBuild()
+        {
+            bool on = s_config.freeBuild;
+            if (m_ftFreeBuildCheckImg)
+            {
+                auto* visFn = m_ftFreeBuildCheckImg->GetFunctionByNameInChain(STR("SetVisibility"));
+                if (visFn) { uint8_t p[8]{}; p[0] = on ? 0 : 1; m_ftFreeBuildCheckImg->ProcessEvent(visFn, p); }
+            }
+            if (m_ftFreeBuildKeyLabel)
+            {
+                umgSetText(m_ftFreeBuildKeyLabel, on ? L"ON" : L"OFF");
+                umgSetTextColor(m_ftFreeBuildKeyLabel, on ? 0.31f : 0.7f, on ? 0.86f : 0.3f, on ? 0.47f : 0.3f, 1.0f);
+            }
+        }
+
+        void updateFtNoCollision()
+        {
+            bool on = m_noCollisionWhileFlying;
+            if (m_ftNoCollisionCheckImg)
+            {
+                auto* visFn = m_ftNoCollisionCheckImg->GetFunctionByNameInChain(STR("SetVisibility"));
+                if (visFn) { uint8_t p[8]{}; p[0] = on ? 0 : 1; m_ftNoCollisionCheckImg->ProcessEvent(visFn, p); }
+            }
+            if (m_ftNoCollisionKeyLabel)
+            {
+                umgSetText(m_ftNoCollisionKeyLabel, on ? L"ON" : L"OFF");
+                umgSetTextColor(m_ftNoCollisionKeyLabel, on ? 0.31f : 0.7f, on ? 0.86f : 0.3f, on ? 0.47f : 0.3f, 1.0f);
+            }
+        }
+
+        void updateFtGameOptCheckboxes()
+        {
+            struct { UObject* img; bool on; } items[] = {
+                { m_ftTrashCheckImg,      m_trashItemEnabled },
+                { m_ftReplenishCheckImg,  m_replenishItemEnabled },
+                { m_ftRemoveAttrsCheckImg,m_removeAttrsEnabled },
+            };
+            for (auto& item : items)
+            {
+                if (!item.img) continue;
+                auto* visFn = item.img->GetFunctionByNameInChain(STR("SetVisibility"));
+                if (visFn) { uint8_t p[8]{}; p[0] = item.on ? 0 : 1; item.img->ProcessEvent(visFn, p); }
+            }
+        }
+
+        // ── Rename Character Dialog ──────────────────────────
+
+        void showRenameDialog()
+        {
+            if (m_ftRenameVisible) { VLOG(STR("[MoriaCppMod] [Rename] BLOCKED: already visible\n")); return; }
+            if (!m_characterLoaded) { showErrorBox(L"Character not loaded"); return; }
+            VLOG(STR("[MoriaCppMod] [Rename] Starting dialog creation...\n"));
+
+            auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
+            auto* imageClass      = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Image"));
+            auto* overlayClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Overlay"));
+            auto* hboxClass       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.HorizontalBox"));
+            auto* vboxClass       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.VerticalBox"));
+            auto* textBlockClass  = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+            auto* sizeBoxClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.SizeBox"));
+            auto* editBoxClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.EditableTextBox"));
+            if (!userWidgetClass || !imageClass || !overlayClass || !hboxClass || !vboxClass ||
+                !textBlockClass || !sizeBoxClass || !editBoxClass) { showErrorBox(L"Rename: missing UMG classes"); return; }
+
+            auto* pc = findPlayerController();
+            if (!pc) { showErrorBox(L"Rename: no PlayerController"); return; }
+            auto* createFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
+            auto* wblClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
+            if (!createFn || !wblClass) { VLOG(STR("[MoriaCppMod] [Rename] FAIL: createFn={} wblClass={}\n"), (void*)createFn, (void*)wblClass); return; }
+
+            int sz = createFn->GetParmsSize();
+            std::vector<uint8_t> cp(sz, 0);
+            auto* pOwner = findParam(createFn, STR("WorldContextObject"));
+            auto* pClass = findParam(createFn, STR("WidgetType"));
+            auto* pRet   = findParam(createFn, STR("ReturnValue"));
+            if (!pOwner || !pClass || !pRet) { VLOG(STR("[MoriaCppMod] [Rename] FAIL: pOwner={} pClass={} pRet={}\n"), (void*)pOwner, (void*)pClass, (void*)pRet); return; }
+            *reinterpret_cast<UObject**>(cp.data() + pOwner->GetOffset_Internal()) = pc;
+            *reinterpret_cast<UObject**>(cp.data() + pClass->GetOffset_Internal()) = userWidgetClass;
+            wblClass->ProcessEvent(createFn, cp.data());
+            UObject* userWidget = *reinterpret_cast<UObject**>(cp.data() + pRet->GetOffset_Internal());
+            if (!userWidget) { VLOG(STR("[MoriaCppMod] [Rename] FAIL: userWidget is null\n")); return; }
+            VLOG(STR("[MoriaCppMod] [Rename] CP1: userWidget created\n"));
+
+            UObject* outer = userWidget;
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = (wtSlot && *wtSlot) ? *wtSlot : nullptr;
+
+            auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
+
+            // Find textures
+            UObject* texBG = findTexture2DByName(L"T_UI_Pnl_Background_Base");
+            UObject* texSectionBg = findTexture2DByName(L"T_UI_Pnl_TabSelected");
+
+            VLOG(STR("[MoriaCppMod] [Rename] CP2: textures done\n"));
+            // Root overlay
+            FStaticConstructObjectParameters olP(overlayClass, outer);
+            UObject* rootOl = UObjectGlobals::StaticConstructObject(olP);
+            if (!rootOl) { VLOG(STR("[MoriaCppMod] [Rename] FAIL: rootOl is null\n")); return; }
+            if (widgetTree) setRootWidget(widgetTree, rootOl);
+
+            // Clip overflow
+            {
+                auto* setClipFn = rootOl->GetFunctionByNameInChain(STR("SetClipping"));
+                if (setClipFn) { int sz2 = setClipFn->GetParmsSize(); std::vector<uint8_t> cp2(sz2, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp2.data() + p->GetOffset_Internal()) = 1; rootOl->ProcessEvent(setClipFn, cp2.data()); }
+            }
+
+            VLOG(STR("[MoriaCppMod] [Rename] CP3: rootOl + clipping done\n"));
+            const float dlgW = 700.0f, dlgH = 220.0f;
+
+            // Layer 0: Border frame (dark blue)
+            {
+                FStaticConstructObjectParameters bfP(imageClass, outer);
+                UObject* bf = UObjectGlobals::StaticConstructObject(bfP);
+                if (bf) { umgSetBrushSize(bf, dlgW, dlgH); umgSetImageColor(bf, 0.08f, 0.14f, 0.32f, 1.0f); addToOverlay(rootOl, bf); }
+            }
+
+            // Layer 1: BG image inset 1px (fully opaque)
+            if (texBG && setBrushFn)
+            {
+                FStaticConstructObjectParameters bgP(imageClass, outer);
+                UObject* bg = UObjectGlobals::StaticConstructObject(bgP);
+                if (bg)
+                {
+                    umgSetBrush(bg, texBG, setBrushFn);
+                    umgSetBrushSize(bg, dlgW - 2.0f, dlgH - 2.0f);
+                    umgSetOpacity(bg, 1.0f);
+                    UObject* s = addToOverlay(rootOl, bg);
+                    if (s) { umgSetHAlign(s, 2); umgSetVAlign(s, 2); }
+                }
+            }
+
+            // Layer 2: Content VBox
+            FStaticConstructObjectParameters cvP(vboxClass, outer);
+            UObject* contentVBox = UObjectGlobals::StaticConstructObject(cvP);
+            if (contentVBox)
+            {
+                UObject* cvSlot = addToOverlay(rootOl, contentVBox);
+                if (cvSlot) umgSetSlotPadding(cvSlot, 20.0f, 10.0f, 20.0f, 10.0f);
+
+                // Section header: "Rename Character"
+                if (texSectionBg && setBrushFn)
+                {
+                    FStaticConstructObjectParameters secOlP(overlayClass, outer);
+                    UObject* secOl = UObjectGlobals::StaticConstructObject(secOlP);
+                    if (secOl)
+                    {
+                        FStaticConstructObjectParameters secImgP(imageClass, outer);
+                        UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
+                        if (secImg) { umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn); umgSetBrushSize(secImg, dlgW - 40.0f, 50.0f); addToOverlay(secOl, secImg); }
+                        UObject* secLabel = createTextBlock(L"Rename Character", 0.78f, 0.86f, 1.0f, 1.0f, 24);
+                        if (secLabel) { umgSetBold(secLabel); UObject* ts = addToOverlay(secOl, secLabel); if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); } }
+                        addToVBox(contentVBox, secOl);
+                    }
+                }
+
+                VLOG(STR("[MoriaCppMod] [Rename] CP4: header section done\n"));
+                // Current name label
+                {
+                    std::wstring currentName = L"(unknown)";
+                    // Try to get current character name
+                    std::vector<UObject*> mgrs;
+                    UObjectGlobals::FindAllOf(STR("CustomizationManager"), mgrs);
+                    UObject* pawn = getPawn();
+                    UObject* target = nullptr;
+                    for (auto* mgr : mgrs) { if (!mgr) continue; if (mgr->GetOuterPrivate() == pawn) { target = mgr; break; } }
+                    if (!target && !mgrs.empty()) target = mgrs[0];
+                    VLOG(STR("[MoriaCppMod] [Rename] CP4a: FindAllOf done, target={}\n"), (void*)target);
+                    if (target)
+                    {
+                        auto* getFn = target->GetFunctionByNameInChain(STR("GetCharacterName"));
+                        if (getFn)
+                        {
+                            // GetCharacterName returns FString
+                            int gsz = getFn->GetParmsSize();
+                            std::vector<uint8_t> gbuf(gsz, 0);
+                            target->ProcessEvent(getFn, gbuf.data());
+                            auto* retProp = findParam(getFn, STR("ReturnValue"));
+                            if (retProp)
+                            {
+                                // FString: {wchar_t* Data, int32 Num, int32 Max}
+                                uintptr_t strPtr = *reinterpret_cast<uintptr_t*>(gbuf.data() + retProp->GetOffset_Internal());
+                                int32_t strLen = *reinterpret_cast<int32_t*>(gbuf.data() + retProp->GetOffset_Internal() + 8);
+                                if (strPtr && strLen > 0)
+                                    currentName = reinterpret_cast<const wchar_t*>(strPtr);
+                            }
+                        }
+                    }
+
+                    FStaticConstructObjectParameters nameHbP(hboxClass, outer);
+                    UObject* nameRow = UObjectGlobals::StaticConstructObject(nameHbP);
+                    if (nameRow)
+                    {
+                        UObject* curLbl = createTextBlock(L"Current name:  ", 0.55f, 0.55f, 0.6f, 0.8f, 22);
+                        if (curLbl) { UObject* ls = addToHBox(nameRow, curLbl); if (ls) { umgSetSlotPadding(ls, 0.0f, 10.0f, 0.0f, 5.0f); umgSetVAlign(ls, 2); } }
+                        UObject* nameLbl = createTextBlock(currentName, 0.9f, 0.75f, 0.2f, 1.0f, 22);
+                        if (nameLbl) { umgSetBold(nameLbl); UObject* ls = addToHBox(nameRow, nameLbl); if (ls) { umgSetSlotPadding(ls, 0.0f, 10.0f, 0.0f, 5.0f); umgSetVAlign(ls, 2); } }
+                        addToVBox(contentVBox, nameRow);
+                    }
+                }
+
+                VLOG(STR("[MoriaCppMod] [Rename] CP5: current name label done\n"));
+                // EditableTextBox in a SizeBox (wide enough for 22+ chars)
+                {
+                    VLOG(STR("[MoriaCppMod] [Rename] CP5a: about to create EditableTextBox...\n"));
+                    FStaticConstructObjectParameters sbP(sizeBoxClass, outer);
+                    UObject* editSizeBox = UObjectGlobals::StaticConstructObject(sbP);
+                    FStaticConstructObjectParameters etP(editBoxClass, outer);
+                    UObject* editBox = UObjectGlobals::StaticConstructObject(etP);
+                    VLOG(STR("[MoriaCppMod] [Rename] CP5b: EditableTextBox created sb={} eb={}\n"), (void*)editSizeBox, (void*)editBox);
+                    if (editSizeBox && editBox)
+                    {
+                        m_ftRenameInput = editBox;
+                        // Set font on EditableTextBox: write to both WidgetStyle.Font and top-level Font
+                        {
+                            UObject* defaultFont = nullptr;
+                            std::vector<UObject*> fonts;
+                            UObjectGlobals::FindAllOf(STR("Font"), fonts);
+                            for (auto* f : fonts) { if (f && std::wstring(f->GetName()) == L"DefaultRegularFont") { defaultFont = f; break; } }
+                            if (defaultFont)
+                            {
+                                uint8_t* raw = reinterpret_cast<uint8_t*>(editBox);
+                                int32_t fontSize = 24;
+                                // WidgetStyle.Font: WidgetStyle@0x0130 + Font@0x0238 = 0x0368 (Slate rendering font)
+                                constexpr int STYLE_FONT_OFF = 0x0368;
+                                *reinterpret_cast<UObject**>(raw + STYLE_FONT_OFF) = defaultFont;
+                                std::memcpy(raw + STYLE_FONT_OFF + fontSizeOff(), &fontSize, sizeof(int32_t));
+                                // Top-level Font property at 0x0958
+                                constexpr int EDITBOX_FONT_OFF = 0x0958;
+                                *reinterpret_cast<UObject**>(raw + EDITBOX_FONT_OFF) = defaultFont;
+                                std::memcpy(raw + EDITBOX_FONT_OFF + fontSizeOff(), &fontSize, sizeof(int32_t));
+                            }
+                        }
+                        // Set width override so text box is wide
+                        auto* setWOvFn = editSizeBox->GetFunctionByNameInChain(STR("SetWidthOverride"));
+                        if (setWOvFn) { int wsz = setWOvFn->GetParmsSize(); std::vector<uint8_t> wp(wsz, 0); auto* p = findParam(setWOvFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = dlgW - 40.0f; editSizeBox->ProcessEvent(setWOvFn, wp.data()); }
+                        auto* setHOvFn = editSizeBox->GetFunctionByNameInChain(STR("SetHeightOverride"));
+                        if (setHOvFn) { int hsz = setHOvFn->GetParmsSize(); std::vector<uint8_t> hp(hsz, 0); auto* p = findParam(setHOvFn, STR("InHeightOverride")); if (p) *reinterpret_cast<float*>(hp.data() + p->GetOffset_Internal()) = 50.0f; editSizeBox->ProcessEvent(setHOvFn, hp.data()); }
+                        // Put editBox inside SizeBox
+                        auto* setChildFn = editSizeBox->GetFunctionByNameInChain(STR("SetContent"));
+                        if (!setChildFn) setChildFn = editSizeBox->GetFunctionByNameInChain(STR("AddChild"));
+                        if (setChildFn) { auto* pChild = findParam(setChildFn, STR("Content")); if (!pChild) pChild = findParam(setChildFn, STR("InContent")); if (pChild) { int csz = setChildFn->GetParmsSize(); std::vector<uint8_t> cbuf(csz, 0); *reinterpret_cast<UObject**>(cbuf.data() + pChild->GetOffset_Internal()) = editBox; editSizeBox->ProcessEvent(setChildFn, cbuf.data()); } }
+                        VLOG(STR("[MoriaCppMod] [Rename] CP5c: SizeBox configured, about to SetHintText...\n"));
+                        // Set hint text using proper FText constructor (same pattern as setTextBlockText)
+                        auto* setHintFn = editBox->GetFunctionByNameInChain(STR("SetHintText"));
+                        if (setHintFn)
+                        {
+                            auto* pHint = findParam(setHintFn, STR("InText"));
+                            if (!pHint) pHint = findParam(setHintFn, STR("InHintText"));
+                            if (pHint)
+                            {
+                                int hsz = setHintFn->GetParmsSize();
+                                std::vector<uint8_t> hbuf(hsz, 0);
+                                FText hintText(STR("Enter new name..."));
+                                std::memcpy(hbuf.data() + pHint->GetOffset_Internal(), &hintText, sizeof(FText));
+                                editBox->ProcessEvent(setHintFn, hbuf.data());
+                            }
+                        }
+                        UObject* editSlot = addToVBox(contentVBox, editSizeBox);
+                        if (editSlot) umgSetSlotPadding(editSlot, 0.0f, 8.0f, 0.0f, 10.0f);
+                    }
+                }
+
+                VLOG(STR("[MoriaCppMod] [Rename] CP6: EditableTextBox section done\n"));
+                // Button row: HBox { CANCEL (red) | CONFIRM (green) }
+                {
+                    FStaticConstructObjectParameters btnHbP(hboxClass, outer);
+                    UObject* btnRow = UObjectGlobals::StaticConstructObject(btnHbP);
+                    if (btnRow)
+                    {
+                        // CANCEL button — solid red bg, white text
+                        {
+                            FStaticConstructObjectParameters cOlP(overlayClass, outer);
+                            UObject* cancelOl = UObjectGlobals::StaticConstructObject(cOlP);
+                            if (cancelOl)
+                            {
+                                FStaticConstructObjectParameters cImgP(imageClass, outer);
+                                UObject* cImg = UObjectGlobals::StaticConstructObject(cImgP);
+                                if (cImg) { umgSetBrushSize(cImg, 250.0f, 55.0f); umgSetImageColor(cImg, 0.6f, 0.12f, 0.12f, 1.0f); addToOverlay(cancelOl, cImg); }
+                                UObject* cLbl = createTextBlock(L"CANCEL", 1.0f, 1.0f, 1.0f, 1.0f, 22);
+                                if (cLbl) { umgSetBold(cLbl); UObject* cs = addToOverlay(cancelOl, cLbl); if (cs) { umgSetHAlign(cs, 2); umgSetVAlign(cs, 2); } }
+                                UObject* cSlot = addToHBox(btnRow, cancelOl);
+                                if (cSlot) umgSetSlotPadding(cSlot, 20.0f, 0.0f, 30.0f, 0.0f);
+                            }
+                        }
+                        // CONFIRM button — solid green bg, white text
+                        {
+                            FStaticConstructObjectParameters cfOlP(overlayClass, outer);
+                            UObject* confirmOl = UObjectGlobals::StaticConstructObject(cfOlP);
+                            if (confirmOl)
+                            {
+                                FStaticConstructObjectParameters cfImgP(imageClass, outer);
+                                UObject* cfImg = UObjectGlobals::StaticConstructObject(cfImgP);
+                                if (cfImg) { umgSetBrushSize(cfImg, 250.0f, 55.0f); umgSetImageColor(cfImg, 0.12f, 0.5f, 0.15f, 1.0f); addToOverlay(confirmOl, cfImg); }
+                                UObject* cfLbl = createTextBlock(L"CONFIRM", 1.0f, 1.0f, 1.0f, 1.0f, 22);
+                                if (cfLbl) { umgSetBold(cfLbl); m_ftRenameConfirmLabel = cfLbl; UObject* cs = addToOverlay(confirmOl, cfLbl); if (cs) { umgSetHAlign(cs, 2); umgSetVAlign(cs, 2); } }
+                                UObject* cfSlot = addToHBox(btnRow, confirmOl);
+                                if (cfSlot) umgSetSlotPadding(cfSlot, 0.0f, 0.0f, 20.0f, 0.0f);
+                            }
+                        }
+                        UObject* btnSlot = addToVBox(contentVBox, btnRow);
+                        if (btnSlot) { umgSetHAlign(btnSlot, 2); } // center the button row
+                    }
+                }
+            }
+
+            VLOG(STR("[MoriaCppMod] [Rename] CP7: all widgets built, about to AddToViewport...\n"));
+            // Add to viewport at ZOrder 300 (above settings panel)
+            auto* addToViewportFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
+            if (addToViewportFn)
+            {
+                auto* pZOrder = findParam(addToViewportFn, STR("ZOrder"));
+                int avSz = addToViewportFn->GetParmsSize();
+                std::vector<uint8_t> vp(avSz, 0);
+                if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 300;
+                userWidget->ProcessEvent(addToViewportFn, vp.data());
+            }
+
+            // Set size
+            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
+            if (setDesiredSizeFn)
+            {
+                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
+                if (pSize) { int ssz = setDesiredSizeFn->GetParmsSize(); std::vector<uint8_t> sb(ssz, 0); auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal()); v[0] = dlgW; v[1] = dlgH; userWidget->ProcessEvent(setDesiredSizeFn, sb.data()); }
+            }
+
+            // Center alignment
+            auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
+            if (setAlignFn) { auto* pAlign = findParam(setAlignFn, STR("Alignment")); if (pAlign) { int asz = setAlignFn->GetParmsSize(); std::vector<uint8_t> ab(asz, 0); auto* a = reinterpret_cast<float*>(ab.data() + pAlign->GetOffset_Internal()); a[0] = 0.5f; a[1] = 0.5f; userWidget->ProcessEvent(setAlignFn, ab.data()); } }
+
+            // Center position
+            setWidgetPosition(userWidget, m_screen.fracToPixelX(0.5f), m_screen.fracToPixelY(0.5f), true);
+
+            VLOG(STR("[MoriaCppMod] [Rename] CP8: AddToViewport + sizing done\n"));
+            m_ftRenameWidget = userWidget;
+            m_ftRenameVisible = true;
+            setInputModeUI(userWidget);
+            VLOG(STR("[MoriaCppMod] [Rename] Dialog opened\n"));
+        }
+
+        void hideRenameDialog()
+        {
+            if (!m_ftRenameVisible) return;
+            if (m_ftRenameWidget)
+            {
+                auto* removeFn = m_ftRenameWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
+                if (removeFn) m_ftRenameWidget->ProcessEvent(removeFn, nullptr);
+                m_ftRenameWidget = nullptr;
+            }
+            m_ftRenameInput = nullptr;
+            m_ftRenameConfirmLabel = nullptr;
+            m_ftRenameVisible = false;
+            // Restore input to settings panel if still open
+            if (m_ftVisible && m_fontTestWidget)
+                setInputModeUI(m_fontTestWidget);
+            else
+                setInputModeGame();
+            VLOG(STR("[MoriaCppMod] [Rename] Dialog closed\n"));
+        }
+
+        void confirmRenameDialog()
+        {
+            if (!m_ftRenameVisible || !m_ftRenameInput) return;
+
+            // Get text from EditableTextBox via GetText()
+            auto* getFn = m_ftRenameInput->GetFunctionByNameInChain(STR("GetText"));
+            if (!getFn) { showErrorBox(L"GetText not found on EditableTextBox"); hideRenameDialog(); return; }
+
+            int gsz = getFn->GetParmsSize();
+            std::vector<uint8_t> gbuf(gsz, 0);
+            m_ftRenameInput->ProcessEvent(getFn, gbuf.data());
+
+            auto* retProp = findParam(getFn, STR("ReturnValue"));
+            if (!retProp) { hideRenameDialog(); return; }
+
+            // GetText returns FText — use FText::ToString pattern
+            std::wstring newName;
+            auto* ftext = reinterpret_cast<FText*>(gbuf.data() + retProp->GetOffset_Internal());
+            if (ftext->Data)
+                newName = ftext->ToString();
+
+            if (newName.empty()) { showErrorBox(L"Name cannot be empty"); return; }
+
+            // Apply directly (same logic as applyPendingCharacterName but inline)
+            {
+                std::scoped_lock lock(m_charNameMutex);
+                m_pendingCharName = newName;
+            }
+            m_pendingCharNameReady.store(true, std::memory_order_release);
+
+            hideRenameDialog();
+        }
+
+        // Rebuild the Environment tab removal list
+        void rebuildFtRemovalList()
+        {
+            if (!m_ftRemovalVBox) return;
+
+            auto* imageClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Image"));
+            auto* hboxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.HorizontalBox"));
+            auto* vboxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.VerticalBox"));
+            auto* textBlockClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+            auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
+            if (!imageClass || !hboxClass || !vboxClass || !textBlockClass) return;
+
+            UObject* outer = m_ftRemovalVBox->GetOuterPrivate();
+            if (!outer) outer = m_ftRemovalVBox;
+
+            auto* clearFn = m_ftRemovalVBox->GetFunctionByNameInChain(STR("ClearChildren"));
+            if (clearFn) m_ftRemovalVBox->ProcessEvent(clearFn, nullptr);
+
+            int count = s_config.removalCount.load();
+            if (m_ftRemovalHeader)
+            {
+                umgSetText(m_ftRemovalHeader, Loc::get("ui.saved_removals_prefix") + std::to_wstring(count) + Loc::get("ui.saved_removals_suffix"));
+            }
+
+            UObject* texDanger = findTexture2DByName(L"T_UI_Icon_Danger");
+            UObject* defaultFont = nullptr;
+            {
+                std::vector<UObject*> fonts;
+                UObjectGlobals::FindAllOf(STR("Font"), fonts);
+                for (auto* f : fonts) { if (f && std::wstring(f->GetName()) == L"DefaultRegularFont") { defaultFont = f; break; } }
+            }
+
+            auto makeTB2 = [&](const std::wstring& text, float r, float g, float b, float a, int32_t size) -> UObject* {
+                FStaticConstructObjectParameters tbP(textBlockClass, outer);
+                UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
+                if (!tb) return nullptr;
+                umgSetText(tb, text);
+                umgSetTextColor(tb, r, g, b, a);
+                if (defaultFont) umgSetFontAndSize(tb, defaultFont, size);
+                else umgSetFontSize(tb, size);
+                return tb;
+            };
+
+            if (s_config.removalCSInit)
+            {
+                CriticalSectionLock removalLock(s_config.removalCS);
+                for (size_t i = 0; i < s_config.removalEntries.size(); i++)
+                {
+                    const auto& entry = s_config.removalEntries[i];
+                    FStaticConstructObjectParameters rowP(hboxClass, outer);
+                    UObject* rowHBox = UObjectGlobals::StaticConstructObject(rowP);
+                    if (!rowHBox) continue;
+
+                    if (texDanger && setBrushFn)
+                    {
+                        FStaticConstructObjectParameters imgP(imageClass, outer);
+                        UObject* dangerImg = UObjectGlobals::StaticConstructObject(imgP);
+                        if (dangerImg)
+                        {
+                            umgSetBrushNoMatch(dangerImg, texDanger, setBrushFn);
+                            umgSetBrushSize(dangerImg, 56.0f, 56.0f);
+                            UObject* imgSlot = addToHBox(rowHBox, dangerImg);
+                            if (imgSlot) umgSetSlotPadding(imgSlot, 4.0f, 8.0f, 8.0f, 8.0f);
+                        }
+                    }
+
+                    FStaticConstructObjectParameters infoP(vboxClass, outer);
+                    UObject* infoVBox = UObjectGlobals::StaticConstructObject(infoP);
+                    if (infoVBox)
+                    {
+                        UObject* nameTB = makeTB2(entry.friendlyName, 0.3f, 0.85f, 0.3f, 1.0f, 22);
+                        if (nameTB) { umgSetBold(nameTB); addToVBox(infoVBox, nameTB); }
+                        std::wstring coordText = entry.isTypeRule ? Loc::get("ui.type_rule") : entry.coordsW;
+                        UObject* coordsTB = makeTB2(coordText, 0.85f, 0.25f, 0.25f, 1.0f, 16);
+                        if (coordsTB) addToVBox(infoVBox, coordsTB);
+                        UObject* infoSlot = addToHBox(rowHBox, infoVBox);
+                        if (infoSlot) umgSetVAlign(infoSlot, 2);
+                    }
+
+                    addToVBox(m_ftRemovalVBox, rowHBox);
+                }
+            }
+            m_ftLastRemovalCount = count;
         }
 

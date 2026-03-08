@@ -511,7 +511,7 @@
         // Direct SelectRecipe via cached handle (fast path for mid-placement switching)
         bool trySelectRecipeByHandle(UObject* buildHUD, const uint8_t* handleData)
         {
-            if (!buildHUD || !handleData) return false;
+            if (!buildHUD || !handleData || !isWidgetAlive(buildHUD)) return false;
             auto* selectFn = buildHUD->GetFunctionByNameInChain(STR("SelectRecipe"));
             if (!selectFn)
             {
@@ -526,7 +526,7 @@
             }
             std::vector<uint8_t> params(pSz, 0);
             std::memcpy(params.data(), handleData, RECIPE_HANDLE_SIZE);
-            buildHUD->ProcessEvent(selectFn, params.data());
+            if (!safeProcessEvent(buildHUD, selectFn, params.data())) return false;
             uint32_t ci = *reinterpret_cast<const uint32_t*>(handleData + 8);
             QBLOG(STR("[MoriaCppMod] [QB] SelectRecipe called with handle CI={}\n"), ci);
             return true;
@@ -834,17 +834,23 @@
                     if (trySelectRecipeByHandle(buildHUD, m_recipeSlots[slot].recipeHandle))
                     {
                         m_isAutoSelecting = false;
-                        m_lastDirectSelectTime = now;
-                        m_lastQBSelectTime = now;
-                        if (isBuildTabShowing()) hideBuildTab();
-                        const std::wstring& targetName = m_recipeSlots[slot].displayName;
-                        showOnScreen((L"Build: " + targetName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
-                        m_buildMenuWasOpen = true;
-                        refreshActionBar();
-                        m_activeBuilderSlot = slot;
-                        updateBuildersBar();
-                        onGhostAppeared();
-                        return;
+                        // Verify ghost actually appeared — stale handles can silently succeed
+                        if (isPlacementActive())
+                        {
+                            m_lastDirectSelectTime = now;
+                            m_lastQBSelectTime = now;
+                            // Defer hideBuildTab + refreshActionBar to next frame
+                            // to let Slate finish painting current widget tree
+                            m_deferHideAndRefresh = true;
+                            const std::wstring& targetName = m_recipeSlots[slot].displayName;
+                            showOnScreen((L"Build: " + targetName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
+                            m_buildMenuWasOpen = true;
+                            m_activeBuilderSlot = slot;
+                            updateBuildersBar();
+                            onGhostAppeared();
+                            return;
+                        }
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path: SelectRecipe succeeded but no ghost — stale handle, invalidating\n"));
                     }
                     m_isAutoSelecting = false;
                     m_recipeSlots[slot].hasHandle = false;

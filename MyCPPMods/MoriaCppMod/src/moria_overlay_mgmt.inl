@@ -67,7 +67,6 @@
 
             s_overlay.running = true;
             s_overlay.visible = m_showHotbar;
-            s_overlay.activeToolbar = m_activeToolbar;
             updateOverlaySlots();
             s_overlay.thread = CreateThread(nullptr, 0, overlayThreadProc, nullptr, 0, nullptr);
             VLOG(STR("[MoriaCppMod] Overlay thread started, icons: {}\n"), s_overlay.iconFolder);
@@ -109,7 +108,7 @@
         {
             auto* pc = findPlayerController();
             if (!pc) return;
-            if (!focusWidget) focusWidget = m_configWidget;
+            if (!focusWidget) focusWidget = m_fontTestWidget;
             if (!focusWidget) return;
 
             // Find SetInputMode_UIOnlyEx on WidgetBlueprintLibrary CDO
@@ -167,26 +166,7 @@
             VLOG(STR("[MoriaCppMod] Input mode Ã¢â€ â€™ Game Only (mouse cursor OFF)\n"));
         }
 
-        void toggleConfig()
-        {
-            if (!m_configWidget) createConfigWidget();
-            if (!m_configWidget) return;
-            m_cfgVisible = !m_cfgVisible;
-            setWidgetVisibility(m_configWidget, m_cfgVisible ? 0 : 1);
-            if (m_cfgVisible)
-            {
-                updateConfigKeyLabels();
-                updateConfigFreeBuild();
-                updateConfigNoCollision();
-                updateConfigRemovalCount();
-                setInputModeUI();
-            }
-            else
-            {
-                setInputModeGame();
-            }
-            VLOG(STR("[MoriaCppMod] Config {} (UMG)\n"), m_cfgVisible ? STR("shown") : STR("hidden"));
-        }
+        // (toggleConfig removed — F12 now uses toggleFontTestPanel)
 
 
         // Ã¢â€â‚¬Ã¢â€â‚¬ Toolbar Repositioning Mode Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬

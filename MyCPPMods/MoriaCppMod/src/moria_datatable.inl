@@ -565,39 +565,6 @@ struct DataTableUtil
         return true;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Diagnostics
-    // ════════════════════════════════════════════════════════════════════════════
-
-    void dumpRowNames() const
-    {
-        auto names = getRowNames();
-        VLOG(STR("[MoriaCppMod] [DT] '{}': {} rows\n"), tableName, names.size());
-        for (size_t i = 0; i < names.size(); i++)
-        {
-            VLOG(STR("[MoriaCppMod] [DT]   [{}] {}\n"), i, names[i]);
-        }
-    }
-
-    void dumpRowStructFields() const
-    {
-        if (!rowStruct)
-        {
-            VLOG(STR("[MoriaCppMod] [DT] '{}' has no RowStruct\n"), tableName);
-            return;
-        }
-        VLOG(STR("[MoriaCppMod] [DT] '{}' RowStruct='{}' size={}\n"),
-             tableName, rowStruct->GetName(), rowSize);
-        for (auto* s = rowStruct; s; s = s->GetSuperStruct())
-        {
-            for (auto* prop : s->ForEachProperty())
-            {
-                VLOG(STR("[MoriaCppMod] [DT]   {} @0x{:04X} size={} ({})\n"),
-                     prop->GetName(), prop->GetOffset_Internal(),
-                     prop->GetSize(), s->GetName());
-            }
-        }
-    }
 };
 
 // ════════════════════════════════════════════════════════════════════════════════

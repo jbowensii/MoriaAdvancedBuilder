@@ -52,7 +52,7 @@ namespace MoriaMods
     // Constants
     // ════════════════════════════════════════════════════════════════════════════
 
-    static constexpr int BIND_COUNT = 22;
+    static constexpr int BIND_COUNT = 25;
     static constexpr int OVERLAY_BUILD_SLOTS = 8;
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -181,7 +181,6 @@ namespace MoriaMods
             s_table["bind.quick_build_8"] = L"Quick Build 8";
             s_table["bind.rotation"] = L"Rotation";
             s_table["bind.target"] = L"Target";
-            s_table["bind.toolbar_swap"] = L"Toolbar Swap";
             s_table["bind.mod_menu_4"] = L"Super Dwarf";
             s_table["bind.integrity_check"] = L"Integrity Check";
             s_table["bind.snap_off"] = L"Snap Off";
@@ -260,11 +259,6 @@ namespace MoriaMods
             // ── On-screen messages ──
             s_table["msg.no_hit"] = L"[Inspect] No hit";
             s_table["msg.actor_dump_no_hit"] = L"[ActorDump] No hit";
-            s_table["msg.not_in_build_mode"] = L"Not in build mode";
-            s_table["msg.slot_cleared"] = L" cleared";
-            s_table["msg.no_recipe_selected"] = L"No recipe selected! Click one in Build menu first.";
-            s_table["msg.build_menu_not_found"] = L"Build menu not open or no widget found";
-            s_table["msg.recipe_not_found"] = L"' not found in menu!";
             s_table["msg.no_buildable_target"] = L"No buildable target \x2014 aim at a building and press F10 first";
             s_table["msg.build_menu_timeout"] = L"Build menu didn't open (timeout)";
             s_table["msg.all_recipes_unlocked"] = L"ALL RECIPES UNLOCKED!";
@@ -272,28 +266,13 @@ namespace MoriaMods
             s_table["msg.free_build_failed"] = L"Free Build toggle failed - debug actor not found";
             s_table["msg.hotbar_overlay_on"] = L"Hotbar overlay ON";
             s_table["msg.hotbar_overlay_off"] = L"Hotbar overlay OFF";
-            s_table["msg.already_clearing"] = L"Already clearing hotbar...";
-            s_table["msg.wait_swap"] = L"Wait for toolbar swap to finish";
-            s_table["msg.wait_clear"] = L"Wait for hotbar clear to finish";
-            s_table["msg.player_not_found"] = L"Player not found";
-            s_table["msg.inventory_not_found"] = L"Inventory not found";
-            s_table["msg.equip_bag"] = L"Equip a bag first!";
-            s_table["msg.clearing_hotbar"] = L"Clearing hotbar...";
-            s_table["msg.swap_in_progress"] = L"Swap already in progress...";
-            s_table["msg.body_inv_not_found"] = L"BodyInventory not found!";
-            s_table["msg.containers_discovered"] = L"Containers discovered!";
-            s_table["msg.container_discovery_failed"] = L"Container discovery failed - swap unavailable";
             s_table["msg.debug_actor_not_found"] = L"Debug menu actor not found";
-            s_table["msg.hud_not_found"] = L"MoriaHUD NOT FOUND";
-            s_table["msg.icon_probe_done"] = L"Icon probe done (see UE4SS log)";
             s_table["msg.builders_bar_created"] = L"Builders bar created!";
             s_table["msg.mod_controller_created"] = L"Mod Controller created!";
             s_table["msg.umg_bar_removed"] = L"UMG bar removed";
             s_table["msg.mc_removed"] = L"Mod Controller removed";
             s_table["msg.char_hidden"] = L"Character hidden";
             s_table["msg.char_visible"] = L"Character visible";
-            s_table["ovr.hide_char"] = L"HIDE";
-            s_table["msg.fly_on"] = L"Fly mode ON";
             s_table["msg.fly_off"] = L"Fly mode OFF";
             // ── Save file headers ──
             s_table["save.removal_header"] = L"# MoriaCppMod removed instances";
@@ -715,7 +694,7 @@ namespace MoriaMods
             "Target",             // 9  (MC slot 1)
             "StabilityCheck",     // 10 (MC slot 2)
             "SuperDwarf",         // 11 (MC slot 3)
-            "ToolbarSwap",        // 12 (MC slot 4)
+            "Empty4",             // 12 (MC slot 4 — empty)
             "SnapToggle",         // 13 (MC slot 5 — Snap Toggle)
             "Empty6",             // 14 (MC slot 6 — empty)
             "Empty7",             // 15 (MC slot 7 — empty)
@@ -724,7 +703,10 @@ namespace MoriaMods
             "RemoveAll",          // 18 (MC slot 10)
             "Configuration",      // 19 (MC slot 11)
             "AdvancedBuilderOpen", // 20
-            "Reserved1"           // 21 (placeholder — will be reassigned)
+            "Reserved1",          // 21 (placeholder — will be reassigned)
+            "TrashItem",          // 22
+            "ReplenishItem",      // 23
+            "RemoveAttributes"    // 24
         };
         if (idx < 0 || idx >= BIND_COUNT) return nullptr;
         return keys[idx];

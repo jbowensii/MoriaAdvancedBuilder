@@ -199,7 +199,7 @@ TEST_F(KeyHelperTest, IniKeyToBindIndex_AllKeys)
     EXPECT_EQ(iniKeyToBindIndex("Target"), 9);
     EXPECT_EQ(iniKeyToBindIndex("StabilityCheck"), 10);
     EXPECT_EQ(iniKeyToBindIndex("SuperDwarf"), 11);
-    EXPECT_EQ(iniKeyToBindIndex("ToolbarSwap"), 12);
+    EXPECT_EQ(iniKeyToBindIndex("Empty4"), 12);
     EXPECT_EQ(iniKeyToBindIndex("SnapToggle"), 13);
     EXPECT_EQ(iniKeyToBindIndex("Empty6"), 14);
     EXPECT_EQ(iniKeyToBindIndex("Empty7"), 15);
@@ -215,7 +215,7 @@ TEST_F(KeyHelperTest, IniKeyToBindIndex_CaseInsensitive)
 {
     EXPECT_EQ(iniKeyToBindIndex("quickbuild1"), 0);
     EXPECT_EQ(iniKeyToBindIndex("ROTATION"), 8);
-    EXPECT_EQ(iniKeyToBindIndex("toolbarswap"), 12);
+    EXPECT_EQ(iniKeyToBindIndex("empty4"), 12);
 }
 
 TEST_F(KeyHelperTest, IniKeyToBindIndex_NotFound)
@@ -233,7 +233,7 @@ TEST_F(KeyHelperTest, BindIndexToIniKey_ValidRange)
     EXPECT_STREQ(bindIndexToIniKey(7), "QuickBuild8");
     EXPECT_STREQ(bindIndexToIniKey(8), "Rotation");
     EXPECT_STREQ(bindIndexToIniKey(10), "StabilityCheck");
-    EXPECT_STREQ(bindIndexToIniKey(12), "ToolbarSwap");
+    EXPECT_STREQ(bindIndexToIniKey(12), "Empty4");
     EXPECT_STREQ(bindIndexToIniKey(16), "RemoveTarget");
     EXPECT_STREQ(bindIndexToIniKey(19), "Configuration");
     EXPECT_STREQ(bindIndexToIniKey(20), "AdvancedBuilderOpen");
