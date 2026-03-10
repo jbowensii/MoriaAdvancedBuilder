@@ -2911,6 +2911,8 @@
                 m_ftRemovalVBox = nullptr;
                 m_ftRemovalHeader = nullptr;
                 m_ftLastRemovalCount = -1;
+                for (auto& c : m_ftGameModCheckImages) c = nullptr;
+                m_ftGameModEntries.clear();
                 if (s_capturingBind >= 0) { s_capturingBind = -1; }
                 setInputModeGame();
                 showOnScreen(L"Settings panel closed", 2.0f, 0.8f, 0.8f, 0.8f);
@@ -3058,7 +3060,7 @@
                 return tb;
             };
 
-            // Left column: VBox with 3 tabs (512x128 each)
+            // Left column: VBox with CONFIG_TAB_COUNT tabs (512x128 each)
             {
                 FStaticConstructObjectParameters vbP(vboxClass, outer);
                 UObject* tabVBox = UObjectGlobals::StaticConstructObject(vbP);
@@ -3067,8 +3069,8 @@
                     UObject* slot = addToHBox(contentHBox, tabVBox);
                     if (slot) umgSetSlotPadding(slot, 2.5f, 10.0f, 2.5f, 0.0f);
 
-                    const wchar_t* tabNames[] = { L"Key Bindings", L"Game Options", L"Environment" };
-                    for (int i = 0; i < 3; i++)
+                    const wchar_t* tabNames[] = { L"Key Bindings", L"Game Options", L"Environment", L"Game Mods" };
+                    for (int i = 0; i < CONFIG_TAB_COUNT; i++)
                     {
                         FStaticConstructObjectParameters olTabP(overlayClass, outer);
                         UObject* tabOl = UObjectGlobals::StaticConstructObject(olTabP);
@@ -3233,8 +3235,8 @@
                     // Populate scroll content (guarded by scrollBox creation)
                     if (scrollBox)
                     {
-                        // Create 3 tab content VBoxes (one per tab, only tab 0 added to ScrollBox initially)
-                        for (int t = 0; t < 3; t++)
+                        // Create CONFIG_TAB_COUNT tab content VBoxes (one per tab, only tab 0 added to ScrollBox initially)
+                        for (int t = 0; t < CONFIG_TAB_COUNT; t++)
                         {
                             FStaticConstructObjectParameters tcP(vboxClass, outer);
                             UObject* tcVBox = UObjectGlobals::StaticConstructObject(tcP);
@@ -3592,6 +3594,153 @@
                             m_ftLastRemovalCount = remCount;
                         }
 
+                        // ── Tab 3: Game Mods ──────────────────────────
+                        if (m_ftTabContent[3])
+                        {
+                            UObject* t3 = m_ftTabContent[3];
+
+                            // Discover available game mods
+                            m_ftGameModEntries = discoverGameMods();
+
+                            if (m_ftGameModEntries.empty())
+                            {
+                                UObject* noMods = makeTB(L"No definition packs found in Mods/MoriaCppMod/definitions/",
+                                    0.7f, 0.7f, 0.7f, 1.0f, 22);
+                                if (noMods)
+                                {
+                                    UObject* s = addToVBox(t3, noMods);
+                                    if (s) umgSetSlotPadding(s, 10.0f, 20.0f, 10.0f, 10.0f);
+                                }
+                            }
+                            else
+                            {
+                                // Section header
+                                if (texSectionBg)
+                                {
+                                    FStaticConstructObjectParameters secOlP(overlayClass, outer);
+                                    UObject* secOl = UObjectGlobals::StaticConstructObject(secOlP);
+                                    if (secOl)
+                                    {
+                                        FStaticConstructObjectParameters secImgP(imageClass, outer);
+                                        UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
+                                        if (secImg) { umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn); umgSetBrushSize(secImg, 900.0f, 80.0f); addToOverlay(secOl, secImg); }
+                                        UObject* secLabel = makeTB(L"Definition Packs", 0.78f, 0.86f, 1.0f, 1.0f, 28);
+                                        if (secLabel) { umgSetBold(secLabel); UObject* ts = addToOverlay(secOl, secLabel); if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); } }
+                                        addToVBox(t3, secOl);
+                                    }
+                                }
+
+                                // One row per game mod: Checkbox | Title + Description
+                                for (size_t gi = 0; gi < m_ftGameModEntries.size() && gi < MAX_GAME_MODS; gi++)
+                                {
+                                    auto& gm = m_ftGameModEntries[gi];
+
+                                    FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                    UObject* gmRow = UObjectGlobals::StaticConstructObject(rowP);
+                                    if (!gmRow) continue;
+
+                                    // Checkbox
+                                    if (texCB)
+                                    {
+                                        FStaticConstructObjectParameters olP(overlayClass, outer);
+                                        UObject* cbOl = UObjectGlobals::StaticConstructObject(olP);
+                                        if (cbOl)
+                                        {
+                                            FStaticConstructObjectParameters imgP(imageClass, outer);
+                                            UObject* cbBg = UObjectGlobals::StaticConstructObject(imgP);
+                                            if (cbBg) { umgSetBrushNoMatch(cbBg, texCB, setBrushFn); umgSetBrushSize(cbBg, 80.0f, 80.0f); addToOverlay(cbOl, cbBg); }
+                                            if (texCheck)
+                                            {
+                                                FStaticConstructObjectParameters chkImgP(imageClass, outer);
+                                                UObject* chkImg = UObjectGlobals::StaticConstructObject(chkImgP);
+                                                if (chkImg)
+                                                {
+                                                    umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
+                                                    umgSetBrushSize(chkImg, 80.0f, 80.0f);
+                                                    addToOverlay(cbOl, chkImg);
+                                                    m_ftGameModCheckImages[gi] = chkImg;
+                                                    // Hide check if not enabled
+                                                    if (!gm.enabled)
+                                                    {
+                                                        auto* visFn = chkImg->GetFunctionByNameInChain(STR("SetVisibility"));
+                                                        if (visFn) { uint8_t vp[8]{}; vp[0] = 2; chkImg->ProcessEvent(visFn, vp); }
+                                                    }
+                                                }
+                                            }
+                                            UObject* cbSlot = addToHBox(gmRow, cbOl);
+                                            if (cbSlot) umgSetSlotPadding(cbSlot, 4.0f, 24.0f, 8.0f, 24.0f);
+                                        }
+                                    }
+
+                                    // Info VBox: Title (bold) + Description (smaller, grey)
+                                    FStaticConstructObjectParameters infoP(vboxClass, outer);
+                                    UObject* infoVBox = UObjectGlobals::StaticConstructObject(infoP);
+                                    if (infoVBox)
+                                    {
+                                        std::wstring wTitle(gm.title.begin(), gm.title.end());
+                                        UObject* titleTB = makeTB(wTitle, 0.86f, 0.90f, 0.96f, 0.85f, 24);
+                                        if (titleTB) { umgSetBold(titleTB); addToVBox(infoVBox, titleTB); }
+
+                                        // Show description (strip HTML tags for display)
+                                        if (!gm.description.empty())
+                                        {
+                                            // Simple HTML strip — remove tags
+                                            std::string plain;
+                                            bool inTag = false;
+                                            for (char c : gm.description)
+                                            {
+                                                if (c == '<') { inTag = true; continue; }
+                                                if (c == '>') { inTag = false; plain += ' '; continue; }
+                                                if (!inTag) plain += c;
+                                            }
+                                            // Collapse whitespace
+                                            std::string desc;
+                                            bool lastSpace = true;
+                                            for (char c : plain)
+                                            {
+                                                if (c == ' ' || c == '\n' || c == '\r' || c == '\t')
+                                                { if (!lastSpace) { desc += ' '; lastSpace = true; } }
+                                                else { desc += c; lastSpace = false; }
+                                            }
+                                            // Trim
+                                            while (!desc.empty() && desc.back() == ' ') desc.pop_back();
+                                            while (!desc.empty() && desc.front() == ' ') desc.erase(desc.begin());
+
+                                            if (!desc.empty())
+                                            {
+                                                std::wstring wDesc(desc.begin(), desc.end());
+                                                UObject* descTB = makeTB(wDesc, 0.6f, 0.6f, 0.65f, 0.8f, 18);
+                                                if (descTB) addToVBox(infoVBox, descTB);
+                                            }
+                                        }
+
+                                        UObject* infoSlot = addToHBox(gmRow, infoVBox);
+                                        if (infoSlot)
+                                        {
+                                            umgSetSlotSize(infoSlot, 1.0f, 1); // Fill
+                                            umgSetVAlign(infoSlot, 2); // VAlign_Center
+                                        }
+                                    }
+
+                                    UObject* rowSlot = addToVBox(t3, gmRow);
+                                    if (rowSlot) umgSetSlotPadding(rowSlot, 0.0f, 2.0f, 0.0f, 2.0f);
+                                }
+
+                                // Footer note
+                                UObject* footerTB = makeTB(L"Changes take effect on next game launch",
+                                    1.0f, 0.2f, 0.2f, 1.0f, 20);
+                                if (footerTB)
+                                {
+                                    umgSetBold(footerTB);
+                                    UObject* fs = addToVBox(t3, footerTB);
+                                    if (fs) umgSetSlotPadding(fs, 10.0f, 20.0f, 10.0f, 10.0f);
+                                }
+                            }
+
+                            VLOG(STR("[MoriaCppMod] [Settings] Game Mods tab populated ({} entries)\n"),
+                                m_ftGameModEntries.size());
+                        }
+
                         // Populate keybinding rows into tab 0 content
                         UObject* tab0Content = m_ftTabContent[0];
                         const wchar_t* lastSection = nullptr;
@@ -3828,14 +3977,14 @@
         // Switch settings panel tab (highlight + content visibility)
         void selectFontTestTab(int tab)
         {
-            if (tab < 0 || tab >= 3) return;
+            if (tab < 0 || tab >= CONFIG_TAB_COUNT) return;
             if (tab == m_ftSelectedTab) return;
             m_ftSelectedTab = tab;
 
             auto* sBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(
                 nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
 
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < CONFIG_TAB_COUNT; i++)
             {
                 // Swap tab background texture
                 if (m_ftTabImages[i] && sBrushFn)

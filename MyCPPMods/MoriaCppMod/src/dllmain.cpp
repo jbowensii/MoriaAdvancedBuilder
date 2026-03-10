@@ -19,6 +19,7 @@
 #include "moria_common.h"
 #include "moria_reflection.h"
 #include "moria_keybinds.h"
+#include <Unreal/Hooks.hpp>
 
 namespace MoriaMods
 {
@@ -45,6 +46,9 @@ namespace MoriaMods
         bool m_replayActive{false};
         bool m_characterLoaded{false};
         bool m_initialReplayDone{false};
+        bool m_definitionsApplied{false};
+        bool m_recipesDiscovered{false};
+        std::vector<std::wstring> m_addedRecipeNames; // recipe row names needing DiscoverRecipe
         int m_stuckLogCount{0}; // only log stuck entries once
         std::string m_saveFilePath;
         PSOffsets m_ps;
@@ -213,6 +217,7 @@ namespace MoriaMods
 
         #include "moria_common.inl"    // Shared utilities, coordinate system, player helpers
         #include "moria_datatable.inl" // DataTable CRUD utility (read/write/add/remove rows)
+        #include "moria_DefinitionProcessing.inl" // Definition file loading & runtime apply
 
         #include "moria_debug.inl"    // 6C + 6F: Display, debug, cheat commands
 
@@ -328,13 +333,13 @@ namespace MoriaMods
         // Settings panel (F12 toggle)
         UObject* m_fontTestWidget{nullptr};
         bool m_ftVisible{false};
-        UObject* m_ftTabImages[3]{};
-        UObject* m_ftTabLabels[3]{};
+        UObject* m_ftTabImages[CONFIG_TAB_COUNT]{};
+        UObject* m_ftTabLabels[CONFIG_TAB_COUNT]{};
         UObject* m_ftTabActiveTexture{nullptr};
         UObject* m_ftTabInactiveTexture{nullptr};
         int m_ftSelectedTab{0};
         UObject* m_ftScrollBox{nullptr};
-        UObject* m_ftTabContent[3]{};
+        UObject* m_ftTabContent[CONFIG_TAB_COUNT]{};
         UObject* m_ftKeyBoxLabels[BIND_COUNT]{};
         UObject* m_ftCheckImages[BIND_COUNT]{};
         UObject* m_ftModBoxLabel{nullptr};
@@ -359,6 +364,10 @@ namespace MoriaMods
         UObject* m_ftRemovalVBox{nullptr};
         UObject* m_ftRemovalHeader{nullptr};
         int m_ftLastRemovalCount{-1};
+        // Tab 3 (Game Mods) widgets
+        static constexpr int MAX_GAME_MODS = 16;
+        UObject* m_ftGameModCheckImages[MAX_GAME_MODS]{};
+        std::vector<GameModEntry> m_ftGameModEntries;
 
         // Advanced Builder toolbar (toggle button)
         UObject* m_abBarWidget{nullptr};
@@ -768,6 +777,20 @@ namespace MoriaMods
             m_replayActive = true;
             VLOG(
                     STR("[MoriaCppMod] v3.1: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+
+            // Apply definition files to live DataTables before each map load
+            // (DataTables are fully populated by the time LoadMap is called)
+            Unreal::Hook::RegisterLoadMapPreCallback(
+                [this](UEngine*, FWorldContext&, FURL, UPendingNetGame*, FString&) -> std::pair<bool, bool>
+                {
+                    if (!m_definitionsApplied)
+                    {
+                        m_definitionsApplied = true;
+                        try { loadAndApplyDefinitions(); }
+                        catch (...) { RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Exception during definition loading\n")); }
+                    }
+                    return {false, false};
+                });
         }
 
         // Per-frame tick: state machines, replay, quickbuild, icons, config, rescans.
@@ -1297,12 +1320,12 @@ namespace MoriaMods
                         int wLeft = static_cast<int>(viewW / 2.0f - 720.0f * s2p);
                         int wTop  = static_cast<int>(viewH / 2.0f - 440.0f * s2p);
 
-                        // Tab clicks: 3 tabs stacked vertically on left
+                        // Tab clicks: CONFIG_TAB_COUNT tabs stacked vertically on left
                         int tabX0 = static_cast<int>(wLeft + 32.5f * s2p);
                         int tabX1 = static_cast<int>(tabX0 + 512.0f * s2p);
                         if (curX >= tabX0 && curX <= tabX1)
                         {
-                            for (int t = 0; t < 3; t++)
+                            for (int t = 0; t < CONFIG_TAB_COUNT; t++)
                             {
                                 int tY0 = static_cast<int>(wTop + (42.0f + t * 132.0f) * s2p);
                                 int tY1 = static_cast<int>(tY0 + 128.0f * s2p);
@@ -1555,6 +1578,56 @@ namespace MoriaMods
                                 {
                                     s_config.pendingRemoveIndex = entryIdx;
                                     VLOG(STR("[MoriaCppMod] [Settings] Delete removal entry {} via icon click\n"), entryIdx);
+                                }
+                            }
+                        }
+
+                        // Tab 3 (Game Mods): checkbox clicks
+                        if (m_ftSelectedTab == 3)
+                        {
+                            int cbX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f + 4.0f) * s2p);
+                            int cbX1 = static_cast<int>(cbX0 + 80.0f * s2p);
+                            int contentY = static_cast<int>(wTop + 40.0f * s2p);
+                            int sectionH = static_cast<int>(80.0f * s2p);
+                            int rowH = static_cast<int>(128.0f * s2p);
+
+                            float scrollOff = 0.0f;
+                            if (m_ftScrollBox)
+                            {
+                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                if (getScrollFn)
+                                {
+                                    int gsz = getScrollFn->GetParmsSize();
+                                    std::vector<uint8_t> sp(gsz, 0);
+                                    m_ftScrollBox->ProcessEvent(getScrollFn, sp.data());
+                                    auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
+                                    if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
+                                        scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
+                                }
+                            }
+
+                            if (curX >= cbX0 && curX <= cbX1)
+                            {
+                                int y = curY - contentY + static_cast<int>(scrollOff * s2p);
+                                // Row layout: section header (80px) then rows (128px each)
+                                int rowY = y - sectionH;
+                                if (rowY >= 0)
+                                {
+                                    int idx = rowY / rowH;
+                                    if (idx >= 0 && idx < static_cast<int>(m_ftGameModEntries.size()) && idx < MAX_GAME_MODS)
+                                    {
+                                        m_ftGameModEntries[idx].enabled = !m_ftGameModEntries[idx].enabled;
+                                        if (m_ftGameModCheckImages[idx])
+                                        {
+                                            auto* visFn = m_ftGameModCheckImages[idx]->GetFunctionByNameInChain(STR("SetVisibility"));
+                                            if (visFn) { uint8_t vp[8]{}; vp[0] = m_ftGameModEntries[idx].enabled ? 0 : 2; m_ftGameModCheckImages[idx]->ProcessEvent(visFn, vp); }
+                                        }
+                                        // Save immediately
+                                        saveGameMods(m_ftGameModEntries);
+                                        VLOG(STR("[MoriaCppMod] [Settings] Game Mod '{}' = {}\n"),
+                                            std::wstring(m_ftGameModEntries[idx].name.begin(), m_ftGameModEntries[idx].name.end()),
+                                            m_ftGameModEntries[idx].enabled ? 1 : 0);
+                                    }
                                 }
                             }
                         }
@@ -1860,6 +1933,9 @@ namespace MoriaMods
                     }
                     s_overlay.visible = false; // hide overlay until character reloads
                     m_initialReplayDone = false;
+                    m_definitionsApplied = false; // re-apply definitions on next world load
+                    m_recipesDiscovered = false;
+                    m_addedRecipeNames.clear();
                     m_processedComps.clear();
                     m_undoStack.clear();
                     m_stuckLogCount = 0;
@@ -1908,6 +1984,8 @@ namespace MoriaMods
                     m_ftRemovalVBox = nullptr;
                     m_ftRemovalHeader = nullptr;
                     m_ftLastRemovalCount = -1;
+                    for (auto& c : m_ftGameModCheckImages) c = nullptr;
+                    m_ftGameModEntries.clear();
                     m_ftRenameWidget = nullptr;
                     m_ftRenameInput = nullptr;
                     m_ftRenameConfirmLabel = nullptr;
@@ -1969,6 +2047,35 @@ namespace MoriaMods
             }
 
 
+            // ── Early recipe injection: BEFORE build tab widget is created ──
+            // The build tab widget caches recipes during construction (before
+            // character spawns). Inject into Recipes/DiscoveredRecipes as soon
+            // as the snapshot populates Recipes on the DiscoveryManager.
+            if (!m_recipesDiscovered && !m_addedRecipeNames.empty() && m_definitionsApplied)
+            {
+                static ULONGLONG s_lastDiscMgrPoll = 0;
+                if (intervalElapsed(s_lastDiscMgrPoll, 200))
+                {
+                    std::vector<UObject*> mgrs;
+                    UObjectGlobals::FindAllOf(STR("MorDiscoveryManager"), mgrs);
+                    if (!mgrs.empty())
+                    {
+                        auto* dmb = reinterpret_cast<uint8_t*>(mgrs[0]);
+                        struct { uint8_t* Data; int32_t Num; int32_t Max; } rHdr{};
+                        if (isReadableMemory(dmb + 0x0220, 16))
+                            std::memcpy(&rHdr, dmb + 0x0220, 16);
+                        if (rHdr.Num > 0)
+                        {
+                            RC::Output::send<RC::LogLevel::Warning>(
+                                STR("[MoriaCppMod] [Def] EARLY inject: DiscoveryManager Recipes.Num={}, injecting NOW\n"),
+                                rHdr.Num);
+                            m_recipesDiscovered = true;
+                            discoverAddedRecipes(mgrs[0]);
+                        }
+                    }
+                }
+            }
+
             if (!m_characterLoaded)
             {
                 if (intervalElapsed(m_lastCharPoll, 500))
@@ -1979,7 +2086,7 @@ namespace MoriaMods
                     {
                         m_characterLoaded = true;
                         m_charLoadTime = GetTickCount64();
-                        VLOG(STR("[MoriaCppMod] Character loaded Ã¢â‚¬â€ waiting 15s before replay\n"));
+                        VLOG(STR("[MoriaCppMod] Character loaded -- waiting 15s before replay\n"));
                     }
                 }
                 return; // don't do anything until character exists

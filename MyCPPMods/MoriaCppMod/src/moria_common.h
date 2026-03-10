@@ -52,6 +52,9 @@
 #include <Unreal/FString.hpp>
 #include <Unreal/FText.hpp>
 #include <Unreal/Property/FBoolProperty.hpp>
+#include <Unreal/Property/FEnumProperty.hpp>
+#include <Unreal/Property/NumericPropertyTypes.hpp>
+#include <Unreal/UEnum.hpp>
 
 #include "moria_testable.h"
 
@@ -65,7 +68,7 @@ namespace MoriaMods
     // ════════════════════════════════════════════════════════════════════════════
 
     // Verbose logging gate (false = short-circuits all VLOG calls)
-    inline bool s_verbose = false;
+    inline bool s_verbose = true;
     inline std::string s_language = "en";
     // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
     #define VLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
@@ -269,8 +272,8 @@ namespace MoriaMods
     // ════════════════════════════════════════════════════════════════════════════
     // Config State & Cross-Thread Signals
     // ════════════════════════════════════════════════════════════════════════════
-    static constexpr int CONFIG_TAB_COUNT = 3;
-    inline const wchar_t* CONFIG_TAB_NAMES[CONFIG_TAB_COUNT] = {L"Optional Mods", L"Key Mapping", L"Hide Environment"};
+    static constexpr int CONFIG_TAB_COUNT = 4;
+    inline const wchar_t* CONFIG_TAB_NAMES[CONFIG_TAB_COUNT] = {L"Optional Mods", L"Key Mapping", L"Hide Environment", L"Game Mods"};
 
     struct ConfigState
     {

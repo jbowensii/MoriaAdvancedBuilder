@@ -362,14 +362,96 @@ struct DataTableUtil
     }
 
     // ════════════════════════════════════════════════════════════════════════════
-    // Phase 3: Add / Remove / Duplicate Rows (EXPERIMENTAL)
+    // Phase 3: Add / Remove / Duplicate Rows
+    // Uses engine virtual functions via vtable dispatch for proper TMap hash maintenance
     // ════════════════════════════════════════════════════════════════════════════
 
+    // VTable offsets for UDataTable virtual functions (UE 4.27)
+    // Source: RE-UE4SS/generated_include/FunctionBodies/4_27_VTableOffsets_UDataTable_FunctionBody.cpp
+    static constexpr uint32_t VTABLE_AddRowInternal = 0x278;  // void(FName, uint8*)
+    static constexpr uint32_t VTABLE_RemoveRow      = 0x2A0;  // void(FName)
+
+    // Call UDataTable::AddRowInternal(FName, uint8*) via vtable dispatch
+    // Engine handles TMap insertion with proper hash bucket maintenance
+    bool callAddRowInternal(const wchar_t* rowName, uint8_t* rowData)
+    {
+        if (!table || !rowData) return false;
+        FName fname(rowName, FNAME_Add);
+        try {
+            std::byte* vt = std::bit_cast<std::byte*>(*std::bit_cast<std::byte**>(table));
+            void* rawFunc = *std::bit_cast<void**>(vt + VTABLE_AddRowInternal);
+            if (!rawFunc)
+            {
+                RC::Output::send<RC::LogLevel::Warning>(
+                    STR("[MoriaCppMod] [DT] callAddRowInternal: vtable slot 0x{:X} is null!\n"),
+                    VTABLE_AddRowInternal);
+                return false;
+            }
+            using MFP = void(UObject::*)(FName, uint8_t*);
+            auto func = std::bit_cast<MFP>(rawFunc);
+            (table->*func)(fname, rowData);
+            return true;
+        } catch (const std::exception& e) {
+            RC::Output::send<RC::LogLevel::Warning>(
+                STR("[MoriaCppMod] [DT] callAddRowInternal EXCEPTION for '{}': {}\n"),
+                std::wstring(rowName),
+                std::wstring(std::string(e.what()).begin(), std::string(e.what()).end()));
+            return false;
+        } catch (...) {
+            RC::Output::send<RC::LogLevel::Warning>(
+                STR("[MoriaCppMod] [DT] callAddRowInternal UNKNOWN EXCEPTION for '{}'\n"),
+                std::wstring(rowName));
+            return false;
+        }
+    }
+
+    // Call UDataTable::RemoveRow(FName) via vtable dispatch
+    // Engine handles TMap removal with proper hash bucket maintenance
+    bool callRemoveRow(const wchar_t* rowName)
+    {
+        if (!table) return false;
+        FName fname(rowName, FNAME_Find);
+        try {
+            std::byte* vt = std::bit_cast<std::byte*>(*std::bit_cast<std::byte**>(table));
+            void* rawFunc = *std::bit_cast<void**>(vt + VTABLE_RemoveRow);
+            if (!rawFunc)
+            {
+                RC::Output::send<RC::LogLevel::Warning>(
+                    STR("[MoriaCppMod] [DT] callRemoveRow: vtable slot 0x{:X} is null!\n"),
+                    VTABLE_RemoveRow);
+                return false;
+            }
+            using MFP = void(UObject::*)(FName);
+            auto func = std::bit_cast<MFP>(rawFunc);
+            (table->*func)(fname);
+            return true;
+        } catch (const std::exception& e) {
+            RC::Output::send<RC::LogLevel::Warning>(
+                STR("[MoriaCppMod] [DT] callRemoveRow EXCEPTION for '{}': {}\n"),
+                std::wstring(rowName),
+                std::wstring(std::string(e.what()).begin(), std::string(e.what()).end()));
+            return false;
+        } catch (...) {
+            RC::Output::send<RC::LogLevel::Warning>(
+                STR("[MoriaCppMod] [DT] callRemoveRow UNKNOWN EXCEPTION for '{}'\n"),
+                std::wstring(rowName));
+            return false;
+        }
+    }
+
     // Add an empty row with default-initialized fields
+    // Uses engine AddRowInternal for proper RowMap hash insertion
     // Returns pointer to the new row data, or nullptr on failure
     uint8_t* addRow(const wchar_t* rowName)
     {
-        if (!table || !rowStruct || rowSize <= 0) return nullptr;
+        if (!table || !rowStruct || rowSize <= 0)
+        {
+            VLOG(STR("[MoriaCppMod] [DT] addRow: precondition failed (table={}, rowStruct={}, rowSize={})\n"),
+                 table ? STR("OK") : STR("NULL"),
+                 rowStruct ? STR("OK") : STR("NULL"),
+                 rowSize);
+            return nullptr;
+        }
 
         // Check if row already exists
         if (findRowData(rowName))
@@ -379,59 +461,45 @@ struct DataTableUtil
             return nullptr;
         }
 
-        // Allocate and zero-fill row memory
+        // Allocate and zero-fill row memory via engine allocator
         uint8_t* newRow = static_cast<uint8_t*>(FMemory::Malloc(rowSize, 8));
         if (!newRow)
         {
-            VLOG(STR("[MoriaCppMod] [DT] addRow: FMemory::Malloc failed for '{}' (size={})\n"),
-                 std::wstring(rowName), rowSize);
+            RC::Output::send<RC::LogLevel::Warning>(
+                STR("[MoriaCppMod] [DT] addRow: FMemory::Malloc FAILED for '{}' (size={})\n"),
+                std::wstring(rowName), rowSize);
             return nullptr;
         }
         std::memset(newRow, 0, rowSize);
 
-        // Initialize struct defaults if available
+        // Initialize struct defaults via engine virtual call
         try { rowStruct->InitializeStruct(newRow); }
-        catch (...) { /* zero-fill is acceptable fallback */ }
-
-        // Insert into RowMap via raw memory TMap manipulation
-        FName fname(rowName, FNAME_Add);
-        auto* base = reinterpret_cast<uint8_t*>(table);
-        RowMapHeader hdr{};
-        std::memcpy(&hdr, base + DT_ROWMAP_OFFSET, 16);
-
-        // Check if we have space (Num < Max)
-        if (hdr.Num < hdr.Max && hdr.Data)
-        {
-            // Write new entry at end: FName(8) + ptr(8) + hash padding(8)
-            uint8_t* newElem = hdr.Data + hdr.Num * SET_ELEMENT_SIZE;
-            if (isReadableMemory(newElem, SET_ELEMENT_SIZE))
-            {
-                std::memcpy(newElem, &fname, FNAME_SIZE);
-                std::memcpy(newElem + FNAME_SIZE, &newRow, 8);
-                std::memset(newElem + FNAME_SIZE + 8, 0, 8); // zero hash entry
-
-                // Increment Num
-                int32_t newNum = hdr.Num + 1;
-                std::memcpy(base + DT_ROWMAP_OFFSET + 8, &newNum, 4);
-
-                VLOG(STR("[MoriaCppMod] [DT] addRow: '{}' added to '{}' (slot {}, size={})\n"),
-                     std::wstring(rowName), tableName, hdr.Num, rowSize);
-                return newRow;
-            }
+        catch (...) {
+            VLOG(STR("[MoriaCppMod] [DT] addRow: InitializeStruct failed for '{}', using zero-fill\n"),
+                 std::wstring(rowName));
         }
 
-        // Fallback: no space in existing array — would need TMap realloc
-        VLOG(STR("[MoriaCppMod] [DT] addRow: '{}' no space in RowMap (Num={} Max={})\n"),
-             std::wstring(rowName), hdr.Num, hdr.Max);
-        FMemory::Free(newRow);
-        return nullptr;
+        // Insert into RowMap via engine's AddRowInternal (proper hash maintenance)
+        if (!callAddRowInternal(rowName, newRow))
+        {
+            RC::Output::send<RC::LogLevel::Warning>(
+                STR("[MoriaCppMod] [DT] addRow: AddRowInternal FAILED for '{}' in '{}'\n"),
+                std::wstring(rowName), tableName);
+            FMemory::Free(newRow);
+            return nullptr;
+        }
+
+        VLOG(STR("[MoriaCppMod] [DT] addRow: '{}' added to '{}' via engine AddRowInternal (size={})\n"),
+             std::wstring(rowName), tableName, rowSize);
+        return newRow;
     }
 
-    // Duplicate an existing row under a new name (shallow copy)
+    // Duplicate an existing row under a new name
+    // Uses engine AddRowInternal + CopyScriptStruct for proper deep copy
     // Returns pointer to the new row data, or nullptr on failure
     uint8_t* duplicateRow(const wchar_t* srcRowName, const wchar_t* newRowName)
     {
-        if (!table || rowSize <= 0) return nullptr;
+        if (!table || !rowStruct || rowSize <= 0) return nullptr;
 
         uint8_t* srcData = findRowData(srcRowName);
         if (!srcData)
@@ -441,88 +509,49 @@ struct DataTableUtil
             return nullptr;
         }
 
-        if (findRowData(newRowName))
-        {
-            VLOG(STR("[MoriaCppMod] [DT] duplicateRow: target '{}' already exists in '{}'\n"),
-                 std::wstring(newRowName), tableName);
-            return nullptr;
-        }
-
-        // Allocate and shallow-copy
-        uint8_t* newRow = static_cast<uint8_t*>(FMemory::Malloc(rowSize, 8));
+        // addRow handles duplicate check, allocation, init, and engine insertion
+        uint8_t* newRow = addRow(newRowName);
         if (!newRow) return nullptr;
-        std::memcpy(newRow, srcData, rowSize);
 
-        // Insert via same mechanism as addRow
-        FName fname(newRowName, FNAME_Add);
-        auto* base = reinterpret_cast<uint8_t*>(table);
-        RowMapHeader hdr{};
-        std::memcpy(&hdr, base + DT_ROWMAP_OFFSET, 16);
-
-        if (hdr.Num < hdr.Max && hdr.Data)
-        {
-            uint8_t* newElem = hdr.Data + hdr.Num * SET_ELEMENT_SIZE;
-            if (isReadableMemory(newElem, SET_ELEMENT_SIZE))
-            {
-                std::memcpy(newElem, &fname, FNAME_SIZE);
-                std::memcpy(newElem + FNAME_SIZE, &newRow, 8);
-                std::memset(newElem + FNAME_SIZE + 8, 0, 8);
-
-                int32_t newNum = hdr.Num + 1;
-                std::memcpy(base + DT_ROWMAP_OFFSET + 8, &newNum, 4);
-
-                VLOG(STR("[MoriaCppMod] [DT] duplicateRow: '{}' -> '{}' in '{}'\n"),
-                     std::wstring(srcRowName), std::wstring(newRowName), tableName);
-                return newRow;
-            }
+        // Deep copy via engine's CopyScriptStruct (handles TArray/FString/etc properly)
+        try {
+            auto* scriptStruct = static_cast<UScriptStruct*>(rowStruct);
+            scriptStruct->CopyScriptStruct(newRow, srcData);
+            VLOG(STR("[MoriaCppMod] [DT] duplicateRow: '{}' -> '{}' in '{}' (CopyScriptStruct)\n"),
+                 std::wstring(srcRowName), std::wstring(newRowName), tableName);
+        } catch (...) {
+            // Fallback: shallow copy (handles simple scalar structs)
+            std::memcpy(newRow, srcData, rowSize);
+            VLOG(STR("[MoriaCppMod] [DT] duplicateRow: '{}' -> '{}' in '{}' (shallow copy fallback)\n"),
+                 std::wstring(srcRowName), std::wstring(newRowName), tableName);
         }
-
-        VLOG(STR("[MoriaCppMod] [DT] duplicateRow: no space in RowMap for '{}'\n"),
-             std::wstring(newRowName));
-        FMemory::Free(newRow);
-        return nullptr;
+        return newRow;
     }
 
-    // Remove a row by name (orphans memory — does NOT free, safe for runtime-only)
+    // Remove a row by name via engine's RemoveRow (proper hash maintenance)
     bool removeRow(const wchar_t* rowName)
     {
         if (!table) return false;
 
-        auto* base = reinterpret_cast<uint8_t*>(table);
-        RowMapHeader hdr{};
-        std::memcpy(&hdr, base + DT_ROWMAP_OFFSET, 16);
-        if (hdr.Num <= 0 || !hdr.Data) return false;
-
-        FName searchName(rowName, FNAME_Add);
-        for (int32_t i = 0; i < hdr.Num; i++)
+        // Verify row exists before calling engine
+        if (!findRowData(rowName))
         {
-            uint8_t* elem = hdr.Data + i * SET_ELEMENT_SIZE;
-            if (!isReadableMemory(elem, SET_ELEMENT_SIZE)) { VLOG(STR("[MoriaCppMod] DataTable removeRow: row {} unreadable\n"), i); continue; }
-            if (std::memcmp(elem, &searchName, FNAME_SIZE) == 0)
-            {
-                // Move last element into this slot (swap-and-pop)
-                int32_t lastIdx = hdr.Num - 1;
-                if (i < lastIdx)
-                {
-                    uint8_t* lastElem = hdr.Data + lastIdx * SET_ELEMENT_SIZE;
-                    std::memcpy(elem, lastElem, SET_ELEMENT_SIZE);
-                }
-                // Zero the old last slot
-                uint8_t* lastElem = hdr.Data + lastIdx * SET_ELEMENT_SIZE;
-                std::memset(lastElem, 0, SET_ELEMENT_SIZE);
-
-                // Decrement Num
-                int32_t newNum = hdr.Num - 1;
-                std::memcpy(base + DT_ROWMAP_OFFSET + 8, &newNum, 4);
-
-                VLOG(STR("[MoriaCppMod] [DT] removeRow: '{}' removed from '{}' (was slot {}, {} remaining)\n"),
-                     std::wstring(rowName), tableName, i, newNum);
-                return true;
-            }
+            VLOG(STR("[MoriaCppMod] [DT] removeRow: '{}' not found in '{}'\n"),
+                 std::wstring(rowName), tableName);
+            return false;
         }
-        VLOG(STR("[MoriaCppMod] [DT] removeRow: '{}' not found in '{}'\n"),
+
+        if (!callRemoveRow(rowName))
+        {
+            RC::Output::send<RC::LogLevel::Warning>(
+                STR("[MoriaCppMod] [DT] removeRow: engine RemoveRow FAILED for '{}' in '{}'\n"),
+                std::wstring(rowName), tableName);
+            return false;
+        }
+
+        VLOG(STR("[MoriaCppMod] [DT] removeRow: '{}' removed from '{}' via engine RemoveRow\n"),
              std::wstring(rowName), tableName);
-        return false;
+        return true;
     }
 
     // ════════════════════════════════════════════════════════════════════════════
