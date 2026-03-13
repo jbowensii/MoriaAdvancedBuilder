@@ -331,13 +331,13 @@ namespace MoriaMods
         // Settings panel (F12 toggle)
         UObject* m_fontTestWidget{nullptr};
         bool m_ftVisible{false};
-        UObject* m_ftTabImages[CONFIG_TAB_COUNT]{};
-        UObject* m_ftTabLabels[CONFIG_TAB_COUNT]{};
+        UObject* m_ftTabImages[4]{};       // fixed at 4 — Game Mods tab hidden but arrays preserved
+        UObject* m_ftTabLabels[4]{};
         UObject* m_ftTabActiveTexture{nullptr};
         UObject* m_ftTabInactiveTexture{nullptr};
         int m_ftSelectedTab{0};
         UObject* m_ftScrollBox{nullptr};
-        UObject* m_ftTabContent[CONFIG_TAB_COUNT]{};
+        UObject* m_ftTabContent[4]{};
         UObject* m_ftKeyBoxLabels[BIND_COUNT]{};
         UObject* m_ftCheckImages[BIND_COUNT]{};
         UObject* m_ftModBoxLabel{nullptr};

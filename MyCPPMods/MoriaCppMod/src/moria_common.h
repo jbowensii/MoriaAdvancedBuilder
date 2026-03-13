@@ -68,7 +68,7 @@ namespace MoriaMods
     // ════════════════════════════════════════════════════════════════════════════
 
     // Verbose logging gate (false = short-circuits all VLOG calls)
-    inline bool s_verbose = true;
+    inline bool s_verbose = false;
     inline std::string s_language = "en";
     // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
     #define VLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
@@ -255,8 +255,8 @@ namespace MoriaMods
     // ════════════════════════════════════════════════════════════════════════════
     // Config State & Cross-Thread Signals
     // ════════════════════════════════════════════════════════════════════════════
-    static constexpr int CONFIG_TAB_COUNT = 4;
-    inline const wchar_t* CONFIG_TAB_NAMES[CONFIG_TAB_COUNT] = {L"Optional Mods", L"Key Mapping", L"Hide Environment", L"Game Mods"};
+    static constexpr int CONFIG_TAB_COUNT = 3;  // Game Mods tab hidden (WIP) — set to 4 to re-enable
+    inline const wchar_t* CONFIG_TAB_NAMES[4] = {L"Optional Mods", L"Key Mapping", L"Hide Environment", L"Game Mods"};
 
     struct ConfigState
     {
