@@ -328,110 +328,6 @@
         }
 
 
-        // Character rename — Win32 dialog on background thread, result picked up in on_update
-        static DWORD WINAPI charNameDialogProc(LPVOID param)
-        {
-            auto* self = static_cast<MoriaCppMod*>(param);
-            HWND owner = findGameWindow();
-
-            // Build a simple modal dialog from a DLGTEMPLATE in memory
-            // Layout: label + edit + OK/Cancel
-            alignas(4) BYTE dlgBuf[512]{};
-            auto* dlg = reinterpret_cast<DLGTEMPLATE*>(dlgBuf);
-            dlg->style = DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE;
-            dlg->cdit = 3; // 3 controls: static label, edit, OK button
-            dlg->cx = 200;
-            dlg->cy = 60;
-
-            // Use DialogBoxIndirectParam with a dlgproc instead — simpler with InputBox approach
-            // Actually, simplest: use a message-loop dialog via CreateWindowEx
-
-            // Simplest reliable approach: TaskDialog is Vista+ but no edit control.
-            // Use a plain Win32 window with an edit control.
-
-            const wchar_t* className = L"MoriaCppModCharNameDlg";
-            WNDCLASSEXW wc{};
-            wc.cbSize = sizeof(wc);
-            wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) -> LRESULT {
-                switch (msg) {
-                case WM_CREATE: {
-                    auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
-                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
-                    HFONT font = CreateFontW(-28, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
-                        0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-                    CreateWindowExW(0, L"STATIC", L"Character Name (max 22 chars):",
-                        WS_CHILD | WS_VISIBLE, 20, 20, 560, 40, hwnd, nullptr, nullptr, nullptr);
-                    HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 20, 68, 560, 48,
-                        hwnd, reinterpret_cast<HMENU>(101), nullptr, nullptr);
-                    CreateWindowExW(0, L"BUTTON", L"OK",
-                        WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 220, 132, 160, 56,
-                        hwnd, reinterpret_cast<HMENU>(IDOK), nullptr, nullptr);
-                    SendMessageW(edit, EM_SETLIMITTEXT, 22, 0);
-                    // Apply font to all children
-                    EnumChildWindows(hwnd, [](HWND child, LPARAM f) -> BOOL {
-                        SendMessageW(child, WM_SETFONT, static_cast<WPARAM>(f), TRUE);
-                        return TRUE;
-                    }, reinterpret_cast<LPARAM>(font));
-                    SetFocus(edit);
-                    return 0;
-                }
-                case WM_COMMAND:
-                    if (LOWORD(wp) == IDOK) {
-                        wchar_t buf[24]{};
-                        HWND edit = GetDlgItem(hwnd, 101);
-                        GetWindowTextW(edit, buf, 23);
-                        auto* self = reinterpret_cast<MoriaCppMod*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-                        if (self && buf[0] != L'\0') {
-                            { std::scoped_lock lock(self->m_charNameMutex); self->m_pendingCharName = buf; }
-                            self->m_pendingCharNameReady.store(true, std::memory_order_release);
-                        }
-                        DestroyWindow(hwnd);
-                    }
-                    return 0;
-                case WM_KEYDOWN:
-                    if (wp == VK_ESCAPE) { DestroyWindow(hwnd); return 0; }
-                    break;
-                case WM_DESTROY:
-                    PostQuitMessage(0);
-                    return 0;
-                }
-                return DefWindowProcW(hwnd, msg, wp, lp);
-            };
-            wc.hInstance = GetModuleHandleW(nullptr);
-            wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-            wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-            wc.lpszClassName = className;
-            RegisterClassExW(&wc);
-
-            HWND dlgWnd = CreateWindowExW(WS_EX_TOPMOST, className, L"Rename Character",
-                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-                CW_USEDEFAULT, CW_USEDEFAULT, 632, 268,
-                owner, nullptr, wc.hInstance, self);
-
-            if (dlgWnd) {
-                MSG m;
-                while (GetMessageW(&m, nullptr, 0, 0) > 0) {
-                    if (!IsDialogMessageW(dlgWnd, &m)) {
-                        TranslateMessage(&m);
-                        DispatchMessageW(&m);
-                    }
-                }
-            }
-            UnregisterClassW(className, wc.hInstance);
-            return 0;
-        }
-
-        void promptCharacterRename()
-        {
-            if (!m_characterLoaded) {
-                showErrorBox(L"Character not loaded");
-                return;
-            }
-            HANDLE h = CreateThread(nullptr, 0, charNameDialogProc, this, 0, nullptr);
-            if (h) CloseHandle(h);
-        }
-
         void applyPendingCharacterName()
         {
             std::wstring newName;
@@ -522,13 +418,9 @@
                 updateMcRotationLabel();
                 break;
             }
-            case 1: // Target
-                if (isModifierDown())
-                    quickBuildFromTarget();
-                else if (m_tiShowTick > 0)
-                    hideTargetInfo();
-                else
-                    dumpAimedActor();
+            case 1: // Snap Toggle (only while placing a piece)
+                if (resolveGATA())
+                    toggleSnap();
                 break;
             case 2: // Stability Check
                 runStabilityAudit();
@@ -539,22 +431,24 @@
                 else
                     toggleHideCharacter();
                 break;
-            case 4: // (empty)
+            case 4: // Target
+                if (isModifierDown())
+                    quickBuildFromTarget();
+                else if (m_tiShowTick > 0)
+                    hideTargetInfo();
+                else
+                    dumpAimedActor();
                 break;
-            case 5: // Snap Toggle (only while placing a piece)
-                if (resolveGATA())
-                    toggleSnap();
+            case 5: // Configuration — handled separately
                 break;
-            case 8: // Remove Target
+            case 6: // Remove Target
                 removeAimed();
                 break;
-            case 9: // Undo Last
+            case 7: // Undo Last
                 undoLast();
                 break;
-            case 10: // Remove All
+            case 8: // Remove All
                 removeAllOfType();
-                break;
-            case 11: // Configuration — handled separately
                 break;
             default:
                 break;

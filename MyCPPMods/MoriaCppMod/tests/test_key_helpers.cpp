@@ -196,26 +196,26 @@ TEST_F(KeyHelperTest, IniKeyToBindIndex_AllKeys)
     EXPECT_EQ(iniKeyToBindIndex("QuickBuild7"), 6);
     EXPECT_EQ(iniKeyToBindIndex("QuickBuild8"), 7);
     EXPECT_EQ(iniKeyToBindIndex("Rotation"), 8);
-    EXPECT_EQ(iniKeyToBindIndex("Target"), 9);
+    EXPECT_EQ(iniKeyToBindIndex("SnapToggle"), 9);
     EXPECT_EQ(iniKeyToBindIndex("StabilityCheck"), 10);
     EXPECT_EQ(iniKeyToBindIndex("SuperDwarf"), 11);
-    EXPECT_EQ(iniKeyToBindIndex("Empty4"), 12);
-    EXPECT_EQ(iniKeyToBindIndex("SnapToggle"), 13);
-    EXPECT_EQ(iniKeyToBindIndex("Empty6"), 14);
-    EXPECT_EQ(iniKeyToBindIndex("Empty7"), 15);
-    EXPECT_EQ(iniKeyToBindIndex("RemoveTarget"), 16);
-    EXPECT_EQ(iniKeyToBindIndex("UndoLast"), 17);
-    EXPECT_EQ(iniKeyToBindIndex("RemoveAll"), 18);
-    EXPECT_EQ(iniKeyToBindIndex("Configuration"), 19);
-    EXPECT_EQ(iniKeyToBindIndex("AdvancedBuilderOpen"), 20);
-    EXPECT_EQ(iniKeyToBindIndex("Reserved1"), 21);
+    EXPECT_EQ(iniKeyToBindIndex("Target"), 12);
+    EXPECT_EQ(iniKeyToBindIndex("Configuration"), 13);
+    EXPECT_EQ(iniKeyToBindIndex("RemoveTarget"), 14);
+    EXPECT_EQ(iniKeyToBindIndex("UndoLast"), 15);
+    EXPECT_EQ(iniKeyToBindIndex("RemoveAll"), 16);
+    EXPECT_EQ(iniKeyToBindIndex("AdvancedBuilderOpen"), 17);
+    EXPECT_EQ(iniKeyToBindIndex("Reserved1"), 18);
+    EXPECT_EQ(iniKeyToBindIndex("TrashItem"), 19);
+    EXPECT_EQ(iniKeyToBindIndex("ReplenishItem"), 20);
+    EXPECT_EQ(iniKeyToBindIndex("RemoveAttributes"), 21);
 }
 
 TEST_F(KeyHelperTest, IniKeyToBindIndex_CaseInsensitive)
 {
     EXPECT_EQ(iniKeyToBindIndex("quickbuild1"), 0);
     EXPECT_EQ(iniKeyToBindIndex("ROTATION"), 8);
-    EXPECT_EQ(iniKeyToBindIndex("empty4"), 12);
+    EXPECT_EQ(iniKeyToBindIndex("trashitem"), 19);
 }
 
 TEST_F(KeyHelperTest, IniKeyToBindIndex_NotFound)
@@ -233,11 +233,11 @@ TEST_F(KeyHelperTest, BindIndexToIniKey_ValidRange)
     EXPECT_STREQ(bindIndexToIniKey(7), "QuickBuild8");
     EXPECT_STREQ(bindIndexToIniKey(8), "Rotation");
     EXPECT_STREQ(bindIndexToIniKey(10), "StabilityCheck");
-    EXPECT_STREQ(bindIndexToIniKey(12), "Empty4");
-    EXPECT_STREQ(bindIndexToIniKey(16), "RemoveTarget");
-    EXPECT_STREQ(bindIndexToIniKey(19), "Configuration");
-    EXPECT_STREQ(bindIndexToIniKey(20), "AdvancedBuilderOpen");
-    EXPECT_STREQ(bindIndexToIniKey(21), "Reserved1");
+    EXPECT_STREQ(bindIndexToIniKey(12), "Target");
+    EXPECT_STREQ(bindIndexToIniKey(16), "RemoveAll");
+    EXPECT_STREQ(bindIndexToIniKey(19), "TrashItem");
+    EXPECT_STREQ(bindIndexToIniKey(20), "ReplenishItem");
+    EXPECT_STREQ(bindIndexToIniKey(21), "RemoveAttributes");
 }
 
 TEST_F(KeyHelperTest, BindIndexToIniKey_OutOfRange)

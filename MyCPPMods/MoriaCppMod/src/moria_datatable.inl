@@ -4,16 +4,16 @@
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 // ════════════════════════════════════════════════════════════════════════════════
-// DataTableUtil — read, write, add, and remove rows from UDataTable at runtime
+// DataTableUtil — read, write, and add rows to UDataTable at runtime
 // ════════════════════════════════════════════════════════════════════════════════
 //
 // Usage:
 //   DataTableUtil dt;
 //   if (dt.bind(L"DT_Constructions")) {
-//       dt.dumpRowStructFields();
 //       auto names = dt.getRowNames();
-//       float val = dt.readFloat(L"MyRow", L"SomeProperty");
-//       dt.writeFloat(L"MyRow", L"SomeProperty", 42.0f);
+//       int32_t val = dt.readInt32(L"MyRow", L"SomeProperty");
+//       dt.writeInt32(L"MyRow", L"SomeProperty", 42);
+//       dt.writeFloat(L"MyRow", L"SomeProperty", 1.5f);
 //   }
 
 struct DataTableUtil
@@ -174,21 +174,6 @@ struct DataTableUtil
         return off;
     }
 
-    // Get property size for a given property name
-    int getPropertySize(const wchar_t* propName) const
-    {
-        if (!rowStruct) return 0;
-        for (auto* s = rowStruct; s; s = s->GetSuperStruct())
-        {
-            for (auto* prop : s->ForEachProperty())
-            {
-                if (prop->GetName() == std::wstring_view(propName))
-                    return prop->GetSize();
-            }
-        }
-        return 0;
-    }
-
     // ════════════════════════════════════════════════════════════════════════════
     // Phase 1: Typed Read Operations
     // ════════════════════════════════════════════════════════════════════════════
@@ -211,38 +196,6 @@ struct DataTableUtil
         return val;
     }
 
-    float readFloat(const wchar_t* row, const wchar_t* prop)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, 4)) return 0.0f;
-        float val; std::memcpy(&val, data + off, 4);
-        return val;
-    }
-
-    bool readBool(const wchar_t* row, const wchar_t* prop)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, 1)) return false;
-        return data[off] != 0;
-    }
-
-    uint8_t readUInt8(const wchar_t* row, const wchar_t* prop)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, 1)) return 0;
-        return data[off];
-    }
-
-    std::wstring readFName(const wchar_t* row, const wchar_t* prop)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, FNAME_SIZE)) return L"";
-        FName fname;
-        std::memcpy(&fname, data + off, FNAME_SIZE);
-        try { return fname.ToString(); }
-        catch (...) { return L"(error)"; }
-    }
-
     std::wstring readFText(const wchar_t* row, const wchar_t* prop)
     {
         auto [data, off] = locateField(row, prop);
@@ -263,49 +216,12 @@ struct DataTableUtil
         return obj;
     }
 
-    // Read raw bytes at a property offset
-    std::vector<uint8_t> readRaw(const wchar_t* row, const wchar_t* prop, int size)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || size <= 0 || !isReadableMemory(data + off, size))
-            return {};
-        std::vector<uint8_t> buf(size);
-        std::memcpy(buf.data(), data + off, size);
-        return buf;
-    }
-
     // ════════════════════════════════════════════════════════════════════════════
-    // Phase 1: TArray Read (raw element bytes)
+    // TArray Header (used by addRow and definition processing)
     // ════════════════════════════════════════════════════════════════════════════
 
     // TArray layout: { T* Data; int32 ArrayNum; int32 ArrayMax; } = 16 bytes
     struct TArrayHeader { uint8_t* Data; int32_t Num; int32_t Max; };
-
-    // Read TArray element count
-    int32_t readTArrayCount(const wchar_t* row, const wchar_t* prop)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, 16)) return 0;
-        TArrayHeader hdr;
-        std::memcpy(&hdr, data + off, 16);
-        return hdr.Num;
-    }
-
-    // Read all TArray elements as raw bytes (caller provides element size)
-    std::vector<uint8_t> readTArrayRaw(const wchar_t* row, const wchar_t* prop, int elementSize)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || elementSize <= 0 || !isReadableMemory(data + off, 16))
-            return {};
-        TArrayHeader hdr;
-        std::memcpy(&hdr, data + off, 16);
-        if (hdr.Num <= 0 || !hdr.Data) return {};
-        int totalBytes = hdr.Num * elementSize;
-        if (!isReadableMemory(hdr.Data, totalBytes)) return {};
-        std::vector<uint8_t> buf(totalBytes);
-        std::memcpy(buf.data(), hdr.Data, totalBytes);
-        return buf;
-    }
 
     // ════════════════════════════════════════════════════════════════════════════
     // Phase 2: Typed Write Operations (in-place to existing row data)
@@ -327,49 +243,62 @@ struct DataTableUtil
         return true;
     }
 
-    bool writeBool(const wchar_t* row, const wchar_t* prop, bool val)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, 1)) return false;
-        data[off] = val ? 1 : 0;
-        return true;
-    }
-
-    bool writeUInt8(const wchar_t* row, const wchar_t* prop, uint8_t val)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, 1)) return false;
-        data[off] = val;
-        return true;
-    }
-
-    bool writeFName(const wchar_t* row, const wchar_t* prop, const wchar_t* val)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, FNAME_SIZE)) return false;
-        FName fname(val, FNAME_Add);
-        std::memcpy(data + off, &fname, FNAME_SIZE);
-        return true;
-    }
-
-    // Write raw bytes to a property offset
-    bool writeRaw(const wchar_t* row, const wchar_t* prop, const uint8_t* src, int size)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || size <= 0 || !isReadableMemory(data + off, size)) return false;
-        std::memcpy(data + off, src, size);
-        return true;
-    }
-
     // ════════════════════════════════════════════════════════════════════════════
-    // Phase 3: Add / Remove / Duplicate Rows (EXPERIMENTAL)
+    // Phase 3: Add Rows
+    // Uses engine virtual functions via vtable dispatch for proper TMap hash maintenance
     // ════════════════════════════════════════════════════════════════════════════
+
+    // VTable offsets for UDataTable virtual functions (UE 4.27)
+    // Source: RE-UE4SS/generated_include/FunctionBodies/4_27_VTableOffsets_UDataTable_FunctionBody.cpp
+    static constexpr uint32_t VTABLE_AddRowInternal = 0x278;  // void(FName, uint8*)
+
+    // Call UDataTable::AddRowInternal(FName, uint8*) via vtable dispatch
+    // Engine handles TMap insertion with proper hash bucket maintenance
+    bool callAddRowInternal(const wchar_t* rowName, uint8_t* rowData)
+    {
+        if (!table || !rowData) return false;
+        FName fname(rowName, FNAME_Add);
+        try {
+            std::byte* vt = std::bit_cast<std::byte*>(*std::bit_cast<std::byte**>(table));
+            void* rawFunc = *std::bit_cast<void**>(vt + VTABLE_AddRowInternal);
+            if (!rawFunc)
+            {
+                RC::Output::send<RC::LogLevel::Warning>(
+                    STR("[MoriaCppMod] [DT] callAddRowInternal: vtable slot 0x{:X} is null!\n"),
+                    VTABLE_AddRowInternal);
+                return false;
+            }
+            using MFP = void(UObject::*)(FName, uint8_t*);
+            auto func = std::bit_cast<MFP>(rawFunc);
+            (table->*func)(fname, rowData);
+            return true;
+        } catch (const std::exception& e) {
+            RC::Output::send<RC::LogLevel::Warning>(
+                STR("[MoriaCppMod] [DT] callAddRowInternal EXCEPTION for '{}': {}\n"),
+                std::wstring(rowName),
+                std::wstring(std::string(e.what()).begin(), std::string(e.what()).end()));
+            return false;
+        } catch (...) {
+            RC::Output::send<RC::LogLevel::Warning>(
+                STR("[MoriaCppMod] [DT] callAddRowInternal UNKNOWN EXCEPTION for '{}'\n"),
+                std::wstring(rowName));
+            return false;
+        }
+    }
 
     // Add an empty row with default-initialized fields
+    // Uses engine AddRowInternal for proper RowMap hash insertion
     // Returns pointer to the new row data, or nullptr on failure
     uint8_t* addRow(const wchar_t* rowName)
     {
-        if (!table || !rowStruct || rowSize <= 0) return nullptr;
+        if (!table || !rowStruct || rowSize <= 0)
+        {
+            VLOG(STR("[MoriaCppMod] [DT] addRow: precondition failed (table={}, rowStruct={}, rowSize={})\n"),
+                 table ? STR("OK") : STR("NULL"),
+                 rowStruct ? STR("OK") : STR("NULL"),
+                 rowSize);
+            return nullptr;
+        }
 
         // Check if row already exists
         if (findRowData(rowName))
@@ -379,190 +308,37 @@ struct DataTableUtil
             return nullptr;
         }
 
-        // Allocate and zero-fill row memory
+        // Allocate and zero-fill row memory via engine allocator
         uint8_t* newRow = static_cast<uint8_t*>(FMemory::Malloc(rowSize, 8));
         if (!newRow)
         {
-            VLOG(STR("[MoriaCppMod] [DT] addRow: FMemory::Malloc failed for '{}' (size={})\n"),
-                 std::wstring(rowName), rowSize);
+            RC::Output::send<RC::LogLevel::Warning>(
+                STR("[MoriaCppMod] [DT] addRow: FMemory::Malloc FAILED for '{}' (size={})\n"),
+                std::wstring(rowName), rowSize);
             return nullptr;
         }
         std::memset(newRow, 0, rowSize);
 
-        // Initialize struct defaults if available
+        // Initialize struct defaults via engine virtual call
         try { rowStruct->InitializeStruct(newRow); }
-        catch (...) { /* zero-fill is acceptable fallback */ }
-
-        // Insert into RowMap via raw memory TMap manipulation
-        FName fname(rowName, FNAME_Add);
-        auto* base = reinterpret_cast<uint8_t*>(table);
-        RowMapHeader hdr{};
-        std::memcpy(&hdr, base + DT_ROWMAP_OFFSET, 16);
-
-        // Check if we have space (Num < Max)
-        if (hdr.Num < hdr.Max && hdr.Data)
-        {
-            // Write new entry at end: FName(8) + ptr(8) + hash padding(8)
-            uint8_t* newElem = hdr.Data + hdr.Num * SET_ELEMENT_SIZE;
-            if (isReadableMemory(newElem, SET_ELEMENT_SIZE))
-            {
-                std::memcpy(newElem, &fname, FNAME_SIZE);
-                std::memcpy(newElem + FNAME_SIZE, &newRow, 8);
-                std::memset(newElem + FNAME_SIZE + 8, 0, 8); // zero hash entry
-
-                // Increment Num
-                int32_t newNum = hdr.Num + 1;
-                std::memcpy(base + DT_ROWMAP_OFFSET + 8, &newNum, 4);
-
-                VLOG(STR("[MoriaCppMod] [DT] addRow: '{}' added to '{}' (slot {}, size={})\n"),
-                     std::wstring(rowName), tableName, hdr.Num, rowSize);
-                return newRow;
-            }
+        catch (...) {
+            VLOG(STR("[MoriaCppMod] [DT] addRow: InitializeStruct failed for '{}', using zero-fill\n"),
+                 std::wstring(rowName));
         }
 
-        // Fallback: no space in existing array — would need TMap realloc
-        VLOG(STR("[MoriaCppMod] [DT] addRow: '{}' no space in RowMap (Num={} Max={})\n"),
-             std::wstring(rowName), hdr.Num, hdr.Max);
-        FMemory::Free(newRow);
-        return nullptr;
-    }
-
-    // Duplicate an existing row under a new name (shallow copy)
-    // Returns pointer to the new row data, or nullptr on failure
-    uint8_t* duplicateRow(const wchar_t* srcRowName, const wchar_t* newRowName)
-    {
-        if (!table || rowSize <= 0) return nullptr;
-
-        uint8_t* srcData = findRowData(srcRowName);
-        if (!srcData)
+        // Insert into RowMap via engine's AddRowInternal (proper hash maintenance)
+        if (!callAddRowInternal(rowName, newRow))
         {
-            VLOG(STR("[MoriaCppMod] [DT] duplicateRow: source '{}' not found in '{}'\n"),
-                 std::wstring(srcRowName), tableName);
+            RC::Output::send<RC::LogLevel::Warning>(
+                STR("[MoriaCppMod] [DT] addRow: AddRowInternal FAILED for '{}' in '{}'\n"),
+                std::wstring(rowName), tableName);
+            FMemory::Free(newRow);
             return nullptr;
         }
 
-        if (findRowData(newRowName))
-        {
-            VLOG(STR("[MoriaCppMod] [DT] duplicateRow: target '{}' already exists in '{}'\n"),
-                 std::wstring(newRowName), tableName);
-            return nullptr;
-        }
-
-        // Allocate and shallow-copy
-        uint8_t* newRow = static_cast<uint8_t*>(FMemory::Malloc(rowSize, 8));
-        if (!newRow) return nullptr;
-        std::memcpy(newRow, srcData, rowSize);
-
-        // Insert via same mechanism as addRow
-        FName fname(newRowName, FNAME_Add);
-        auto* base = reinterpret_cast<uint8_t*>(table);
-        RowMapHeader hdr{};
-        std::memcpy(&hdr, base + DT_ROWMAP_OFFSET, 16);
-
-        if (hdr.Num < hdr.Max && hdr.Data)
-        {
-            uint8_t* newElem = hdr.Data + hdr.Num * SET_ELEMENT_SIZE;
-            if (isReadableMemory(newElem, SET_ELEMENT_SIZE))
-            {
-                std::memcpy(newElem, &fname, FNAME_SIZE);
-                std::memcpy(newElem + FNAME_SIZE, &newRow, 8);
-                std::memset(newElem + FNAME_SIZE + 8, 0, 8);
-
-                int32_t newNum = hdr.Num + 1;
-                std::memcpy(base + DT_ROWMAP_OFFSET + 8, &newNum, 4);
-
-                VLOG(STR("[MoriaCppMod] [DT] duplicateRow: '{}' -> '{}' in '{}'\n"),
-                     std::wstring(srcRowName), std::wstring(newRowName), tableName);
-                return newRow;
-            }
-        }
-
-        VLOG(STR("[MoriaCppMod] [DT] duplicateRow: no space in RowMap for '{}'\n"),
-             std::wstring(newRowName));
-        FMemory::Free(newRow);
-        return nullptr;
-    }
-
-    // Remove a row by name (orphans memory — does NOT free, safe for runtime-only)
-    bool removeRow(const wchar_t* rowName)
-    {
-        if (!table) return false;
-
-        auto* base = reinterpret_cast<uint8_t*>(table);
-        RowMapHeader hdr{};
-        std::memcpy(&hdr, base + DT_ROWMAP_OFFSET, 16);
-        if (hdr.Num <= 0 || !hdr.Data) return false;
-
-        FName searchName(rowName, FNAME_Add);
-        for (int32_t i = 0; i < hdr.Num; i++)
-        {
-            uint8_t* elem = hdr.Data + i * SET_ELEMENT_SIZE;
-            if (!isReadableMemory(elem, SET_ELEMENT_SIZE)) { VLOG(STR("[MoriaCppMod] DataTable removeRow: row {} unreadable\n"), i); continue; }
-            if (std::memcmp(elem, &searchName, FNAME_SIZE) == 0)
-            {
-                // Move last element into this slot (swap-and-pop)
-                int32_t lastIdx = hdr.Num - 1;
-                if (i < lastIdx)
-                {
-                    uint8_t* lastElem = hdr.Data + lastIdx * SET_ELEMENT_SIZE;
-                    std::memcpy(elem, lastElem, SET_ELEMENT_SIZE);
-                }
-                // Zero the old last slot
-                uint8_t* lastElem = hdr.Data + lastIdx * SET_ELEMENT_SIZE;
-                std::memset(lastElem, 0, SET_ELEMENT_SIZE);
-
-                // Decrement Num
-                int32_t newNum = hdr.Num - 1;
-                std::memcpy(base + DT_ROWMAP_OFFSET + 8, &newNum, 4);
-
-                VLOG(STR("[MoriaCppMod] [DT] removeRow: '{}' removed from '{}' (was slot {}, {} remaining)\n"),
-                     std::wstring(rowName), tableName, i, newNum);
-                return true;
-            }
-        }
-        VLOG(STR("[MoriaCppMod] [DT] removeRow: '{}' not found in '{}'\n"),
-             std::wstring(rowName), tableName);
-        return false;
-    }
-
-    // ════════════════════════════════════════════════════════════════════════════
-    // Phase 4: TArray Write (in-place modification)
-    // ════════════════════════════════════════════════════════════════════════════
-
-    // Clear a TArray (set Num=0, keep Data/Max intact — no memory freed)
-    bool clearTArray(const wchar_t* row, const wchar_t* prop)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, 16)) return false;
-        int32_t zero = 0;
-        std::memcpy(data + off + 8, &zero, 4); // ArrayNum = 0
-        return true;
-    }
-
-    // Write elements into an existing TArray (must fit within current Max)
-    bool writeTArrayRaw(const wchar_t* row, const wchar_t* prop,
-                        const uint8_t* elements, int count, int elementSize)
-    {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, 16)) return false;
-        TArrayHeader hdr;
-        std::memcpy(&hdr, data + off, 16);
-
-        if (count > hdr.Max || !hdr.Data)
-        {
-            VLOG(STR("[MoriaCppMod] [DT] writeTArrayRaw: count {} exceeds Max {} for '{}'\n"),
-                 count, hdr.Max, tableName);
-            return false;
-        }
-
-        int totalBytes = count * elementSize;
-        if (!isReadableMemory(hdr.Data, totalBytes)) return false;
-        std::memcpy(hdr.Data, elements, totalBytes);
-
-        // Update ArrayNum
-        int32_t num = count;
-        std::memcpy(data + off + 8, &num, 4);
-        return true;
+        VLOG(STR("[MoriaCppMod] [DT] addRow: '{}' added to '{}' via engine AddRowInternal (size={})\n"),
+             std::wstring(rowName), tableName, rowSize);
+        return newRow;
     }
 
 };
@@ -574,41 +350,12 @@ struct DataTableUtil
 DataTableUtil m_dtConstructions;
 DataTableUtil m_dtConstructionRecipes;
 DataTableUtil m_dtItems;
-DataTableUtil m_dtItemRecipes;
 DataTableUtil m_dtWeapons;
 DataTableUtil m_dtTools;
 DataTableUtil m_dtArmor;
 DataTableUtil m_dtConsumables;
 DataTableUtil m_dtContainerItems;
 DataTableUtil m_dtOres;
-
-void bindAllDataTables()
-{
-    m_dtConstructions.bind(L"DT_Constructions");
-    m_dtConstructionRecipes.bind(L"DT_ConstructionRecipes");
-    m_dtItems.bind(L"DT_Items");
-    m_dtItemRecipes.bind(L"DT_ItemRecipes");
-    m_dtWeapons.bind(L"DT_Weapons");
-    m_dtTools.bind(L"DT_Tools");
-    m_dtArmor.bind(L"DT_Armor");
-    m_dtConsumables.bind(L"DT_Consumables");
-    m_dtContainerItems.bind(L"DT_ContainerItems");
-    m_dtOres.bind(L"DT_Ores");
-}
-
-void unbindAllDataTables()
-{
-    m_dtConstructions.unbind();
-    m_dtConstructionRecipes.unbind();
-    m_dtItems.unbind();
-    m_dtItemRecipes.unbind();
-    m_dtWeapons.unbind();
-    m_dtTools.unbind();
-    m_dtArmor.unbind();
-    m_dtConsumables.unbind();
-    m_dtContainerItems.unbind();
-    m_dtOres.unbind();
-}
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Cross-table lookups: DT_ConstructionRecipes → DT_Constructions
@@ -639,11 +386,3 @@ UObject* lookupRecipeIcon(const wchar_t* recipeRowName)
     return m_dtConstructions.readObjectPtr(constrName.c_str(), L"Icon");
 }
 
-// Get the display name from DT_Constructions for a given recipe row name
-std::wstring lookupRecipeDisplayName(const wchar_t* recipeRowName)
-{
-    if (!m_dtConstructions.isBound()) return L"";
-    std::wstring constrName = resolveConstructionRowName(recipeRowName);
-    if (constrName.empty()) return L"";
-    return m_dtConstructions.readFText(constrName.c_str(), L"DisplayName");
-}

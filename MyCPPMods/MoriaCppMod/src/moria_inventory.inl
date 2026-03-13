@@ -1,6 +1,7 @@
 // +==============================================================================+
 // |  moria_inventory.inl -- Inventory utilities                                |
-// |  safeProcessEvent SEH wrapper, player inventory component lookup           |
+// |  safeProcessEvent SEH wrapper, component lookup, tint/effects helpers,     |
+// |  trash item, replenish, remove attributes                                  |
 // |  #include inside MoriaCppMod class body                                    |
 // +==============================================================================+
 
@@ -20,10 +21,11 @@
 
         // ---- 6E: Inventory & Toolbar System -----------------------------------
 
-        // Finds the MorInventoryComponent on the player character.
-        UObject* findPlayerInventoryComponent(UObject* playerChar)
+        // Find an ActorComponent on a given owner by class name.
+        // Iterates all ActorComponents, calls GetOwner via ProcessEvent, matches class name.
+        UObject* findActorComponentByClass(UObject* owner, const wchar_t* className)
         {
-            if (!playerChar) return nullptr;
+            if (!owner) return nullptr;
             std::vector<UObject*> allComps;
             UObjectGlobals::FindAllOf(STR("ActorComponent"), allComps);
             for (auto* c : allComps)
@@ -31,16 +33,35 @@
                 if (!c) continue;
                 auto* ownerFunc = c->GetFunctionByNameInChain(STR("GetOwner"));
                 if (!ownerFunc) continue;
-                struct
-                {
-                    UObject* Ret{nullptr};
-                } op{};
+                struct { UObject* Ret{nullptr}; } op{};
                 if (!safeProcessEvent(c, ownerFunc, &op)) continue;
-                if (op.Ret != playerChar) continue;
-                std::wstring cls = safeClassName(c);
-                if (cls == STR("MorInventoryComponent")) return c;
+                if (op.Ret != owner) continue;
+                if (safeClassName(c) == className) return c;
             }
             return nullptr;
+        }
+
+        // Finds the MorInventoryComponent on the player character.
+        UObject* findPlayerInventoryComponent(UObject* playerChar)
+        {
+            return findActorComponentByClass(playerChar, STR("MorInventoryComponent"));
+        }
+
+        // Call ServerTintItem on a CraftingComponent to set/clear an item's tint effect.
+        // Pass effect=nullptr to clear. Returns true if the call was made.
+        bool callServerTintItem(UObject* craftComp, const uint8_t* itemHandle, UObject* effect, UObject* interactor)
+        {
+            auto* tintFn = craftComp->GetFunctionByNameInChain(STR("ServerTintItem"));
+            if (!tintFn) return false;
+            int sz = tintFn->GetParmsSize();
+            std::vector<uint8_t> p(sz, 0);
+            auto* pHandle = findParam(tintFn, STR("ItemHandle"));
+            auto* pEffect = findParam(tintFn, STR("TintEffect"));
+            auto* pActor  = findParam(tintFn, STR("Interactor"));
+            if (pHandle) std::memcpy(p.data() + pHandle->GetOffset_Internal(), itemHandle, 20);
+            if (pEffect) *reinterpret_cast<UObject**>(p.data() + pEffect->GetOffset_Internal()) = effect;
+            if (pActor)  *reinterpret_cast<UObject**>(p.data() + pActor->GetOffset_Internal()) = interactor;
+            return safeProcessEvent(craftComp, tintFn, p.data());
         }
 
         // Removes a per-instance item effect from the inventory component's Effects.List TArray.
@@ -201,7 +222,6 @@
                         float endTime = *reinterpret_cast<float*>(e + 0x18);
 
                         std::wstring effectName = L"nullptr";
-                        std::wstring effectClass = L"?";
                         if (effect)
                         {
                             if (isReadableMemory(reinterpret_cast<uint8_t*>(effect), 64))
@@ -485,22 +505,7 @@
                 return;
             }
 
-            UObject* craftComp = nullptr;
-            {
-                std::vector<UObject*> allComps;
-                UObjectGlobals::FindAllOf(STR("ActorComponent"), allComps);
-                for (auto* c : allComps)
-                {
-                    if (!c) continue;
-                    auto* ownerFunc = c->GetFunctionByNameInChain(STR("GetOwner"));
-                    if (!ownerFunc) continue;
-                    struct { UObject* Ret{nullptr}; } op{};
-                    if (!safeProcessEvent(c, ownerFunc, &op)) continue;
-                    if (op.Ret != pawn) continue;
-                    std::wstring cls = safeClassName(c);
-                    if (cls == STR("MorCraftingComponent")) { craftComp = c; break; }
-                }
-            }
+            UObject* craftComp = findActorComponentByClass(pawn, STR("MorCraftingComponent"));
             if (!craftComp)
             {
                 showOnScreen(L"Remove Attributes failed: no crafting component", 3.0f, 1.0f, 0.4f, 0.4f);
@@ -510,34 +515,8 @@
             int removed = 0;
 
             // Clear tint: ServerTintItem(FItemHandle, nullptr, ACharacter*)
-            auto* tintFn = craftComp->GetFunctionByNameInChain(STR("ServerTintItem"));
-            if (tintFn)
+            if (callServerTintItem(craftComp, m_lastItemHandle, nullptr, pawn))
             {
-                int sz = tintFn->GetParmsSize();
-                std::vector<uint8_t> p(sz, 0);
-                auto* pHandle = findParam(tintFn, STR("ItemHandle"));
-                auto* pEffect = findParam(tintFn, STR("TintEffect"));
-                auto* pActor  = findParam(tintFn, STR("Interactor"));
-                VLOG(STR("[MoriaCppMod] [RemoveAttrs] ServerTintItem ParmsSize={} pHandle={} pEffect={} pActor={}\n"),
-                     sz, (void*)pHandle, (void*)pEffect, (void*)pActor);
-                if (pHandle)
-                {
-                    std::memcpy(p.data() + pHandle->GetOffset_Internal(), m_lastItemHandle, 20);
-                    VLOG(STR("[MoriaCppMod] [RemoveAttrs]   Handle offset={} ID={}\n"),
-                         pHandle->GetOffset_Internal(), *reinterpret_cast<int32_t*>(m_lastItemHandle));
-                }
-                if (pEffect)
-                {
-                    *reinterpret_cast<UObject**>(p.data() + pEffect->GetOffset_Internal()) = nullptr;
-                    VLOG(STR("[MoriaCppMod] [RemoveAttrs]   TintEffect offset={} (nullptr)\n"), pEffect->GetOffset_Internal());
-                }
-                if (pActor)
-                {
-                    *reinterpret_cast<UObject**>(p.data() + pActor->GetOffset_Internal()) = pawn;
-                    VLOG(STR("[MoriaCppMod] [RemoveAttrs]   Interactor offset={} pawn={}\n"),
-                         pActor->GetOffset_Internal(), (void*)pawn);
-                }
-                craftComp->ProcessEvent(tintFn, p.data());
                 removed++;
                 VLOG(STR("[MoriaCppMod] [RemoveAttrs] Called ServerTintItem(nullptr) on {}\n"), m_lastPickedUpItemName);
             }
@@ -831,6 +810,11 @@
             m_trashDlgWidget = userWidget;
             m_trashDlgVisible = true;
             m_trashDlgOpenTick = GetTickCount64();
+            // Save cursor state so we can restore it when dialog closes
+            // (e.g. cursor was visible because a container UI was open)
+            m_trashCursorWasVisible = false;
+            if (auto* pc2 = findPlayerController())
+                m_trashCursorWasVisible = getBoolProp(pc2, L"bShowMouseCursor");
             setInputModeUI(userWidget);
             VLOG(STR("[MoriaCppMod] [Trash] Dialog opened for {}\n"), m_lastPickedUpItemName);
         }
@@ -845,12 +829,20 @@
                 m_trashDlgWidget = nullptr;
             }
             m_trashDlgVisible = false;
-            // Restore input to settings panel if still open
+            // Restore input mode: settings panel > container cursor > game-only
             if (m_ftVisible && m_fontTestWidget)
                 setInputModeUI(m_fontTestWidget);
+            else if (m_trashCursorWasVisible)
+            {
+                // Cursor was visible before dialog (e.g. container UI open) — restore it
+                setInputModeGame();  // reset input routing
+                if (auto* pc2 = findPlayerController())
+                    setBoolProp(pc2, L"bShowMouseCursor", true);
+            }
             else
                 setInputModeGame();
-            VLOG(STR("[MoriaCppMod] [Trash] Dialog closed\n"));
+            VLOG(STR("[MoriaCppMod] [Trash] Dialog closed (cursorRestore={})\n"),
+                 m_trashCursorWasVisible ? STR("yes") : STR("no"));
         }
 
         void confirmTrashItem()
@@ -887,6 +879,12 @@
                 return;
             }
 
+            // Close dialog BEFORE inventory operations — DropItem triggers
+            // BroadcastToContainers_OnChanged which causes Slate to repaint;
+            // if our dialog widget is still in the tree, the cascading invalidation
+            // can crash in FSlateCachedElementList::DestroyCachedData.
+            hideTrashDialog();
+
             // Step 3: DropItem(handle, count) removes the exact item instance from inventory
             // For containers (bags): DropItem drops the container WITH its contents into a single
             // MorDroppedItem actor. K2_DestroyActor on that actor destroys everything cleanly —
@@ -897,91 +895,98 @@
             {
                 VLOG(STR("[MoriaCppMod] [Trash] DropItem not found on invComp\n"));
                 showOnScreen(L"Trash failed: DropItem not found", 3.0f, 1.0f, 0.4f, 0.4f);
-                hideTrashDialog();
                 return;
             }
 
-            // Snapshot existing drop actors so we can find the new one after the drop
-            std::vector<UObject*> preDropActors;
-            UObjectGlobals::FindAllOf(STR("MorDroppedItem"), preDropActors);
-            std::unordered_set<UObject*> preDropSet(preDropActors.begin(), preDropActors.end());
-            VLOG(STR("[MoriaCppMod] [Trash] Pre-drop MorDroppedItem count={}\n"), preDropActors.size());
+            // Drop the entire stack — game may cap DropItem at ~100 per call,
+            // so loop until the full count is consumed.
+            auto* pHandle = findParam(dropFn, STR("Item"));
+            auto* pCount  = findParam(dropFn, STR("Count"));
+            int32_t remaining = itemCount;
+            int totalDestroyed = 0;
+            static constexpr int MAX_DROP_ITERATIONS = 200; // safety cap (200 x 100 = 20,000)
 
+            for (int iter = 0; iter < MAX_DROP_ITERATIONS && remaining > 0; iter++)
             {
-                int sz = dropFn->GetParmsSize();
-                std::vector<uint8_t> p(sz, 0);
-                auto* pHandle = findParam(dropFn, STR("Item"));
-                auto* pCount  = findParam(dropFn, STR("Count"));
-                if (pHandle) std::memcpy(p.data() + pHandle->GetOffset_Internal(), m_lastItemHandle, 20);
-                if (pCount)  *reinterpret_cast<int32_t*>(p.data() + pCount->GetOffset_Internal()) = itemCount;
-                VLOG(STR("[MoriaCppMod] [Trash] Calling DropItem(handle, count={}) for {}\n"),
-                     itemCount, m_lastPickedUpItemName);
-                if (!safeProcessEvent(invComp, dropFn, p.data()))
-                {
-                    VLOG(STR("[MoriaCppMod] [Trash] DropItem CRASHED (SEH caught)\n"));
-                    showOnScreen(L"Trash failed: DropItem crashed", 3.0f, 1.0f, 0.4f, 0.4f);
-                    hideTrashDialog();
-                    return;
-                }
-            }
+                // Snapshot existing drop actors so we can find new ones
+                std::vector<UObject*> preDropActors;
+                UObjectGlobals::FindAllOf(STR("MorDroppedItem"), preDropActors);
+                std::unordered_set<UObject*> preDropSet(preDropActors.begin(), preDropActors.end());
 
-            // Destroy the spawned drop actor so the item doesn't appear in the world
-            {
-                std::vector<UObject*> postDropActors;
-                UObjectGlobals::FindAllOf(STR("MorDroppedItem"), postDropActors);
-                VLOG(STR("[MoriaCppMod] [Trash] Post-drop MorDroppedItem count={}\n"), postDropActors.size());
-                int destroyed = 0;
-                for (auto* actor : postDropActors)
+                // Call DropItem with full remaining count (game will cap internally)
                 {
-                    if (!actor || preDropSet.count(actor)) continue;
-                    // This is the newly spawned drop — destroy it
-                    auto* destroyFn = actor->GetFunctionByNameInChain(STR("K2_DestroyActor"));
-                    if (destroyFn)
+                    int sz = dropFn->GetParmsSize();
+                    std::vector<uint8_t> p(sz, 0);
+                    if (pHandle) std::memcpy(p.data() + pHandle->GetOffset_Internal(), m_lastItemHandle, 20);
+                    if (pCount)  *reinterpret_cast<int32_t*>(p.data() + pCount->GetOffset_Internal()) = remaining;
+                    if (iter == 0)
+                        VLOG(STR("[MoriaCppMod] [Trash] DropItem(handle, count={}) for {}\n"),
+                             remaining, m_lastPickedUpItemName);
+                    if (!safeProcessEvent(invComp, dropFn, p.data()))
                     {
-                        safeProcessEvent(actor, destroyFn, nullptr);
-                        destroyed++;
-                        VLOG(STR("[MoriaCppMod] [Trash] Destroyed drop actor {}\n"), (void*)actor);
+                        VLOG(STR("[MoriaCppMod] [Trash] DropItem CRASHED (SEH caught) on iter {}\n"), iter);
+                        showOnScreen(L"Trash failed: DropItem crashed", 3.0f, 1.0f, 0.4f, 0.4f);
+                        return;
                     }
                 }
-                if (destroyed == 0)
-                    VLOG(STR("[MoriaCppMod] [Trash] WARNING: no new drop actors found to destroy!\n"));
+
+                // Destroy newly spawned drop actors
+                {
+                    std::vector<UObject*> postDropActors;
+                    UObjectGlobals::FindAllOf(STR("MorDroppedItem"), postDropActors);
+                    for (auto* actor : postDropActors)
+                    {
+                        if (!actor || preDropSet.count(actor)) continue;
+                        auto* destroyFn2 = actor->GetFunctionByNameInChain(STR("K2_DestroyActor"));
+                        if (destroyFn2) { safeProcessEvent(actor, destroyFn2, nullptr); totalDestroyed++; }
+                    }
+                }
+
+                // Check how many remain in inventory
+                int32_t nowCount = 0;
+                {
+                    FProperty* itemsProp3 = invComp->GetPropertyByNameInChain(STR("Items"));
+                    if (itemsProp3)
+                    {
+                        int off3 = itemsProp3->GetOffset_Internal();
+                        uint8_t* lb3 = reinterpret_cast<uint8_t*>(invComp) + off3 + iiaListOff();
+                        if (isReadableMemory(lb3, 16))
+                        {
+                            uint8_t* ad3 = *reinterpret_cast<uint8_t**>(lb3);
+                            int32_t an3 = *reinterpret_cast<int32_t*>(lb3 + 8);
+                            int32_t origID = *reinterpret_cast<int32_t*>(m_lastItemHandle);
+                            if (ad3 && an3 > 0 && an3 < 10000)
+                            {
+                                int stride3 = iiSize(), idOff3 = iiIDOff();
+                                for (int32_t i = 0; i < an3; i++)
+                                {
+                                    uint8_t* e3 = ad3 + i * stride3;
+                                    if (!isReadableMemory(e3, stride3)) continue;
+                                    if (*reinterpret_cast<int32_t*>(e3 + idOff3) == origID)
+                                    { nowCount = *reinterpret_cast<int32_t*>(e3 + 0x18); break; }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (nowCount <= 0) break; // fully consumed
+                if (nowCount >= remaining)
+                {
+                    VLOG(STR("[MoriaCppMod] [Trash] DropItem had no effect (count still {}) — stopping\n"), nowCount);
+                    break; // DropItem didn't remove anything — avoid infinite loop
+                }
+                remaining = nowCount;
             }
+            VLOG(STR("[MoriaCppMod] [Trash] Drop loop done: {} drop actors destroyed\n"), totalDestroyed);
 
             // Step 4: Remove tint effect via ServerTintItem(handle, nullptr, pawn) on CraftingComponent
             if (pawn)
             {
-                UObject* craftComp = nullptr;
-                {
-                    std::vector<UObject*> allComps;
-                    UObjectGlobals::FindAllOf(STR("ActorComponent"), allComps);
-                    for (auto* c : allComps)
-                    {
-                        if (!c) continue;
-                        auto* ownerFunc = c->GetFunctionByNameInChain(STR("GetOwner"));
-                        if (!ownerFunc) continue;
-                        struct { UObject* Ret{nullptr}; } op{};
-                        if (!safeProcessEvent(c, ownerFunc, &op)) continue;
-                        if (op.Ret != pawn) continue;
-                        std::wstring cls = safeClassName(c);
-                        if (cls == STR("MorCraftingComponent")) { craftComp = c; break; }
-                    }
-                }
+                UObject* craftComp = findActorComponentByClass(pawn, STR("MorCraftingComponent"));
                 if (craftComp)
                 {
-                    auto* tintFn = craftComp->GetFunctionByNameInChain(STR("ServerTintItem"));
-                    if (tintFn)
-                    {
-                        int sz = tintFn->GetParmsSize();
-                        std::vector<uint8_t> p(sz, 0);
-                        auto* pHandle = findParam(tintFn, STR("ItemHandle"));
-                        auto* pEffect = findParam(tintFn, STR("TintEffect"));
-                        auto* pActor  = findParam(tintFn, STR("Interactor"));
-                        if (pHandle) std::memcpy(p.data() + pHandle->GetOffset_Internal(), m_lastItemHandle, 20);
-                        if (pEffect) *reinterpret_cast<UObject**>(p.data() + pEffect->GetOffset_Internal()) = nullptr;
-                        if (pActor)  *reinterpret_cast<UObject**>(p.data() + pActor->GetOffset_Internal()) = pawn;
-                        safeProcessEvent(craftComp, tintFn, p.data());
+                    if (callServerTintItem(craftComp, m_lastItemHandle, nullptr, pawn))
                         VLOG(STR("[MoriaCppMod] [Trash] Called ServerTintItem(nullptr) to remove tint\n"));
-                    }
                 }
 
                 // Step 5: Remove rune effect from Effects.List
@@ -995,12 +1000,60 @@
             showOnScreen(msg, 3.0f, 0.3f, 1.0f, 0.3f);
             VLOG(STR("[MoriaCppMod] [Trash] {}\n"), msg);
 
-            // Step 7: Close dialog and clear item state
-            hideTrashDialog();
-            m_lastPickedUpItemClass = nullptr;
-            m_lastPickedUpItemName.clear();
-            m_lastPickedUpDisplayName.clear();
-            m_lastPickedUpCount = 0;
-            std::memset(m_lastItemHandle, 0, 20);
-            m_lastItemInvComp = nullptr;
+            // Step 7: Re-check if item still exists with remaining stack
+            // (dialog already closed above before DropItem)
+
+            // Re-scan inventory for the SAME item instance (by ID) — if it still exists
+            // with remaining count (DropItem may cap at 100), recapture so user can
+            // press DEL again. Only matches the exact same instance, NOT other stacks
+            // of the same item class (to avoid accidentally deleting multiple stacks).
+            bool recaptured = false;
+            int32_t originalID = *reinterpret_cast<int32_t*>(m_lastItemHandle);
+            if (invComp && originalID > 0)
+            {
+                FProperty* itemsProp2 = invComp->GetPropertyByNameInChain(STR("Items"));
+                if (itemsProp2)
+                {
+                    int itemsOff2 = itemsProp2->GetOffset_Internal();
+                    uint8_t* invBase2 = reinterpret_cast<uint8_t*>(invComp);
+                    uint8_t* listBase2 = invBase2 + itemsOff2 + iiaListOff();
+                    if (isReadableMemory(listBase2, 16))
+                    {
+                        uint8_t* arrData2 = *reinterpret_cast<uint8_t**>(listBase2);
+                        int32_t arrNum2 = *reinterpret_cast<int32_t*>(listBase2 + 8);
+                        if (arrData2 && arrNum2 > 0 && arrNum2 < 10000)
+                        {
+                            int stride2 = iiSize();
+                            int idOff2 = iiIDOff();
+                            for (int32_t i = 0; i < arrNum2; i++)
+                            {
+                                uint8_t* entry2 = arrData2 + i * stride2;
+                                if (!isReadableMemory(entry2, stride2)) continue;
+                                int32_t entryID = *reinterpret_cast<int32_t*>(entry2 + idOff2);
+                                if (entryID != originalID) continue;
+                                // Same instance still exists — update count
+                                int32_t newCount = *reinterpret_cast<int32_t*>(entry2 + 0x18);
+                                if (newCount <= 0) break; // depleted
+                                m_lastPickedUpCount = newCount;
+                                m_lastItemInvComp = invComp;
+                                recaptured = true;
+                                VLOG(STR("[MoriaCppMod] [Trash] Same instance ID={} still exists — remaining count={}\n"),
+                                     originalID, newCount);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!recaptured)
+            {
+                // Item fully consumed — clear state
+                m_lastPickedUpItemClass = nullptr;
+                m_lastPickedUpItemName.clear();
+                m_lastPickedUpDisplayName.clear();
+                m_lastPickedUpCount = 0;
+                std::memset(m_lastItemHandle, 0, 20);
+                m_lastItemInvComp = nullptr;
+            }
         }

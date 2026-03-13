@@ -52,7 +52,7 @@ namespace MoriaMods
     // Constants
     // ════════════════════════════════════════════════════════════════════════════
 
-    static constexpr int BIND_COUNT = 25;
+    static constexpr int BIND_COUNT = 22;
     static constexpr int OVERLAY_BUILD_SLOTS = 8;
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -190,11 +190,15 @@ namespace MoriaMods
             s_table["bind.remove_all"] = L"Remove All";
             s_table["bind.configuration"] = L"Configuration";
             s_table["bind.ab_open"] = L"Advanced Builder Open";
+            s_table["bind.trash_item"] = L"Trash Item";
+            s_table["bind.replenish_item"] = L"Replenish Item";
+            s_table["bind.remove_attrs"] = L"Remove Attributes";
             // ── Keybind section names ──
             s_table["bind.section_quick_building"] = L"Quick Building";
             s_table["bind.section_mod_controller"] = L"Mod Controller";
             s_table["bind.section_advanced_builder"] = L"Advanced Builder";
             s_table["bind.section_diagnostics"] = L"Diagnostics";
+            s_table["bind.section_game_options"] = L"Game Options";
             // ── Modifier key names ──
             s_table["key.shift"] = L"SHIFT";
             s_table["key.ctrl"] = L"CTRL";
@@ -691,22 +695,19 @@ namespace MoriaMods
             "QuickBuild7",        // 6
             "QuickBuild8",        // 7
             "Rotation",           // 8  (MC slot 0)
-            "Target",             // 9  (MC slot 1)
+            "SnapToggle",         // 9  (MC slot 1)
             "StabilityCheck",     // 10 (MC slot 2)
             "SuperDwarf",         // 11 (MC slot 3)
-            "Empty4",             // 12 (MC slot 4 — empty)
-            "SnapToggle",         // 13 (MC slot 5 — Snap Toggle)
-            "Empty6",             // 14 (MC slot 6 — empty)
-            "Empty7",             // 15 (MC slot 7 — empty)
-            "RemoveTarget",       // 16 (MC slot 8)
-            "UndoLast",           // 17 (MC slot 9)
-            "RemoveAll",          // 18 (MC slot 10)
-            "Configuration",      // 19 (MC slot 11)
-            "AdvancedBuilderOpen", // 20
-            "Reserved1",          // 21 (placeholder — will be reassigned)
-            "TrashItem",          // 22
-            "ReplenishItem",      // 23
-            "RemoveAttributes"    // 24
+            "Target",             // 12 (MC slot 4)
+            "Configuration",      // 13 (MC slot 5)
+            "RemoveTarget",       // 14 (MC slot 6)
+            "UndoLast",           // 15 (MC slot 7)
+            "RemoveAll",          // 16 (MC slot 8)
+            "AdvancedBuilderOpen", // 17
+            "Reserved1",          // 18 (placeholder)
+            "TrashItem",          // 19
+            "ReplenishItem",      // 20
+            "RemoveAttributes"    // 21
         };
         if (idx < 0 || idx >= BIND_COUNT) return nullptr;
         return keys[idx];

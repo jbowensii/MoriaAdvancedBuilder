@@ -52,6 +52,9 @@
 #include <Unreal/FString.hpp>
 #include <Unreal/FText.hpp>
 #include <Unreal/Property/FBoolProperty.hpp>
+#include <Unreal/Property/FEnumProperty.hpp>
+#include <Unreal/Property/NumericPropertyTypes.hpp>
+#include <Unreal/UEnum.hpp>
 
 #include "moria_testable.h"
 
@@ -81,8 +84,6 @@ namespace MoriaMods
     // ════════════════════════════════════════════════════════════════════════════
     // Constants
     // ════════════════════════════════════════════════════════════════════════════
-    static constexpr float MY_PI = 3.14159265358979323846f;
-    static constexpr float DEG2RAD = MY_PI / 180.0f;
     static constexpr float TRACE_DIST = 5000.0f;   // 50m
     static constexpr float POS_TOLERANCE = 100.0f; // 1m in game units
 
@@ -101,7 +102,6 @@ namespace MoriaMods
     static constexpr int VARIANT_ROW_NUM = 0xE4;        // FMorConstructionRecipeDefinition::ResultConstructionHandle.RowName.Number
     static constexpr int VARIANT_ENTRY_SIZE = 0xE8;     // sizeof(FMorConstructionRecipeDefinition) — minimum readable size per variant entry
     static constexpr int TEX_PARAM_VALUE_PTR = 0x10;     // FTextureParameterValue::ParameterValue (UTexture*)
-    static constexpr int VK_BUILD_MENU = 0x42;          // Virtual key code for 'B' (build menu toggle)
     static constexpr int DT_ROWMAP_OFFSET = 0x30;       // UDataTable internal RowMap offset
     static constexpr int SOFTCLASSPTR_ASSETPATH_FNAME = 0x10; // TSoftClassPtr internal: AssetPathName FName offset
 
@@ -116,11 +116,6 @@ namespace MoriaMods
     {
         float X, Y, Z, W;
     };
-    struct FRotator3f
-    {
-        float Pitch, Yaw, Roll;
-    };
-
     struct FTransformRaw
     {
         FQuat4f Rotation;
@@ -178,15 +173,6 @@ namespace MoriaMods
     }; // 0x88
 #pragma pack(pop)
     static_assert(sizeof(FHitResultLocal) == 0x88, "FHitResult must be 136 bytes");
-
-    // FItemHandle (0x14 = 20 bytes, matches FGK.hpp:1715)
-    struct FItemHandleLocal
-    {
-        int32_t ID;        // 0x00
-        int32_t Payload;   // 0x04
-        uint8_t Owner[12]; // 0x08 (TWeakObjectPtr + padding to 0x14)
-    }; // 0x14
-    static_assert(sizeof(FItemHandleLocal) == 0x14, "FItemHandle must be 20 bytes");
 
     // ════════════════════════════════════════════════════════════════════════════
     // Application Structs
@@ -269,8 +255,8 @@ namespace MoriaMods
     // ════════════════════════════════════════════════════════════════════════════
     // Config State & Cross-Thread Signals
     // ════════════════════════════════════════════════════════════════════════════
-    static constexpr int CONFIG_TAB_COUNT = 3;
-    inline const wchar_t* CONFIG_TAB_NAMES[CONFIG_TAB_COUNT] = {L"Optional Mods", L"Key Mapping", L"Hide Environment"};
+    static constexpr int CONFIG_TAB_COUNT = 4;
+    inline const wchar_t* CONFIG_TAB_NAMES[CONFIG_TAB_COUNT] = {L"Optional Mods", L"Key Mapping", L"Hide Environment", L"Game Mods"};
 
     struct ConfigState
     {

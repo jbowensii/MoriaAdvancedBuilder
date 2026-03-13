@@ -1,6 +1,6 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║  moria_keybinds.h — Keybinding system & window discovery                  ║
-// ║  25 rebindable keys (8 quickbuild + 12 MC slots + 5 extra),              ║
+// ║  22 rebindable keys (8 quickbuild + 9 MC slots + 5 extra),               ║
 // ║  VK code ↔ string conversion, findGameWindow() for overlay               ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 #pragma once
@@ -14,16 +14,16 @@ namespace MoriaMods
     // ════════════════════════════════════════════════════════════════════════════
 
     // BIND_COUNT defined in moria_testable.h
-    static constexpr int MC_BIND_BASE = 8;     // s_bindings[8..19] = MC slots 0..11
-    static constexpr int BIND_ROTATION = 8;    // "Rotation" — MC slot 0
-    static constexpr int BIND_TARGET   = 9;    // "Target" — MC slot 1
-    static constexpr int BIND_CONFIG   = 19;   // "Configuration" — MC slot 11
-    static constexpr int BIND_AB_OPEN  = 20;   // "Advanced Builder Open"
+    static constexpr int MC_BIND_BASE = 8;     // s_bindings[8..16] = MC slots 0..8
+    static constexpr int BIND_ROTATION  = 8;   // "Rotation" — MC slot 0
+    static constexpr int BIND_SNAP      = 9;   // "Snap Toggle" — MC slot 1
     static constexpr int BIND_STABILITY = 10;  // "Stability Check" — MC slot 2
-    static constexpr int BIND_SNAP      = 13;  // "Snap Toggle" — MC slot 5
-    static constexpr int BIND_TRASH_ITEM     = 22;  // "Trash Item"
-    static constexpr int BIND_REPLENISH_ITEM = 23;  // "Replenish Item"
-    static constexpr int BIND_REMOVE_ATTRS   = 24;  // "Remove Attributes"
+    static constexpr int BIND_TARGET    = 12;  // "Target" — MC slot 4
+    static constexpr int BIND_CONFIG    = 13;  // "Configuration" — MC slot 5
+    static constexpr int BIND_AB_OPEN   = 17;  // "Advanced Builder Open"
+    static constexpr int BIND_TRASH_ITEM     = 19;  // "Trash Item"
+    static constexpr int BIND_REPLENISH_ITEM = 20;  // "Replenish Item"
+    static constexpr int BIND_REMOVE_ATTRS   = 21;  // "Remove Attributes"
 
     struct KeyBind
     {
@@ -42,23 +42,20 @@ namespace MoriaMods
             {L"Quick Build 6", L"Quick Building", Input::Key::F6},                     // 5
             {L"Quick Build 7", L"Quick Building", Input::Key::F7},                     // 6
             {L"Quick Build 8", L"Quick Building", Input::Key::F8},                     // 7
-            {L"Rotation", L"Mod Controller", Input::Key::F9},                          // 8  (BIND_ROTATION, MC slot 0)
-            {L"Target", L"Mod Controller", Input::Key::OEM_SIX},                       // 9  (BIND_TARGET, MC slot 1)
-            {L"Integrity Check", L"Mod Controller", Input::Key::DIVIDE},               // 10 (BIND_STABILITY, MC slot 2)
+            {L"Rotation", L"Mod Controller", Input::Key::F9},                          // 8  (MC slot 0)
+            {L"Snap Toggle", L"Mod Controller", Input::Key::OEM_FOUR},                 // 9  (MC slot 1)
+            {L"Integrity Check", L"Mod Controller", Input::Key::DIVIDE},               // 10 (MC slot 2)
             {L"Super Dwarf", L"Mod Controller", Input::Key::OEM_FIVE},                 // 11 (MC slot 3)
-            {L"Empty", L"Mod Controller", 0},                                           // 12 (MC slot 4 — empty)
-            {L"Snap Toggle", L"Mod Controller", Input::Key::OEM_FOUR},                    // 13 (BIND_SNAP, MC slot 5)
-            {L"Empty", L"Mod Controller", 0},                                           // 14 (MC slot 6 — empty)
-            {L"Empty", L"Mod Controller", 0},                                           // 15 (MC slot 7 — empty)
-            {L"Remove Single", L"Mod Controller", Input::Key::NUM_ONE},                // 16 (MC slot 8)
-            {L"Undo Last", L"Mod Controller", Input::Key::NUM_TWO},                    // 17 (MC slot 9)
-            {L"Remove All", L"Mod Controller", Input::Key::NUM_THREE},                 // 18 (MC slot 10)
-            {L"Configuration", L"Mod Controller", Input::Key::F12},                    // 19 (BIND_CONFIG, MC slot 11)
-            {L"Advanced Builder Open", L"Advanced Builder", Input::Key::ADD},           // 20 (BIND_AB_OPEN)
-            {L"Reserved", L"Diagnostics", 0},                                          // 21 (placeholder — no key, no action)
-            {L"Trash Item", L"Game Options", VK_DELETE},                                  // 22 (BIND_TRASH_ITEM)
-            {L"Replenish Item", L"Game Options", VK_INSERT},                              // 23 (BIND_REPLENISH_ITEM)
-            {L"Remove Attributes", L"Game Options", VK_END},                              // 24 (BIND_REMOVE_ATTRS)
+            {L"Target", L"Mod Controller", Input::Key::OEM_SIX},                       // 12 (MC slot 4)
+            {L"Configuration", L"Mod Controller", Input::Key::F12},                    // 13 (MC slot 5)
+            {L"Remove Single", L"Mod Controller", Input::Key::NUM_ONE},                // 14 (MC slot 6)
+            {L"Undo Last", L"Mod Controller", Input::Key::NUM_TWO},                    // 15 (MC slot 7)
+            {L"Remove All", L"Mod Controller", Input::Key::NUM_THREE},                 // 16 (MC slot 8)
+            {L"Advanced Builder Open", L"Advanced Builder", Input::Key::ADD},           // 17 (BIND_AB_OPEN)
+            {L"Reserved", L"Diagnostics", 0},                                          // 18 (placeholder)
+            {L"Trash Item", L"Game Options", VK_DELETE},                                // 19 (BIND_TRASH_ITEM)
+            {L"Replenish Item", L"Game Options", VK_INSERT},                            // 20 (BIND_REPLENISH_ITEM)
+            {L"Remove Attributes", L"Game Options", VK_END},                            // 21 (BIND_REMOVE_ATTRS)
     };
 
     inline std::atomic<int> s_capturingBind{-1};

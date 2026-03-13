@@ -138,18 +138,6 @@
             return params.Ret;
         }
 
-        // UMG animation check — retained for future use, not in any guards (350ms cooldown is the proven fix)
-        bool isBuildTabAnimating()
-        {
-            UObject* tab = getCachedBuildTab();
-            if (!tab) return false;
-            auto* fn = tab->GetFunctionByNameInChain(STR("IsAnyAnimationPlaying"));
-            if (!fn) return false;
-            struct { bool Ret{false}; } params{};
-            tab->ProcessEvent(fn, &params);
-            return params.Ret;
-        }
-
         // Open build tab via FGK Show(). 350ms cooldown prevents MovieScene re-entrancy crashes.
         void showBuildTab()
         {
@@ -279,7 +267,7 @@
 
             showOnScreen(m_snapEnabled ? L"Snap: ON" : L"Snap: OFF",
                          2.0f, 0.4f, 0.6f, 1.0f);
-            setMcSlotState(5, m_snapEnabled ? UmgSlotState::Active : UmgSlotState::Inactive);
+            setMcSlotState(1, m_snapEnabled ? UmgSlotState::Active : UmgSlotState::Inactive);
         }
 
         // Auto-restore snap after placement — only resets flag, new GATA spawns with default
@@ -343,7 +331,7 @@
             {
                 VLOG(STR("[MoriaCppMod] [Placement] onGhostAppeared: resolveGATA returned nullptr (ghost not yet spawned)\n"));
                 // Ghost will appear shortly after blockSelectedEvent
-                setMcSlotState(5, m_snapEnabled ? UmgSlotState::Active : UmgSlotState::Inactive);
+                setMcSlotState(1, m_snapEnabled ? UmgSlotState::Active : UmgSlotState::Inactive);
                 return;
             }
 
@@ -358,7 +346,7 @@
                 }
             }
             setGATARotation(gata, static_cast<float>(s_overlay.rotationStep.load()));
-            setMcSlotState(5, m_snapEnabled ? UmgSlotState::Active : UmgSlotState::Inactive);
+            setMcSlotState(1, m_snapEnabled ? UmgSlotState::Active : UmgSlotState::Inactive);
         }
 
         // Ghost disappeared — grey out snap slot (suppressed during QB SM transitions)
@@ -372,7 +360,7 @@
             if (now - m_lastQBSelectTime < 500)
                 return;
             VLOG(STR("[MoriaCppMod] [Placement] onGhostDisappeared: greying out snap slot\n"));
-            setMcSlotState(5, UmgSlotState::Disabled);
+            setMcSlotState(1, UmgSlotState::Disabled);
         }
 
         // ── Recipe selection (blockSelectedEvent path) ───────────────────────────────

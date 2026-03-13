@@ -16,22 +16,12 @@ namespace MoriaMods
     // ════════════════════════════════════════════════════════════════════════════
     // Cached Property Offsets (-2 = unresolved, -1 = not found)
     // ════════════════════════════════════════════════════════════════════════════
-    inline int s_off_widgetTree = -2;       // UUserWidget::WidgetTree
-    inline int s_off_rootWidget = -2;       // UWidgetTree::RootWidget
     inline int s_off_font = -2;             // UTextBlock::Font
     inline int s_off_brush = -2;            // UImage::Brush
-    inline int s_off_charMovement = -2;     // ACharacter::CharacterMovement
-    inline int s_off_capsuleComp = -2;      // ACharacter::CapsuleComponent
-    inline int s_off_recipeSelectMode = -2; // UI_WBP_BuildHUDv2_C::recipeSelectMode
     inline int s_off_bLock = -2;            // UI_WBP_Build_Item_C::bLock
     inline int s_off_icon = -2;             // UI_WBP_Build_Item_Medium_C::Icon
     inline int s_off_blockName = -2;        // UI_WBP_Build_Item_Medium_C::blockName
-    inline int s_off_stackCount = -2;       // UI_WBP_Build_Item_Medium_C::StackCount
     inline int s_off_texParamValues = -2;   // UMaterialInstanceDynamic::TextureParameterValues
-    inline int s_off_targetActor = -2;      // UBuildOverlayWidget::TargetActor
-    inline int s_off_selectedRecipe = -2;    // UI_WBP_Build_Tab_C::selectedRecipe
-    inline int s_off_selectedName = -2;      // UI_WBP_Build_Tab_C::selectedName
-    inline int s_off_recipesDataTable = -2;  // UI_WBP_Build_Tab_C::recipesDataTable
 
     // Probed struct-internal offsets (fallback to constants)
     inline int s_off_brushImageSize = -2;      // FSlateBrush::ImageSize (probed)
@@ -42,7 +32,6 @@ namespace MoriaMods
 
     // FMorRecipeBlock field offsets
     inline int s_off_rbVariants = -2;          // FMorRecipeBlock::Variants (TArray offset within struct)
-    inline int s_off_rbTag = -2;               // FMorRecipeBlock::Tag (FGameplayTag)
 
     // FMorConstructionRecipeDefinition nested offsets
     inline int s_off_varResultHandle = -2;     // FMorConstructionRecipeDefinition::ResultConstructionHandle
@@ -67,7 +56,6 @@ namespace MoriaMods
     inline int brushResourceObj(){ return (s_off_brushResourceObj >= 0) ? s_off_brushResourceObj  : BRUSH_RESOURCE_OBJECT; }
     inline int fontTypefaceName(){ return (s_off_fontTypefaceName >= 0) ? s_off_fontTypefaceName  : FONT_TYPEFACE_NAME; }
     inline int fontSizeOff()     { return (s_off_fontSize >= 0)         ? s_off_fontSize          : FONT_SIZE; }
-    inline int fontStructSize()  { return FONT_STRUCT_SIZE; } // no probed alternative yet
     inline int texParamValueOff(){ return (s_off_texParamValue >= 0)    ? s_off_texParamValue     : TEX_PARAM_VALUE_PTR; }
 
     // FMorRecipeBlock accessors
@@ -180,45 +168,6 @@ namespace MoriaMods
         VLOG(STR("[MoriaCppMod] WARNING: struct field '{}' not found on {}\n"),
              std::wstring(propName), strct->GetName());
         return cache;
-    }
-
-    // Validate a hardcoded offset against runtime reflection.
-    // Returns true if the property exists at the expected offset, false otherwise.
-    // If the property is found at a different offset, logs a WARNING with both values.
-    inline bool validateOffset(UObject* obj, const wchar_t* propName, int expectedOffset, const char* label)
-    {
-        if (!obj) return false;
-        for (auto* strct = static_cast<UStruct*>(obj->GetClassPrivate());
-             strct;
-             strct = strct->GetSuperStruct())
-        {
-            for (auto* prop : strct->ForEachProperty())
-            {
-                if (prop->GetName() == std::wstring_view(propName))
-                {
-                    int actual = prop->GetOffset_Internal();
-                    int size = prop->GetSize();
-                    if (actual == expectedOffset)
-                    {
-                        VLOG(STR("[MoriaCppMod] [Validate] {} OK: '{}' at 0x{:04X} (size {})\n"),
-                             std::wstring(label, label + strlen(label)),
-                             std::wstring(propName), actual, size);
-                        return true;
-                    }
-                    else
-                    {
-                        VLOG(STR("[MoriaCppMod] [Validate] {} MISMATCH: '{}' expected 0x{:04X} but found 0x{:04X} (size {})\n"),
-                             std::wstring(label, label + strlen(label)),
-                             std::wstring(propName), expectedOffset, actual, size);
-                        return false;
-                    }
-                }
-            }
-        }
-        VLOG(STR("[MoriaCppMod] [Validate] {} NOT FOUND: '{}' (expected 0x{:04X})\n"),
-             std::wstring(label, label + strlen(label)),
-             std::wstring(propName), expectedOffset);
-        return false;
     }
 
     // Helper: find a named property on obj's class chain, return it if it's an FStructProperty.
@@ -344,7 +293,6 @@ namespace MoriaMods
     {
         if (s_off_rbVariants != -2) return; // already probed
         s_off_rbVariants = -1;
-        s_off_rbTag = -1;
         s_off_varResultHandle = -1;
         s_off_rhRowName = -1;
         s_off_variantEntrySize = -1;
@@ -364,12 +312,10 @@ namespace MoriaMods
             return;
         }
 
-        // Resolve FMorRecipeBlock fields: Tag, Variants
-        resolveStructFieldOffset(recipeBlockStruct, L"Tag", s_off_rbTag);
+        // Resolve FMorRecipeBlock::Variants offset
         resolveStructFieldOffset(recipeBlockStruct, L"Variants", s_off_rbVariants);
 
-        VLOG(STR("[MoriaCppMod] [Validate] FMorRecipeBlock: Tag@0x{:02X} Variants@0x{:02X} (expected Tag@0x00 Variants@0x{:02X})\n"),
-             s_off_rbTag >= 0 ? s_off_rbTag : 0,
+        VLOG(STR("[MoriaCppMod] [Validate] FMorRecipeBlock: Variants@0x{:02X} (expected @0x{:02X})\n"),
              s_off_rbVariants >= 0 ? s_off_rbVariants : RECIPE_BLOCK_VARIANTS,
              RECIPE_BLOCK_VARIANTS);
 
@@ -477,32 +423,6 @@ namespace MoriaMods
     {
         auto* slot = widgetTree->GetValuePtrByPropertyNameInChain<UObject*>(STR("RootWidget"));
         if (slot) *slot = root;
-    }
-
-    // Resolve a UProperty offset + property size by name (for runtime struct size validation)
-    inline int resolveOffsetWithSize(UObject* obj, const wchar_t* propName, int& cache, int& sizeOut)
-    {
-        sizeOut = 0;
-        if (cache != -2) return cache;
-        cache = -1;
-        if (!obj) return -1;
-        for (auto* strct = static_cast<UStruct*>(obj->GetClassPrivate());
-             strct;
-             strct = strct->GetSuperStruct())
-        {
-            for (auto* prop : strct->ForEachProperty())
-            {
-                if (prop->GetName() == std::wstring_view(propName))
-                {
-                    cache = prop->GetOffset_Internal();
-                    sizeOut = prop->GetSize();
-                    VLOG(STR("[MoriaCppMod] Resolved '{}' at offset 0x{:04X} size {} (on {})\n"),
-                         std::wstring(propName), cache, sizeOut, strct->GetName());
-                    return cache;
-                }
-            }
-        }
-        return cache;
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -775,12 +695,6 @@ namespace MoriaMods
             && s_lt.End >= 0 && s_lt.OutHit >= 0 && s_lt.ReturnValue >= 0
             && s_lt.bTraceComplex >= 0 && s_lt.bIgnoreSelf >= 0
             && s_lt.ActorsToIgnore >= 0;
-    }
-
-    inline bool dspOffsetsValid()
-    {
-        return s_dsp.resolved && s_dsp.ScreenX >= 0 && s_dsp.ScreenY >= 0
-            && s_dsp.WorldLocation >= 0 && s_dsp.WorldDirection >= 0;
     }
 
     inline bool bseOffsetsValid()
