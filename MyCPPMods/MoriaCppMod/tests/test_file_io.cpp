@@ -112,6 +112,36 @@ TEST(ParseRemovalLine, ZeroCoordinates)
     EXPECT_FLOAT_EQ(pos->posZ, 0.0f);
 }
 
+TEST(ParseRemovalLine, ScientificNotation)
+{
+    // std::stof supports scientific notation
+    auto result = parseRemovalLine("mesh|1.5e3|-2.0e1|3.14e0");
+    auto* pos = std::get_if<ParsedRemovalPosition>(&result);
+    ASSERT_NE(pos, nullptr);
+    EXPECT_FLOAT_EQ(pos->posX, 1500.0f);
+    EXPECT_FLOAT_EQ(pos->posY, -20.0f);
+    EXPECT_FLOAT_EQ(pos->posZ, 3.14f);
+}
+
+TEST(ParseRemovalLine, TypeRuleLongName)
+{
+    // Very long mesh name in type rule
+    std::string longName(500, 'X');
+    auto result = parseRemovalLine("@" + longName);
+    auto* tr = std::get_if<ParsedRemovalTypeRule>(&result);
+    ASSERT_NE(tr, nullptr);
+    EXPECT_EQ(tr->meshName.size(), 500u);
+}
+
+TEST(ParseRemovalLine, MeshNameWithSpecialChars)
+{
+    // Mesh names can contain underscores, numbers, dots
+    auto result = parseRemovalLine("SM_Wall.Stone_2x1x1_A|1.0|2.0|3.0");
+    auto* pos = std::get_if<ParsedRemovalPosition>(&result);
+    ASSERT_NE(pos, nullptr);
+    EXPECT_EQ(pos->meshName, "SM_Wall.Stone_2x1x1_A");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // parseSlotLine tests
 // ════════════════════════════════════════════════════════════════════════════
@@ -240,6 +270,42 @@ TEST(ParseSlotLine, DisplayNameWithPipes)
     ASSERT_NE(slot, nullptr);
     EXPECT_EQ(slot->displayName, "Name With Spaces");
     EXPECT_EQ(slot->textureName, "TextureName");
+}
+
+TEST(ParseSlotLine, FourFieldFormat)
+{
+    // Full 4-field format: slot|displayName|textureName|rowName
+    auto result = parseSlotLine("2|Wall Stone|T_UI_BuildIcon_WallStone|DT_Recipes.WallStone_Row");
+    auto* slot = std::get_if<ParsedSlot>(&result);
+    ASSERT_NE(slot, nullptr);
+    EXPECT_EQ(slot->slotIndex, 2);
+    EXPECT_EQ(slot->displayName, "Wall Stone");
+    EXPECT_EQ(slot->textureName, "T_UI_BuildIcon_WallStone");
+    EXPECT_EQ(slot->rowName, "DT_Recipes.WallStone_Row");
+}
+
+TEST(ParseSlotLine, FourFieldEmptyRowName)
+{
+    // 4-field with empty row name
+    auto result = parseSlotLine("0|Name|Tex|");
+    auto* slot = std::get_if<ParsedSlot>(&result);
+    ASSERT_NE(slot, nullptr);
+    EXPECT_EQ(slot->textureName, "Tex");
+    EXPECT_EQ(slot->rowName, "");
+}
+
+TEST(ParseSlotLine, RotationNonNumeric)
+{
+    // rotation with non-numeric value
+    auto result = parseSlotLine("rotation|abc");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}
+
+TEST(ParseSlotLine, NonNumericSlotKey)
+{
+    // A non-numeric, non-rotation key — "abc" fails stoi
+    auto result = parseSlotLine("abc|name|tex");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -468,6 +534,50 @@ TEST_F(NameToVKTest, Invalid)
     EXPECT_EQ(nameToVK(L"F25"), std::nullopt);
 }
 
+TEST_F(NameToVKTest, FKeysExtended)
+{
+    // nameToVK supports F1-F24 (wider than keyName's F1-F12)
+    EXPECT_EQ(nameToVK(L"F13"), 0x7C);
+    EXPECT_EQ(nameToVK(L"F16"), 0x7F);
+    EXPECT_EQ(nameToVK(L"F24"), 0x87);
+    // F0 and F25 are out of range
+    EXPECT_EQ(nameToVK(L"F0"), std::nullopt);
+    EXPECT_EQ(nameToVK(L"F25"), std::nullopt);
+}
+
+TEST_F(NameToVKTest, HexCaseSensitivity)
+{
+    // Both uppercase and lowercase hex should work
+    EXPECT_EQ(nameToVK(L"0xFF"), 0xFF);
+    EXPECT_EQ(nameToVK(L"0xff"), 0xFF);
+    EXPECT_EQ(nameToVK(L"0xAB"), 0xAB);
+    EXPECT_EQ(nameToVK(L"0xab"), 0xAB);
+    // Invalid hex strings
+    EXPECT_EQ(nameToVK(L"0xGG"), std::nullopt);
+    EXPECT_EQ(nameToVK(L"0x00"), std::nullopt); // VK 0 rejected (val > 0)
+}
+
+TEST_F(NameToVKTest, FKeyCaseVariations)
+{
+    EXPECT_EQ(nameToVK(L"f12"), 0x7B);
+    EXPECT_EQ(nameToVK(L"F1"), 0x70);
+    EXPECT_EQ(nameToVK(L"f24"), 0x87);
+}
+
+TEST_F(NameToVKTest, NumpadCaseVariations)
+{
+    EXPECT_EQ(nameToVK(L"num0"), 0x60);
+    EXPECT_EQ(nameToVK(L"NUM9"), 0x69);
+    EXPECT_EQ(nameToVK(L"num*"), 0x6A);
+    EXPECT_EQ(nameToVK(L"numsep"), 0x6C);
+}
+
+TEST_F(NameToVKTest, EmptyAndWhitespace)
+{
+    EXPECT_EQ(nameToVK(L""), std::nullopt);
+    EXPECT_EQ(nameToVK(L" "), std::nullopt); // space char is not "Space"
+}
+
 TEST_F(NameToVKTest, RoundTrip)
 {
     // For all VK codes that keyName produces a recognizable name, verify round-trip
@@ -675,4 +785,43 @@ TEST(IniKeyMapping, CaseInsensitive)
 TEST(IniKeyMapping, Unknown)
 {
     EXPECT_EQ(iniKeyToBindIndex("nonexistent"), -1);
+}
+
+// ── parseIniLine edge cases ──
+
+TEST(ParseIniLine, MalformedSectionNoClose)
+{
+    // "[Section" without closing bracket — not a section header
+    auto r = parseIniLine("[Section");
+    // The front is '[' but the back is not ']', so it should NOT be parsed as a section.
+    // It will try key=value parse, fail (no '='), and return monostate
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(r));
+}
+
+TEST(ParseIniLine, KeyWithSpecialChars)
+{
+    // Keys with dots, dashes, underscores are common in INI files
+    auto r = parseIniLine("Some-Key.Name_Here = Value");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->key, "Some-Key.Name_Here");
+    EXPECT_EQ(kv->value, "Value");
+}
+
+TEST(ParseIniLine, ValueWithSpaces)
+{
+    auto r = parseIniLine("Key = Value With Spaces");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->value, "Value With Spaces");
+}
+
+TEST(ParseIniLine, ConsecutiveEquals)
+{
+    // "Key===Value" — splits at first '=', rest is value
+    auto r = parseIniLine("Key===Value");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->key, "Key");
+    EXPECT_EQ(kv->value, "==Value");
 }

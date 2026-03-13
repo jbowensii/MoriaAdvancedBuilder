@@ -254,3 +254,39 @@ TEST_F(KeyHelperTest, KeyName_ZeroVK)
     // VK 0x00 should fall through to hex format
     EXPECT_EQ(keyName(0x00), L"0x00");
 }
+
+// ── Extended F-key tests (F13-F24) ──
+
+TEST_F(KeyHelperTest, FKeysExtended)
+{
+    // F13-F24 are valid VK codes but outside the F1-F12 keyName range
+    // They should fall through to hex format since keyName only handles 0x70-0x7B
+    EXPECT_EQ(keyName(0x7C), L"0x7C"); // F13
+    EXPECT_EQ(keyName(0x7F), L"0x7F"); // F16
+    EXPECT_EQ(keyName(0x87), L"0x87"); // F24
+}
+
+// ── parseKeybindLine: all valid bind indices ──
+
+TEST(ParseKeybindLine, AllValidBindIndices)
+{
+    // Verify all 22 bind indices (0 through BIND_COUNT-1) are accepted
+    for (int i = 0; i < MoriaMods::BIND_COUNT; i++)
+    {
+        auto result = parseKeybindLine(std::to_string(i) + "|112");
+        auto* kb = std::get_if<ParsedKeybind>(&result);
+        ASSERT_NE(kb, nullptr) << "Bind index " << i << " should be valid";
+        EXPECT_EQ(kb->bindIndex, i);
+        EXPECT_EQ(kb->vkCode, 112);
+    }
+}
+
+TEST(ParseKeybindLine, BindIndexBoundary)
+{
+    // BIND_COUNT-1 = last valid, BIND_COUNT = first invalid
+    auto valid = parseKeybindLine(std::to_string(MoriaMods::BIND_COUNT - 1) + "|112");
+    EXPECT_NE(std::get_if<ParsedKeybind>(&valid), nullptr);
+
+    auto invalid = parseKeybindLine(std::to_string(MoriaMods::BIND_COUNT) + "|112");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(invalid));
+}

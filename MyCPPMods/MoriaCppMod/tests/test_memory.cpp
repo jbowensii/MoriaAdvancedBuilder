@@ -81,3 +81,42 @@ TEST(IsReadableMemory, AlignedInvalidPage)
     // Page-aligned address in typically unmapped region
     EXPECT_FALSE(isReadableMemory(reinterpret_cast<void*>(0x10000000000ULL)));
 }
+
+TEST(IsReadableMemory, SizeZero)
+{
+    // Size 0 with valid pointer — only checks first page
+    int x = 42;
+    EXPECT_TRUE(isReadableMemory(&x, 0));
+}
+
+TEST(IsReadableMemory, LargeSize)
+{
+    // Heap allocation with large size check
+    void* ptr = malloc(65536);
+    ASSERT_NE(ptr, nullptr);
+    EXPECT_TRUE(isReadableMemory(ptr, 65536));
+    free(ptr);
+}
+
+TEST(IsReadableMemory, NullWithSizeZero)
+{
+    // Null pointer should fail even with size 0 (early null check)
+    EXPECT_FALSE(isReadableMemory(nullptr, 0));
+}
+
+TEST(IsReadableMemory, GlobalConstant)
+{
+    // Static const data should be readable
+    static const int arr[100] = {1, 2, 3};
+    EXPECT_TRUE(isReadableMemory(arr, sizeof(arr)));
+}
+
+TEST(IsReadableMemory, CrossPageBoundary)
+{
+    // Allocate a large block and check across likely page boundary
+    void* ptr = malloc(8192);
+    ASSERT_NE(ptr, nullptr);
+    // Check starting near the end of the allocation
+    EXPECT_TRUE(isReadableMemory(static_cast<uint8_t*>(ptr) + 4000, 4000));
+    free(ptr);
+}

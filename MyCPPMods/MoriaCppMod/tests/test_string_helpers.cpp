@@ -358,3 +358,77 @@ TEST(WstrEqualCI, OneEmpty)
     EXPECT_FALSE(wstrEqualCI(L"a", L""));
     EXPECT_FALSE(wstrEqualCI(L"", L"b"));
 }
+
+TEST(WstrEqualCI, Digits)
+{
+    EXPECT_TRUE(wstrEqualCI(L"abc123", L"ABC123"));
+    EXPECT_TRUE(wstrEqualCI(L"Num+", L"num+"));
+}
+
+// ── wrapText additional edge cases ──
+
+TEST(WrapText, WrapsAtDash)
+{
+    std::wstring prefix = L"Name: ";
+    // Build string that breaks at a dash
+    std::wstring value = std::wstring(55, L'A') + L"-" + std::wstring(20, L'B');
+    std::wstring result = wrapText(prefix, value);
+    EXPECT_NE(result.find(L'\n'), std::wstring::npos);
+    // Content preserved
+    std::wstring stripped;
+    for (wchar_t c : result) if (c != L'\n') stripped += c;
+    EXPECT_EQ(stripped, prefix + value);
+}
+
+TEST(WrapText, WrapsAtBackslash)
+{
+    std::wstring prefix = L"Path: ";
+    // Windows-style path with backslashes as break points
+    std::wstring value = L"C:\\" + std::wstring(55, L'X') + L"\\" + std::wstring(20, L'Y');
+    std::wstring result = wrapText(prefix, value);
+    EXPECT_NE(result.find(L'\n'), std::wstring::npos);
+}
+
+TEST(WrapText, SingleCharValue)
+{
+    EXPECT_EQ(wrapText(L"", L"X"), L"X");
+    EXPECT_EQ(wrapText(L"P: ", L"X"), L"P: X");
+}
+
+TEST(WrapText, ExactlyOneOverMaxLine)
+{
+    // 71 chars = exactly 1 over default maxLine of 70
+    std::wstring value(71, L'Q');
+    std::wstring result = wrapText(L"", value);
+    EXPECT_NE(result.find(L'\n'), std::wstring::npos);
+    // First line should be 70 chars (hard break)
+    auto nl = result.find(L'\n');
+    EXPECT_EQ(nl, 70u);
+}
+
+// ── extractFriendlyName additional edge cases ──
+
+TEST(ExtractFriendlyName, OnlyDash)
+{
+    EXPECT_EQ(extractFriendlyName("-"), L"");
+}
+
+TEST(ExtractFriendlyName, ConsecutiveDashes)
+{
+    EXPECT_EQ(extractFriendlyName("A--B"), L"A");
+}
+
+// ── componentNameToMeshId additional edge cases ──
+
+TEST(ComponentNameToMeshId, OnlyUnderscore)
+{
+    // Single underscore — last underscore at pos 0, empty suffix = vacuously all digits
+    // But lastUnderscore > 0 check fails (pos == 0), so full string returned
+    EXPECT_EQ(componentNameToMeshId(L"_"), "_");
+}
+
+TEST(ComponentNameToMeshId, OnlyDigits)
+{
+    // "12345" — no underscore, so returned as-is
+    EXPECT_EQ(componentNameToMeshId(L"12345"), "12345");
+}

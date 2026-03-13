@@ -303,3 +303,105 @@ TEST_F(LocTest, Get_ClearRemovesAll)
     EXPECT_TRUE(Loc::s_table.empty());
     EXPECT_TRUE(Loc::get("key.shift").empty());
 }
+
+// ── JSON parser edge cases: malformed unicode, non-string values ──
+
+TEST_F(LocTest, ParseJsonFile_MalformedUnicodeShort)
+{
+    // Incomplete \u escape (only 2 hex digits available before end of string)
+    auto path = writeTempJson(R"({"k": "\u00"})");
+    // Should not crash; may or may not parse the value
+    Loc::parseJsonFile(path);
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_MalformedUnicodeInvalidHex)
+{
+    // Invalid hex digits in \uXXXX — should produce some output without crashing
+    auto path = writeTempJson(R"({"k": "\u00GZ"})");
+    Loc::parseJsonFile(path);
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_NonStringValue)
+{
+    // JSON with numeric or boolean values — our parser expects string values only
+    // Should reject gracefully (value doesn't start with quote)
+    auto path = writeTempJson(R"({"valid": "yes", "num": 42, "after": "ok"})");
+    Loc::parseJsonFile(path);
+    // "valid" should be parsed, "num" should be skipped, "after" may or may not parse
+    EXPECT_EQ(Loc::get("valid"), L"yes");
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_BooleanValue)
+{
+    auto path = writeTempJson(R"({"flag": true, "name": "test"})");
+    Loc::parseJsonFile(path);
+    // "flag" should not appear (not a string value), "name" may not parse
+    // either due to parser stopping — just verify no crash
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_EscapeCarriageReturn)
+{
+    auto path = writeTempJson(R"({"k": "line1\rline2"})");
+    EXPECT_TRUE(Loc::parseJsonFile(path));
+    EXPECT_EQ(Loc::get("k"), L"line1\rline2");
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_UnknownEscape)
+{
+    // \z is not a standard JSON escape — parser default case passes through 'z'
+    auto path = writeTempJson(R"({"k": "test\zval"})");
+    EXPECT_TRUE(Loc::parseJsonFile(path));
+    EXPECT_EQ(Loc::get("k"), L"testzval");
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_OnlyBraces)
+{
+    // Just braces with whitespace inside — no pairs
+    auto path = writeTempJson("{   }");
+    EXPECT_FALSE(Loc::parseJsonFile(path));
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_LargeFile)
+{
+    // 500 key-value pairs
+    std::string json = "{";
+    for (int i = 0; i < 500; i++)
+    {
+        if (i > 0) json += ",";
+        json += "\"key" + std::to_string(i) + "\": \"val" + std::to_string(i) + "\"";
+    }
+    json += "}";
+    auto path = writeTempJson(json);
+    EXPECT_TRUE(Loc::parseJsonFile(path));
+    EXPECT_EQ(Loc::get("key0"), L"val0");
+    EXPECT_EQ(Loc::get("key499"), L"val499");
+    std::remove(path.c_str());
+}
+
+// ── utf8ToWide edge cases ──
+
+TEST_F(LocTest, Utf8ToWide_4ByteChar)
+{
+    // UTF-8 for U+1F600 (grinning face emoji): 0xF0 0x9F 0x98 0x80
+    // On Windows wchar_t is 16-bit, so this becomes a surrogate pair
+    std::string utf8 = "\xF0\x9F\x98\x80";
+    auto wide = Loc::utf8ToWide(utf8);
+    EXPECT_GE(wide.size(), 1u); // surrogate pair = 2 wchars on Windows
+}
+
+TEST_F(LocTest, Utf8ToWide_LongString)
+{
+    // 1000 ASCII characters
+    std::string input(1000, 'A');
+    auto wide = Loc::utf8ToWide(input);
+    EXPECT_EQ(wide.size(), 1000u);
+    EXPECT_EQ(wide[0], L'A');
+    EXPECT_EQ(wide[999], L'A');
+}
