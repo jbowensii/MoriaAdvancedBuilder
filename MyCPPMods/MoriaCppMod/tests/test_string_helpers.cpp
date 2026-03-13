@@ -432,3 +432,65 @@ TEST(ComponentNameToMeshId, OnlyDigits)
     // "12345" — no underscore, so returned as-is
     EXPECT_EQ(componentNameToMeshId(L"12345"), "12345");
 }
+
+TEST(ComponentNameToMeshId, ConsecutiveUnderscores)
+{
+    // "A__123" — last underscore is at pos 2, suffix "123" is all digits → strip
+    EXPECT_EQ(componentNameToMeshId(L"A__123"), "A_");
+}
+
+TEST(ComponentNameToMeshId, UnderscoreAndLettersAtEnd)
+{
+    // "Mesh_ABC_DEF" — suffix "DEF" has letters → not stripped
+    EXPECT_EQ(componentNameToMeshId(L"Mesh_ABC_DEF"), "Mesh_ABC_DEF");
+}
+
+// ── trimStr edge cases ──
+
+TEST(TrimStr, OnlyNewlines)
+{
+    EXPECT_EQ(trimStr("\n\n\n"), "");
+}
+
+TEST(TrimStr, InternalNewlines)
+{
+    EXPECT_EQ(trimStr("  hello\nworld  "), "hello\nworld");
+}
+
+// ── strEqualCI edge cases ──
+
+TEST(StrEqualCI, SingleChar)
+{
+    EXPECT_TRUE(strEqualCI("A", "a"));
+    EXPECT_TRUE(strEqualCI("z", "Z"));
+    EXPECT_FALSE(strEqualCI("a", "b"));
+}
+
+TEST(StrEqualCI, SpecialChars)
+{
+    // Non-alpha characters are unchanged by tolower
+    EXPECT_TRUE(strEqualCI("key=val", "KEY=VAL"));
+    EXPECT_TRUE(strEqualCI("foo.bar", "FOO.BAR"));
+}
+
+// ── wstrEqualCI edge cases ──
+
+TEST(WstrEqualCI, SpecialChars)
+{
+    EXPECT_TRUE(wstrEqualCI(L"Num+", L"num+"));
+    EXPECT_TRUE(wstrEqualCI(L"Key=Val", L"key=val"));
+}
+
+// ── extractFriendlyName edge cases ──
+
+TEST(ExtractFriendlyName, LongNameNoDash)
+{
+    std::string longName(500, 'A');
+    auto result = extractFriendlyName(longName);
+    EXPECT_EQ(result.size(), 500u);
+}
+
+TEST(ExtractFriendlyName, DashFollowedByDash)
+{
+    EXPECT_EQ(extractFriendlyName("A--"), L"A");
+}

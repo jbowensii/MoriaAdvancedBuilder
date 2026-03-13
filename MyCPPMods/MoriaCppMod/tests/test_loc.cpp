@@ -405,3 +405,91 @@ TEST_F(LocTest, Utf8ToWide_LongString)
     EXPECT_EQ(wide[0], L'A');
     EXPECT_EQ(wide[999], L'A');
 }
+
+// ── parseJsonFile: parser robustness ──
+
+TEST_F(LocTest, ParseJsonFile_DuplicateKeys)
+{
+    // Duplicate keys — last value should win
+    auto path = writeTempJson(R"({"k": "first", "k": "second"})");
+    EXPECT_TRUE(Loc::parseJsonFile(path));
+    EXPECT_EQ(Loc::get("k"), L"second");
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_ConsecutiveCommas)
+{
+    // Multiple commas between entries — parser skips commas
+    auto path = writeTempJson(R"({"a": "1",,,, "b": "2"})");
+    Loc::parseJsonFile(path);
+    EXPECT_EQ(Loc::get("a"), L"1");
+    // "b" may or may not parse depending on how commas interact with skipWS+parseString
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_KeyWithoutColon)
+{
+    // Key followed by another key instead of colon — parser should stop
+    auto path = writeTempJson(R"({"valid": "yes", "bad" "value", "after": "ok"})");
+    Loc::parseJsonFile(path);
+    EXPECT_EQ(Loc::get("valid"), L"yes");
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_UnicodeInKey)
+{
+    // Unicode escape in key name
+    auto path = writeTempJson(R"({"\u0041\u0042": "AB key"})");
+    EXPECT_TRUE(Loc::parseJsonFile(path));
+    EXPECT_EQ(Loc::get("AB"), L"AB key");
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_MixedNewlines)
+{
+    // CRLF and LF mixed
+    auto path = writeTempJson("{\r\n  \"a\": \"1\",\n  \"b\": \"2\"\r\n}");
+    EXPECT_TRUE(Loc::parseJsonFile(path));
+    EXPECT_EQ(Loc::get("a"), L"1");
+    EXPECT_EQ(Loc::get("b"), L"2");
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_SinglePair)
+{
+    auto path = writeTempJson(R"({"only": "one"})");
+    EXPECT_TRUE(Loc::parseJsonFile(path));
+    EXPECT_EQ(Loc::get("only"), L"one");
+    std::remove(path.c_str());
+}
+
+TEST_F(LocTest, ParseJsonFile_LeadingGarbage)
+{
+    // Garbage before the opening brace — parser searches for '{'
+    auto path = writeTempJson(R"(GARBAGE STUFF {"k": "v"})");
+    EXPECT_TRUE(Loc::parseJsonFile(path));
+    EXPECT_EQ(Loc::get("k"), L"v");
+    std::remove(path.c_str());
+}
+
+// ── utf8ToWide: invalid sequences ──
+
+TEST_F(LocTest, Utf8ToWide_InvalidSequence)
+{
+    // Invalid UTF-8 byte (0xFF is never valid in UTF-8)
+    // MultiByteToWideChar with CP_UTF8 should handle gracefully
+    std::string bad = "\xFF\xFE";
+    auto wide = Loc::utf8ToWide(bad);
+    // Should not crash; result may vary by Windows version
+    // Just verify we get some result without throwing
+    (void)wide;
+}
+
+TEST_F(LocTest, Utf8ToWide_TruncatedMultibyte)
+{
+    // First byte of 2-byte sequence (0xC3) without continuation
+    std::string truncated = "\xC3";
+    auto wide = Loc::utf8ToWide(truncated);
+    // Should not crash
+    (void)wide;
+}

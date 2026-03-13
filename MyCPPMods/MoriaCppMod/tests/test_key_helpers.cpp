@@ -290,3 +290,93 @@ TEST(ParseKeybindLine, BindIndexBoundary)
     auto invalid = parseKeybindLine(std::to_string(MoriaMods::BIND_COUNT) + "|112");
     EXPECT_TRUE(std::holds_alternative<std::monostate>(invalid));
 }
+
+// ── nameToVK edge cases ──
+
+TEST_F(KeyHelperTest, NameToVK_MultiCharNonSpecial)
+{
+    // Two-letter strings that aren't special key names → nullopt
+    EXPECT_EQ(nameToVK(L"AB"), std::nullopt);
+    EXPECT_EQ(nameToVK(L"XY"), std::nullopt);
+    EXPECT_EQ(nameToVK(L"No"), std::nullopt);
+}
+
+TEST_F(KeyHelperTest, NameToVK_OversizedHex)
+{
+    // 5+ char hex string doesn't match the 4-char hex pattern
+    EXPECT_EQ(nameToVK(L"0x100"), std::nullopt);
+    EXPECT_EQ(nameToVK(L"0xFFFF"), std::nullopt);
+}
+
+TEST_F(KeyHelperTest, NameToVK_ThreeDigitFKey)
+{
+    // "F100" is 4 chars — size check allows up to 3, so rejected
+    EXPECT_EQ(nameToVK(L"F100"), std::nullopt);
+}
+
+TEST_F(KeyHelperTest, NameToVK_NumpadEdgeCases)
+{
+    // "Num" alone (3 chars, no digit) — doesn't match Num0-9 (needs size==4)
+    EXPECT_EQ(nameToVK(L"Num"), std::nullopt);
+    // "Num10" (5 chars) — too long for numpad digit pattern
+    EXPECT_EQ(nameToVK(L"Num10"), std::nullopt);
+}
+
+// ── keyName completeness ──
+
+TEST_F(KeyHelperTest, KeyName_AllVKsProduceNonEmpty)
+{
+    // Every VK code 0-255 should produce a non-empty wstring
+    for (int vk = 0; vk <= 255; vk++)
+    {
+        std::wstring name = keyName(static_cast<uint8_t>(vk));
+        EXPECT_FALSE(name.empty()) << "keyName(" << vk << ") returned empty string";
+    }
+}
+
+// ── parseKeybindLine modifier edge cases ──
+
+TEST(ParseKeybindLine, ModifierNonNumeric)
+{
+    // "mod|abc" — non-numeric value after "mod|"
+    auto result = parseKeybindLine("mod|abc");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}
+
+TEST(ParseKeybindLine, ModifierEmpty)
+{
+    // "mod|" — empty value after pipe
+    auto result = parseKeybindLine("mod|");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}
+
+TEST(ParseKeybindLine, ModifierFloat)
+{
+    // "mod|16.5" — float instead of int (stoi parses "16", which is VK_SHIFT)
+    auto result = parseKeybindLine("mod|16.5");
+    auto* mod = std::get_if<ParsedModifier>(&result);
+    // stoi("16.5") returns 16 = VK_SHIFT, so this should succeed
+    ASSERT_NE(mod, nullptr);
+    EXPECT_EQ(mod->vkCode, VK_SHIFT);
+}
+
+TEST(ParseKeybindLine, ModifierNegative)
+{
+    // "mod|-1" — negative, not a valid modifier VK
+    auto result = parseKeybindLine("mod|-1");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}
+
+TEST(ParseKeybindLine, LargeIndex)
+{
+    // Very large index string
+    auto result = parseKeybindLine("999999|112");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}
+
+TEST(ParseKeybindLine, LargeVK)
+{
+    // VK > 255
+    auto result = parseKeybindLine("0|999");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}

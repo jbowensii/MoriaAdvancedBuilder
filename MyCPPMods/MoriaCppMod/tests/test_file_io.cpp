@@ -142,6 +142,49 @@ TEST(ParseRemovalLine, MeshNameWithSpecialChars)
     EXPECT_EQ(pos->meshName, "SM_Wall.Stone_2x1x1_A");
 }
 
+TEST(ParseRemovalLine, MeshNameWithSpaces)
+{
+    // Mesh names with spaces (rare but possible)
+    auto result = parseRemovalLine("SM Wall Stone|1.0|2.0|3.0");
+    auto* pos = std::get_if<ParsedRemovalPosition>(&result);
+    ASSERT_NE(pos, nullptr);
+    EXPECT_EQ(pos->meshName, "SM Wall Stone");
+}
+
+TEST(ParseRemovalLine, FieldsWithWhitespace)
+{
+    // stof handles leading whitespace but our parser doesn't trim
+    // fields come from pipe-splitting so "1.0 " has trailing space
+    auto result = parseRemovalLine("mesh| 1.0| 2.0| 3.0");
+    auto* pos = std::get_if<ParsedRemovalPosition>(&result);
+    ASSERT_NE(pos, nullptr);
+    EXPECT_FLOAT_EQ(pos->posX, 1.0f);
+}
+
+TEST(ParseRemovalLine, EmptyMeshName)
+{
+    // Empty mesh name but valid coordinates
+    auto result = parseRemovalLine("|1.0|2.0|3.0");
+    auto* pos = std::get_if<ParsedRemovalPosition>(&result);
+    ASSERT_NE(pos, nullptr);
+    EXPECT_EQ(pos->meshName, "");
+}
+
+TEST(ParseRemovalLine, OnlyCommentHash)
+{
+    auto result = parseRemovalLine("#");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}
+
+TEST(ParseRemovalLine, TypeRuleWithPipe)
+{
+    // "@mesh|extra" — type rule only takes substr(1), so includes the pipe
+    auto result = parseRemovalLine("@mesh|extra");
+    auto* tr = std::get_if<ParsedRemovalTypeRule>(&result);
+    ASSERT_NE(tr, nullptr);
+    EXPECT_EQ(tr->meshName, "mesh|extra");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // parseSlotLine tests
 // ════════════════════════════════════════════════════════════════════════════
@@ -306,6 +349,41 @@ TEST(ParseSlotLine, NonNumericSlotKey)
     // A non-numeric, non-rotation key — "abc" fails stoi
     auto result = parseSlotLine("abc|name|tex");
     EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}
+
+TEST(ParseSlotLine, RotationBoundary91)
+{
+    // rotation=91 is just over the max of 90
+    auto result = parseSlotLine("rotation|91");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}
+
+TEST(ParseSlotLine, EmptyDisplayName)
+{
+    // slot with empty display name
+    auto result = parseSlotLine("0||tex");
+    auto* slot = std::get_if<ParsedSlot>(&result);
+    ASSERT_NE(slot, nullptr);
+    EXPECT_EQ(slot->displayName, "");
+    EXPECT_EQ(slot->textureName, "tex");
+}
+
+TEST(ParseSlotLine, LongMeshName)
+{
+    // Very long display name (stress test)
+    std::string longName(500, 'X');
+    auto result = parseSlotLine("0|" + longName + "|tex");
+    auto* slot = std::get_if<ParsedSlot>(&result);
+    ASSERT_NE(slot, nullptr);
+    EXPECT_EQ(slot->displayName.size(), 500u);
+}
+
+TEST(ParseSlotLine, SlotWithSpacesInTexture)
+{
+    auto result = parseSlotLine("5|Door|T UI BuildIcon Door");
+    auto* slot = std::get_if<ParsedSlot>(&result);
+    ASSERT_NE(slot, nullptr);
+    EXPECT_EQ(slot->textureName, "T UI BuildIcon Door");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -824,4 +902,55 @@ TEST(ParseIniLine, ConsecutiveEquals)
     ASSERT_NE(kv, nullptr);
     EXPECT_EQ(kv->key, "Key");
     EXPECT_EQ(kv->value, "==Value");
+}
+
+TEST(ParseIniLine, SectionWithTrailingContent)
+{
+    // "[Section] extra" — back is not ']', so not parsed as section
+    auto r = parseIniLine("[Section] extra");
+    // trimmed string is "[Section] extra" — back is not ']'
+    // so it falls through to key=value parse, which fails (no '=')
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(r));
+}
+
+TEST(ParseIniLine, OnlyEquals)
+{
+    // "=" — empty key, should be rejected
+    auto r = parseIniLine("=");
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(r));
+}
+
+TEST(ParseIniLine, BooleanValue)
+{
+    auto r = parseIniLine("Verbose = true");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->key, "Verbose");
+    EXPECT_EQ(kv->value, "true");
+}
+
+TEST(ParseIniLine, NumericValue)
+{
+    auto r = parseIniLine("RotationStep = 5");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->key, "RotationStep");
+    EXPECT_EQ(kv->value, "5");
+}
+
+TEST(ParseIniLine, SectionWithNumbers)
+{
+    auto r = parseIniLine("[Section2]");
+    auto* sec = std::get_if<ParsedIniSection>(&r);
+    ASSERT_NE(sec, nullptr);
+    EXPECT_EQ(sec->name, "Section2");
+}
+
+TEST(ParseIniLine, InlineCommentNoSpace)
+{
+    // ";comment" without space before semicolon should NOT strip (only " ;" triggers)
+    auto r = parseIniLine("Key = Value;comment");
+    auto* kv = std::get_if<ParsedIniKeyValue>(&r);
+    ASSERT_NE(kv, nullptr);
+    EXPECT_EQ(kv->value, "Value;comment");
 }
