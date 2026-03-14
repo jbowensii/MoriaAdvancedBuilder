@@ -1,15 +1,9 @@
-// ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  moria_placement.inl — Build placement lifecycle, snap, ghost piece mgmt  ║
-// ║  #include inside MoriaCppMod class body (before moria_quickbuild.inl)     ║
-// ╚══════════════════════════════════════════════════════════════════════════════╝
 
-        // ──── Placement Management ────────────────────────────────────────────────────
-        // Build lifecycle: menu open/close, recipe selection, ghost piece, snap, rotation
 
-        // Cached UMorBuildingComponent lookup
+
         UObject* getCachedBuildComp()
         {
-            if (m_cachedBuildComp && isWidgetAlive(m_cachedBuildComp))
+            if (m_cachedBuildComp && isObjectAlive(m_cachedBuildComp))
                 return m_cachedBuildComp;
             m_cachedBuildComp = nullptr;
             std::vector<UObject*> comps;
@@ -23,9 +17,7 @@
             return m_cachedBuildComp;
         }
 
-        // ── Build widget discovery and menu management ───────────────────────────────
 
-        // Find visible BuildHUD widget (falls back to first match if none visible)
         UObject* findBuildHUD()
         {
             std::vector<UObject*> widgets;
@@ -49,7 +41,7 @@
                     }
                 }
             }
-            // Fallback: first match regardless of visibility
+
             for (auto* w : widgets)
             {
                 if (!w) continue;
@@ -60,17 +52,17 @@
             return nullptr;
         }
 
-        // Cached BuildHUD: GetActiveBuildingWidget() primary, FindAllOf fallback
+
         UObject* getCachedBuildHUD()
         {
             if (m_cachedBuildHUD)
             {
-                if (!isWidgetAlive(m_cachedBuildHUD) || safeClassName(m_cachedBuildHUD).find(L"BuildHUD") == std::wstring::npos)
+                if (!isObjectAlive(m_cachedBuildHUD) || safeClassName(m_cachedBuildHUD).find(L"BuildHUD") == std::wstring::npos)
                     m_cachedBuildHUD = nullptr;
             }
             if (!m_cachedBuildHUD)
             {
-                // Primary: GetActiveBuildingWidget() (avoids widget scan)
+
                 UObject* comp = getCachedBuildComp();
                 if (comp)
                 {
@@ -79,7 +71,7 @@
                     {
                         struct { UObject* Ret{nullptr}; } params{};
                         comp->ProcessEvent(fn, &params);
-                        if (params.Ret && isWidgetAlive(params.Ret))
+                        if (params.Ret && isObjectAlive(params.Ret))
                         {
                             m_cachedBuildHUD = params.Ret;
                             QBLOG(STR("[MoriaCppMod] [QB] getCachedBuildHUD: via GetActiveBuildingWidget -> {:p}\n"),
@@ -87,18 +79,18 @@
                         }
                     }
                 }
-                // Fallback: FindAllOf scan (needed before build mode is active)
+
                 if (!m_cachedBuildHUD)
                 {
                     m_cachedBuildHUD = findWidgetByClass(L"UI_WBP_BuildHUDv2_C", false);
-                    if (m_cachedBuildHUD && !isWidgetAlive(m_cachedBuildHUD))
+                    if (m_cachedBuildHUD && !isObjectAlive(m_cachedBuildHUD))
                         m_cachedBuildHUD = nullptr;
                 }
             }
             return m_cachedBuildHUD;
         }
 
-        // Live check: BuildHUD showing AND past recipe picker
+
         bool isPlacementActive()
         {
             UObject* hud = getCachedBuildHUD();
@@ -108,7 +100,7 @@
             struct { bool Ret{false}; } params{};
             hud->ProcessEvent(fn, &params);
             if (!params.Ret) { QBLOG(STR("[MoriaCppMod] [QB] isPlacementActive -> false (HUD not showing)\n")); return false; }
-            // Past the recipe picker?
+
             static FBoolProperty* s_bp_recipeSelectMode = nullptr;
             if (!s_bp_recipeSelectMode)
                 s_bp_recipeSelectMode = resolveBoolProperty(hud, L"recipeSelectMode");
@@ -120,7 +112,7 @@
             return result;
         }
 
-        // Build_Tab visibility via UWidget::IsVisible (not FGK IsShowing, which may lag)
+
         bool isBuildTabShowing()
         {
             static bool s_lastState = false;
@@ -138,7 +130,7 @@
             return params.Ret;
         }
 
-        // Open build tab via FGK Show(). 350ms cooldown prevents MovieScene re-entrancy crashes.
+
         void showBuildTab()
         {
             ULONGLONG now = GetTickCount64();
@@ -156,7 +148,7 @@
             m_lastShowHideTime = now;
         }
 
-        // Close build tab via FGK Hide(). 350ms cooldown shared with Show.
+
         void hideBuildTab()
         {
             ULONGLONG now = GetTickCount64();
@@ -174,12 +166,10 @@
             m_lastShowHideTime = now;
         }
 
-        // Activate build mode via API call (replaces keybd_event(B) simulation).
-        // Uses FGK Show() if Build_Tab already exists, otherwise ConstructMode() on character.
-        // Returns false if neither path is available.
+
         bool activateBuildMode()
         {
-            // Warm restart: widget exists, just show it
+
             UObject* tab = getCachedBuildTab();
             if (tab)
             {
@@ -187,7 +177,7 @@
                 showBuildTab();
                 return true;
             }
-            // Cold start: call ConstructMode() on character to create + show build UI
+
             UObject* pawn = getPawn();
             if (!pawn)
             {
@@ -205,18 +195,17 @@
             return true;
         }
 
-        // ── GATA (Ghost Actor / Target Actor) management ─────────────────────────────
 
         UObject* resolveGATA()
         {
-            auto* hud = findBuildHUD();
+            auto* hud = getCachedBuildHUD();
             if (!hud) return nullptr;
             auto* weakPtr = hud->GetValuePtrByPropertyNameInChain<RC::Unreal::FWeakObjectPtr>(STR("TargetActor"));
             if (!weakPtr) return nullptr;
             return weakPtr->Get();
         }
 
-        // Set rotation increment on GATA via runtime property discovery
+
         bool setGATARotation(UObject* gata, float step)
         {
             if (!gata) return false;
@@ -228,9 +217,7 @@
             return true;
         }
 
-        // ── Snap toggle ──────────────────────────────────────────────────────────────
 
-        // Toggle snap for current piece (auto-restores on placement)
         void toggleSnap()
         {
             VLOG(STR("[MoriaCppMod] [Snap] toggleSnap() called, current state: {} savedDist={}\n"),
@@ -251,7 +238,7 @@
                 return;
             }
 
-            // Capture original on first use
+
             if (m_savedMaxSnapDistance < 0.0f)
             {
                 m_savedMaxSnapDistance = *pSnap;
@@ -270,7 +257,7 @@
             setMcSlotState(1, m_snapEnabled ? UmgSlotState::Active : UmgSlotState::Inactive);
         }
 
-        // Auto-restore snap after placement — only resets flag, new GATA spawns with default
+
         void restoreSnap()
         {
             if (m_snapEnabled) return;
@@ -278,9 +265,7 @@
             VLOG(STR("[MoriaCppMod] [Snap] Snap auto-restored to ON after placement (GATA will spawn fresh)\n"));
         }
 
-        // ── MC slot state management ─────────────────────────────────────────────────
 
-        // Update MC toolbar slot visual (frame texture + icon brightness)
         void setMcSlotState(int slot, UmgSlotState state)
         {
             if (slot < 0 || slot >= MC_SLOTS) return;
@@ -312,7 +297,7 @@
                 if (iconImg)
                     umgSetImageColor(iconImg, 1.0f, 1.0f, 1.0f, 1.0f);
             }
-            else // Empty
+            else
             {
                 if (stateImg && m_umgTexEmpty && m_umgSetBrushFn)
                     umgSetBrush(stateImg, m_umgTexEmpty, m_umgSetBrushFn);
@@ -321,21 +306,19 @@
             }
         }
 
-        // ── Ghost piece event handlers ───────────────────────────────────────────────
 
-        // Ghost piece appeared — reapply snap/rotation state and enable snap slot
         void onGhostAppeared()
         {
             UObject* gata = resolveGATA();
             if (!gata)
             {
                 VLOG(STR("[MoriaCppMod] [Placement] onGhostAppeared: resolveGATA returned nullptr (ghost not yet spawned)\n"));
-                // Ghost will appear shortly after blockSelectedEvent
+
                 setMcSlotState(1, m_snapEnabled ? UmgSlotState::Active : UmgSlotState::Inactive);
                 return;
             }
 
-            // Reapply snap state to new GATA
+
             if (!m_snapEnabled && m_savedMaxSnapDistance >= 0.0f)
             {
                 float* pSnap = gata->GetValuePtrByPropertyNameInChain<float>(STR("MaxSnapDistance"));
@@ -349,13 +332,13 @@
             setMcSlotState(1, m_snapEnabled ? UmgSlotState::Active : UmgSlotState::Inactive);
         }
 
-        // Ghost disappeared — grey out snap slot (suppressed during QB SM transitions)
+
         void onGhostDisappeared()
         {
-            // Suppress during recipe swap — transient ghost flicker crashes RHI thread
+
             if (m_qbPhase != PlacePhase::Idle)
                 return;
-            // Also suppress within 500ms of last selection (DIRECT path ghost flicker)
+
             ULONGLONG now = GetTickCount64();
             if (now - m_lastQBSelectTime < 500)
                 return;
@@ -363,9 +346,7 @@
             setMcSlotState(1, UmgSlotState::Disabled);
         }
 
-        // ── Recipe selection (blockSelectedEvent path) ───────────────────────────────
 
-        // Select recipe via blockSelectedEvent on Build_Tab (SM path after menu open)
         SelectResult selectRecipeOnBuildTab(UObject* buildTab, int slot)
         {
             const std::wstring& targetName = m_recipeSlots[slot].displayName;
@@ -376,7 +357,7 @@
 
             UObject* buildHUD = getCachedBuildHUD();
 
-            // Find matching visible Build_Item_Medium widget
+
             std::vector<UObject*> widgets;
             UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
 
@@ -384,11 +365,11 @@
             int visibleCount = 0;
             for (auto* w : widgets)
             {
-                if (!w || !isWidgetAlive(w)) continue;
+                if (!w || !isObjectAlive(w)) continue;
                 std::wstring cls = safeClassName(w);
                 if (cls != L"UI_WBP_Build_Item_Medium_C") continue;
 
-                // Skip non-visible (stale/recycled) widgets
+
                 auto* visFunc = w->GetFunctionByNameInChain(STR("IsVisible"));
                 if (visFunc)
                 {
@@ -404,7 +385,7 @@
                 std::wstring name = readWidgetDisplayName(w);
                 if (!name.empty() && name == targetName)
                 {
-                    // Disambiguate same-name items by icon texture
+
                     if (!slotTexture.empty())
                     {
                         std::wstring widgetTex = extractIconTextureName(w);
@@ -436,14 +417,14 @@
             std::vector<uint8_t> params(s_bse.parmsSize, 0);
             bool gotFreshBLock = false;
 
-            // Resolve bLock offset on first quickbuild
+
             if (s_off_bLock == -2)
             {
                 resolveOffset(matchedWidget, L"bLock", s_off_bLock);
                 probeRecipeBlockStruct(matchedWidget);
             }
 
-            // Best: fresh bLock from matched widget
+
             if (s_off_bLock >= 0)
             {
                 uint8_t* widgetBase = reinterpret_cast<uint8_t*>(matchedWidget);
@@ -452,7 +433,7 @@
                 QBLOG(STR("[MoriaCppMod] [QuickBuild]   using FRESH bLock from widget (@0x{:X})\n"), s_off_bLock);
             }
 
-            // Fallback: saved bLock (may be stale)
+
             if (!gotFreshBLock && m_recipeSlots[slot].hasBLockData)
             {
                 std::memcpy(params.data() + s_bse.bLock, m_recipeSlots[slot].bLockData, BLOCK_DATA_SIZE);
@@ -468,7 +449,7 @@
 
             QBLOG(STR("[MoriaCppMod] [QuickBuild]   calling blockSelectedEvent with selfRef={:p}\n"), static_cast<void*>(matchedWidget));
 
-            // RAII guard suppresses post-hook capture during automated selection
+
             m_isAutoSelecting = true;
             struct AutoSelectGuardFB
             {
@@ -478,7 +459,7 @@
             buildTab->ProcessEvent(func, params.data());
             m_isAutoSelecting = false;
 
-            // Cache handle for future DIRECT path
+
             if (buildHUD)
                 cacheRecipeHandleForSlot(buildHUD, slot);
 
@@ -496,10 +477,10 @@
             return SelectResult::Found;
         }
 
-        // Direct SelectRecipe via cached handle (fast path for mid-placement switching)
+
         bool trySelectRecipeByHandle(UObject* buildHUD, const uint8_t* handleData)
         {
-            if (!buildHUD || !handleData || !isWidgetAlive(buildHUD)) return false;
+            if (!buildHUD || !handleData || !isObjectAlive(buildHUD)) return false;
             auto* selectFn = buildHUD->GetFunctionByNameInChain(STR("SelectRecipe"));
             if (!selectFn)
             {
@@ -520,7 +501,7 @@
             return true;
         }
 
-        // Cache recipe handle from build HUD after successful activation
+
         void cacheRecipeHandleForSlot(UObject* buildHUD, int slot)
         {
             if (!buildHUD || slot < 0 || slot >= QUICK_BUILD_SLOTS) return;
@@ -536,9 +517,7 @@
             QBLOG(STR("[MoriaCppMod] [QB] Cached recipe handle for F{}: CI={}\n"), slot + 1, ci);
         }
 
-        // ── Build-from-target recipe selection ───────────────────────────────────────
 
-        // Lowercase alphanumeric-only for fuzzy matching
         static std::wstring normalizeForMatch(const std::wstring& s)
         {
             std::wstring out;
@@ -557,15 +536,15 @@
                                             m_targetBuildRecipeRef,
                                             s_off_bLock);
 
-            // Build FName variants for ComparisonIndex matching
+
             std::vector<std::pair<std::wstring, uint32_t>> targetFNames;
             {
-                // Full ref
+
                 FName fn1(m_targetBuildRecipeRef.c_str());
                 uint32_t ci1 = fn1.GetComparisonIndex();
                 targetFNames.push_back({m_targetBuildRecipeRef, ci1});
 
-                // Without BP_ prefix
+
                 std::wstring noBP = m_targetBuildRecipeRef;
                 if (noBP.size() > 3 && noBP.substr(0, 3) == L"BP_") noBP.erase(0, 3);
                 FName fn2(noBP.c_str());
@@ -589,7 +568,7 @@
 
             for (auto* w : widgets)
             {
-                if (!w || !isWidgetAlive(w)) continue;
+                if (!w || !isObjectAlive(w)) continue;
                 std::wstring cls = safeClassName(w);
                 if (cls != L"UI_WBP_Build_Item_Medium_C") continue;
 
@@ -608,21 +587,21 @@
                 std::wstring name = readWidgetDisplayName(w);
                 bool isFirstFew = (visibleCount <= 5);
 
-                // Resolve bLock offset on first visible widget
+
                 if (s_off_bLock == -2)
                 {
                     resolveOffset(w, L"bLock", s_off_bLock);
                     probeRecipeBlockStruct(w);
                 }
 
-                // Log first 5 for diagnostics
+
                 if (isFirstFew)
                 {
                     std::wstring objName(w->GetName());
                     QBLOG(STR("[MoriaCppMod] [TargetBuild]   W[{}] obj='{}' display='{}'\n"), visibleCount, objName, name);
                 }
 
-                // Strategy 1: bLock RowName CI matching
+
                 if (!matchedWidget && s_off_bLock >= 0 && !m_targetBuildRecipeRef.empty())
                 {
                     uint8_t* widgetBase = reinterpret_cast<uint8_t*>(w);
@@ -645,7 +624,7 @@
 
                         if (isFirstFew)
                         {
-                            // Log bLock tag FName
+
                             uint32_t tagCI = *reinterpret_cast<uint32_t*>(bLock);
                             int32_t tagNum = *reinterpret_cast<int32_t*>(bLock + 4);
                             QBLOG(STR("[MoriaCppMod] [TargetBuild]     bLock tag CI={} Num={} | variants={} ptr={:p}\n"),
@@ -661,7 +640,7 @@
                         }
                         else if (isReadableMemory(variantsPtr, variantEntrySize()))
                         {
-                            // ResultConstructionHandle.RowName
+
                             uint32_t rowCI = *reinterpret_cast<uint32_t*>(variantsPtr + variantRowCIOff());
                             int32_t rowNum = *reinterpret_cast<int32_t*>(variantsPtr + variantRowNumOff());
 
@@ -670,7 +649,7 @@
                                 QBLOG(STR("[MoriaCppMod] [TargetBuild]     RowName CI={} Num={}\n"), rowCI, rowNum);
                             }
 
-                            // Match against target FName CIs
+
                             for (auto& [tName, tCI] : targetFNames)
                             {
                                 if (tCI == rowCI)
@@ -692,7 +671,7 @@
                     }
                 }
 
-                // Strategy 2: Exact display name match
+
                 if (!matchedWidget && !name.empty() && name == m_targetBuildName)
                 {
                     matchedWidget = w;
@@ -700,7 +679,7 @@
                     QBLOG(STR("[MoriaCppMod] [TargetBuild] MATCH (exact display name) on '{}'\n"), name);
                 }
 
-                // Strategy 3: Fuzzy display name match (containment)
+
                 if (!matchedWidget && !name.empty())
                 {
                     std::wstring nameNorm = normalizeForMatch(name);
@@ -741,7 +720,7 @@
 
             std::vector<uint8_t> params(s_bse.parmsSize, 0);
 
-            // Fresh bLock from matched widget
+
             bool gotFreshBLock = false;
             if (s_off_bLock >= 0)
             {
@@ -757,7 +736,7 @@
             *reinterpret_cast<UObject**>(params.data() + s_bse.selfRef) = matchedWidget;
             *reinterpret_cast<int32_t*>(params.data() + s_bse.Index) = 0;
 
-            // RAII guard suppresses post-hook capture during automated selection
+
             m_isAutoSelecting = true;
             struct AutoSelectGuardTB
             {
@@ -777,10 +756,7 @@
             return SelectResult::Found;
         }
 
-        // ── Entry points from dispatcher (quickbuild / target build) ─────────────────
 
-        // Start/switch build — called from quickBuildSlot() after debounce/cooldown
-        // Event-driven: DIRECT path (instant) or activateBuildMode() + OnAfterShow callback
         void startOrSwitchBuild(int slot)
         {
             m_isTargetBuild = false;
@@ -791,7 +767,7 @@
                                             m_frameCounter,
                                             m_recipeSlots[slot].hasHandle);
 
-            // DIRECT PATH: cached handle + active build overlay. No timers, instant switch.
+
             if (m_recipeSlots[slot].hasHandle)
             {
                 ULONGLONG now = GetTickCount64();
@@ -811,7 +787,7 @@
                     {
                         struct { UObject* Ret{nullptr}; } params{};
                         comp->ProcessEvent(fn, &params);
-                        if (params.Ret && isWidgetAlive(params.Ret))
+                        if (params.Ret && isObjectAlive(params.Ret))
                             buildHUD = params.Ret;
                     }
                 }
@@ -822,13 +798,13 @@
                     if (trySelectRecipeByHandle(buildHUD, m_recipeSlots[slot].recipeHandle))
                     {
                         m_isAutoSelecting = false;
-                        // Verify ghost actually appeared — stale handles can silently succeed
+
                         if (isPlacementActive())
                         {
                             m_lastDirectSelectTime = now;
                             m_lastQBSelectTime = now;
-                            // Defer hideBuildTab + refreshActionBar to next frame
-                            // to let Slate finish painting current widget tree
+
+
                             m_deferHideAndRefresh = true;
                             const std::wstring& targetName = m_recipeSlots[slot].displayName;
                             showOnScreen((L"Build: " + targetName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
@@ -850,20 +826,20 @@
                 }
             }
 
-            // STATE MACHINE PATH: event-driven (no retry timers)
+
             m_pendingQuickBuildSlot = slot;
             m_qbStartTime = GetTickCount64();
 
             if (isBuildTabShowing())
             {
-                // Build tab already open — walk tree immediately
+
                 QBLOG(STR("[MoriaCppMod] [QuickBuild] Build tab open, selecting recipe\n"));
                 m_qbPhase = PlacePhase::SelectRecipeWalk;
             }
             else if (isPlacementActive())
             {
-                // Ghost active but DIRECT path failed (no handle) — cancel ghost first
-                // OnAfterHide callback will trigger activateBuildMode() -> WaitingForShow
+
+
                 QBLOG(STR("[MoriaCppMod] [QuickBuild] Placement active, cancelling ghost\n"));
                 keybd_event(VK_ESCAPE, 0, 0, 0);
                 keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
@@ -871,8 +847,8 @@
             }
             else
             {
-                // Not showing, not placing — activate build mode via API
-                // OnAfterShow callback will transition to SelectRecipeWalk
+
+
                 QBLOG(STR("[MoriaCppMod] [QuickBuild] Activating build mode via API\n"));
                 m_buildTabAfterShowFired = false;
                 if (activateBuildMode())
@@ -886,7 +862,7 @@
             }
         }
 
-        // Start build-from-target via unified SM (guards in quickBuildFromTarget)
+
         void startBuildFromTarget()
         {
             VLOG(STR("[MoriaCppMod] [TargetBuild] startBuildFromTarget: name='{}' recipeRef='{}'\n"),
@@ -923,7 +899,6 @@
             }
         }
 
-        // ── Placement state machine tick ─────────────────────────────────────────────
 
         void placementTick()
         {
@@ -932,7 +907,7 @@
             ULONGLONG now = GetTickCount64();
             ULONGLONG elapsed = now - m_qbStartTime;
 
-            // Safety watchdog — catches stuck states (should never fire in normal operation)
+
             if (elapsed > 5000)
             {
                 QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: TIMEOUT at {}ms phase {}\n"),
@@ -945,8 +920,7 @@
                 return;
             }
 
-            // CancelGhost: ESC was sent, OnAfterHide callback handles transition.
-            // Tick only provides a fallback if OnAfterHide doesn't fire (e.g. ESC was swallowed).
+
             if (m_qbPhase == PlacePhase::CancelGhost)
             {
                 if (!isPlacementActive())
@@ -960,8 +934,7 @@
                 return;
             }
 
-            // WaitingForShow: OnAfterShow callback handles transition.
-            // Tick provides a fallback if Build_Tab appears without OnAfterShow firing.
+
             if (m_qbPhase == PlacePhase::WaitingForShow)
             {
                 if (isBuildTabShowing())
@@ -973,11 +946,11 @@
                 return;
             }
 
-            // SelectRecipeWalk: walk Build_Tab widget tree and call blockSelectedEvent
+
             if (m_qbPhase == PlacePhase::SelectRecipeWalk)
             {
                 UObject* buildTab = getCachedBuildTab();
-                if (!buildTab) return; // watchdog handles timeout
+                if (!buildTab) return;
 
                 SelectResult result = m_isTargetBuild
                     ? selectRecipeByTargetName(buildTab)
@@ -1005,6 +978,6 @@
                     m_isTargetBuild = false;
                     m_qbPhase = PlacePhase::Idle;
                 }
-                // Loading: widget tree not ready yet, retry next frame (watchdog catches stuck)
+
             }
         }

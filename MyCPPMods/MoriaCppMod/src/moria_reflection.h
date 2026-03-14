@@ -1,10 +1,6 @@
-// ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  moria_reflection.h — Property offset resolution & UFunction helpers      ║
-// ║                                                                           ║
-// ║  THREAD SAFETY: Offset caches are written only from the game thread.      ║
-// ║  The overlay thread must never call resolveOffset or any resolver.         ║
-// ║  It only reads s_overlay.slots[] which is protected by slotCS.            ║
-// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+
 #pragma once
 
 #include "moria_common.h"
@@ -13,44 +9,41 @@
 
 namespace MoriaMods
 {
-    // ════════════════════════════════════════════════════════════════════════════
-    // Cached Property Offsets (-2 = unresolved, -1 = not found)
-    // ════════════════════════════════════════════════════════════════════════════
-    inline int s_off_font = -2;             // UTextBlock::Font
-    inline int s_off_brush = -2;            // UImage::Brush
-    inline int s_off_bLock = -2;            // UI_WBP_Build_Item_C::bLock
-    inline int s_off_icon = -2;             // UI_WBP_Build_Item_Medium_C::Icon
-    inline int s_off_blockName = -2;        // UI_WBP_Build_Item_Medium_C::blockName
-    inline int s_off_texParamValues = -2;   // UMaterialInstanceDynamic::TextureParameterValues
 
-    // Probed struct-internal offsets (fallback to constants)
-    inline int s_off_brushImageSize = -2;      // FSlateBrush::ImageSize (probed)
-    inline int s_off_brushResourceObj = -2;    // FSlateBrush::ResourceObject (probed)
-    inline int s_off_fontTypefaceName = -2;    // FSlateFontInfo::TypefaceFontName (probed)
-    inline int s_off_fontSize = -2;            // FSlateFontInfo::Size (probed)
-    inline int s_off_texParamValue = -2;       // FTextureParameterValue::ParameterValue (probed)
 
-    // FMorRecipeBlock field offsets
-    inline int s_off_rbVariants = -2;          // FMorRecipeBlock::Variants (TArray offset within struct)
+    inline int s_off_font = -2;
+    inline int s_off_brush = -2;
+    inline int s_off_bLock = -2;
+    inline int s_off_icon = -2;
+    inline int s_off_blockName = -2;
+    inline int s_off_texParamValues = -2;
 
-    // FMorConstructionRecipeDefinition nested offsets
-    inline int s_off_varResultHandle = -2;     // FMorConstructionRecipeDefinition::ResultConstructionHandle
-    inline int s_off_rhRowName = -2;           // FDataTableRowHandle::RowName (FName, within ResultConstructionHandle)
-    inline int s_off_variantEntrySize = -2;    // sizeof(FMorConstructionRecipeDefinition) element stride
 
-    // FItemInstance field offsets
-    inline int s_off_iiItem = -2;              // FItemInstance::Item (TSubclassOf)
-    inline int s_off_iiCount = -2;            // FItemInstance::Count (int32)
-    inline int s_off_iiID = -2;              // FItemInstance::ID (int32)
-    inline int s_off_iiDur = -2;              // FItemInstance::Durability (float)
-    inline int s_off_iiSize = -2;             // sizeof(FItemInstance) element stride
+    inline int s_off_brushImageSize = -2;
+    inline int s_off_brushResourceObj = -2;
+    inline int s_off_fontTypefaceName = -2;
+    inline int s_off_fontSize = -2;
+    inline int s_off_texParamValue = -2;
 
-    // FItemInstanceArray::List offset
-    inline int s_off_iiaList = -2;            // FItemInstanceArray::List (TArray offset within FFastArraySerializer-derived struct)
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Resolved Struct-Internal Offsets (probed value or hardcoded fallback)
-    // ════════════════════════════════════════════════════════════════════════════
+    inline int s_off_rbVariants = -2;
+
+
+    inline int s_off_varResultHandle = -2;
+    inline int s_off_rhRowName = -2;
+    inline int s_off_variantEntrySize = -2;
+
+
+    inline int s_off_iiItem = -2;
+    inline int s_off_iiCount = -2;
+    inline int s_off_iiID = -2;
+    inline int s_off_iiDur = -2;
+    inline int s_off_iiSize = -2;
+
+
+    inline int s_off_iiaList = -2;
+
+
     inline int brushImageSizeX() { return (s_off_brushImageSize >= 0) ? s_off_brushImageSize     : BRUSH_IMAGE_SIZE_X; }
     inline int brushImageSizeY() { return (s_off_brushImageSize >= 0) ? s_off_brushImageSize + 4 : BRUSH_IMAGE_SIZE_Y; }
     inline int brushResourceObj(){ return (s_off_brushResourceObj >= 0) ? s_off_brushResourceObj  : BRUSH_RESOURCE_OBJECT; }
@@ -58,11 +51,11 @@ namespace MoriaMods
     inline int fontSizeOff()     { return (s_off_fontSize >= 0)         ? s_off_fontSize          : FONT_SIZE; }
     inline int texParamValueOff(){ return (s_off_texParamValue >= 0)    ? s_off_texParamValue     : TEX_PARAM_VALUE_PTR; }
 
-    // FMorRecipeBlock accessors
+
     inline int rbVariantsOff()   { return (s_off_rbVariants >= 0)      ? s_off_rbVariants        : RECIPE_BLOCK_VARIANTS; }
     inline int rbVariantsNumOff(){ return (s_off_rbVariants >= 0)      ? s_off_rbVariants + 8    : RECIPE_BLOCK_VARIANTS_NUM; }
 
-    // FMorConstructionRecipeDefinition::ResultConstructionHandle.RowName offsets
+
     inline int variantRowCIOff() {
         if (s_off_varResultHandle >= 0 && s_off_rhRowName >= 0)
             return s_off_varResultHandle + s_off_rhRowName;
@@ -75,27 +68,23 @@ namespace MoriaMods
     }
     inline int variantEntrySize() { return (s_off_variantEntrySize >= 0) ? s_off_variantEntrySize : VARIANT_ENTRY_SIZE; }
 
-    // FItemInstance field accessors (probed value or hardcoded fallback)
+
     inline int iiItemOff()  { return (s_off_iiItem >= 0)  ? s_off_iiItem : 0x10; }
     inline int iiCountOff() { return (s_off_iiCount >= 0) ? s_off_iiCount: 0x18; }
     inline int iiIDOff()    { return (s_off_iiID >= 0)    ? s_off_iiID   : 0x20; }
     inline int iiDurOff()   { return (s_off_iiDur >= 0)   ? s_off_iiDur  : 0x24; }
     inline int iiSize()     { return (s_off_iiSize >= 0)  ? s_off_iiSize : 0x30; }
 
-    // FItemInstanceArray::List offset accessor
+
     inline int iiaListOff() { return (s_off_iiaList >= 0) ? s_off_iiaList : 0x110; }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Property Offset Resolution
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // Resolve a UProperty offset by name on an object's class (walks full inheritance chain).
     inline int resolveOffset(UObject* obj, const wchar_t* propName, int& cache)
     {
         if (cache != -2) return cache;
         cache = -1;
         if (!obj) return -1;
-        // Walk the class hierarchy: child → parent → grandparent → ...
+
         for (auto* strct = static_cast<UStruct*>(obj->GetClassPrivate());
              strct;
              strct = strct->GetSuperStruct())
@@ -116,8 +105,7 @@ namespace MoriaMods
         return cache;
     }
 
-    // Resolve a UProperty offset by name, also returning the property size.
-    // Used for runtime validation of hardcoded struct sizes.
+
     inline int resolveOffsetAndSize(UObject* obj, const wchar_t* propName, int& cache, int& sizeOut)
     {
         if (cache != -2) return cache;
@@ -145,8 +133,7 @@ namespace MoriaMods
         return cache;
     }
 
-    // Resolve a property offset by name on a UStruct directly (for DataTable row structs, etc.)
-    // Same sentinel values as resolveOffset: -2 = unresolved, -1 = not found.
+
     inline int resolveStructFieldOffset(UStruct* strct, const wchar_t* propName, int& cache)
     {
         if (cache != -2) return cache;
@@ -170,7 +157,7 @@ namespace MoriaMods
         return cache;
     }
 
-    // Helper: find a named property on obj's class chain, return it if it's an FStructProperty.
+
     inline FStructProperty* findStructProperty(UObject* obj, const wchar_t* propName)
     {
         if (!obj) return nullptr;
@@ -187,13 +174,13 @@ namespace MoriaMods
         return nullptr;
     }
 
-    // Ensure s_off_brush is resolved + probe FSlateBrush struct fields for validation
+
     inline void ensureBrushOffset(UObject* imageWidget)
     {
         if (s_off_brush == -2 && imageWidget)
         {
             resolveOffset(imageWidget, L"Brush", s_off_brush);
-            // One-time probe of FSlateBrush struct fields
+
             if (s_off_brush >= 0 && s_off_brushImageSize == -2)
             {
                 auto* structProp = findStructProperty(imageWidget, L"Brush");
@@ -221,10 +208,10 @@ namespace MoriaMods
         }
     }
 
-    // Probe FSlateFontInfo struct fields (called once when s_off_font is first resolved)
+
     inline void probeFontStruct(UObject* textBlock)
     {
-        if (s_off_fontTypefaceName != -2) return; // already probed
+        if (s_off_fontTypefaceName != -2) return;
         auto* structProp = findStructProperty(textBlock, L"Font");
         if (!structProp) { s_off_fontTypefaceName = -1; s_off_fontSize = -1; return; }
         UScriptStruct* fontStruct = structProp->GetStruct();
@@ -247,12 +234,12 @@ namespace MoriaMods
              s_off_fontSize >= 0 ? s_off_fontSize : FONT_SIZE);
     }
 
-    // Probe FTextureParameterValue struct fields (called once when s_off_texParamValues is first resolved)
+
     inline void probeTexParamStruct(UObject* materialInstance)
     {
-        if (s_off_texParamValue != -2) return; // already probed
+        if (s_off_texParamValue != -2) return;
         if (!materialInstance) { s_off_texParamValue = -1; return; }
-        // TextureParameterValues is a TArray<FTextureParameterValue> — get array inner struct
+
         for (auto* strct = static_cast<UStruct*>(materialInstance->GetClassPrivate());
              strct;
              strct = strct->GetSuperStruct())
@@ -284,20 +271,19 @@ namespace MoriaMods
             }
         }
         probed:
-        if (s_off_texParamValue == -2) s_off_texParamValue = -1; // mark as not found
+        if (s_off_texParamValue == -2) s_off_texParamValue = -1;
     }
 
-    // Probe FMorRecipeBlock struct fields from the bLock FStructProperty.
-    // Resolves Variants TArray offset and inner entry offsets for ResultConstructionHandle.RowName.
+
     inline void probeRecipeBlockStruct(UObject* widget)
     {
-        if (s_off_rbVariants != -2) return; // already probed
+        if (s_off_rbVariants != -2) return;
         s_off_rbVariants = -1;
         s_off_varResultHandle = -1;
         s_off_rhRowName = -1;
         s_off_variantEntrySize = -1;
 
-        // Get the bLock FStructProperty from the widget
+
         FProperty* bLockProp = widget->GetPropertyByNameInChain(STR("bLock"));
         if (!bLockProp)
         {
@@ -312,14 +298,14 @@ namespace MoriaMods
             return;
         }
 
-        // Resolve FMorRecipeBlock::Variants offset
+
         resolveStructFieldOffset(recipeBlockStruct, L"Variants", s_off_rbVariants);
 
         VLOG(STR("[MoriaCppMod] [Validate] FMorRecipeBlock: Variants@0x{:02X} (expected @0x{:02X})\n"),
              s_off_rbVariants >= 0 ? s_off_rbVariants : RECIPE_BLOCK_VARIANTS,
              RECIPE_BLOCK_VARIANTS);
 
-        // Now probe the Variants TArray inner type: FMorConstructionRecipeDefinition
+
         for (auto* prop : recipeBlockStruct->ForEachProperty())
         {
             if (prop->GetName() == std::wstring_view(L"Variants"))
@@ -333,13 +319,13 @@ namespace MoriaMods
 
                 s_off_variantEntrySize = variantStruct->GetPropertiesSize();
 
-                // Find ResultConstructionHandle offset within the variant entry
+
                 resolveStructFieldOffset(variantStruct, L"ResultConstructionHandle", s_off_varResultHandle);
 
                 VLOG(STR("[MoriaCppMod] [Validate] FMorConstructionRecipeDefinition: size=0x{:X} ResultConstructionHandle@0x{:02X} (expected @0xD8)\n"),
                      s_off_variantEntrySize, s_off_varResultHandle >= 0 ? s_off_varResultHandle : 0xD8);
 
-                // Probe ResultConstructionHandle struct for RowName offset
+
                 if (s_off_varResultHandle >= 0)
                 {
                     for (auto* vProp : variantStruct->ForEachProperty())
@@ -363,10 +349,10 @@ namespace MoriaMods
         }
     }
 
-    // Probe FItemInstance and FItemInstanceArray struct fields from the Items property.
+
     inline void probeItemInstanceStruct(UObject* invComp)
     {
-        if (s_off_iiItem != -2) return; // already probed
+        if (s_off_iiItem != -2) return;
         s_off_iiItem = -1;
         s_off_iiCount = -1;
         s_off_iiID = -1;
@@ -374,7 +360,7 @@ namespace MoriaMods
         s_off_iiSize = -1;
         s_off_iiaList = -1;
 
-        // Get the Items FStructProperty from UInventoryComponent
+
         FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
         if (!itemsProp)
         {
@@ -389,12 +375,12 @@ namespace MoriaMods
             return;
         }
 
-        // Resolve FItemInstanceArray::List offset
+
         resolveStructFieldOffset(iiaStruct, L"List", s_off_iiaList);
         VLOG(STR("[MoriaCppMod] [Validate] FItemInstanceArray: List@0x{:02X} (expected @0x110)\n"),
              s_off_iiaList >= 0 ? s_off_iiaList : 0x110);
 
-        // Probe the List TArray inner type: FItemInstance
+
         for (auto* prop : iiaStruct->ForEachProperty())
         {
             if (prop->GetName() == std::wstring_view(L"List"))
@@ -418,18 +404,14 @@ namespace MoriaMods
         }
     }
 
-    // Set UWidgetTree::RootWidget via reflected property
+
     inline void setRootWidget(UObject* widgetTree, UObject* root)
     {
         auto* slot = widgetTree->GetValuePtrByPropertyNameInChain<UObject*>(STR("RootWidget"));
         if (slot) *slot = root;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Bool Property Helpers (handles bitfields via FBoolProperty API)
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // Resolve a bool property using FBoolProperty API (handles bitfields correctly)
     inline FBoolProperty* resolveBoolProperty(UObject* obj, const wchar_t* propName)
     {
         if (!obj) return nullptr;
@@ -451,7 +433,7 @@ namespace MoriaMods
         return nullptr;
     }
 
-    // Set a bool property value on an object using FBoolProperty (handles bitfields)
+
     inline bool setBoolProp(UObject* obj, const wchar_t* propName, bool value)
     {
         auto* bp = resolveBoolProperty(obj, propName);
@@ -460,7 +442,7 @@ namespace MoriaMods
         return true;
     }
 
-    // Get a bool property value from an object using FBoolProperty (handles bitfields)
+
     inline bool getBoolProp(UObject* obj, const wchar_t* propName)
     {
         auto* bp = resolveBoolProperty(obj, propName);
@@ -468,11 +450,7 @@ namespace MoriaMods
         return bp->GetPropertyValueInContainer(obj);
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Time Interval Helper
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // Check if a real-time interval has elapsed (replaces frame-counting)
     inline bool intervalElapsed(ULONGLONG& lastTime, ULONGLONG intervalMs)
     {
         ULONGLONG now = GetTickCount64();
@@ -484,11 +462,7 @@ namespace MoriaMods
         return false;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // UFunction Parameter Finder
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // Find a named parameter on a UFunction — returns the FProperty* or nullptr
     inline FProperty* findParam(UFunction* func, const wchar_t* paramName)
     {
         if (!func) return nullptr;
@@ -500,11 +474,7 @@ namespace MoriaMods
         return nullptr;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Resolved Param Offset Structs (runtime-resolved UFunction parameter layouts)
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // LineTraceSingle param offsets
     struct LTResolved
     {
         int WorldContextObject{-1}, Start{-1}, End{-1}, TraceChannel{-1};
@@ -543,7 +513,7 @@ namespace MoriaMods
              s_lt.parmsSize, s_lt.Start, s_lt.End, s_lt.OutHit, s_lt.ReturnValue);
     }
 
-    // UpdateInstanceTransform param offsets
+
     struct UITResolved
     {
         int InstanceIndex{-1}, NewInstanceTransform{-1};
@@ -574,7 +544,7 @@ namespace MoriaMods
              s_uit.parmsSize, s_uit.InstanceIndex, s_uit.NewInstanceTransform, s_uit.ReturnValue);
     }
 
-    // DeprojectScreenPositionToWorld param offsets
+
     struct DSPResolved
     {
         int ScreenX{-1}, ScreenY{-1}, WorldLocation{-1}, WorldDirection{-1}, ReturnValue{-1};
@@ -602,7 +572,7 @@ namespace MoriaMods
              s_dsp.parmsSize, s_dsp.ScreenX, s_dsp.ScreenY, s_dsp.WorldLocation, s_dsp.WorldDirection);
     }
 
-    // SetInputMode_UIOnlyEx param offsets
+
     struct SIMUIResolved
     {
         int PlayerController{-1}, InWidgetToFocus{-1}, InMouseLockMode{-1};
@@ -628,7 +598,7 @@ namespace MoriaMods
              s_simui.parmsSize, s_simui.PlayerController, s_simui.InWidgetToFocus, s_simui.InMouseLockMode);
     }
 
-    // SetInputMode_GameOnly param offsets
+
     struct SIMGResolved
     {
         int PlayerController{-1};
@@ -652,7 +622,7 @@ namespace MoriaMods
              s_simg.parmsSize, s_simg.PlayerController);
     }
 
-    // blockSelectedEvent param offsets
+
     struct BSEResolved
     {
         int bLock{-1}, selfRef{-1}, Index{-1};
@@ -678,9 +648,6 @@ namespace MoriaMods
              s_bse.parmsSize, s_bse.bLock, s_bse.selfRef, s_bse.Index);
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Offset Validation — check that all critical offsets resolved successfully
-    // ════════════════════════════════════════════════════════════════════════════
 
     inline bool uitOffsetsValid()
     {
@@ -702,4 +669,4 @@ namespace MoriaMods
         return s_bse.resolved && s_bse.bLock >= 0 && s_bse.selfRef >= 0;
     }
 
-} // namespace MoriaMods
+}

@@ -1,35 +1,18 @@
-// ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  moria_common.inl — Centralized coordinate conversion (ScreenCoords)      ║
-// ║  Included inside the mod class body, before other .inl files.             ║
-// ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// ════════════════════════════════════════════════════════════════════════════════
-// ScreenCoords — single source of truth for viewport, cursor, and scale state
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// Coordinate spaces used in this mod:
-//   Viewport Fraction (0.0–1.0) — resolution-independent, used for toolbar positions/sizes
-//   Raw Pixels                  — Win32 client rect and UE4 GetViewportSize()
-//   Slate Units                 — UMG logical coordinates (raw pixels / viewportScale)
-//
-// Usage:
-//   m_screen.refresh(findPlayerController());  // caches viewW/viewH/viewportScale/slateW/slateH
-//   float fx, fy;
-//   if (m_screen.getCursorFraction(fx, fy)) { ... }
-//   setWidgetPosition(w, m_screen.fracToPixelX(fx), m_screen.fracToPixelY(fy), true);
+
 
 struct ScreenCoords
 {
-    // ── Cached State ──
-    int32_t viewW{1920};            // raw pixel viewport width  (from GetViewportSize)
-    int32_t viewH{1080};            // raw pixel viewport height (from GetViewportSize)
-    float   viewportScale{1.0f};    // raw pixels per slate unit (from GetViewportScale)
-    float   slateW{1920.0f};        // viewW / viewportScale — viewport width in slate units
-    float   slateH{1080.0f};        // viewH / viewportScale — viewport height in slate units
-    float   aspectRatio{16.0f/9.0f};// viewW / viewH
-    float   uiScale{1.0f};          // viewH / 2160.0f, min 0.5 (base 4K design scale)
 
-    // ── Query UE4 viewport scale via reflection ──
+    int32_t viewW{1920};
+    int32_t viewH{1080};
+    float   viewportScale{1.0f};
+    float   slateW{1920.0f};
+    float   slateH{1080.0f};
+    float   aspectRatio{16.0f/9.0f};
+    float   uiScale{1.0f};
+
+
     static float queryViewportScale(UObject* worldContext)
     {
         static UFunction* s_fn  = nullptr;
@@ -47,10 +30,7 @@ struct ScreenCoords
         return (p.RV > 0.1f) ? p.RV : 1.0f;
     }
 
-    // ── Refresh ──
-    // Call once per widget creation or per-frame in tick.
-    // Queries GetViewportSize + GetViewportScale, derives all cached fields.
-    // Returns false if PlayerController is null or GetViewportSize fails.
+
     bool refresh(UObject* playerController)
     {
         if (!playerController) return false;
@@ -71,7 +51,7 @@ struct ScreenCoords
         return true;
     }
 
-    // ── Cursor: Win32 → Viewport Fraction ──
+
     bool getCursorFraction(float& outFracX, float& outFracY) const
     {
         HWND gw = findGameWindow();
@@ -84,7 +64,7 @@ struct ScreenCoords
         return true;
     }
 
-    // ── Cursor: Win32 → Raw Client Pixels ──
+
     bool getCursorClientPixels(int& outX, int& outY,
                                int& outClientW, int& outClientH) const
     {
@@ -98,42 +78,17 @@ struct ScreenCoords
         return true;
     }
 
-    // ── Cursor: Win32 → Slate Units ──
-    bool getCursorSlate(float& outX, float& outY) const
-    {
-        int cx, cy, cw, ch;
-        if (!getCursorClientPixels(cx, cy, cw, ch)) return false;
-        outX = static_cast<float>(cx) / viewportScale;
-        outY = static_cast<float>(cy) / viewportScale;
-        return true;
-    }
-
-    // ── Conversions: Fraction ↔ Pixel ──
     float fracToPixelX(float frac) const { return frac * static_cast<float>(viewW); }
     float fracToPixelY(float frac) const { return frac * static_cast<float>(viewH); }
-    float pixelToFracX(float px)   const { return (viewW > 0) ? px / static_cast<float>(viewW) : 0.0f; }
-    float pixelToFracY(float py)   const { return (viewH > 0) ? py / static_cast<float>(viewH) : 0.0f; }
 
-    // ── Conversions: Pixel ↔ Slate ──
     float pixelToSlateX(float px)  const { return px / viewportScale; }
     float pixelToSlateY(float py)  const { return py / viewportScale; }
-    float slateToPixelX(float sx)  const { return sx * viewportScale; }
-    float slateToPixelY(float sy)  const { return sy * viewportScale; }
 
-    // ── Conversions: Fraction ↔ Slate ──
-    float fracToSlateX(float frac) const { return frac * slateW; }
-    float fracToSlateY(float frac) const { return frac * slateH; }
     float slateToFracX(float sx)   const { return (slateW > 0.0f) ? sx / slateW : 0.0f; }
     float slateToFracY(float sy)   const { return (slateH > 0.0f) ? sy / slateH : 0.0f; }
 };
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Shared Utility Functions
-// ════════════════════════════════════════════════════════════════════════════════
 
-// ── Object Introspection ────────────────────────────────────────────────────
-
-// Safe class name extraction — returns L"" if obj or class is null
 static std::wstring safeClassName(UObject* obj)
 {
     if (!obj) return L"";
@@ -142,8 +97,8 @@ static std::wstring safeClassName(UObject* obj)
     return std::wstring(cls->GetName());
 }
 
-// GC-safe liveness check — not null, not pending destruction, not unreachable
-static bool isWidgetAlive(UObject* obj)
+
+static bool isObjectAlive(UObject* obj)
 {
     if (!obj) return false;
     if (obj->HasAnyFlags(static_cast<EObjectFlags>(RF_BeginDestroyed | RF_FinishDestroyed))) return false;
@@ -151,7 +106,6 @@ static bool isWidgetAlive(UObject* obj)
     return true;
 }
 
-// ── Player & World Lookup ───────────────────────────────────────────────────
 
 UObject* findPlayerController()
 {
@@ -185,9 +139,7 @@ FVec3f getPawnLocation()
     return loc;
 }
 
-// ── Widget Visibility ───────────────────────────────────────────────────────
 
-// Set UMG widget visibility via ProcessEvent. vis: 0=Visible, 1=Collapsed, 2=Hidden
 void setWidgetVisibility(UObject* widget, uint8_t vis)
 {
     if (!widget) return;
@@ -198,10 +150,7 @@ void setWidgetVisibility(UObject* widget, uint8_t vis)
     widget->ProcessEvent(fn, parms);
 }
 
-// ── Panel Child Management ──────────────────────────────────────────────────
 
-// Generic AddChild via named UFunction (AddChildToVerticalBox, etc.)
-// Returns the slot UObject* for further configuration, or nullptr on failure.
 UObject* addChildToPanel(UObject* parent, const wchar_t* fnName, UObject* child)
 {
     if (!parent || !child) return nullptr;
@@ -234,9 +183,7 @@ UObject* addToOverlay(UObject* parent, UObject* child)
     return addChildToPanel(parent, STR("AddChildToOverlay"), child);
 }
 
-// ── Widget Discovery ────────────────────────────────────────────────────────
 
-// Find first UserWidget matching className. If requireVisible, skip hidden ones.
 UObject* findWidgetByClass(const wchar_t* className, bool requireVisible = false)
 {
     std::vector<UObject*> widgets;
@@ -245,7 +192,7 @@ UObject* findWidgetByClass(const wchar_t* className, bool requireVisible = false
           className, requireVisible, widgets.size());
     for (auto* w : widgets)
     {
-        if (!w || !isWidgetAlive(w)) continue;
+        if (!w || !isObjectAlive(w)) continue;
         std::wstring cls = safeClassName(w);
         if (cls.empty()) continue;
         if (cls == className)

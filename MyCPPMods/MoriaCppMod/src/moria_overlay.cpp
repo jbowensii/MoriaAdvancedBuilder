@@ -1,21 +1,13 @@
-// ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  moria_overlay.cpp — Win32 GDI+ overlay rendering thread                  ║
-// ║                                                                           ║
-// ║  Runs entirely on the overlay thread. Must NOT call UE4SS APIs.           ║
-// ║  Accesses only s_overlay (thread-safe via slotCS) and s_bindings          ║
-// ║  (read-only from this thread).                                            ║
-// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+
 
 #include "moria_common.h"
 #include "moria_keybinds.h"
 
 namespace MoriaMods
 {
-    // ════════════════════════════════════════════════════════════════════════════
-    // Overlay Rendering
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // Render 12-slot hotbar overlay (WM_TIMER, scales from 1080p, UpdateLayeredWindow)
+
     static void renderOverlay(HWND hwnd)
     {
         if (!s_overlay.gameHwnd || !IsWindow(s_overlay.gameHwnd))
@@ -35,13 +27,13 @@ namespace MoriaMods
         float scale = gameH / 1080.0f;
         if (scale < 0.5f) scale = 0.5f;
 
-        // Each slot: icon box (slotSize x slotSize) with gap between them
+
         int slotSize = static_cast<int>(48 * scale);
         int gap = static_cast<int>(4 * scale);
         int padding = static_cast<int>(6 * scale);
-        int labelH = static_cast<int>(14 * scale);    // height for F-key label below icon
-        int separatorW = static_cast<int>(8 * scale); // white vertical bar between F8 and F9
-        // Width = padding + 8 build slots + separator + 4 extra slots + padding
+        int labelH = static_cast<int>(14 * scale);
+        int separatorW = static_cast<int>(8 * scale);
+
         int overlayW = padding * 2 + OVERLAY_SLOTS * slotSize + (OVERLAY_SLOTS - 1) * gap + separatorW;
         int overlayH = padding * 2 + slotSize + labelH;
         int overlayX = origin.x + (gameW - overlayW) / 2;
@@ -54,7 +46,7 @@ namespace MoriaMods
         }
         if (!IsWindowVisible(hwnd)) ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 
-        // Create 32-bit ARGB bitmap
+
         HDC screenDC = GetDC(nullptr);
         HDC memDC = CreateCompatibleDC(screenDC);
         BITMAPINFO bmi{};
@@ -74,7 +66,7 @@ namespace MoriaMods
         }
         HBITMAP oldBmp = (HBITMAP)SelectObject(memDC, bmp);
 
-        // Thread-safe slot copy
+
         OverlaySlot localSlots[OVERLAY_SLOTS]{};
         if (s_overlay.csInit)
         {
@@ -89,7 +81,7 @@ namespace MoriaMods
             gfx.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
             gfx.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
 
-            // Overall background
+
             Gdiplus::SolidBrush bgBrush(Gdiplus::Color(100, 5, 8, 18));
             int radius = static_cast<int>(6 * scale);
             Gdiplus::GraphicsPath bgPath;
@@ -100,11 +92,11 @@ namespace MoriaMods
             bgPath.CloseFigure();
             gfx.FillPath(&bgBrush, &bgPath);
 
-            // Brushes and fonts
-            Gdiplus::SolidBrush emptyBrush(Gdiplus::Color(51, 235, 235, 230)); // off-white 20% opacity
-            Gdiplus::SolidBrush usedBrush(Gdiplus::Color(51, 245, 245, 240));  // off-white 20% opacity (used)
-            Gdiplus::Pen slotBorder(Gdiplus::Color(180, 100, 160, 230), 3.0f); // light blue outline 2x thick
-            Gdiplus::Pen usedBorder(Gdiplus::Color(220, 120, 180, 255), 3.0f); // light blue outline 2x thick (used)
+
+            Gdiplus::SolidBrush emptyBrush(Gdiplus::Color(51, 235, 235, 230));
+            Gdiplus::SolidBrush usedBrush(Gdiplus::Color(51, 245, 245, 240));
+            Gdiplus::Pen slotBorder(Gdiplus::Color(180, 100, 160, 230), 3.0f);
+            Gdiplus::Pen usedBorder(Gdiplus::Color(220, 120, 180, 255), 3.0f);
             float labelFontSz = 10.0f * scale;
             if (labelFontSz < 9.0f) labelFontSz = 9.0f;
             Gdiplus::FontFamily fontFamily(L"Consolas");
@@ -120,23 +112,23 @@ namespace MoriaMods
             centerFmt.SetAlignment(Gdiplus::StringAlignmentCenter);
             centerFmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-            // Vertical separator pen (white, thin)
+
             Gdiplus::Pen separatorPen(Gdiplus::Color(180, 200, 210, 230), 1.0f);
 
             for (int i = 0; i < OVERLAY_SLOTS; i++)
             {
-                // X offset: after F8 (index 8+), add separator width
+
                 int sx = padding + i * (slotSize + gap) + (i >= OVERLAY_BUILD_SLOTS ? separatorW : 0);
                 int sy = padding;
 
-                // Draw vertical separator before F9
+
                 if (i == OVERLAY_BUILD_SLOTS)
                 {
                     int sepX = padding + OVERLAY_BUILD_SLOTS * (slotSize + gap) - gap / 2 + separatorW / 2;
                     gfx.DrawLine(&separatorPen, sepX, sy + 2, sepX, sy + slotSize - 2);
                 }
 
-                // Slot background — F9-F12 always draw as empty
+
                 Gdiplus::Rect slotRect(sx, sy, slotSize, slotSize);
                 if (i < OVERLAY_BUILD_SLOTS && localSlots[i].used)
                 {
@@ -149,7 +141,7 @@ namespace MoriaMods
                     gfx.DrawRectangle(&slotBorder, slotRect);
                 }
 
-                // Icon or letter placeholder (F1-F8 only)
+
                 if (i < OVERLAY_BUILD_SLOTS)
                 {
                     if (localSlots[i].used && localSlots[i].icon)
@@ -165,17 +157,17 @@ namespace MoriaMods
                     }
                 }
 
-                // Slot 8 (Target): archery target icon + TGT text
+
                 if (i == 8)
                 {
                     float bcx = (float)(sx + slotSize / 2);
                     float bcy = (float)(sy + slotSize / 2);
-                    // Concentric rings: white, black, blue, red, gold (outside-in)
-                    float r5 = slotSize * 0.42f; // outermost white
-                    float r4 = slotSize * 0.35f; // black
-                    float r3 = slotSize * 0.28f; // blue
-                    float r2 = slotSize * 0.20f; // red
-                    float r1 = slotSize * 0.12f; // gold center
+
+                    float r5 = slotSize * 0.42f;
+                    float r4 = slotSize * 0.35f;
+                    float r3 = slotSize * 0.28f;
+                    float r2 = slotSize * 0.20f;
+                    float r1 = slotSize * 0.12f;
                     Gdiplus::SolidBrush bWhite(Gdiplus::Color(160, 240, 240, 235));
                     Gdiplus::SolidBrush bBlack(Gdiplus::Color(160, 40, 40, 40));
                     Gdiplus::SolidBrush bBlue(Gdiplus::Color(160, 50, 120, 200));
@@ -196,13 +188,13 @@ namespace MoriaMods
                     gfx.DrawString(Loc::get("ovr.target").c_str(), -1, &tgtFont, tgtRect, &centerFmt, &tgtBrush);
                 }
 
-                // Slot 9 (Rotation): step degrees (top, bold) | separator line | T+total (bottom)
+
                 if (i == 9)
                 {
                     int stepVal = s_overlay.rotationStep;
                     int totalVal = s_overlay.totalRotation;
 
-                    // Top line: step value with degree symbol (bold)
+
                     std::wstring stepStr = std::to_wstring(stepVal) + Loc::get("ovr.degree");
                     float stepFontSz = slotSize * 0.28f;
                     Gdiplus::Font stepFont(&fontFamily, stepFontSz, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
@@ -213,13 +205,13 @@ namespace MoriaMods
                     Gdiplus::RectF topRect((float)sx, (float)sy + slotSize * 0.02f, (float)slotSize, (float)slotSize * 0.45f);
                     gfx.DrawString(stepStr.c_str(), -1, &stepFont, topRect, &topFmt, &stepBrush);
 
-                    // Horizontal separator line
+
                     float lineY = (float)sy + slotSize * 0.48f;
                     float lineMargin = slotSize * 0.15f;
                     Gdiplus::Pen linePen(Gdiplus::Color(120, 180, 180, 200), 1.0f);
                     gfx.DrawLine(&linePen, (float)sx + lineMargin, lineY, (float)sx + slotSize - lineMargin, lineY);
 
-                    // Bottom line: T+total (no degree symbol)
+
                     std::wstring totalStr = L"T" + std::to_wstring(totalVal);
                     float totalFontSz = slotSize * 0.28f;
                     Gdiplus::Font totalFont(&fontFamily, totalFontSz, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
@@ -231,31 +223,31 @@ namespace MoriaMods
                     gfx.DrawString(totalStr.c_str(), -1, &totalFont, botRect, &botFmt, &totalBrush);
                 }
 
-                // Slot 11 (Configuration): gear/cog icon + CFG text
+
                 if (i == 11)
                 {
                     float gcx = (float)(sx + slotSize / 2);
                     float gcy = (float)(sy + slotSize / 2);
                     constexpr int nTeeth = 8;
                     constexpr float kPI = 3.14159265f;
-                    float tipR = slotSize * 0.40f;  // outer radius (tooth tips)
-                    float rootR = slotSize * 0.28f; // inner radius (between teeth)
-                    float holeR = slotSize * 0.10f; // center hole
+                    float tipR = slotSize * 0.40f;
+                    float rootR = slotSize * 0.28f;
+                    float holeR = slotSize * 0.10f;
 
-                    // Build gear profile: each tooth = flat top, each gap = flat valley
+
                     float segAngle = 2.0f * kPI / nTeeth;
-                    float halfTip = segAngle * 0.22f;  // half angular width of tooth top
-                    float halfRoot = segAngle * 0.28f; // half angular width of root valley
+                    float halfTip = segAngle * 0.22f;
+                    float halfRoot = segAngle * 0.28f;
 
                     std::vector<Gdiplus::PointF> gearPts;
                     for (int t = 0; t < nTeeth; t++)
                     {
                         float ctrAngle = t * segAngle - kPI / 2.0f;
                         float gapCtr = ctrAngle + segAngle * 0.5f;
-                        // Flat tooth top (outer)
+
                         gearPts.push_back({gcx + tipR * cosf(ctrAngle - halfTip), gcy + tipR * sinf(ctrAngle - halfTip)});
                         gearPts.push_back({gcx + tipR * cosf(ctrAngle + halfTip), gcy + tipR * sinf(ctrAngle + halfTip)});
-                        // Flat root valley (inner)
+
                         gearPts.push_back({gcx + rootR * cosf(gapCtr - halfRoot), gcy + rootR * sinf(gapCtr - halfRoot)});
                         gearPts.push_back({gcx + rootR * cosf(gapCtr + halfRoot), gcy + rootR * sinf(gapCtr + halfRoot)});
                     }
@@ -268,7 +260,7 @@ namespace MoriaMods
                     gfx.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
                     gfx.FillPath(&gearBrush, &gearPath);
                     gfx.DrawPath(&gearOutline, &gearPath);
-                    // Center hole
+
                     Gdiplus::SolidBrush holeBrush(Gdiplus::Color(150, 25, 30, 45));
                     gfx.FillEllipse(&holeBrush, gcx - holeR, gcy - holeR, holeR * 2, holeR * 2);
                     Gdiplus::Pen holeRing(Gdiplus::Color(140, 100, 115, 140), 1.2f * (slotSize / 48.0f));
@@ -282,23 +274,23 @@ namespace MoriaMods
                     gfx.DrawString(Loc::get("ovr.config").c_str(), -1, &cfgFont, cfgRect, &centerFmt, &cfgBrush);
                 }
 
-                // Key label below slot (0-7=QB, 8=Target, 9=Rotation, 10=Swap, 11=Config)
+
                 std::wstring fLabel;
                 if (i <= 7)
                 {
-                    fLabel = keyName(s_bindings[i].key); // Quick Build 1-8
+                    fLabel = keyName(s_bindings[i].key);
                 }
                 else if (i == 8)
                 {
-                    fLabel = keyName(s_bindings[BIND_TARGET].key); // Target
+                    fLabel = keyName(s_bindings[BIND_TARGET].key);
                 }
                 else if (i == 9)
                 {
-                    fLabel = keyName(s_bindings[BIND_ROTATION].key); // Rotation
+                    fLabel = keyName(s_bindings[BIND_ROTATION].key);
                 }
                 else if (i == 11)
                 {
-                    fLabel = keyName(s_bindings[BIND_CONFIG].key); // Configuration
+                    fLabel = keyName(s_bindings[BIND_CONFIG].key);
                 }
                 Gdiplus::RectF labelRect((float)sx, (float)(sy + slotSize + 1), (float)slotSize, (float)labelH);
                 gfx.DrawString(fLabel.c_str(), -1, &labelFont, labelRect, &centerFmt, &labelBrush);
@@ -320,9 +312,6 @@ namespace MoriaMods
         ReleaseDC(nullptr, screenDC);
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Window Procedure & Thread Entry
-    // ════════════════════════════════════════════════════════════════════════════
 
     static LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
@@ -341,9 +330,9 @@ namespace MoriaMods
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
 
-    DWORD WINAPI overlayThreadProc(LPVOID /*param*/)
+    DWORD WINAPI overlayThreadProc(LPVOID )
     {
-        // GDI+ fallback init (normally done in startOverlay)
+
         if (!s_overlay.gdipToken)
         {
             Gdiplus::GdiplusStartupInput gdipInput;
@@ -401,7 +390,7 @@ namespace MoriaMods
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         renderOverlay(hwnd);
 
-        SetTimer(hwnd, 1, 200, nullptr); // 5Hz refresh
+        SetTimer(hwnd, 1, 200, nullptr);
 
         MSG msg;
         while (GetMessage(&msg, nullptr, 0, 0))
@@ -420,4 +409,4 @@ namespace MoriaMods
         return 0;
     }
 
-} // namespace MoriaMods
+}

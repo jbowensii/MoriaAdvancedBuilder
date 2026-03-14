@@ -1,24 +1,9 @@
-// ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  moria_datatable.inl — DataTable CRUD utility (runtime-only)              ║
-// ║  Included inside the mod class body, after moria_common.inl.              ║
-// ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// ════════════════════════════════════════════════════════════════════════════════
-// DataTableUtil — read, write, and add rows to UDataTable at runtime
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// Usage:
-//   DataTableUtil dt;
-//   if (dt.bind(L"DT_Constructions")) {
-//       auto names = dt.getRowNames();
-//       int32_t val = dt.readInt32(L"MyRow", L"SomeProperty");
-//       dt.writeInt32(L"MyRow", L"SomeProperty", 42);
-//       dt.writeFloat(L"MyRow", L"SomeProperty", 1.5f);
-//   }
+
 
 struct DataTableUtil
 {
-    // ── Cached State ──
+
     UObject*    table{nullptr};
     UStruct*    rowStruct{nullptr};
     std::wstring tableName;
@@ -26,10 +11,10 @@ struct DataTableUtil
     int         rowSize{0};
     std::unordered_map<std::wstring, int> propOffsetCache;
 
-    // ── Internal: RowMap raw memory header ──
+
     struct RowMapHeader { uint8_t* Data; int32_t Num; int32_t Max; };
 
-    static constexpr int SET_ELEMENT_SIZE = 24;  // FName(8) + ptr(8) + hash(8)
+    static constexpr int SET_ELEMENT_SIZE = 24;
     static constexpr int FNAME_SIZE = 8;
 
     bool getRowMapHeader(RowMapHeader& out) const
@@ -41,9 +26,7 @@ struct DataTableUtil
         return out.Data != nullptr && out.Num >= 0;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // bind — find a DataTable by name and cache its RowStruct
-    // ════════════════════════════════════════════════════════════════════════════
+
     bool bind(const wchar_t* name)
     {
         table = nullptr; rowStruct = nullptr; rowSize = 0;
@@ -84,9 +67,7 @@ struct DataTableUtil
         return true;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // unbind — release cached state
-    // ════════════════════════════════════════════════════════════════════════════
+
     void unbind()
     {
         table = nullptr; rowStruct = nullptr; rowSize = 0;
@@ -96,9 +77,6 @@ struct DataTableUtil
 
     bool isBound() const { return table != nullptr; }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Row Enumeration
-    // ════════════════════════════════════════════════════════════════════════════
 
     int32_t getRowCount() const
     {
@@ -125,9 +103,6 @@ struct DataTableUtil
         return names;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // findRowData — get raw pointer to row data by name
-    // ════════════════════════════════════════════════════════════════════════════
 
     uint8_t* findRowData(const wchar_t* rowName) const
     {
@@ -136,7 +111,7 @@ struct DataTableUtil
         if (!getRowMapHeader(hdr)) return nullptr;
         if (hdr.Num < 0 || hdr.Num > 100000) return nullptr;
 
-        FName searchName(rowName, FNAME_Add);
+        FName searchName(rowName, FNAME_Find);
         for (int32_t i = 0; i < hdr.Num; i++)
         {
             uint8_t* elem = hdr.Data + i * SET_ELEMENT_SIZE;
@@ -150,9 +125,6 @@ struct DataTableUtil
         return nullptr;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Property Offset Resolution (cached per property name)
-    // ════════════════════════════════════════════════════════════════════════════
 
     int resolvePropertyOffset(const wchar_t* propName)
     {
@@ -174,11 +146,7 @@ struct DataTableUtil
         return off;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Phase 1: Typed Read Operations
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // Internal: get row data + property offset, returns nullptr + -1 on failure
     std::pair<uint8_t*, int> locateField(const wchar_t* row, const wchar_t* prop)
     {
         uint8_t* data = findRowData(row);
@@ -188,11 +156,39 @@ struct DataTableUtil
         return {data, off};
     }
 
+
+    struct LocatedField { uint8_t* data; int off; FProperty* prop; };
+    LocatedField locateFieldWithProp(const wchar_t* row, const wchar_t* propName)
+    {
+        uint8_t* data = findRowData(row);
+        if (!data) return {nullptr, -1, nullptr};
+        int off = resolvePropertyOffset(propName);
+        if (off < 0) return {nullptr, -1, nullptr};
+
+        FProperty* prop = nullptr;
+        for (auto* s = rowStruct; s && !prop; s = s->GetSuperStruct())
+        {
+            for (auto* p : s->ForEachProperty())
+            {
+                if (p->GetName() == std::wstring_view(propName))
+                {
+                    prop = p;
+                    break;
+                }
+            }
+        }
+        return {data, off, prop};
+    }
+
     int32_t readInt32(const wchar_t* row, const wchar_t* prop)
     {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, 4)) return 0;
-        int32_t val; std::memcpy(&val, data + off, 4);
+        auto field = locateFieldWithProp(row, prop);
+        if (!field.data || !field.prop) return 0;
+        auto* numProp = CastField<FNumericProperty>(field.prop);
+        if (numProp) return static_cast<int32_t>(numProp->GetSignedIntPropertyValue(field.data + field.off));
+
+        if (!isReadableMemory(field.data + field.off, 4)) return 0;
+        int32_t val; std::memcpy(&val, field.data + field.off, 4);
         return val;
     }
 
@@ -200,6 +196,8 @@ struct DataTableUtil
     {
         auto [data, off] = locateField(row, prop);
         if (!data || !isReadableMemory(data + off, 0x18)) return L"";
+
+
         FText* txt = reinterpret_cast<FText*>(data + off);
         try {
             if (txt && txt->Data && isReadableMemory(txt->Data, 8))
@@ -210,50 +208,46 @@ struct DataTableUtil
 
     UObject* readObjectPtr(const wchar_t* row, const wchar_t* prop)
     {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, 8)) return nullptr;
-        UObject* obj; std::memcpy(&obj, data + off, 8);
+        auto field = locateFieldWithProp(row, prop);
+        if (!field.data || !field.prop) return nullptr;
+        auto* objProp = CastField<FObjectPropertyBase>(field.prop);
+        if (objProp) return objProp->GetObjectPropertyValue(field.data + field.off);
+
+        if (!isReadableMemory(field.data + field.off, 8)) return nullptr;
+        UObject* obj; std::memcpy(&obj, field.data + field.off, 8);
         return obj;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // TArray Header (used by addRow and definition processing)
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // TArray layout: { T* Data; int32 ArrayNum; int32 ArrayMax; } = 16 bytes
     struct TArrayHeader { uint8_t* Data; int32_t Num; int32_t Max; };
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Phase 2: Typed Write Operations (in-place to existing row data)
-    // ════════════════════════════════════════════════════════════════════════════
 
     bool writeInt32(const wchar_t* row, const wchar_t* prop, int32_t val)
     {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, 4)) return false;
-        std::memcpy(data + off, &val, 4);
+        auto field = locateFieldWithProp(row, prop);
+        if (!field.data || !field.prop) return false;
+        auto* numProp = CastField<FNumericProperty>(field.prop);
+        if (numProp) { numProp->SetIntPropertyValue(field.data + field.off, static_cast<int64>(val)); return true; }
+        if (!isReadableMemory(field.data + field.off, 4)) return false;
+        std::memcpy(field.data + field.off, &val, 4);
         return true;
     }
 
     bool writeFloat(const wchar_t* row, const wchar_t* prop, float val)
     {
-        auto [data, off] = locateField(row, prop);
-        if (!data || !isReadableMemory(data + off, 4)) return false;
-        std::memcpy(data + off, &val, 4);
+        auto field = locateFieldWithProp(row, prop);
+        if (!field.data || !field.prop) return false;
+        auto* numProp = CastField<FNumericProperty>(field.prop);
+        if (numProp) { numProp->SetFloatingPointPropertyValue(field.data + field.off, static_cast<double>(val)); return true; }
+        if (!isReadableMemory(field.data + field.off, 4)) return false;
+        std::memcpy(field.data + field.off, &val, 4);
         return true;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Phase 3: Add Rows
-    // Uses engine virtual functions via vtable dispatch for proper TMap hash maintenance
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // VTable offsets for UDataTable virtual functions (UE 4.27)
-    // Source: RE-UE4SS/generated_include/FunctionBodies/4_27_VTableOffsets_UDataTable_FunctionBody.cpp
-    static constexpr uint32_t VTABLE_AddRowInternal = 0x278;  // void(FName, uint8*)
+    static constexpr uint32_t VTABLE_AddRowInternal = 0x278;
 
-    // Call UDataTable::AddRowInternal(FName, uint8*) via vtable dispatch
-    // Engine handles TMap insertion with proper hash bucket maintenance
+
     bool callAddRowInternal(const wchar_t* rowName, uint8_t* rowData)
     {
         if (!table || !rowData) return false;
@@ -286,9 +280,7 @@ struct DataTableUtil
         }
     }
 
-    // Add an empty row with default-initialized fields
-    // Uses engine AddRowInternal for proper RowMap hash insertion
-    // Returns pointer to the new row data, or nullptr on failure
+
     uint8_t* addRow(const wchar_t* rowName)
     {
         if (!table || !rowStruct || rowSize <= 0)
@@ -300,7 +292,7 @@ struct DataTableUtil
             return nullptr;
         }
 
-        // Check if row already exists
+
         if (findRowData(rowName))
         {
             VLOG(STR("[MoriaCppMod] [DT] addRow: '{}' already exists in '{}'\n"),
@@ -308,7 +300,7 @@ struct DataTableUtil
             return nullptr;
         }
 
-        // Allocate and zero-fill row memory via engine allocator
+
         uint8_t* newRow = static_cast<uint8_t*>(FMemory::Malloc(rowSize, 8));
         if (!newRow)
         {
@@ -319,14 +311,14 @@ struct DataTableUtil
         }
         std::memset(newRow, 0, rowSize);
 
-        // Initialize struct defaults via engine virtual call
+
         try { rowStruct->InitializeStruct(newRow); }
         catch (...) {
             VLOG(STR("[MoriaCppMod] [DT] addRow: InitializeStruct failed for '{}', using zero-fill\n"),
                  std::wstring(rowName));
         }
 
-        // Insert into RowMap via engine's AddRowInternal (proper hash maintenance)
+
         if (!callAddRowInternal(rowName, newRow))
         {
             RC::Output::send<RC::LogLevel::Warning>(
@@ -343,9 +335,6 @@ struct DataTableUtil
 
 };
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Cached DataTableUtil instances + bind/unbind helpers
-// ════════════════════════════════════════════════════════════════════════════════
 
 DataTableUtil m_dtConstructions;
 DataTableUtil m_dtConstructionRecipes;
@@ -357,12 +346,7 @@ DataTableUtil m_dtConsumables;
 DataTableUtil m_dtContainerItems;
 DataTableUtil m_dtOres;
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Cross-table lookups: DT_ConstructionRecipes → DT_Constructions
-// ════════════════════════════════════════════════════════════════════════════════
 
-// Extract the DT_Constructions row name from a DT_ConstructionRecipes row
-// by reading ResultConstructionHandle.RowName (FName at handle + 0x08)
 std::wstring resolveConstructionRowName(const wchar_t* recipeRowName)
 {
     if (!m_dtConstructionRecipes.isBound()) return L"";
@@ -370,14 +354,14 @@ std::wstring resolveConstructionRowName(const wchar_t* recipeRowName)
     if (!rowData) return L"";
     int handleOff = m_dtConstructionRecipes.resolvePropertyOffset(L"ResultConstructionHandle");
     if (handleOff < 0) return L"";
-    // FDataTableRowHandle::RowName at +0x08 (UE4 engine struct, standard layout)
+
     if (!isReadableMemory(rowData + handleOff + 0x08, 8)) return L"";
     FName rowName;
     std::memcpy(&rowName, rowData + handleOff + 0x08, 8);
     try { return rowName.ToString(); } catch (...) { return L""; }
 }
 
-// Look up the UTexture2D* icon from DT_Constructions for a given recipe row name
+
 UObject* lookupRecipeIcon(const wchar_t* recipeRowName)
 {
     if (!m_dtConstructions.isBound()) return nullptr;

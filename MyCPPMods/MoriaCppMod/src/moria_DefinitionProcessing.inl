@@ -1,46 +1,29 @@
-// ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  moria_DefinitionProcessing.inl — Definition file loading & runtime apply ║
-// ║  Included inside the mod class body, after moria_datatable.inl.           ║
-// ╚══════════════════════════════════════════════════════════════════════════════╝
-//
-// Reads .ini manifests and .def XML files from the definitions/ directory,
-// then applies <change> and <delete> operations to live DataTables at runtime
-// using the existing DataTableUtil infrastructure.
-//
-// Supports:
-//   <change item="RowName" property="PropName" value="123" />
-//   <change item="NONE" property="PropName" value="123" />       (all rows)
-//   <change item="RowName" property="PropName" value="NULL" />   (clear/zero)
-//   <change item="X" property="Nested[2].Field" value="..." />   (nested path)
-//   <delete item="RowName" property="TagContainer" value="Tag.Name" />
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Data Structures
-// ════════════════════════════════════════════════════════════════════════════════
+
 
 struct DefChange
 {
-    std::string item;       // row name or "NONE" for all rows
-    std::string property;   // property path (may contain [N] and dots)
-    std::string value;      // value string or "NULL" for clear
+    std::string item;
+    std::string property;
+    std::string value;
 };
 
 struct DefDelete
 {
-    std::string item;       // row name
-    std::string property;   // GameplayTagContainer property name
-    std::string value;      // tag to remove (e.g. "Item.EpicPack")
+    std::string item;
+    std::string property;
+    std::string value;
 };
 
 struct DefAddRow
 {
-    std::string rowName;    // new row name (from name="..." attribute)
-    std::string json;       // full JSON CDATA block (UAssetAPI format)
+    std::string rowName;
+    std::string json;
 };
 
 struct DefMod
 {
-    std::string filePath;               // original JSON path (used to derive DT name)
+    std::string filePath;
     std::vector<DefChange> changes;
     std::vector<DefDelete> deletes;
     std::vector<DefAddRow> addRows;
@@ -60,12 +43,9 @@ struct DefManifest
     std::string authors;
     std::string description;
     bool includeSecrets{false};
-    std::vector<std::string> defPaths;  // relative paths to .def files (pipe-separated → slash)
+    std::vector<std::string> defPaths;
 };
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Utility: case-insensitive string ends-with
-// ════════════════════════════════════════════════════════════════════════════════
 
 static bool strEndsWithCI(const std::string& str, const std::string& suffix)
 {
@@ -74,9 +54,6 @@ static bool strEndsWithCI(const std::string& str, const std::string& suffix)
         [](char a, char b) { return tolower(static_cast<unsigned char>(a)) == tolower(static_cast<unsigned char>(b)); });
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Lightweight XML Parser (handles elements, attributes, self-closing tags)
-// ════════════════════════════════════════════════════════════════════════════════
 
 struct XmlAttribute
 {
@@ -88,7 +65,7 @@ struct XmlElement
 {
     std::string tag;
     std::vector<XmlAttribute> attrs;
-    std::string text;                    // text content between open/close
+    std::string text;
     std::vector<XmlElement> children;
     bool selfClosing{false};
 };
@@ -100,7 +77,7 @@ static std::string xmlGetAttr(const XmlElement& elem, const std::string& name)
     return "";
 }
 
-// Skip whitespace, return new position
+
 static size_t xmlSkipWS(const std::string& xml, size_t pos)
 {
     while (pos < xml.size() && (xml[pos] == ' ' || xml[pos] == '\t' || xml[pos] == '\r' || xml[pos] == '\n'))
@@ -108,7 +85,7 @@ static size_t xmlSkipWS(const std::string& xml, size_t pos)
     return pos;
 }
 
-// Parse a quoted attribute value, return new position after closing quote
+
 static size_t xmlParseAttrValue(const std::string& xml, size_t pos, std::string& out)
 {
     if (pos >= xml.size()) return pos;
@@ -118,8 +95,8 @@ static size_t xmlParseAttrValue(const std::string& xml, size_t pos, std::string&
     size_t start = pos;
     while (pos < xml.size() && xml[pos] != quote) ++pos;
     out = xml.substr(start, pos - start);
-    if (pos < xml.size()) ++pos; // skip closing quote
-    // Unescape basic XML entities
+    if (pos < xml.size()) ++pos;
+
     std::string decoded;
     decoded.reserve(out.size());
     for (size_t i = 0; i < out.size(); i++)
@@ -143,7 +120,7 @@ static size_t xmlParseAttrValue(const std::string& xml, size_t pos, std::string&
     return pos;
 }
 
-// Parse attributes until '>' or '/>' is found, return new position
+
 static size_t xmlParseAttrs(const std::string& xml, size_t pos, std::vector<XmlAttribute>& attrs, bool& selfClose)
 {
     selfClose = false;
@@ -164,7 +141,7 @@ static size_t xmlParseAttrs(const std::string& xml, size_t pos, std::vector<XmlA
             ++pos;
             return pos;
         }
-        // Parse attribute name
+
         size_t nameStart = pos;
         while (pos < xml.size() && xml[pos] != '=' && xml[pos] != ' ' && xml[pos] != '>' && xml[pos] != '/') ++pos;
         std::string attrName = xml.substr(nameStart, pos - nameStart);
@@ -181,13 +158,13 @@ static size_t xmlParseAttrs(const std::string& xml, size_t pos, std::vector<XmlA
     return pos;
 }
 
-// Recursive element parser
+
 static size_t xmlParseElement(const std::string& xml, size_t pos, XmlElement& elem)
 {
     pos = xmlSkipWS(xml, pos);
     if (pos >= xml.size() || xml[pos] != '<') return pos;
 
-    // Skip XML declaration and comments
+
     if (pos + 1 < xml.size() && xml[pos + 1] == '?')
     {
         size_t end = xml.find("?>", pos);
@@ -201,26 +178,26 @@ static size_t xmlParseElement(const std::string& xml, size_t pos, XmlElement& el
         return xml.size();
     }
 
-    ++pos; // skip '<'
-    // Parse tag name
+    ++pos;
+
     size_t tagStart = pos;
     while (pos < xml.size() && xml[pos] != ' ' && xml[pos] != '>' && xml[pos] != '/' && xml[pos] != '\t' && xml[pos] != '\r' && xml[pos] != '\n') ++pos;
     elem.tag = xml.substr(tagStart, pos - tagStart);
 
-    // Parse attributes
+
     bool selfClose = false;
     pos = xmlParseAttrs(xml, pos, elem.attrs, selfClose);
     elem.selfClosing = selfClose;
     if (selfClose) return pos;
 
-    // Parse children and text content until closing tag
+
     std::string closeTag = "</" + elem.tag;
     while (pos < xml.size())
     {
         pos = xmlSkipWS(xml, pos);
         if (pos >= xml.size()) break;
 
-        // Check for closing tag
+
         if (pos + closeTag.size() < xml.size() && xml.substr(pos, closeTag.size()) == closeTag)
         {
             pos += closeTag.size();
@@ -231,7 +208,7 @@ static size_t xmlParseElement(const std::string& xml, size_t pos, XmlElement& el
 
         if (xml[pos] == '<')
         {
-            // CDATA section: <![CDATA[...]]>
+
             if (pos + 8 < xml.size() && xml.substr(pos, 9) == "<![CDATA[")
             {
                 size_t cdataStart = pos + 9;
@@ -245,21 +222,21 @@ static size_t xmlParseElement(const std::string& xml, size_t pos, XmlElement& el
                     pos = xml.size();
                 continue;
             }
-            // Skip comments inside elements
+
             if (pos + 3 < xml.size() && xml.substr(pos, 4) == "<!--")
             {
                 size_t end = xml.find("-->", pos);
                 pos = (end != std::string::npos) ? end + 3 : xml.size();
                 continue;
             }
-            // Skip declarations
+
             if (pos + 1 < xml.size() && xml[pos + 1] == '?')
             {
                 size_t end = xml.find("?>", pos);
                 pos = (end != std::string::npos) ? end + 2 : xml.size();
                 continue;
             }
-            // Closing tag of parent? Stop.
+
             if (pos + 1 < xml.size() && xml[pos + 1] == '/')
                 break;
 
@@ -270,11 +247,11 @@ static size_t xmlParseElement(const std::string& xml, size_t pos, XmlElement& el
         }
         else
         {
-            // Text content
+
             size_t textStart = pos;
             while (pos < xml.size() && xml[pos] != '<') ++pos;
             std::string text = xml.substr(textStart, pos - textStart);
-            // Trim
+
             size_t a = text.find_first_not_of(" \t\r\n");
             size_t b = text.find_last_not_of(" \t\r\n");
             if (a != std::string::npos)
@@ -284,7 +261,7 @@ static size_t xmlParseElement(const std::string& xml, size_t pos, XmlElement& el
     return pos;
 }
 
-// Parse a complete XML document into a root element
+
 static XmlElement xmlParse(const std::string& xml)
 {
     XmlElement root;
@@ -295,7 +272,7 @@ static XmlElement xmlParse(const std::string& xml)
         if (pos >= xml.size()) break;
         if (xml[pos] != '<') { ++pos; continue; }
 
-        // Skip declaration/comments at top level
+
         if (pos + 1 < xml.size() && xml[pos + 1] == '?')
         {
             size_t end = xml.find("?>", pos);
@@ -310,14 +287,11 @@ static XmlElement xmlParse(const std::string& xml)
         }
 
         pos = xmlParseElement(xml, pos, root);
-        if (!root.tag.empty()) break; // got root element
+        if (!root.tag.empty()) break;
     }
     return root;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Directory Listing (Win32)
-// ════════════════════════════════════════════════════════════════════════════════
 
 static std::vector<std::string> listFiles(const std::string& dir, const std::string& pattern = "*")
 {
@@ -338,7 +312,7 @@ static std::vector<std::string> listFiles(const std::string& dir, const std::str
     return files;
 }
 
-// Read entire file to string
+
 static std::string readFileToString(const std::string& path)
 {
     std::ifstream f(path, std::ios::binary);
@@ -348,9 +322,6 @@ static std::string readFileToString(const std::string& path)
     return ss.str();
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// INI Manifest Parser
-// ════════════════════════════════════════════════════════════════════════════════
 
 DefManifest parseManifest(const std::string& iniPath, const std::string& defBaseDir)
 {
@@ -377,21 +348,21 @@ DefManifest parseManifest(const std::string& iniPath, const std::string& defBase
             }
             else if (strEqualCI(section, "Paths"))
             {
-                // Keys are either directory names or "dir|filename.def"
-                // Value is "true" to enable
+
+
                 if (strEqualCI(kv->value, "true"))
                 {
                     std::string key = kv->key;
-                    // Convert pipe separator to path separator
+
                     for (auto& c : key) { if (c == '|') c = '\\'; }
 
                     if (strEndsWithCI(key, ".def"))
                     {
-                        // It's a .def file path relative to definitions dir
+
                         std::string fullPath = defBaseDir + "\\" + key;
                         manifest.defPaths.push_back(fullPath);
                     }
-                    // else it's a directory marker — .def files are referenced individually
+
                 }
             }
             else if (strEqualCI(section, "Settings"))
@@ -404,9 +375,6 @@ DefManifest parseManifest(const std::string& iniPath, const std::string& defBase
     return manifest;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// .def XML Parser
-// ════════════════════════════════════════════════════════════════════════════════
 
 DefDefinition parseDef(const std::string& defPath)
 {
@@ -420,7 +388,7 @@ DefDefinition parseDef(const std::string& defPath)
 
     XmlElement root = xmlParse(xml);
 
-    // Handle both <definition> and <manifest> root elements
+
     if (root.tag == "definition")
     {
         for (auto& child : root.children)
@@ -454,7 +422,7 @@ DefDefinition parseDef(const std::string& defPath)
                     {
                         DefAddRow ar;
                         ar.rowName = xmlGetAttr(op, "name");
-                        ar.json = op.text; // CDATA content
+                        ar.json = op.text;
                         if (!ar.rowName.empty() && !ar.json.empty())
                             mod.addRows.push_back(std::move(ar));
                     }
@@ -465,8 +433,8 @@ DefDefinition parseDef(const std::string& defPath)
     }
     else if (root.tag == "manifest")
     {
-        // Secrets manifest — lists JSON file overlays, no runtime changes to apply
-        // These are build-time only; skip for runtime processing
+
+
         VLOG(STR("[MoriaCppMod] [Def] Skipping manifest file (build-time only): {}\n"),
              std::wstring(defPath.begin(), defPath.end()));
     }
@@ -474,49 +442,32 @@ DefDefinition parseDef(const std::string& defPath)
     return def;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// DataTable Name Resolution — derive DT name from JSON file path
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// Examples:
-//   "\Moria\Content\Tech\Data\Items\DT_Items.json"       → "DT_Items"
-//   "Moria\Content\Tech\Data\Economy\DT_TradeGoods.json"  → "DT_TradeGoods"
-//   "\Moria\Content\Tech\Data\Items\DT_Storage.json"      → "DT_Storage"
-//   "Moria\Content\Tech\Data\Settlements\DT_MonumentData.json" → "DT_MonumentData"
 
 static std::string extractDataTableName(const std::string& filePath)
 {
-    // Find the filename (after last slash/backslash)
+
     size_t lastSlash = filePath.find_last_of("/\\");
     std::string filename = (lastSlash != std::string::npos) ? filePath.substr(lastSlash + 1) : filePath;
 
-    // Remove .json extension
+
     if (strEndsWithCI(filename, ".json"))
         filename = filename.substr(0, filename.size() - 5);
 
     return filename;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Nested Property Path Traversal
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// Handles dot-separated paths like "StageDataList[3].MonumentProgressonPointsNeeded"
-// by walking UStruct reflection at runtime.
-//
-// Returns: pointer to the final field and its UStruct property, or nullptr on failure.
 
 struct ResolvedField
 {
-    uint8_t* data{nullptr};     // pointer to the field's raw memory
-    FProperty* prop{nullptr};   // the UE4 FProperty describing the field
+    uint8_t* data{nullptr};
+    FProperty* prop{nullptr};
 };
 
 ResolvedField resolveNestedProperty(uint8_t* rowData, UStruct* rowStruct, const std::string& propertyPath)
 {
     if (!rowData || !rowStruct || propertyPath.empty()) return {};
 
-    // Split path by '.'
+
     std::vector<std::string> segments;
     {
         std::string seg;
@@ -536,7 +487,7 @@ ResolvedField resolveNestedProperty(uint8_t* rowData, UStruct* rowStruct, const 
         std::string& seg = segments[i];
         bool isLast = (i == segments.size() - 1);
 
-        // Check for array index: "FieldName[N]"
+
         std::string fieldName = seg;
         int arrayIndex = -1;
         size_t bracket = seg.find('[');
@@ -551,7 +502,7 @@ ResolvedField resolveNestedProperty(uint8_t* rowData, UStruct* rowStruct, const 
             }
         }
 
-        // Find the property in the current struct
+
         std::wstring wFieldName(fieldName.begin(), fieldName.end());
         FProperty* foundProp = nullptr;
         for (auto* s = currentStruct; s; s = s->GetSuperStruct())
@@ -577,55 +528,43 @@ ResolvedField resolveNestedProperty(uint8_t* rowData, UStruct* rowStruct, const 
 
         if (isLast && arrayIndex < 0)
         {
-            // Final simple field
+
             return {currentData + offset, foundProp};
         }
 
         if (arrayIndex >= 0)
         {
-            // TArray access: read header, index into elements
-            // TArray layout: { T* Data; int32 Num; int32 Max; }
-            uint8_t* arrayBase = currentData + offset;
-            if (!isReadableMemory(arrayBase, 16)) return {};
 
-            DataTableUtil::TArrayHeader hdr;
-            std::memcpy(&hdr, arrayBase, 16);
-            if (arrayIndex >= hdr.Num || !hdr.Data) return {};
-
-            // Get inner property via FArrayProperty::GetInner()
-            int elemSize = 0;
-            UStruct* innerStruct = nullptr;
-
-            try
+            auto* arrProp = CastField<FArrayProperty>(foundProp);
+            if (!arrProp)
             {
-                auto* arrProp = static_cast<FArrayProperty*>(foundProp);
-                FProperty* inner = arrProp->GetInner();
-                if (inner)
-                {
-                    elemSize = inner->GetSize();
-                    auto* structProp = CastField<FStructProperty>(inner);
-                    if (structProp)
-                        innerStruct = structProp->GetStruct();
-                }
-            }
-            catch (...) {}
-
-            if (elemSize <= 0)
-            {
-                VLOG(STR("[MoriaCppMod] [Def] Cannot determine element size for array '{}'\n"), wFieldName);
+                VLOG(STR("[MoriaCppMod] [Def] Property '{}' is not an array\n"), wFieldName);
                 return {};
             }
 
-            uint8_t* elemData = hdr.Data + arrayIndex * elemSize;
-            if (!isReadableMemory(elemData, elemSize)) return {};
+            uint8_t* arrayBase = currentData + offset;
+            TArrayView arrayView(arrProp, arrayBase);
+
+            if (arrayIndex >= arrayView.Num())
+            {
+                VLOG(STR("[MoriaCppMod] [Def] Array '{}' index {} out of range (Num={})\n"),
+                     wFieldName, arrayIndex, arrayView.Num());
+                return {};
+            }
+
+            uint8_t* elemData = arrayView.GetRawPtr(arrayIndex);
+            if (!elemData) return {};
 
             if (isLast)
             {
-                // Caller wants the entire array element
+
                 return {elemData, foundProp};
             }
 
-            // Continue traversal into the struct element
+
+            FProperty* inner = arrProp->GetInner();
+            auto* structProp = inner ? CastField<FStructProperty>(inner) : nullptr;
+            UStruct* innerStruct = structProp ? structProp->GetStruct() : nullptr;
             if (!innerStruct)
             {
                 VLOG(STR("[MoriaCppMod] [Def] Array '{}' elements are not structs, cannot traverse further\n"), wFieldName);
@@ -637,7 +576,7 @@ ResolvedField resolveNestedProperty(uint8_t* rowData, UStruct* rowStruct, const 
         }
         else
         {
-            // Non-array struct field — continue traversal
+
             auto* structProp = CastField<FStructProperty>(foundProp);
             if (!structProp || !structProp->GetStruct())
             {
@@ -652,215 +591,64 @@ ResolvedField resolveNestedProperty(uint8_t* rowData, UStruct* rowStruct, const 
     return {};
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Type-Aware Value Writer
-// ════════════════════════════════════════════════════════════════════════════════
 
 bool writeValueToField(uint8_t* fieldData, FProperty* prop, const std::string& value)
 {
     if (!fieldData || !prop) return false;
-    int size = prop->GetSize();
 
-    // NULL means zero/clear the field
+
     if (strEqualCI(value, "NULL") || value.empty())
     {
-        if (isReadableMemory(fieldData, size))
-        {
-            std::memset(fieldData, 0, size);
-            return true;
-        }
-        return false;
+        try { prop->ClearValue(fieldData); return true; }
+        catch (...) { return false; }
     }
 
-    // Determine type from property class name
-    std::wstring className;
-    try { className = prop->GetClass().GetName(); } catch (...) { return false; }
 
-    // Int properties (int32, int16, int8)
-    if (className.find(L"IntProperty") != std::wstring::npos ||
-        className.find(L"Int32Property") != std::wstring::npos)
-    {
-        try {
-            int32_t v = std::stoi(value);
-            if (isReadableMemory(fieldData, 4)) { std::memcpy(fieldData, &v, 4); return true; }
-        } catch (...) {}
-        return false;
-    }
-
-    // Float property
-    if (className.find(L"FloatProperty") != std::wstring::npos)
-    {
-        try {
-            float v = std::stof(value);
-            if (isReadableMemory(fieldData, 4)) { std::memcpy(fieldData, &v, 4); return true; }
-        } catch (...) {}
-        return false;
-    }
-
-    // Double property
-    if (className.find(L"DoubleProperty") != std::wstring::npos)
-    {
-        try {
-            double v = std::stod(value);
-            if (isReadableMemory(fieldData, 8)) { std::memcpy(fieldData, &v, 8); return true; }
-        } catch (...) {}
-        return false;
-    }
-
-    // Bool property
-    if (className.find(L"BoolProperty") != std::wstring::npos)
-    {
-        auto* boolProp = CastField<FBoolProperty>(prop);
-        if (boolProp)
-        {
-            bool bVal = strEqualCI(value, "true") || value == "1" || strEqualCI(value, "yes");
-            boolProp->SetPropertyValue(fieldData, bVal);
-            return true;
-        }
-        return false;
-    }
-
-    // Byte/UInt8 property (also covers enums stored as uint8)
-    if (className.find(L"ByteProperty") != std::wstring::npos ||
-        className.find(L"EnumProperty") != std::wstring::npos)
-    {
-        try {
-            uint8_t v = static_cast<uint8_t>(std::stoi(value));
-            if (isReadableMemory(fieldData, 1)) { fieldData[0] = v; return true; }
-        } catch (...) {}
-        return false;
-    }
-
-    // FName property
-    if (className.find(L"NameProperty") != std::wstring::npos)
-    {
+    try {
         std::wstring wval(value.begin(), value.end());
-        FName fname(wval.c_str(), FNAME_Add);
-        if (isReadableMemory(fieldData, 8)) { std::memcpy(fieldData, &fname, 8); return true; }
-        return false;
-    }
+        const TCHAR* result = prop->ImportText_Direct(wval.c_str(), fieldData, nullptr, 0, nullptr);
+        if (result) return true;
+    } catch (...) {}
 
-    // For unsupported types, try writing as int32 if size matches
-    if (size == 4)
-    {
-        try {
-            // Try float first (if it contains a decimal point)
-            if (value.find('.') != std::string::npos)
-            {
-                float v = std::stof(value);
-                if (isReadableMemory(fieldData, 4)) { std::memcpy(fieldData, &v, 4); return true; }
-            }
-            else
-            {
-                int32_t v = std::stoi(value);
-                if (isReadableMemory(fieldData, 4)) { std::memcpy(fieldData, &v, 4); return true; }
-            }
-        } catch (...) {}
-    }
-
-    VLOG(STR("[MoriaCppMod] [Def] Unsupported property type '{}' for write\n"), className);
+    VLOG(STR("[MoriaCppMod] [Def] ImportText_Direct failed for value '{}'\n"),
+         std::wstring(value.begin(), value.end()));
     return false;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Type-Aware Value Reader (debug verification)
-// ════════════════════════════════════════════════════════════════════════════════
 
 std::string readFieldAsString(uint8_t* fieldData, FProperty* prop)
 {
     if (!fieldData || !prop) return "<null>";
-    int size = prop->GetSize();
 
-    std::wstring className;
-    try { className = prop->GetClass().GetName(); } catch (...) { return "<error>"; }
-
-    if (className.find(L"IntProperty") != std::wstring::npos ||
-        className.find(L"Int32Property") != std::wstring::npos)
+    try
     {
-        if (isReadableMemory(fieldData, 4))
-        {
-            int32_t v; std::memcpy(&v, fieldData, 4);
-            return std::to_string(v);
-        }
+        FString outStr{};
+        prop->ExportText_Direct(outStr, fieldData, nullptr, nullptr, 0, nullptr);
+        const wchar_t* ws = outStr.GetCharArray();
+        if (!ws || ws[0] == L'\0') return "<empty>";
+        std::string result;
+        for (const wchar_t* p = ws; *p != L'\0'; ++p)
+            result += static_cast<char>(*p);
+        return result;
     }
-    else if (className.find(L"FloatProperty") != std::wstring::npos)
-    {
-        if (isReadableMemory(fieldData, 4))
-        {
-            float v; std::memcpy(&v, fieldData, 4);
-            return std::to_string(v);
-        }
-    }
-    else if (className.find(L"DoubleProperty") != std::wstring::npos)
-    {
-        if (isReadableMemory(fieldData, 8))
-        {
-            double v; std::memcpy(&v, fieldData, 8);
-            return std::to_string(v);
-        }
-    }
-    else if (className.find(L"BoolProperty") != std::wstring::npos)
-    {
-        auto* boolProp = CastField<FBoolProperty>(prop);
-        if (boolProp)
-            return boolProp->GetPropertyValue(fieldData) ? "true" : "false";
-    }
-    else if (className.find(L"ByteProperty") != std::wstring::npos ||
-             className.find(L"EnumProperty") != std::wstring::npos)
-    {
-        if (isReadableMemory(fieldData, 1))
-            return std::to_string(fieldData[0]);
-    }
-    else if (className.find(L"NameProperty") != std::wstring::npos)
-    {
-        if (isReadableMemory(fieldData, 8))
-        {
-            FName fn; std::memcpy(&fn, fieldData, 8);
-            try {
-                auto ws = fn.ToString();
-                std::string r; r.reserve(ws.size());
-                for (auto wc : ws) r += static_cast<char>(wc);
-                return r;
-            }
-            catch (...) { return "<FName?>"; }
-        }
-    }
-
-    // Fallback: if 4 bytes, show as int32
-    if (size == 4 && isReadableMemory(fieldData, 4))
-    {
-        int32_t v; std::memcpy(&v, fieldData, 4);
-        return std::to_string(v) + "?";
-    }
-
-    std::string cn; cn.reserve(className.size());
-    for (auto wc : className) cn += static_cast<char>(wc);
-    return "<unsupported:" + cn + ">";
+    catch (...) { return "<error>"; }
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// GameplayTag Container Operations
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// FGameplayTagContainer layout (UE4.27):
-//   TArray<FGameplayTag> GameplayTags;   // offset 0x00, each FGameplayTag is FName (8 bytes)
-//
-// <delete> removes a tag by FName comparison.
 
 bool removeGameplayTag(uint8_t* containerData, const std::string& tagName)
 {
     if (!containerData) return false;
 
-    // FGameplayTagContainer starts with TArray<FGameplayTag> at offset 0
+
     DataTableUtil::TArrayHeader hdr;
     if (!isReadableMemory(containerData, 16)) return false;
     std::memcpy(&hdr, containerData, 16);
     if (hdr.Num <= 0 || !hdr.Data) return false;
 
-    // Each element is an FGameplayTag = FName (8 bytes)
+
     static constexpr int TAG_SIZE = 8;
     std::wstring wTagName(tagName.begin(), tagName.end());
-    FName searchTag(wTagName.c_str(), FNAME_Add);
+    FName searchTag(wTagName.c_str(), FNAME_Find);
 
     for (int32_t i = 0; i < hdr.Num; i++)
     {
@@ -868,17 +656,17 @@ bool removeGameplayTag(uint8_t* containerData, const std::string& tagName)
         if (!isReadableMemory(elem, TAG_SIZE)) continue;
         if (std::memcmp(elem, &searchTag, TAG_SIZE) == 0)
         {
-            // Swap-and-pop: move last element here, decrement count
+
             int32_t lastIdx = hdr.Num - 1;
             if (i < lastIdx)
             {
                 uint8_t* lastElem = hdr.Data + lastIdx * TAG_SIZE;
                 std::memcpy(elem, lastElem, TAG_SIZE);
             }
-            // Zero the old last slot
+
             uint8_t* lastElem = hdr.Data + lastIdx * TAG_SIZE;
             std::memset(lastElem, 0, TAG_SIZE);
-            // Update Num in the TArray header
+
             int32_t newNum = hdr.Num - 1;
             std::memcpy(containerData + 8, &newNum, 4);
 
@@ -892,58 +680,31 @@ bool removeGameplayTag(uint8_t* containerData, const std::string& tagName)
     return false;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Lightweight JSON Value Extractor (for UAssetAPI add_row CDATA blocks)
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// UAssetAPI JSON format:
-//   { "Value": [ { "$type": "...IntPropertyData...", "Name": "Durability", "Value": 1000 }, ... ] }
-//
-// We extract top-level properties from the "Value" array and write each to the
-// newly created row using existing reflection-based writeValueToField().
-//
-// Supported $types → UE4 FProperty mapping:
-//   IntPropertyData        → IntProperty      (int32)
-//   FloatPropertyData      → FloatProperty     (float)
-//   BoolPropertyData       → BoolProperty      (bool via FBoolProperty)
-//   BytePropertyData       → ByteProperty      (uint8)
-//   NamePropertyData       → NameProperty      (FName)
-//   EnumPropertyData       → EnumProperty/ByteProperty (uint8 from last segment after ::)
-//   TextPropertyData       → skipped (FText requires StringTable — not writable at runtime)
-//   ObjectPropertyData     → skipped (UObject* requires package index resolution)
-//   SoftObjectPropertyData → SoftObjectProperty (FSoftObjectPath via FName write)
-//   ArrayPropertyData      → skipped for complex arrays; empty arrays just leave zero-init
-//   MapPropertyData        → skipped (TMap — zero-init is correct for empty maps)
-//   StructPropertyData     → recurse into nested struct (GameplayTag, handles, etc.)
-//
-// Properties not in the JSON keep their InitializeStruct defaults (zero or CDO values).
 
-// Find a JSON string value for a given key at the current nesting level
-// Returns empty string if not found
 static std::string jsonExtractString(const std::string& json, size_t start, size_t end, const std::string& key)
 {
     std::string needle = "\"" + key + "\"";
     size_t pos = json.find(needle, start);
     if (pos == std::string::npos || pos >= end) return "";
     pos += needle.size();
-    // Skip whitespace and colon
+
     while (pos < end && (json[pos] == ' ' || json[pos] == ':' || json[pos] == '\t')) ++pos;
     if (pos >= end) return "";
 
     if (json[pos] == '"')
     {
-        // String value
+
         ++pos;
         size_t valEnd = pos;
         while (valEnd < end && json[valEnd] != '"') {
-            if (json[valEnd] == '\\') valEnd++; // skip escaped char
+            if (json[valEnd] == '\\') valEnd++;
             valEnd++;
         }
         return json.substr(pos, valEnd - pos);
     }
     else if (json[pos] == '{' || json[pos] == '[')
     {
-        // Object or array — return the entire block
+
         char open = json[pos], close = (open == '{') ? '}' : ']';
         int depth = 1;
         size_t blockStart = pos;
@@ -958,26 +719,25 @@ static std::string jsonExtractString(const std::string& json, size_t start, size
     }
     else
     {
-        // Number, bool, or null
+
         size_t valStart = pos;
         while (pos < end && json[pos] != ',' && json[pos] != '}' && json[pos] != ']'
                && json[pos] != '\r' && json[pos] != '\n') ++pos;
         std::string val = json.substr(valStart, pos - valStart);
-        // Trim trailing whitespace
+
         while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
         return val;
     }
 }
 
-// Find boundaries of each top-level object in a JSON array: [ {...}, {...}, ... ]
-// Returns vector of (start, end) positions for each object
+
 static std::vector<std::pair<size_t, size_t>> jsonArrayObjects(const std::string& json, size_t arrStart, size_t arrEnd)
 {
     std::vector<std::pair<size_t, size_t>> objects;
     size_t pos = arrStart;
     while (pos < arrEnd)
     {
-        // Find next '{'
+
         while (pos < arrEnd && json[pos] != '{') ++pos;
         if (pos >= arrEnd) break;
         size_t objStart = pos;
@@ -994,8 +754,7 @@ static std::vector<std::pair<size_t, size_t>> jsonArrayObjects(const std::string
     return objects;
 }
 
-// Look up an enum value by name string, searching both full and short forms
-// Returns the int64 value or INDEX_NONE if not found
+
 int64_t findEnumValueByName(UEnum* uenum, const std::string& val)
 {
     if (!uenum) return INDEX_NONE;
@@ -1012,7 +771,7 @@ int64_t findEnumValueByName(UEnum* uenum, const std::string& val)
         std::wstring enumName = pair.Key.ToString();
         if (enumName == wVal) return pair.Value;
         if (!wShort.empty() && enumName == wShort) return pair.Value;
-        // Also try matching the short suffix of the enum name
+
         size_t enumColon = enumName.rfind(L"::");
         if (enumColon != std::wstring::npos)
         {
@@ -1024,8 +783,7 @@ int64_t findEnumValueByName(UEnum* uenum, const std::string& val)
     return INDEX_NONE;
 }
 
-// Write a single JSON property to a struct field using UE4 reflection
-// Returns true if the property was written, false if skipped or failed
+
 bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
                                const std::string& json, size_t objStart, size_t objEnd)
 {
@@ -1035,11 +793,11 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
     std::string name = jsonExtractString(json, objStart, objEnd, "Name");
     if (name.empty()) return false;
 
-    // Skip zero/null entries
+
     std::string isZero = jsonExtractString(json, objStart, objEnd, "IsZero");
     if (isZero == "true") return false;
 
-    // Find the property in the UStruct
+
     std::wstring wName(name.begin(), name.end());
     FProperty* prop = nullptr;
     for (auto* s = ustruct; s; s = s->GetSuperStruct())
@@ -1070,7 +828,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
     int offset = prop->GetOffset_Internal();
     uint8_t* fieldData = structData + offset;
 
-    // ── IntPropertyData ──
+
     if (type.find("IntPropertyData") != std::string::npos)
     {
         std::string val = jsonExtractString(json, objStart, objEnd, "Value");
@@ -1078,24 +836,24 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return writeValueToField(fieldData, prop, val);
     }
 
-    // ── FloatPropertyData ──
+
     if (type.find("FloatPropertyData") != std::string::npos)
     {
         std::string val = jsonExtractString(json, objStart, objEnd, "Value");
         if (val.empty()) return false;
-        // Handle "+0" format from UAssetAPI
+
         if (val == "+0" || val == "+0.0") val = "0";
         return writeValueToField(fieldData, prop, val);
     }
 
-    // ── BoolPropertyData ──
+
     if (type.find("BoolPropertyData") != std::string::npos)
     {
         std::string val = jsonExtractString(json, objStart, objEnd, "Value");
         return writeValueToField(fieldData, prop, val);
     }
 
-    // ── BytePropertyData ──
+
     if (type.find("BytePropertyData") != std::string::npos)
     {
         std::string val = jsonExtractString(json, objStart, objEnd, "Value");
@@ -1103,7 +861,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return writeValueToField(fieldData, prop, val);
     }
 
-    // ── NamePropertyData ──
+
     if (type.find("NamePropertyData") != std::string::npos)
     {
         std::string val = jsonExtractString(json, objStart, objEnd, "Value");
@@ -1111,25 +869,20 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return writeValueToField(fieldData, prop, val);
     }
 
-    // ── EnumPropertyData ──
+
     if (type.find("EnumPropertyData") != std::string::npos)
     {
         std::string val = jsonExtractString(json, objStart, objEnd, "Value");
         if (val.empty() || val == "null") return false;
 
-        // Enums are stored as "EnumType::ValueName" — we need to find the
-        // numeric index. For UE4 byte-backed enums, write via FName of the
-        // full enum value string so the engine's enum property resolution works.
-        // If it's a ByteProperty underneath, try the enum value as FName.
+
         std::wstring className;
         try { className = prop->GetClass().GetName(); } catch (...) { return false; }
 
         if (className.find(L"EnumProperty") != std::wstring::npos)
         {
-            // EnumProperty stores as int64 (enum index). Find the value name
-            // after "::" and write as byte index. For now, write 0 for the
-            // default value and let the engine figure it out via reflection.
-            // Actually, UE4 EnumProperty can be resolved by FName:
+
+
             auto* enumProp = CastField<FEnumProperty>(prop);
             if (enumProp)
             {
@@ -1159,11 +912,11 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         }
         else if (className.find(L"ByteProperty") != std::wstring::npos)
         {
-            // Byte-backed enum — extract numeric suffix or try FName
+
             size_t colonPos = val.rfind("::");
             if (colonPos != std::string::npos)
             {
-                // Try to resolve via the enum object on the ByteProperty
+
                 auto* byteProp = CastField<FByteProperty>(prop);
                 if (byteProp)
                 {
@@ -1176,7 +929,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
                     }
                 }
             }
-            // Last resort: try as plain integer
+
             try {
                 uint8_t v = static_cast<uint8_t>(std::stoi(val));
                 if (isReadableMemory(fieldData, 1)) { fieldData[0] = v; return true; }
@@ -1186,34 +939,25 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return false;
     }
 
-    // ── SoftObjectPropertyData ──
+
     if (type.find("SoftObjectPropertyData") != std::string::npos)
     {
-        // FSoftObjectPath has: { FTopLevelAssetPath AssetPath; FString SubPathString; }
-        // FTopLevelAssetPath: { FName PackageName; FName AssetName; }
-        // For runtime, we write the AssetName as an FName to AssetPath.AssetName
+
+
         std::string valueBlock = jsonExtractString(json, objStart, objEnd, "Value");
         if (valueBlock.empty() || valueBlock == "null") return false;
 
-        // Extract nested AssetPath.AssetName
+
         std::string assetPath = jsonExtractString(valueBlock, 0, valueBlock.size(), "AssetPath");
         if (assetPath.empty()) return false;
         std::string assetName = jsonExtractString(assetPath, 0, assetPath.size(), "AssetName");
         if (assetName.empty() || assetName == "null" || assetName == "None") return false;
 
-        // FSoftObjectPath layout: FName PackageName (8) + FName AssetName (8) + FString SubPath (16)
-        // Actually in UE4.27 with FTopLevelAssetPath, it's:
-        //   FName PackageName @0, FName AssetName @8
-        // Then FSoftObjectPath wraps that with SubPathString.
-        // For the soft object property, write the full path as an FName to the AssetName field.
-        // In practice: SoftObjectProperty's internal is FSoftObjectPath which starts with
-        // FTopLevelAssetPath { FName PackageName; FName AssetName; }
-        // We write the full path string to the first FName slot which is how the game resolves it.
+
         std::wstring wPath(assetName.begin(), assetName.end());
         FName pathName(wPath.c_str(), FNAME_Add);
-        // SoftObjectProperty internal layout varies; write to the appropriate offset
-        // In UE4.27, FSoftObjectPath is: { FName AssetPathName; FString SubPathString; }
-        // So the first 8 bytes are the asset path FName
+
+
         if (isReadableMemory(fieldData, 8))
         {
             std::memcpy(fieldData, &pathName, 8);
@@ -1229,22 +973,22 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return false;
     }
 
-    // ── StructPropertyData (nested structs) ──
+
     if (type.find("StructPropertyData") != std::string::npos)
     {
         std::string structType = jsonExtractString(json, objStart, objEnd, "StructType");
         std::string valueBlock = jsonExtractString(json, objStart, objEnd, "Value");
         if (valueBlock.empty() || valueBlock[0] != '[') return false;
 
-        // Get the inner struct from the property
+
         auto* structProp = CastField<FStructProperty>(prop);
         if (!structProp || !structProp->GetStruct()) return false;
         UStruct* innerStruct = structProp->GetStruct();
 
-        // Special case: GameplayTagContainer — write tags as FName array
+
         if (structType == "GameplayTagContainer")
         {
-            // Find the GameplayTagContainerPropertyData inside
+
             auto innerObjects = jsonArrayObjects(valueBlock, 0, valueBlock.size());
             for (auto& [iStart, iEnd] : innerObjects)
             {
@@ -1254,16 +998,14 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
                     std::string tagsBlock = jsonExtractString(valueBlock, iStart, iEnd, "Value");
                     if (tagsBlock.empty() || tagsBlock == "[]") break;
 
-                    // Parse tag strings from array: ["Tag.A", "Tag.B", ...]
-                    // The TArray<FGameplayTag> at offset 0 of the container is already zero-init.
-                    // We need to allocate an FName array and write it.
+
                     std::vector<std::string> tagNames;
-                    size_t tPos = 1; // skip '['
+                    size_t tPos = 1;
                     while (tPos < tagsBlock.size())
                     {
                         while (tPos < tagsBlock.size() && tagsBlock[tPos] != '"' && tagsBlock[tPos] != ']') ++tPos;
                         if (tPos >= tagsBlock.size() || tagsBlock[tPos] == ']') break;
-                        ++tPos; // skip opening quote
+                        ++tPos;
                         size_t tEnd = tPos;
                         while (tEnd < tagsBlock.size() && tagsBlock[tEnd] != '"') ++tEnd;
                         tagNames.push_back(tagsBlock.substr(tPos, tEnd - tPos));
@@ -1272,7 +1014,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
 
                     if (!tagNames.empty())
                     {
-                        // Allocate persistent FName array for the tags
+
                         int tagCount = static_cast<int>(tagNames.size());
                         uint8_t* tagData = static_cast<uint8_t*>(FMemory::Malloc(tagCount * 8, 8));
                         if (tagData)
@@ -1284,12 +1026,12 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
                                 FName fn(wTag.c_str(), FNAME_Add);
                                 std::memcpy(tagData + t * 8, &fn, 8);
                             }
-                            // Write TArray header: Data, Num, Max
+
                             if (isReadableMemory(fieldData, 16))
                             {
-                                std::memcpy(fieldData, &tagData, 8);          // Data pointer
-                                std::memcpy(fieldData + 8, &tagCount, 4);     // Num
-                                std::memcpy(fieldData + 12, &tagCount, 4);    // Max
+                                std::memcpy(fieldData, &tagData, 8);
+                                std::memcpy(fieldData + 8, &tagCount, 4);
+                                std::memcpy(fieldData + 12, &tagCount, 4);
                             }
                         }
                     }
@@ -1299,7 +1041,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
             return true;
         }
 
-        // Special case: GameplayTag — single tag with TagName FName
+
         if (structType == "GameplayTag")
         {
             auto innerObjects = jsonArrayObjects(valueBlock, 0, valueBlock.size());
@@ -1311,7 +1053,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
                     std::string tagVal = jsonExtractString(valueBlock, iStart, iEnd, "Value");
                     if (!tagVal.empty() && tagVal != "null" && tagVal != "None")
                     {
-                        // GameplayTag is just { FName TagName; } — write at offset 0
+
                         std::wstring wTag(tagVal.begin(), tagVal.end());
                         FName fn(wTag.c_str(), FNAME_Add);
                         if (isReadableMemory(fieldData, 8))
@@ -1323,8 +1065,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
             return false;
         }
 
-        // Generic nested struct (e.g. MorConstructionRowHandle, MorAnyItemRowHandle)
-        // These typically contain RowName as an FName
+
         auto innerObjects = jsonArrayObjects(valueBlock, 0, valueBlock.size());
         for (auto& [iStart, iEnd] : innerObjects)
         {
@@ -1333,8 +1074,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return true;
     }
 
-    // ── ObjectPropertyData ──
-    // UObject* pointers require package resolution — skip (leave as null/zero-init)
+
     if (type.find("ObjectPropertyData") != std::string::npos)
     {
         if (s_verbose)
@@ -1343,8 +1083,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return false;
     }
 
-    // ── TextPropertyData ──
-    // FText with StringTable references — skip (requires engine StringTable binding)
+
     if (type.find("TextPropertyData") != std::string::npos)
     {
         if (s_verbose)
@@ -1353,15 +1092,14 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return false;
     }
 
-    // ── ArrayPropertyData ──
+
     if (type.find("ArrayPropertyData") != std::string::npos)
     {
         std::string valueBlock = jsonExtractString(json, objStart, objEnd, "Value");
-        // Empty arrays: leave zero-init (Num=0, Max=0, Data=null)
+
         if (valueBlock.empty() || valueBlock == "[]") return false;
 
-        // For non-empty arrays of structs (like CraftingStations, InitialRepairCost),
-        // we need to allocate a TArray and write each struct element.
+
         std::string arrayType = jsonExtractString(json, objStart, objEnd, "ArrayType");
 
         auto* arrProp = CastField<FArrayProperty>(prop);
@@ -1376,67 +1114,58 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
 
         int count = static_cast<int>(elements.size());
 
-        // Allocate persistent element array
+
         uint8_t* arrData = static_cast<uint8_t*>(FMemory::Malloc(count * elemSize, 8));
         if (!arrData) return false;
-        std::memset(arrData, 0, count * elemSize);
 
-        // Initialize each element's struct defaults
+
+        for (int i = 0; i < count; i++)
+            inner->InitializeValue(arrData + i * elemSize);
+
         auto* innerStructProp = CastField<FStructProperty>(inner);
         UStruct* innerStruct = innerStructProp ? innerStructProp->GetStruct() : nullptr;
 
-        if (innerStruct)
-        {
-            for (int i = 0; i < count; i++)
-            {
-                try { innerStruct->InitializeStruct(arrData + i * elemSize); } catch (...) {}
-            }
-        }
 
-        // Write each element
         for (int i = 0; i < count; i++)
         {
+            uint8_t* elemData = arrData + i * elemSize;
             auto& [eStart, eEnd] = elements[i];
 
             if (innerStruct)
             {
-                // Struct array element — recurse into its "Value" array
+
                 std::string elemValue = jsonExtractString(valueBlock, eStart, eEnd, "Value");
                 if (!elemValue.empty() && elemValue[0] == '[')
                 {
                     auto innerProps = jsonArrayObjects(elemValue, 0, elemValue.size());
                     for (auto& [ipStart, ipEnd] : innerProps)
                     {
-                        writeJsonPropertyToField(arrData + i * elemSize, innerStruct,
+                        writeJsonPropertyToField(elemData, innerStruct,
                                                   elemValue, ipStart, ipEnd);
                     }
                 }
             }
             else
             {
-                // Scalar array element — try to write Value directly
+
                 std::string val = jsonExtractString(valueBlock, eStart, eEnd, "Value");
                 if (!val.empty())
-                    writeValueToField(arrData + i * elemSize, inner, val);
+                    writeValueToField(elemData, inner, val);
             }
         }
 
-        // Write TArray header to the field
-        if (isReadableMemory(fieldData, 16))
-        {
-            std::memcpy(fieldData, &arrData, 8);      // Data pointer
-            std::memcpy(fieldData + 8, &count, 4);     // Num
-            std::memcpy(fieldData + 12, &count, 4);    // Max
-        }
+
+        std::memcpy(fieldData, &arrData, 8);
+        std::memcpy(fieldData + 8, &count, 4);
+        std::memcpy(fieldData + 12, &count, 4);
         return true;
     }
 
-    // ── MapPropertyData ──
-    // TMap — leave zero-init for empty maps
+
     if (type.find("MapPropertyData") != std::string::npos)
         return false;
 
-    // Unhandled type
+
     if (s_verbose)
     {
         std::wstring wType(type.begin(), type.end());
@@ -1446,19 +1175,12 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
     return false;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Fix RowHandle DataTable pointers — copy from existing game row
-// ════════════════════════════════════════════════════════════════════════════════
-// FFGKDataTableRowHandle is { UDataTable* @0x00; FName RowName @0x08; } = 0x10.
-// Our .def files only set RowName (via nested StructPropertyData). The DataTable*
-// at offset 0 is an ObjectProperty that we skip. If GetRow() checks DataTable != null,
-// all handle resolution fails. Fix: copy the pointer from an existing game row.
 
 void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
 {
     if (!dt.rowStruct || !newRow) return;
 
-    // Get first existing game row as reference
+
     DataTableUtil::RowMapHeader hdr{};
     if (!dt.getRowMapHeader(hdr) || !hdr.Data || hdr.Num < 1) return;
     if (!isReadableMemory(hdr.Data, DataTableUtil::SET_ELEMENT_SIZE)) return;
@@ -1466,7 +1188,7 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
     if (!refRow || !isReadableMemory(refRow, dt.rowSize)) return;
 
     int fixed = 0;
-    // Walk top-level struct properties
+
     for (auto* s = dt.rowStruct; s; s = s->GetSuperStruct())
     {
         for (auto* p : s->ForEachProperty())
@@ -1476,7 +1198,7 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
             UStruct* innerStruct = sp->GetStruct();
             if (!innerStruct) continue;
 
-            // Check if struct name contains "RowHandle" or "DataTableRowHandle"
+
             std::wstring structName = innerStruct->GetName();
             if (structName.find(L"RowHandle") == std::wstring::npos &&
                 structName.find(L"DataTableRowHandle") == std::wstring::npos)
@@ -1484,9 +1206,9 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
 
             int off = p->GetOffset_Internal();
             int sz = p->GetSize();
-            if (off < 0 || sz < 16) continue; // Need at least 16 bytes (ptr + FName)
+            if (off < 0 || sz < 16) continue;
 
-            // Check if new row has null pointer (first 8 bytes)
+
             uint64_t newPtr = 0, refPtr = 0;
             if (!isReadableMemory(newRow + off, 8) || !isReadableMemory(refRow + off, 8))
                 continue;
@@ -1495,7 +1217,7 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
 
             if (newPtr != refPtr && refPtr != 0)
             {
-                std::memcpy(newRow + off, refRow + off, 8); // Copy DataTable pointer
+                std::memcpy(newRow + off, refRow + off, 8);
                 fixed++;
                 if (s_verbose)
                     RC::Output::send<RC::LogLevel::Warning>(
@@ -1505,7 +1227,7 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
         }
     }
 
-    // Also fix RowHandle pointers inside arrays of structs (e.g. DefaultRequiredMaterials)
+
     for (auto* s = dt.rowStruct; s; s = s->GetSuperStruct())
     {
         for (auto* p : s->ForEachProperty())
@@ -1519,7 +1241,7 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
             int elemSize = innerSP->GetSize();
             if (elemSize <= 0) continue;
 
-            // Check if any sub-property of the array element struct is a RowHandle
+
             bool hasRowHandle = false;
             for (auto* es = elemStruct; es && !hasRowHandle; es = es->GetSuperStruct())
                 for (auto* ep : es->ForEachProperty())
@@ -1532,21 +1254,15 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
             if (!hasRowHandle) continue;
 
             int arrOff = p->GetOffset_Internal();
-            // Read TArray header from BOTH new and reference rows
-            struct TArrHdr { uint8_t* Data; int32_t Num; int32_t Max; };
-            TArrHdr newArr{}, refArr{};
-            if (!isReadableMemory(newRow + arrOff, 16) || !isReadableMemory(refRow + arrOff, 16))
-                continue;
-            std::memcpy(&newArr, newRow + arrOff, 16);
-            std::memcpy(&refArr, refRow + arrOff, 16);
 
-            // For each element in the NEW array, find RowHandle sub-properties
-            // and copy the DataTable pointer from the REFERENCE array's first element
-            // (all elements of the same handle type point to the same DataTable)
-            if (!newArr.Data || newArr.Num <= 0) continue;
-            if (!refArr.Data || refArr.Num <= 0) continue;
-            if (!isReadableMemory(newArr.Data, newArr.Num * elemSize)) continue;
-            if (!isReadableMemory(refArr.Data, elemSize)) continue;
+
+            TArrayView newArr(arrProp, newRow + arrOff);
+            TArrayView refArr(arrProp, refRow + arrOff);
+
+            if (newArr.Num() <= 0 || refArr.Num() <= 0) continue;
+
+            uint8_t* refElem0 = refArr.GetRawPtr(0);
+            if (!refElem0) continue;
 
             for (auto* es = elemStruct; es; es = es->GetSuperStruct())
             {
@@ -1560,18 +1276,17 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
                     int subOff = ep->GetOffset_Internal();
                     if (subOff < 0 || ep->GetSize() < 16) continue;
 
-                    // Get DataTable pointer from reference array element[0]
+
                     uint64_t refSubPtr = 0;
-                    if (!isReadableMemory(refArr.Data + subOff, 8)) continue;
-                    std::memcpy(&refSubPtr, refArr.Data + subOff, 8);
+                    std::memcpy(&refSubPtr, refElem0 + subOff, 8);
                     if (refSubPtr == 0) continue;
 
-                    // Apply to all new array elements
-                    for (int i = 0; i < newArr.Num; i++)
+
+                    for (int i = 0; i < newArr.Num(); i++)
                     {
-                        uint8_t* elemBase = newArr.Data + i * elemSize;
+                        uint8_t* elemBase = newArr.GetRawPtr(i);
+                        if (!elemBase) continue;
                         uint64_t curPtr = 0;
-                        if (!isReadableMemory(elemBase + subOff, 8)) continue;
                         std::memcpy(&curPtr, elemBase + subOff, 8);
                         if (curPtr != refSubPtr)
                         {
@@ -1592,9 +1307,6 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
         VLOG(STR("[MoriaCppMod] [Def]   RowHandle DataTable* pointers fixed: {}\n"), fixed);
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Apply add_row — create a new DataTable row and populate from JSON
-// ════════════════════════════════════════════════════════════════════════════════
 
 int applyAddRow(DataTableUtil& dt, const DefAddRow& addRow)
 {
@@ -1602,7 +1314,7 @@ int applyAddRow(DataTableUtil& dt, const DefAddRow& addRow)
 
     std::wstring wRowName(addRow.rowName.begin(), addRow.rowName.end());
 
-    // Check if row already exists (skip duplicates)
+
     if (dt.findRowData(wRowName.c_str()))
     {
         VLOG(STR("[MoriaCppMod] [Def] add_row: '{}' already exists in '{}', skipping\n"),
@@ -1610,7 +1322,7 @@ int applyAddRow(DataTableUtil& dt, const DefAddRow& addRow)
         return 0;
     }
 
-    // Add empty row (allocates + InitializeStruct + inserts into RowMap)
+
     uint8_t* rowData = dt.addRow(wRowName.c_str());
     if (!rowData)
     {
@@ -1620,13 +1332,13 @@ int applyAddRow(DataTableUtil& dt, const DefAddRow& addRow)
         return 0;
     }
 
-    // Parse the JSON "Value" array to get the property list
+
     const std::string& json = addRow.json;
     std::string valueBlock = jsonExtractString(json, 0, json.size(), "Value");
     if (valueBlock.empty() || valueBlock[0] != '[')
     {
         VLOG(STR("[MoriaCppMod] [Def] add_row: '{}' has no Value array\n"), wRowName);
-        return 1; // Row was added (with defaults) even if no properties to set
+        return 1;
     }
 
     auto properties = jsonArrayObjects(valueBlock, 0, valueBlock.size());
@@ -1637,14 +1349,13 @@ int applyAddRow(DataTableUtil& dt, const DefAddRow& addRow)
             propsWritten++;
     }
 
-    // Write row FName at unreflected offset 0x08 in FFGKTableRowBase
-    // (game code uses this to look up associated construction definitions)
+
     {
         FName rowFName(wRowName.c_str(), FNAME_Add);
         std::memcpy(rowData + 0x08, &rowFName, sizeof(FName));
     }
 
-    // Post-pass: copy DataTable* pointers for RowHandle properties from existing game rows
+
     fixRowHandlePointers(dt, rowData);
 
     if (s_verbose)
@@ -1657,9 +1368,6 @@ int applyAddRow(DataTableUtil& dt, const DefAddRow& addRow)
     return 1;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Apply Operations
-// ════════════════════════════════════════════════════════════════════════════════
 
 int applyChange(DataTableUtil& dt, const DefChange& change)
 {
@@ -1674,7 +1382,7 @@ int applyChange(DataTableUtil& dt, const DefChange& change)
     {
         if (isSimple)
         {
-            // Simple flat property — use DataTableUtil typed writes
+
             std::wstring wProp(change.property.begin(), change.property.end());
             int off = dt.resolvePropertyOffset(wProp.c_str());
             if (off < 0) return false;
@@ -1682,7 +1390,7 @@ int applyChange(DataTableUtil& dt, const DefChange& change)
             uint8_t* rowData = dt.findRowData(rowName);
             if (!rowData) return false;
 
-            // Determine type from UStruct reflection
+
             FProperty* prop = nullptr;
             if (dt.rowStruct)
             {
@@ -1715,7 +1423,7 @@ int applyChange(DataTableUtil& dt, const DefChange& change)
                 return ok;
             }
 
-            // Fallback: try int32 then float
+
             if (change.value.find('.') != std::string::npos)
             {
                 try { return dt.writeFloat(rowName, wProp.c_str(), std::stof(change.value)); }
@@ -1729,7 +1437,7 @@ int applyChange(DataTableUtil& dt, const DefChange& change)
         }
         else
         {
-            // Nested property path
+
             uint8_t* rowData = dt.findRowData(rowName);
             if (!rowData || !dt.rowStruct) return false;
 
@@ -1754,7 +1462,7 @@ int applyChange(DataTableUtil& dt, const DefChange& change)
 
     if (isNone)
     {
-        // Apply to all rows
+
         auto names = dt.getRowNames();
         for (auto& name : names)
         {
@@ -1786,24 +1494,21 @@ int applyDelete(DataTableUtil& dt, const DefDelete& del)
     bool ok = removeGameplayTag(rowData + off, del.value);
     if (ok && s_verbose)
     {
-        // Read back tag count for verification
-        DataTableUtil::TArrayHeader hdr;
-        std::memcpy(&hdr, rowData + off, 16);
+
+        int32_t tagCount = 0;
+        std::memcpy(&tagCount, rowData + off + 8, 4);
         std::wstring wVal(del.value.begin(), del.value.end());
         RC::Output::send<RC::LogLevel::Warning>(
             STR("[MoriaCppMod] [Def]   {} . {} -= '{}' (tags remaining: {})\n"),
-            wItem, wProp, wVal, hdr.Num);
+            wItem, wProp, wVal, tagCount);
     }
     return ok ? 1 : 0;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// DataTable Binding by Name (dynamic — binds tables not in the pre-cached set)
-// ════════════════════════════════════════════════════════════════════════════════
 
 DataTableUtil& getOrBindDataTable(const std::string& dtName, std::unordered_map<std::string, DataTableUtil>& dynamicTables)
 {
-    // Check pre-cached tables first
+
     static const std::unordered_map<std::string, DataTableUtil*> knownTables = {
         {"DT_Constructions", &m_dtConstructions},
         {"DT_ConstructionRecipes", &m_dtConstructionRecipes},
@@ -1816,14 +1521,14 @@ DataTableUtil& getOrBindDataTable(const std::string& dtName, std::unordered_map<
         {"DT_Ores", &m_dtOres},
     };
 
-    // Case-insensitive lookup
+
     for (auto& [name, dt] : knownTables)
     {
         if (strEqualCI(name, dtName) && dt->isBound())
             return *dt;
     }
 
-    // Dynamic binding for tables not pre-cached (e.g. DT_Storage, DT_MonumentData, etc.)
+
     auto it = dynamicTables.find(dtName);
     if (it != dynamicTables.end() && it->second.isBound())
         return it->second;
@@ -1834,30 +1539,24 @@ DataTableUtil& getOrBindDataTable(const std::string& dtName, std::unordered_map<
     return dt;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Game Mods Discovery & Persistence
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// GameMods.ini location: Mods/GameMods.ini (root Mods directory)
-// Definitions dir:       Mods/MoriaCppMod/definitions/
 
 static inline const std::string GAMEMODS_INI_PATH = "Mods/GameMods.ini";
 static inline const std::string DEFINITIONS_DIR = "Mods/MoriaCppMod/definitions";
 
 struct GameModEntry
 {
-    std::string name;           // manifest name (without .ini extension)
-    std::string title;          // from [ModInfo] Title
-    std::string description;    // from [ModInfo] Description (HTML)
-    bool enabled{false};        // from GameMods.ini
+    std::string name;
+    std::string title;
+    std::string description;
+    bool enabled{false};
 };
 
-// Scan definitions/ for available .ini manifests and merge with GameMods.ini state
+
 std::vector<GameModEntry> discoverGameMods()
 {
     std::vector<GameModEntry> entries;
 
-    // Read current enabled state from GameMods.ini
+
     std::unordered_map<std::string, bool> enabledMap;
     {
         std::ifstream file(GAMEMODS_INI_PATH);
@@ -1878,20 +1577,20 @@ std::vector<GameModEntry> discoverGameMods()
         }
     }
 
-    // Scan for .ini manifests in definitions directory
+
     auto iniFiles = listFiles(DEFINITIONS_DIR, "*.ini");
     for (auto& iniFile : iniFiles)
     {
-        // Strip .ini extension for the name
+
         std::string name = iniFile;
         if (strEndsWithCI(name, ".ini"))
             name = name.substr(0, name.size() - 4);
 
-        // Parse manifest to get title and description
+
         std::string iniPath = DEFINITIONS_DIR + "\\" + iniFile;
         DefManifest manifest = parseManifest(iniPath, DEFINITIONS_DIR);
 
-        // Skip manifests with no .def paths (e.g. secrets-only)
+
         if (manifest.defPaths.empty()) continue;
 
         GameModEntry entry;
@@ -1899,7 +1598,7 @@ std::vector<GameModEntry> discoverGameMods()
         entry.title = manifest.title.empty() ? name : manifest.title;
         entry.description = manifest.description;
 
-        // Check enabled state — default OFF
+
         auto it = enabledMap.find(name);
         entry.enabled = (it != enabledMap.end()) ? it->second : false;
 
@@ -1909,7 +1608,7 @@ std::vector<GameModEntry> discoverGameMods()
     return entries;
 }
 
-// Save enabled/disabled state to GameMods.ini
+
 void saveGameMods(const std::vector<GameModEntry>& entries)
 {
     std::ofstream file(GAMEMODS_INI_PATH, std::ios::trunc);
@@ -1927,16 +1626,6 @@ void saveGameMods(const std::vector<GameModEntry>& entries)
     file.flush();
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// GameMods.ini Reader — reads Mods/GameMods.ini to find enabled manifests
-// ════════════════════════════════════════════════════════════════════════════════
-//
-// Format:
-//   [EnabledMods]
-//   Clean Fat Stacks = true
-//   Fat Trade = false
-//
-// Keys are manifest names (without .ini extension), values are true/false.
 
 static std::vector<std::string> readEnabledMods(const std::string& gameModsPath)
 {
@@ -1962,13 +1651,10 @@ static std::vector<std::string> readEnabledMods(const std::string& gameModsPath)
     return enabled;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Main Entry Point: loadAndApplyDefinitions()
-// ════════════════════════════════════════════════════════════════════════════════
 
 void loadAndApplyDefinitions()
 {
-    // Read GameMods.ini to find which manifests are enabled
+
     auto enabledMods = readEnabledMods(GAMEMODS_INI_PATH);
     if (enabledMods.empty())
     {
@@ -1976,7 +1662,7 @@ void loadAndApplyDefinitions()
         return;
     }
 
-    // Verify definitions directory exists
+
     WIN32_FIND_DATAA fd;
     HANDLE hTest = FindFirstFileA((DEFINITIONS_DIR + "\\*").c_str(), &fd);
     if (hTest == INVALID_HANDLE_VALUE)
@@ -1995,12 +1681,12 @@ void loadAndApplyDefinitions()
     int totalDeletes = 0;
     int totalApplied = 0;
     std::unordered_map<std::string, DataTableUtil> dynamicTables;
-    // Track tables that received add_rows for post-processing verification
-    std::unordered_map<std::string, std::string> tablesWithAddRows; // dtName -> firstRowName
+
+    std::unordered_map<std::string, std::string> tablesWithAddRows;
 
     for (auto& modName : enabledMods)
     {
-        // Find the corresponding .ini manifest in the definitions directory
+
         std::string iniPath = DEFINITIONS_DIR + "\\" + modName + ".ini";
         std::ifstream testFile(iniPath);
         if (!testFile.is_open())
@@ -2050,18 +1736,18 @@ void loadAndApplyDefinitions()
                     continue;
                 }
 
-                // Apply add_rows first (new rows must exist before changes/deletes reference them)
+
                 for (auto& ar : mod.addRows)
                 {
                     totalAddRows++;
                     int ok = applyAddRow(dt, ar);
                     totalApplied += ok;
-                    // Track first added row per table for verification
+
                     if (tablesWithAddRows.find(dtName) == tablesWithAddRows.end())
                         tablesWithAddRows[dtName] = ar.rowName;
                 }
 
-                // Apply deletes (order matters: remove restrictions before changing values)
+
                 for (auto& del : mod.deletes)
                 {
                     totalDeletes++;
@@ -2069,7 +1755,7 @@ void loadAndApplyDefinitions()
                     totalApplied += n;
                 }
 
-                // Then apply changes
+
                 for (auto& change : mod.changes)
                 {
                     totalChanges++;
@@ -2080,12 +1766,10 @@ void loadAndApplyDefinitions()
         }
     }
 
-    // ── Post-processing verification: confirm added rows are findable ──
-    // Uses ZERO FName::ToString() calls (SEH-unsafe). All output is hex/numeric only.
-    // Tests both linear scan (array) and engine hash lookup (DoesDataTableRowExist).
+
     if (!tablesWithAddRows.empty())
     {
-        // Helper: dump N bytes as hex string (no FName::ToString involved)
+
         auto hexDump = [](const uint8_t* data, int len) -> std::wstring {
             std::wstring hex;
             for (int b = 0; b < len; b++) {
@@ -2095,7 +1779,7 @@ void loadAndApplyDefinitions()
             return hex;
         };
 
-        // Find UDataTableFunctionLibrary::DoesDataTableRowExist for hash verification
+
         UObject* dtFuncLib = nullptr;
         UFunction* doesRowExistFn = nullptr;
         {
@@ -2121,12 +1805,11 @@ void loadAndApplyDefinitions()
             std::wstring wDtName(dtName.begin(), dtName.end());
             std::wstring wFirstRow(firstRow.begin(), firstRow.end());
 
-            // ── UDataTable object structure dump ──
-            // Dump raw bytes of the UDataTable beyond UObject base to see full layout
+
             {
                 auto* dtBase = reinterpret_cast<uint8_t*>(dt.table);
-                // UObject is ~0x28 bytes, UDataTable adds RowStruct, RowMap, flags, etc.
-                // Dump 0x28..0xA0 (120 bytes covering RowStruct, RowMap, and beyond)
+
+
                 if (isReadableMemory(dtBase + 0x28, 0x78))
                 {
                     RC::Output::send<RC::LogLevel::Warning>(
@@ -2148,7 +1831,7 @@ void loadAndApplyDefinitions()
                         STR("[MoriaCppMod] [Def]     +0x80..+0xA0:        {}\n"),
                         hexDump(dtBase + 0x80, 32));
                 }
-                // Package path
+
                 try {
                     auto* outermost = dt.table->GetOutermost();
                     if (outermost)
@@ -2156,7 +1839,7 @@ void loadAndApplyDefinitions()
                             STR("[MoriaCppMod] [Def]     Package: {}\n"),
                             outermost->GetPathName());
                 } catch (...) {}
-                // RowStruct name
+
                 if (dt.rowStruct)
                 {
                     try {
@@ -2167,8 +1850,7 @@ void loadAndApplyDefinitions()
                 }
             }
 
-            // ── Search for UFGKDataTableBase wrapper that references this UDataTable ──
-            // UFGKDataTableBase has: TableAsset @0x28, TestTableAsset @0x30, DynamicTableAsset @0x38
+
             {
                 std::vector<UObject*> fgkBases;
                 UObjectGlobals::FindAllOf(STR("FGKDataTableBase"), fgkBases);
@@ -2202,8 +1884,8 @@ void loadAndApplyDefinitions()
                                 dynamicAsset ? STR("HAS DYNAMIC TABLE") : STR("NULL"));
                             if (dynamicAsset)
                             {
-                                // Dump DynamicTableAsset (UFGKAdditiveDataTable, inherits UDataTable)
-                                // Check its RowMap for row count
+
+
                                 auto* dynBytes = reinterpret_cast<uint8_t*>(dynamicAsset);
                                 if (isReadableMemory(dynBytes + 0x30, 16))
                                 {
@@ -2225,11 +1907,11 @@ void loadAndApplyDefinitions()
                 }
             }
 
-            // Test 1: Linear scan (array-based, no hash)
+
             uint8_t* rowData = dt.findRowData(wFirstRow.c_str());
             bool foundLinear = (rowData != nullptr);
 
-            // Test 2: Engine hash lookup via DoesDataTableRowExist (ADDED row)
+
             bool foundHash = false;
             bool hashTestRan = false;
             if (doesRowExistFn && dtFuncLib && dt.table)
@@ -2245,7 +1927,7 @@ void loadAndApplyDefinitions()
                 } catch (...) {}
             }
 
-            // Test 3: Engine hash lookup on EXISTING (original game) row as control
+
             bool controlHash = false;
             bool controlRan = false;
             if (doesRowExistFn && dtFuncLib && dt.table && totalRows > 0)
@@ -2275,7 +1957,7 @@ void loadAndApplyDefinitions()
                 hashTestRan ? (foundHash ? STR("YES") : STR("NO")) : STR("N/A"),
                 controlRan ? (controlHash ? STR("YES") : STR("NO")) : STR("N/A"));
 
-            // Dump key fields as raw hex (ZERO ToString calls)
+
             if (foundLinear && dtName == "DT_Constructions")
             {
                 int actorOff = dt.resolvePropertyOffset(L"Actor");
@@ -2297,18 +1979,18 @@ void loadAndApplyDefinitions()
                         STR("[MoriaCppMod] [Def]     EnabledState @{}: {}\n"),
                         enableOff, rowData[enableOff]);
 
-                // Also dump first 32 bytes of the row for structural analysis
+
                 if (isReadableMemory(rowData, 32))
                     RC::Output::send<RC::LogLevel::Warning>(
                         STR("[MoriaCppMod] [Def]     Row first 32B: {}\n"),
                         hexDump(rowData, 32));
 
-                // COMPARISON: dump same fields from an existing GAME row (element[0])
+
                 DataTableUtil::RowMapHeader hdr{};
                 if (dt.getRowMapHeader(hdr) && hdr.Data && hdr.Num > 0
                     && isReadableMemory(hdr.Data, DataTableUtil::SET_ELEMENT_SIZE))
                 {
-                    // Get row data pointer from element[0]
+
                     uint8_t* existingRow = *reinterpret_cast<uint8_t**>(hdr.Data + DataTableUtil::FNAME_SIZE);
                     if (existingRow && isReadableMemory(existingRow, dt.rowSize))
                     {
@@ -2344,7 +2026,7 @@ void loadAndApplyDefinitions()
                     RC::Output::send<RC::LogLevel::Warning>(
                         STR("[MoriaCppMod] [Def]     ADDED ResultConstructionHandle @{} raw: {}\n"),
                         resultOff, hexDump(rowData + resultOff, 16));
-                    // Annotate: first 8 bytes = potential UDataTable*, next 8 = RowName FName
+
                     uint64_t dtPtr = 0;
                     std::memcpy(&dtPtr, rowData + resultOff, 8);
                     RC::Output::send<RC::LogLevel::Warning>(
@@ -2357,7 +2039,7 @@ void loadAndApplyDefinitions()
                         STR("[MoriaCppMod] [Def]     bOnFloor @{}: {}\n"),
                         bOnFloorOff, rowData[bOnFloorOff]);
 
-                // COMPARISON: dump ResultConstructionHandle from an existing GAME row
+
                 DataTableUtil::RowMapHeader hdr2{};
                 if (dt.getRowMapHeader(hdr2) && hdr2.Data && hdr2.Num > 0
                     && isReadableMemory(hdr2.Data, DataTableUtil::SET_ELEMENT_SIZE))
@@ -2386,7 +2068,7 @@ void loadAndApplyDefinitions()
             STR("[MoriaCppMod] [Def] === END VERIFICATION ===\n"));
     }
 
-    // Unbind dynamic tables
+
     for (auto& [name, dt] : dynamicTables)
         dt.unbind();
 

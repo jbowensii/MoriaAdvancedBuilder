@@ -1,13 +1,6 @@
-// +==============================================================================+
-// |  moria_inventory.inl -- Inventory utilities                                |
-// |  safeProcessEvent SEH wrapper, component lookup, tint/effects helpers,     |
-// |  trash item, replenish, remove attributes                                  |
-// |  #include inside MoriaCppMod class body                                    |
-// +==============================================================================+
 
-        // SEH-safe ProcessEvent wrapper — catches access violations from game code
-        // (e.g. async asset loader crash during AddItem auto-equip).
-        // Must be a standalone function: __try/__except cannot coexist with C++ destructors.
+
+
         static bool safeProcessEvent(UObject* obj, RC::Unreal::UFunction* fn, void* params)
         {
             __try {
@@ -19,10 +12,7 @@
             }
         }
 
-        // ---- 6E: Inventory & Toolbar System -----------------------------------
 
-        // Find an ActorComponent on a given owner by class name.
-        // Iterates all ActorComponents, calls GetOwner via ProcessEvent, matches class name.
         UObject* findActorComponentByClass(UObject* owner, const wchar_t* className)
         {
             if (!owner) return nullptr;
@@ -41,14 +31,13 @@
             return nullptr;
         }
 
-        // Finds the MorInventoryComponent on the player character.
+
         UObject* findPlayerInventoryComponent(UObject* playerChar)
         {
             return findActorComponentByClass(playerChar, STR("MorInventoryComponent"));
         }
 
-        // Call ServerTintItem on a CraftingComponent to set/clear an item's tint effect.
-        // Pass effect=nullptr to clear. Returns true if the call was made.
+
         bool callServerTintItem(UObject* craftComp, const uint8_t* itemHandle, UObject* effect, UObject* interactor)
         {
             auto* tintFn = craftComp->GetFunctionByNameInChain(STR("ServerTintItem"));
@@ -64,9 +53,7 @@
             return safeProcessEvent(craftComp, tintFn, p.data());
         }
 
-        // Removes a per-instance item effect from the inventory component's Effects.List TArray.
-        // effectClassName: e.g. "MorRuneEffect" or "MorItemTintEffect"
-        // Returns true if an entry was found and removed.
+
         bool removeItemEffectFromList(UObject* invComp, int32_t itemID, const wchar_t* effectClassName)
         {
             if (!invComp) return false;
@@ -79,7 +66,7 @@
 
             uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
             int32_t& arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
-            constexpr int kStride = 0x30; // FActiveItemEffect size
+            constexpr int kStride = 0x30;
 
             for (int32_t j = arrNum - 1; j >= 0; j--)
             {
@@ -104,14 +91,14 @@
             return false;
         }
 
-        // ---- Diagnostic: dump item effect arrays ----
+
         void dumpItemEffects(UClass* itemClass, int32_t itemID, UObject* invComp)
         {
-            // 1) CDO-level arrays: StartingItemEffects, VisibleEffects, EquipEffects (class-level, same for all instances)
+
             UObject* cdo = itemClass->GetClassDefaultObject();
             if (cdo)
             {
-                // StartingItemEffects — TArray<UItemEffect*> @0x0240
+
                 auto* sieProp = cdo->GetPropertyByNameInChain(STR("StartingItemEffects"));
                 if (sieProp)
                 {
@@ -136,7 +123,7 @@
                     VLOG(STR("[MoriaCppMod] [EffectDump] CDO StartingItemEffects property NOT FOUND\n"));
                 }
 
-                // VisibleEffects — TArray<TSubclassOf<UGameplayEffect>>
+
                 auto* veProp = cdo->GetPropertyByNameInChain(STR("VisibleEffects"));
                 if (veProp)
                 {
@@ -161,8 +148,7 @@
                     VLOG(STR("[MoriaCppMod] [EffectDump] CDO VisibleEffects property NOT FOUND\n"));
                 }
 
-                // EquipEffects (named "Effects" in CXXHeaderDump but GetEquipEffects() exists)
-                // Try both names
+
                 auto* eeProp = cdo->GetPropertyByNameInChain(STR("EquipEffects"));
                 if (!eeProp) eeProp = cdo->GetPropertyByNameInChain(STR("Effects"));
                 if (eeProp)
@@ -189,14 +175,12 @@
                 }
             }
 
-            // 2) Per-instance effects: FActiveItemEffectArray Effects on inventory component
-            // Effects is at offset 0x0340 on UInventoryComponent, List at +0x0110 within it
-            // FActiveItemEffect: { FFastArraySerializerItem(0x10), int32 OnItem(0x10), UItemEffect* Effect(0x18), float EndTime(0x20), FPrimaryAssetId(0x28) }
+
             FProperty* effectsProp = invComp->GetPropertyByNameInChain(STR("Effects"));
             if (effectsProp)
             {
                 int effectsOff = effectsProp->GetOffset_Internal();
-                // FActiveItemEffectArray extends FFastArraySerializer — List TArray at +0x0110
+
                 uint8_t* effectsBase = reinterpret_cast<uint8_t*>(invComp) + effectsOff + 0x0110;
                 if (isReadableMemory(effectsBase, 16))
                 {
@@ -204,12 +188,7 @@
                     int32_t arrNum = *reinterpret_cast<int32_t*>(effectsBase + 8);
                     VLOG(STR("[MoriaCppMod] [EffectDump] InvComp Effects.List count={} (effectsOff=0x{:X})\n"), arrNum, effectsOff);
 
-                    // FActiveItemEffect (CXXHeaderDump): Size=0x30
-                    //   FFastArraySerializerItem base: ~0x0C
-                    //   int32 OnItem @0x0C (size 4)
-                    //   UItemEffect* Effect @0x10 (size 8)
-                    //   float EndTime @0x18 (size 4)
-                    //   FPrimaryAssetId @0x1C (size 0x10)
+
                     constexpr int kStride = 0x30;
 
                     for (int32_t j = 0; j < arrNum && j < 50; j++)
@@ -226,8 +205,8 @@
                         {
                             if (isReadableMemory(reinterpret_cast<uint8_t*>(effect), 64))
                             {
-                                effectName = safeClassName(effect); // uses SEH internally
-                                // Don't call GetName() on effect — use safeClassName only
+                                effectName = safeClassName(effect);
+
                             }
                             else
                             {
@@ -235,7 +214,7 @@
                             }
                         }
 
-                        // Also dump raw hex at +0x1C for FPrimaryAssetId (FName-based)
+
                         uint32_t assetIdWord0 = *reinterpret_cast<uint32_t*>(e + 0x1C);
                         uint32_t assetIdWord1 = *reinterpret_cast<uint32_t*>(e + 0x20);
 
@@ -252,25 +231,16 @@
             }
         }
 
-        // ---- Replenish Last Changed Item ----------------------------------------
-        // Captures the last item class that triggered BroadcastToContainers_OnChanged
-        // on the player's MorInventoryComponent (fires on pickup, move, etc.).
-        // When user presses Replenish, finds all FItemInstances matching that class
-        // and sets Count = MaxStackSize from DataTables.
-        // Uses pure reflection — no hardcoded byte offsets.
 
-        // Called from ProcessEvent post-hook when BroadcastToContainers_OnChanged fires.
-        // Extracts item class from FItemHandle parameter via inventory Items.List lookup.
         void captureLastChangedItem(UObject* invComp, void* parms)
         {
             if (!invComp || !parms) return;
 
-            // FItemHandle layout: { int32 ID (0x00), int32 Payload (0x04), TWeakObjectPtr Owner (0x08) }
-            // ID is the item instance ID; we use it to find the matching FItemInstance
+
             int32_t handleID = *reinterpret_cast<int32_t*>(parms);
             if (handleID <= 0) return;
 
-            // Ensure FItemInstance offsets are probed
+
             probeItemInstanceStruct(invComp);
 
             FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
@@ -302,7 +272,7 @@
                 {
                     m_lastPickedUpItemClass = entryClass;
                     m_lastPickedUpItemName = entryClass->GetName();
-                    // Resolve human-readable display name from CDO
+
                     m_lastPickedUpDisplayName.clear();
                     if (UObject* cdo = entryClass->GetClassDefaultObject())
                     {
@@ -323,16 +293,15 @@
                         }
                     }
                     if (m_lastPickedUpDisplayName.empty())
-                        m_lastPickedUpDisplayName = m_lastPickedUpItemName; // fallback to class name
-                    // Read stack count from FItemInstance.Count at entry+0x18
+                        m_lastPickedUpDisplayName = m_lastPickedUpItemName;
+
                     m_lastPickedUpCount = *reinterpret_cast<int32_t*>(entry + 0x18);
-                    // Store the full FItemHandle (0x14 bytes) and inventory component
+
                     std::memcpy(m_lastItemHandle, parms, 20);
                     m_lastItemInvComp = invComp;
                     VLOG(STR("[MoriaCppMod] [Capture] item={} display='{}' ID={} count={}\n"), m_lastPickedUpItemName, m_lastPickedUpDisplayName, handleID, m_lastPickedUpCount);
 
-                    // --- Diagnostic: dump CDO effect arrays and per-instance effects ---
-                    dumpItemEffects(entryClass, handleID, invComp);
+                    if (s_verbose) dumpItemEffects(entryClass, handleID, invComp);
                 }
                 return;
             }
@@ -346,7 +315,7 @@
                 return;
             }
 
-            // Step 1: Get CDO and resolve RowHandle → RowName via reflection
+
             UObject* cdo = m_lastPickedUpItemClass->GetClassDefaultObject();
             if (!cdo)
             {
@@ -381,7 +350,7 @@
             }
             VLOG(STR("[MoriaCppMod] [Replenish] Item CDO={} RowName='{}'\n"), cdo->GetClassPrivate()->GetName(), rowName);
 
-            // Step 2: Lazy-bind item DataTables on first use
+
             if (!m_dtItems.isBound()) m_dtItems.bind(L"DT_Items");
             if (!m_dtWeapons.isBound()) m_dtWeapons.bind(L"DT_Weapons");
             if (!m_dtTools.isBound()) m_dtTools.bind(L"DT_Tools");
@@ -390,7 +359,7 @@
             if (!m_dtOres.isBound()) m_dtOres.bind(L"DT_Ores");
             if (!m_dtContainerItems.isBound()) m_dtContainerItems.bind(L"DT_ContainerItems");
 
-            // Search all item DataTables for MaxStackSize
+
             DataTableUtil* itemTables[] = {
                 &m_dtItems, &m_dtWeapons, &m_dtTools, &m_dtArmor,
                 &m_dtConsumables, &m_dtOres, &m_dtContainerItems
@@ -415,7 +384,7 @@
                 return;
             }
 
-            // Step 3: Find inventory component
+
             UObject* pawn = getPawn();
             UObject* invComp = findPlayerInventoryComponent(pawn);
             if (!invComp)
@@ -424,13 +393,13 @@
                 return;
             }
 
-            // Step 4: Get current count of this item type via GetItemCount ProcessEvent
+
             int32_t currentCount = 0;
             {
                 auto* fn = invComp->GetFunctionByNameInChain(STR("GetItemCount"));
                 if (fn)
                 {
-                    // Params: TSubclassOf<AInventoryItem> Item, EInventoryQuery From, ReturnValue int32
+
                     int sz = fn->GetParmsSize();
                     std::vector<uint8_t> p(sz, 0);
 
@@ -439,7 +408,7 @@
                     auto* pRet  = findParam(fn, STR("ReturnValue"));
 
                     if (pItem) *reinterpret_cast<UClass**>(p.data() + pItem->GetOffset_Internal()) = m_lastPickedUpItemClass;
-                    if (pFrom) *reinterpret_cast<uint8_t*>(p.data() + pFrom->GetOffset_Internal()) = 0; // EInventoryQuery default
+                    if (pFrom) *reinterpret_cast<uint8_t*>(p.data() + pFrom->GetOffset_Internal()) = 0;
                     invComp->ProcessEvent(fn, p.data());
                     if (pRet) currentCount = *reinterpret_cast<int32_t*>(p.data() + pRet->GetOffset_Internal());
                 }
@@ -456,7 +425,7 @@
                 return;
             }
 
-            // Step 5: Call RequestAddItem via ProcessEvent to add the deficit
+
             auto* addFn = invComp->GetFunctionByNameInChain(STR("RequestAddItem"));
             if (!addFn)
             {
@@ -475,7 +444,7 @@
 
                 if (pClass)  *reinterpret_cast<UClass**>(p.data() + pClass->GetOffset_Internal()) = m_lastPickedUpItemClass;
                 if (pCount)  *reinterpret_cast<int32_t*>(p.data() + pCount->GetOffset_Internal()) = deficit;
-                if (pMethod) *reinterpret_cast<uint8_t*>(p.data() + pMethod->GetOffset_Internal()) = 0; // EAddItem::Normal
+                if (pMethod) *reinterpret_cast<uint8_t*>(p.data() + pMethod->GetOffset_Internal()) = 0;
 
                 VLOG(STR("[MoriaCppMod] [Replenish] Calling RequestAddItem({}, count={}, method=Normal)\n"),
                      m_lastPickedUpItemName, deficit);
@@ -486,9 +455,7 @@
             showOnScreen(msg, 3.0f, 0.3f, 1.0f, 0.3f);
         }
 
-        // ---- Remove Attributes (tint + rune) from last captured item ----
-        // Calls ServerTintItem(handle, nullptr, char) and ServerInscribeRune(handle, nullptr, char)
-        // on MorCraftingComponent via ProcessEvent to strip tint color and enchant.
+
         void removeItemAttributes()
         {
             if (!m_lastPickedUpItemClass || !m_lastItemInvComp)
@@ -497,7 +464,7 @@
                 return;
             }
 
-            // Find MorCraftingComponent on the player pawn
+
             UObject* pawn = getPawn();
             if (!pawn)
             {
@@ -514,16 +481,14 @@
 
             int removed = 0;
 
-            // Clear tint: ServerTintItem(FItemHandle, nullptr, ACharacter*)
+
             if (callServerTintItem(craftComp, m_lastItemHandle, nullptr, pawn))
             {
                 removed++;
                 VLOG(STR("[MoriaCppMod] [RemoveAttrs] Called ServerTintItem(nullptr) on {}\n"), m_lastPickedUpItemName);
             }
 
-            // Clear rune: directly remove MorRuneEffect entry from Effects.List
-            // ServerInscribeRune(nullptr) doesn't work (validation rejects null Rune),
-            // so we use removeItemEffectFromList() to manipulate the TArray directly.
+
             {
                 int32_t targetID = *reinterpret_cast<int32_t*>(m_lastItemHandle);
                 UObject* invComp = findPlayerInventoryComponent(pawn);
@@ -542,9 +507,6 @@
             }
         }
 
-        // ---- Trash Item Dialog (confirmation modal) ---------------------------------
-        // Shows a modal dialog with the item's icon and name, asking user to confirm deletion.
-        // DELETE removes all of that item type from inventory + strips tint/rune effects.
 
         void showTrashDialog()
         {
@@ -590,18 +552,18 @@
 
             auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
 
-            // Find textures
+
             UObject* texBG = findTexture2DByName(L"T_UI_Pnl_Background_Base");
             UObject* texSectionBg = findTexture2DByName(L"T_UI_Pnl_TabSelected");
 
             VLOG(STR("[MoriaCppMod] [Trash] CP2: textures done\n"));
-            // Root overlay
+
             FStaticConstructObjectParameters olP(overlayClass, outer);
             UObject* rootOl = UObjectGlobals::StaticConstructObject(olP);
             if (!rootOl) { VLOG(STR("[MoriaCppMod] [Trash] FAIL: rootOl is null\n")); return; }
             if (widgetTree) setRootWidget(widgetTree, rootOl);
 
-            // Clip overflow
+
             {
                 auto* setClipFn = rootOl->GetFunctionByNameInChain(STR("SetClipping"));
                 if (setClipFn) { int sz2 = setClipFn->GetParmsSize(); std::vector<uint8_t> cp2(sz2, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp2.data() + p->GetOffset_Internal()) = 1; rootOl->ProcessEvent(setClipFn, cp2.data()); }
@@ -610,14 +572,14 @@
             VLOG(STR("[MoriaCppMod] [Trash] CP3: rootOl + clipping done\n"));
             const float dlgW = 500.0f, dlgH = 180.0f;
 
-            // Layer 0: Border frame (dark blue)
+
             {
                 FStaticConstructObjectParameters bfP(imageClass, outer);
                 UObject* bf = UObjectGlobals::StaticConstructObject(bfP);
                 if (bf) { umgSetBrushSize(bf, dlgW, dlgH); umgSetImageColor(bf, 0.08f, 0.14f, 0.32f, 1.0f); addToOverlay(rootOl, bf); }
             }
 
-            // Layer 1: BG image inset 1px (fully opaque)
+
             if (texBG && setBrushFn)
             {
                 FStaticConstructObjectParameters bgP(imageClass, outer);
@@ -632,7 +594,7 @@
                 }
             }
 
-            // Layer 2: Content VBox
+
             FStaticConstructObjectParameters cvP(vboxClass, outer);
             UObject* contentVBox = UObjectGlobals::StaticConstructObject(cvP);
             if (contentVBox)
@@ -640,7 +602,7 @@
                 UObject* cvSlot = addToOverlay(rootOl, contentVBox);
                 if (cvSlot) umgSetSlotPadding(cvSlot, 20.0f, 10.0f, 20.0f, 10.0f);
 
-                // Section header: "Trash Item"
+
                 if (texSectionBg && setBrushFn)
                 {
                     FStaticConstructObjectParameters secOlP(overlayClass, outer);
@@ -657,13 +619,13 @@
                 }
 
                 VLOG(STR("[MoriaCppMod] [Trash] CP4: header section done\n"));
-                // Item icon + name row
+
                 {
                     FStaticConstructObjectParameters itemHbP(hboxClass, outer);
                     UObject* itemRow = UObjectGlobals::StaticConstructObject(itemHbP);
                     if (itemRow)
                     {
-                        // Get item icon from CDO via GetIcon() -> UTexture2D*
+
                         UObject* cdo = m_lastPickedUpItemClass->GetClassDefaultObject();
                         UObject* iconTex = nullptr;
                         if (cdo)
@@ -683,7 +645,7 @@
                             VLOG(STR("[MoriaCppMod] [Trash] GetIcon CDO={} iconTex={}\n"), (void*)cdo, (void*)iconTex);
                         }
 
-                        // Create icon image (64x64)
+
                         if (iconTex && setBrushFn)
                         {
                             FStaticConstructObjectParameters iconImgP(imageClass, outer);
@@ -697,7 +659,7 @@
                             }
                         }
 
-                        // Check if item is a container; use captured count from FItemInstance
+
                         bool isContainer = false;
                         int32_t stackCount = m_lastPickedUpCount > 0 ? m_lastPickedUpCount : 1;
                         {
@@ -718,17 +680,17 @@
                                         if (safeProcessEvent(ihfCDO, isContFn, cbuf.data()) && pR)
                                             isContainer = *reinterpret_cast<bool*>(cbuf.data() + pR->GetOffset_Internal());
                                     }
-                                    // stackCount already set from m_lastPickedUpCount (captured from FItemInstance)
+
                                 }
                             }
                         }
 
-                        // Build display label: "Iron Pickaxe x3" or "Leather Bag (+ contents)"
+
                         std::wstring labelText = m_lastPickedUpDisplayName;
                         if (stackCount > 1) labelText += L" x" + std::to_wstring(stackCount);
                         if (isContainer) labelText += L"  (+ contents)";
 
-                        // Item name label (display name, not class name)
+
                         UObject* nameLbl = createTextBlock(labelText, 0.9f, 0.75f, 0.2f, 1.0f, 22);
                         if (nameLbl) { umgSetBold(nameLbl); UObject* ns = addToHBox(itemRow, nameLbl); if (ns) { umgSetSlotPadding(ns, 0.0f, 5.0f, 0.0f, 5.0f); umgSetVAlign(ns, 2); } }
                         UObject* itemSlot = addToVBox(contentVBox, itemRow);
@@ -737,13 +699,13 @@
                 }
 
                 VLOG(STR("[MoriaCppMod] [Trash] CP5: item icon + name done\n"));
-                // Button row: HBox { CANCEL (red) | DELETE (green) }
+
                 {
                     FStaticConstructObjectParameters btnHbP(hboxClass, outer);
                     UObject* btnRow = UObjectGlobals::StaticConstructObject(btnHbP);
                     if (btnRow)
                     {
-                        // CANCEL button — solid red bg, white text
+
                         {
                             FStaticConstructObjectParameters cOlP(overlayClass, outer);
                             UObject* cancelOl = UObjectGlobals::StaticConstructObject(cOlP);
@@ -758,7 +720,7 @@
                                 if (cSlot) umgSetSlotPadding(cSlot, 20.0f, 0.0f, 30.0f, 0.0f);
                             }
                         }
-                        // DELETE button — solid green bg, white text
+
                         {
                             FStaticConstructObjectParameters dOlP(overlayClass, outer);
                             UObject* deleteOl = UObjectGlobals::StaticConstructObject(dOlP);
@@ -774,13 +736,13 @@
                             }
                         }
                         UObject* btnSlot = addToVBox(contentVBox, btnRow);
-                        if (btnSlot) { umgSetHAlign(btnSlot, 2); } // center the button row
+                        if (btnSlot) { umgSetHAlign(btnSlot, 2); }
                     }
                 }
             }
 
             VLOG(STR("[MoriaCppMod] [Trash] CP6: all widgets built, about to AddToViewport...\n"));
-            // Add to viewport at ZOrder 300 (above settings panel)
+
             auto* addToViewportFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
             if (addToViewportFn)
             {
@@ -791,7 +753,7 @@
                 userWidget->ProcessEvent(addToViewportFn, vp.data());
             }
 
-            // Set size
+
             auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
             if (setDesiredSizeFn)
             {
@@ -799,19 +761,19 @@
                 if (pSize) { int ssz = setDesiredSizeFn->GetParmsSize(); std::vector<uint8_t> sb(ssz, 0); auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal()); v[0] = dlgW; v[1] = dlgH; userWidget->ProcessEvent(setDesiredSizeFn, sb.data()); }
             }
 
-            // Center alignment
+
             auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
             if (setAlignFn) { auto* pAlign = findParam(setAlignFn, STR("Alignment")); if (pAlign) { int asz = setAlignFn->GetParmsSize(); std::vector<uint8_t> ab(asz, 0); auto* a = reinterpret_cast<float*>(ab.data() + pAlign->GetOffset_Internal()); a[0] = 0.5f; a[1] = 0.5f; userWidget->ProcessEvent(setAlignFn, ab.data()); } }
 
-            // Center position
+
             setWidgetPosition(userWidget, m_screen.fracToPixelX(0.5f), m_screen.fracToPixelY(0.5f), true);
 
             VLOG(STR("[MoriaCppMod] [Trash] CP7: AddToViewport + sizing done\n"));
             m_trashDlgWidget = userWidget;
             m_trashDlgVisible = true;
             m_trashDlgOpenTick = GetTickCount64();
-            // Save cursor state so we can restore it when dialog closes
-            // (e.g. cursor was visible because a container UI was open)
+
+
             m_trashCursorWasVisible = false;
             if (auto* pc2 = findPlayerController())
                 m_trashCursorWasVisible = getBoolProp(pc2, L"bShowMouseCursor");
@@ -829,13 +791,13 @@
                 m_trashDlgWidget = nullptr;
             }
             m_trashDlgVisible = false;
-            // Restore input mode: settings panel > container cursor > game-only
+
             if (m_ftVisible && m_fontTestWidget)
                 setInputModeUI(m_fontTestWidget);
             else if (m_trashCursorWasVisible)
             {
-                // Cursor was visible before dialog (e.g. container UI open) — restore it
-                setInputModeGame();  // reset input routing
+
+                setInputModeGame();
                 if (auto* pc2 = findPlayerController())
                     setBoolProp(pc2, L"bShowMouseCursor", true);
             }
@@ -857,7 +819,7 @@
 
             VLOG(STR("[MoriaCppMod] [Trash] Confirming deletion of {}...\n"), m_lastPickedUpItemName);
 
-            // Step 1: Find inventory component
+
             UObject* pawn = getPawn();
             UObject* invComp = findPlayerInventoryComponent(pawn);
             if (!invComp)
@@ -867,8 +829,7 @@
                 return;
             }
 
-            // Step 2: Use stack count captured from FItemInstance at move time
-            // (UItemHandleFunctions::GetCount returns 1 for stacks — unreliable)
+
             int32_t itemCount = m_lastPickedUpCount > 0 ? m_lastPickedUpCount : 1;
             VLOG(STR("[MoriaCppMod] [Trash] {} captured count={}\n"), m_lastPickedUpItemName, itemCount);
 
@@ -879,17 +840,10 @@
                 return;
             }
 
-            // Close dialog BEFORE inventory operations — DropItem triggers
-            // BroadcastToContainers_OnChanged which causes Slate to repaint;
-            // if our dialog widget is still in the tree, the cascading invalidation
-            // can crash in FSlateCachedElementList::DestroyCachedData.
+
             hideTrashDialog();
 
-            // Step 3: DropItem(handle, count) removes the exact item instance from inventory
-            // For containers (bags): DropItem drops the container WITH its contents into a single
-            // MorDroppedItem actor. K2_DestroyActor on that actor destroys everything cleanly —
-            // the MorDroppedItem has its own UMorInventoryComponent that holds the contents.
-            // Then we destroy the spawned pickup actor so the item is truly trashed.
+
             auto* dropFn = invComp->GetFunctionByNameInChain(STR("DropItem"));
             if (!dropFn)
             {
@@ -898,22 +852,21 @@
                 return;
             }
 
-            // Drop the entire stack — game may cap DropItem at ~100 per call,
-            // so loop until the full count is consumed.
+
             auto* pHandle = findParam(dropFn, STR("Item"));
             auto* pCount  = findParam(dropFn, STR("Count"));
             int32_t remaining = itemCount;
             int totalDestroyed = 0;
-            static constexpr int MAX_DROP_ITERATIONS = 200; // safety cap (200 x 100 = 20,000)
+            static constexpr int MAX_DROP_ITERATIONS = 200;
 
             for (int iter = 0; iter < MAX_DROP_ITERATIONS && remaining > 0; iter++)
             {
-                // Snapshot existing drop actors so we can find new ones
+
                 std::vector<UObject*> preDropActors;
                 UObjectGlobals::FindAllOf(STR("MorDroppedItem"), preDropActors);
                 std::unordered_set<UObject*> preDropSet(preDropActors.begin(), preDropActors.end());
 
-                // Call DropItem with full remaining count (game will cap internally)
+
                 {
                     int sz = dropFn->GetParmsSize();
                     std::vector<uint8_t> p(sz, 0);
@@ -930,7 +883,7 @@
                     }
                 }
 
-                // Destroy newly spawned drop actors
+
                 {
                     std::vector<UObject*> postDropActors;
                     UObjectGlobals::FindAllOf(STR("MorDroppedItem"), postDropActors);
@@ -942,7 +895,7 @@
                     }
                 }
 
-                // Check how many remain in inventory
+
                 int32_t nowCount = 0;
                 {
                     FProperty* itemsProp3 = invComp->GetPropertyByNameInChain(STR("Items"));
@@ -969,17 +922,17 @@
                         }
                     }
                 }
-                if (nowCount <= 0) break; // fully consumed
+                if (nowCount <= 0) break;
                 if (nowCount >= remaining)
                 {
                     VLOG(STR("[MoriaCppMod] [Trash] DropItem had no effect (count still {}) — stopping\n"), nowCount);
-                    break; // DropItem didn't remove anything — avoid infinite loop
+                    break;
                 }
                 remaining = nowCount;
             }
             VLOG(STR("[MoriaCppMod] [Trash] Drop loop done: {} drop actors destroyed\n"), totalDestroyed);
 
-            // Step 4: Remove tint effect via ServerTintItem(handle, nullptr, pawn) on CraftingComponent
+
             if (pawn)
             {
                 UObject* craftComp = findActorComponentByClass(pawn, STR("MorCraftingComponent"));
@@ -989,24 +942,18 @@
                         VLOG(STR("[MoriaCppMod] [Trash] Called ServerTintItem(nullptr) to remove tint\n"));
                 }
 
-                // Step 5: Remove rune effect from Effects.List
+
                 int32_t targetID = *reinterpret_cast<int32_t*>(m_lastItemHandle);
                 if (invComp && removeItemEffectFromList(invComp, targetID, STR("MorRuneEffect")))
                     VLOG(STR("[MoriaCppMod] [Trash] Removed MorRuneEffect for item ID={}\n"), targetID);
             }
 
-            // Step 6: Show confirmation message
+
             std::wstring msg = L"Trashed " + m_lastPickedUpDisplayName + L" x" + std::to_wstring(itemCount);
             showOnScreen(msg, 3.0f, 0.3f, 1.0f, 0.3f);
             VLOG(STR("[MoriaCppMod] [Trash] {}\n"), msg);
 
-            // Step 7: Re-check if item still exists with remaining stack
-            // (dialog already closed above before DropItem)
 
-            // Re-scan inventory for the SAME item instance (by ID) — if it still exists
-            // with remaining count (DropItem may cap at 100), recapture so user can
-            // press DEL again. Only matches the exact same instance, NOT other stacks
-            // of the same item class (to avoid accidentally deleting multiple stacks).
             bool recaptured = false;
             int32_t originalID = *reinterpret_cast<int32_t*>(m_lastItemHandle);
             if (invComp && originalID > 0)
@@ -1031,9 +978,9 @@
                                 if (!isReadableMemory(entry2, stride2)) continue;
                                 int32_t entryID = *reinterpret_cast<int32_t*>(entry2 + idOff2);
                                 if (entryID != originalID) continue;
-                                // Same instance still exists — update count
+
                                 int32_t newCount = *reinterpret_cast<int32_t*>(entry2 + 0x18);
-                                if (newCount <= 0) break; // depleted
+                                if (newCount <= 0) break;
                                 m_lastPickedUpCount = newCount;
                                 m_lastItemInvComp = invComp;
                                 recaptured = true;
@@ -1048,7 +995,7 @@
 
             if (!recaptured)
             {
-                // Item fully consumed — clear state
+
                 m_lastPickedUpItemClass = nullptr;
                 m_lastPickedUpItemName.clear();
                 m_lastPickedUpDisplayName.clear();

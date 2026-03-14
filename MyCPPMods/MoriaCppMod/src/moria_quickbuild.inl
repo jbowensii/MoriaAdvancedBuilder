@@ -1,30 +1,21 @@
-// ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  moria_quickbuild.inl — Recipe slots, quick-build SM, icon extraction     ║
-// ║  #include inside MoriaCppMod class body                                    ║
-// ╚══════════════════════════════════════════════════════════════════════════════╝
-
-        // Ã¢â€â‚¬Ã¢â€â‚¬ 6G: Quick-Build System Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // F1-F8 recipe slots: capture bLock from build menu, replay via state machine
-        // Key discovery: bLock at widget+616 is THE recipe identifier
-        // State machine: open menu Ã¢â€ â€™ wait for build tab Ã¢â€ â€™ find widget Ã¢â€ â€™ select recipe
 
 
-        // Cached Build_Tab lookup Ã¢â‚¬â€ avoids FindAllOf on every check
+
         UObject* getCachedBuildTab()
         {
             if (m_cachedBuildTab)
             {
-                if (!isWidgetAlive(m_cachedBuildTab) || safeClassName(m_cachedBuildTab) != L"UI_WBP_Build_Tab_C")
+                if (!isObjectAlive(m_cachedBuildTab) || safeClassName(m_cachedBuildTab) != L"UI_WBP_Build_Tab_C")
                 {
                     QBLOG(STR("[MoriaCppMod] [QB] getCachedBuildTab: cached tab invalidated (alive={} cls='{}')\n"),
-                          isWidgetAlive(m_cachedBuildTab), m_cachedBuildTab ? safeClassName(m_cachedBuildTab) : L"null");
+                          isObjectAlive(m_cachedBuildTab), m_cachedBuildTab ? safeClassName(m_cachedBuildTab) : L"null");
                     m_cachedBuildTab = nullptr;
                 }
             }
             if (!m_cachedBuildTab)
             {
                 m_cachedBuildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", false);
-                if (m_cachedBuildTab && !isWidgetAlive(m_cachedBuildTab))
+                if (m_cachedBuildTab && !isObjectAlive(m_cachedBuildTab))
                     m_cachedBuildTab = nullptr;
                 QBLOG(STR("[MoriaCppMod] [QB] getCachedBuildTab: fresh lookup -> {}\n"),
                       m_cachedBuildTab ? STR("FOUND") : STR("NOT FOUND"));
@@ -32,11 +23,11 @@
             return m_cachedBuildTab;
         }
 
-                // Force the game's action bar (hotbar UI) to refresh its display
+
         void refreshActionBar()
         {
             UObject* actionBar = findWidgetByClass(L"WBP_UI_ActionBar_C", true);
-            if (!actionBar || !isWidgetAlive(actionBar))
+            if (!actionBar || !isObjectAlive(actionBar))
                 return;
 
             auto* refreshFunc = actionBar->GetFunctionByNameInChain(STR("Set All Action Bar Items"));
@@ -65,7 +56,7 @@
                     narrowRow.push_back(static_cast<char>(c));
                 file << i << "|" << narrowName << "|" << narrowTex << "|" << narrowRow << "\n";
             }
-            // NOTE: rotationStep now persisted in MoriaCppMod.ini [Preferences], not here
+
         }
 
         void loadQuickBuildSlots()
@@ -85,15 +76,11 @@
                     m_recipeSlots[slot->slotIndex].used = true;
                     loaded++;
                 }
-                else if (auto* rot = std::get_if<ParsedRotation>(&parsed))
-                {
-                    s_overlay.rotationStep = rot->step;
-                }
             }
             if (loaded > 0)
             {
                 VLOG(STR("[MoriaCppMod] Loaded {} quick-build slots from disk\n"), loaded);
-                updateOverlayText();
+                updateOverlaySlots();
                 updateBuildersBar();
             }
         }
@@ -117,7 +104,7 @@
                 if (!iniKey) continue;
                 std::wstring wname = keyName(s_bindings[i].key);
                 std::string name;
-                for (auto wc : wname) name += static_cast<char>(wc); // ASCII-safe narrow
+                for (auto wc : wname) name += static_cast<char>(wc);
                 file << iniKey << " = " << name << "\n";
                 if (!s_bindings[i].enabled)
                     file << iniKey << "_Enabled = false\n";
@@ -181,7 +168,7 @@
                             }
                             else
                             {
-                                // Check for _Enabled suffix
+
                                 std::string k = kv->key;
                                 bool isEnabledKey = false;
                                 if (k.size() > 8 && strEqualCI(k.substr(k.size() - 8), "_Enabled"))
@@ -282,7 +269,7 @@
                 return;
             }
 
-            // Migration: try old keybindings.txt format
+
             std::ifstream oldFile(OLD_KEYBIND_PATH);
             if (oldFile.is_open())
             {
@@ -303,18 +290,17 @@
                 }
                 oldFile.close();
                 VLOG(STR("[MoriaCppMod] Migrated {} keybindings from keybindings.txt\n"), loaded);
-                // Write new INI and rename old file
+
                 saveConfig();
                 std::rename(OLD_KEYBIND_PATH, "Mods/MoriaCppMod/keybindings.txt.bak");
                 return;
             }
 
-            // First run: write default INI from hardcoded s_bindings
+
             saveConfig();
         }
 
 
-        // Helper: find a UFunction param property by name (case-insensitive)
         static FProperty* findParam(UFunction* fn, const wchar_t* name)
         {
             std::wstring target(name);
@@ -336,8 +322,7 @@
             return nullptr;
         }
 
-        // Extract icon via render target: draw UTexture2D to Canvas on a render target, then export
-        // textureOverride: if non-null, skip widget chain walk and use this UTexture2D directly
+
         bool extractAndSaveIcon(UObject* widget, const std::wstring& textureName,
                                 const std::wstring& outPath, UObject* textureOverride = nullptr)
         {
@@ -347,7 +332,7 @@
             if (!textureOverride && !widget) return false;
             try
             {
-                // --- Get UTexture2D: prefer override, fall back to widget chain ---
+
                 UObject* texture = textureOverride;
                 if (!texture && widget)
                 {
@@ -370,7 +355,7 @@
                                 }
                                 else if (resClass.find(L"Material") != std::wstring::npos && isReadableMemory(brushResource, 280))
                                 {
-                                    // MaterialInstanceDynamic — walk TextureParameterValues
+
                                     if (s_off_texParamValues == -2)
                                     {
                                         resolveOffset(brushResource, L"TextureParameterValues", s_off_texParamValues);
@@ -420,7 +405,7 @@
                     VLOG(STR("[MoriaCppMod] [Icon] Missing required UFunctions\n"));
                     return false;
                 }
-                // Log parameter layouts for all functions (first time only)
+
                 static bool s_loggedParams = false;
                 if (!s_loggedParams)
                 {
@@ -452,19 +437,19 @@
                         }
                     }
                 }
-                if (!worldCtx || !isWidgetAlive(worldCtx))
+                if (!worldCtx || !isObjectAlive(worldCtx))
                 {
                     VLOG(STR("[MoriaCppMod] [Icon] No valid PlayerController\n"));
                     return false;
                 }
 
-                // KRL CDO for static function calls
+
                 auto* krlClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Engine.KismetRenderingLibrary"));
                 if (!krlClass) return false;
                 UObject* krlCDO = krlClass->GetClassDefaultObject();
                 if (!krlCDO) return false;
 
-                // === Step 1: CreateRenderTarget2D (128x128 RGBA8) ===
+
                 UObject* renderTarget = nullptr;
                 {
                     int pSz = createRTFn->GetParmsSize();
@@ -478,7 +463,7 @@
                     if (pWC) *reinterpret_cast<UObject**>(params.data() + pWC->GetOffset_Internal()) = worldCtx;
                     if (pW) *reinterpret_cast<int32_t*>(params.data() + pW->GetOffset_Internal()) = 128;
                     if (pH) *reinterpret_cast<int32_t*>(params.data() + pH->GetOffset_Internal()) = 128;
-                    if (pF) params[pF->GetOffset_Internal()] = 2; // RTF_RGBA8
+                    if (pF) params[pF->GetOffset_Internal()] = 2;
                     krlCDO->ProcessEvent(createRTFn, params.data());
                     renderTarget = pRV ? *reinterpret_cast<UObject**>(params.data() + pRV->GetOffset_Internal()) : nullptr;
                 }
@@ -489,7 +474,7 @@
                 }
                 VLOG(STR("[MoriaCppMod] [Icon] Created render target OK\n"));
 
-                // === Step 2: BeginDrawCanvasToRenderTarget ===
+
                 UObject* canvas = nullptr;
                 std::vector<uint8_t> beginParams;
                 {
@@ -507,7 +492,7 @@
                 if (!canvas)
                 {
                     VLOG(STR("[MoriaCppMod] [Icon] BeginDrawCanvasToRenderTarget returned no Canvas\n"));
-                    // Must still call EndDraw to balance the Begin (render thread state)
+
                     {
                         int pSz = endDrawFn->GetParmsSize();
                         std::vector<uint8_t> eParams(pSz, 0);
@@ -526,7 +511,7 @@
                 }
                 VLOG(STR("[MoriaCppMod] [Icon] Got Canvas: {} '{}'\n"), safeClassName(canvas), std::wstring(canvas->GetName()));
 
-                // === Step 3: K2_DrawTexture on Canvas ===
+
                 {
                     int pSz = drawTexFn->GetParmsSize();
                     std::vector<uint8_t> dtParams(pSz, 0);
@@ -575,7 +560,7 @@
                         c[2] = 1.0f;
                         c[3] = 1.0f;
                     }
-                    if (dBlend) *reinterpret_cast<uint8_t*>(dtParams.data() + dBlend->GetOffset_Internal()) = 0; // BLEND_Opaque
+                    if (dBlend) *reinterpret_cast<uint8_t*>(dtParams.data() + dBlend->GetOffset_Internal()) = 0;
                     if (dRotation) *reinterpret_cast<float*>(dtParams.data() + dRotation->GetOffset_Internal()) = 0.0f;
                     if (dPivot)
                     {
@@ -586,17 +571,17 @@
 
                     canvas->ProcessEvent(drawTexFn, dtParams.data());
                     VLOG(STR("[MoriaCppMod] [Icon] Drew texture to canvas\n"));
-                    } // else (dTex present)
+                    }
                 }
 
-                // === Step 4: EndDrawCanvasToRenderTarget ===
+
                 {
                     int pSz = endDrawFn->GetParmsSize();
                     std::vector<uint8_t> eParams(pSz, 0);
                     auto* eWC = findParam(endDrawFn, STR("WorldContextObject"));
                     auto* eCtx = findParam(endDrawFn, STR("Context"));
                     if (eWC) *reinterpret_cast<UObject**>(eParams.data() + eWC->GetOffset_Internal()) = worldCtx;
-                    // Copy the Context struct from BeginDraw output to EndDraw input
+
                     if (eCtx)
                     {
                         auto* bCtx = findParam(beginDrawFn, STR("Context"));
@@ -609,7 +594,7 @@
                     VLOG(STR("[MoriaCppMod] [Icon] EndDrawCanvasToRenderTarget OK\n"));
                 }
 
-                // === Step 5: ExportRenderTarget ===
+
                 {
                     int eSz = exportRTFn->GetParmsSize();
                     std::vector<uint8_t> eParams(eSz, 0);
@@ -647,10 +632,10 @@
                     }
                     krlCDO->ProcessEvent(exportRTFn, eParams.data());
                     VLOG(STR("[MoriaCppMod] [Icon] ExportRenderTarget called\n"));
-                    } // else (critical params present)
+                    }
                 }
 
-                // === Step 6: Release render target (free GPU memory) ===
+
                 {
                     auto* releaseRTFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.KismetRenderingLibrary:ReleaseRenderTarget2D"));
                     if (releaseRTFn)
@@ -671,7 +656,7 @@
                     }
                 }
 
-                // --- Check for exported file and convert to PNG ---
+
                 std::wstring baseName = outPath.substr(0, outPath.rfind(L'.'));
                 std::wstring exportedPath;
                 for (const wchar_t* ext : {L".hdr", L".bmp", L".png", L".exr", L""})
@@ -706,7 +691,7 @@
 
                 if (exportedPath == outPath) return true;
 
-                // Convert to PNG using GDI+ (one-time init, never shutdown — safe for process lifetime)
+
                 static ULONG_PTR s_gdipToken = 0;
                 if (!s_gdipToken)
                 {
@@ -752,10 +737,7 @@
             }
         }
 
-        // Ã¢â€â‚¬Ã¢â€â‚¬ 6H: Icon Extraction & Build-from-Target Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // Canvas RT pipeline: widget chain to UTexture2D, render+export to PNG, cache in icons/
 
-        // Extract UTexture2D name from Build_Item_Medium (Icon -> Brush -> MID -> TextureParamValues)
         std::wstring extractIconTextureName(UObject* widget)
         {
             if (!widget) { QBLOG(STR("[MoriaCppMod] [QB] extractIconTextureName: widget=null\n")); return L""; }
@@ -770,7 +752,7 @@
                 QBLOG(STR("[MoriaCppMod] [QB] extractIconTextureName: iconImg={:p} readable={}\n"),
                       (void*)iconImg, iconImg ? isReadableMemory(iconImg, 400) : false);
                 if (!iconImg || !isReadableMemory(iconImg, 400)) return L"";
-                // MID via Brush.ResourceObject
+
                 ensureBrushOffset(iconImg);
                 if (s_off_brush < 0) { QBLOG(STR("[MoriaCppMod] [QB] extractIconTextureName: s_off_brush not resolved\n")); return L""; }
                 uint8_t* imgBase = reinterpret_cast<uint8_t*>(iconImg);
@@ -788,7 +770,7 @@
                     return result;
                 }
 
-                // Brush holds a MaterialInstanceDynamic — walk TextureParameterValues
+
                 if (resourceClass.find(L"Material") == std::wstring::npos)
                 {
                     QBLOG(STR("[MoriaCppMod] [QB] extractIconTextureName: brushResource is neither Texture2D nor Material, skipping\n"));
@@ -821,7 +803,7 @@
             }
         }
 
-        // Find the Build_Item_Medium widget matching a recipe display name
+
         UObject* findBuildItemWidget(const std::wstring& recipeName)
         {
             std::vector<UObject*> widgets;
@@ -846,7 +828,7 @@
             return nullptr;
         }
 
-        // Log bLock diagnostics: Tag, CategoryTag, Variants RowName, hex dump
+
         void logBLockDiagnostics(const wchar_t* context, const std::wstring& displayName, const uint8_t* bLock)
         {
             if (!bLock)
@@ -855,21 +837,21 @@
                 return;
             }
 
-            // bLock+0x00: Tag (FGameplayTag = FName, 8B)
+
             uint32_t tagCI = *reinterpret_cast<const uint32_t*>(bLock);
             int32_t tagNum = *reinterpret_cast<const int32_t*>(bLock + 4);
 
-            // bLock+0x20: CategoryTag.Tag (FGameplayTag = FName, 8B)
+
             uint32_t catTagCI = *reinterpret_cast<const uint32_t*>(bLock + 0x20);
             int32_t catTagNum = *reinterpret_cast<const int32_t*>(bLock + 0x24);
 
-            // bLock+0x60: CategoryTag.SortOrder (int32)
+
             int32_t sortOrder = *reinterpret_cast<const int32_t*>(bLock + 0x60);
 
             VLOG(STR("[MoriaCppMod] [{}] '{}' Tag CI={} Num={} | CatTag CI={} Num={} | SortOrder={}\n"),
                  context, displayName, tagCI, tagNum, catTagCI, catTagNum, sortOrder);
 
-            // Variants TArray at bLock+0x68
+
             const uint8_t* variantsPtr = *reinterpret_cast<const uint8_t* const*>(bLock + rbVariantsOff());
             int32_t variantsCount = *reinterpret_cast<const int32_t*>(bLock + rbVariantsNumOff());
 
@@ -885,7 +867,7 @@
                 VLOG(STR("[MoriaCppMod] [{}]   Variants={} (no readable data)\n"), context, variantsCount);
             }
 
-            // Hex dump: first 16 bytes (Tag + start of CategoryTag) and bytes 0x60-0x77 (SortOrder + Variants)
+
             auto hexRow = [](const uint8_t* p, int len) -> std::wstring {
                 std::wstring h;
                 for (int i = 0; i < len; i++)
@@ -905,15 +887,15 @@
         {
             QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot(F{}) ENTER: hasLastCapture={} lastCapturedName='{}'\n"),
                   slot + 1, m_hasLastCapture, m_lastCapturedName);
-            if (slot < 0 || slot >= OVERLAY_BUILD_SLOTS) return; // F1-F8 only
+            if (slot < 0 || slot >= OVERLAY_BUILD_SLOTS) return;
 
-            // Check if build menu is open Ã¢â‚¬â€ if not, treat as "no build object selected"
+
             UObject* buildTab = getCachedBuildTab();
             bool hasBuildObject = m_hasLastCapture && !m_lastCapturedName.empty() && buildTab;
             QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: buildTab={} hasBuildObject={}\n"),
                   buildTab ? STR("YES") : STR("NO"), hasBuildObject ? STR("true") : STR("false"));
 
-            // No build object selected Ã¢â€ â€™ clear the slot
+
             if (!hasBuildObject)
             {
                 if (m_recipeSlots[slot].used)
@@ -928,7 +910,7 @@
                     m_recipeSlots[slot].used = false;
                     if (m_activeBuilderSlot == slot) m_activeBuilderSlot = -1;
                     saveQuickBuildSlots();
-                    updateOverlayText();
+                    updateOverlaySlots();
                     updateBuildersBar();
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] CLEARED F{}\n"), slot + 1);
                     std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" cleared";
@@ -944,7 +926,7 @@
             {
                 std::memcpy(m_recipeSlots[slot].recipeHandle, m_lastCapturedHandle, RECIPE_HANDLE_SIZE);
                 m_recipeSlots[slot].hasHandle = true;
-                // Extract RowName string from handle for disk persistence
+
                 uint32_t ci = *reinterpret_cast<uint32_t*>(m_lastCapturedHandle + 8);
                 uint32_t num = *reinterpret_cast<uint32_t*>(m_lastCapturedHandle + 12);
                 RC::Unreal::FName fn(ci, num);
@@ -955,7 +937,7 @@
             m_recipeSlots[slot].used = true;
             QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot: slot data set, looking up icon...\n"));
 
-            // Try DataTable shortcut first: DT_ConstructionRecipes → DT_Constructions Icon
+
             UObject* dtIcon = nullptr;
             if (!m_recipeSlots[slot].rowName.empty())
             {
@@ -974,7 +956,7 @@
                 }
             }
 
-            // Fallback: extract from widget chain
+
             UObject* itemWidget = nullptr;
             if (!dtIcon)
             {
@@ -988,7 +970,7 @@
                 }
             }
 
-            // Save icon as PNG if we have a texture name
+
             if (!m_recipeSlots[slot].textureName.empty())
             {
                 QBLOG(STR("[MoriaCppMod] [QuickBuild] F{} icon: '{}'\n"), slot + 1, m_recipeSlots[slot].textureName);
@@ -1012,7 +994,7 @@
             }
 
             saveQuickBuildSlots();
-            updateOverlayText();
+            updateOverlaySlots();
             updateBuildersBar();
 
             QBLOG(STR("[MoriaCppMod] [QB] ASSIGN F{} = '{}' tex='{}'\n"),
@@ -1024,15 +1006,15 @@
             QBLOG(STR("[MoriaCppMod] [QB] assignRecipeSlot(F{}) EXIT OK\n"), slot + 1);
         }
 
-        // Read display name from a Build_Item_Medium widget's blockName TextBlock
+
         std::wstring readWidgetDisplayName(UObject* widget)
         {
-            if (!widget || !isWidgetAlive(widget)) return L"";
+            if (!widget || !isObjectAlive(widget)) return L"";
             uint8_t* base = reinterpret_cast<uint8_t*>(widget);
             if (s_off_blockName == -2) resolveOffset(widget, L"blockName", s_off_blockName);
             if (s_off_blockName < 0) return L"";
             UObject* blockNameWidget = *reinterpret_cast<UObject**>(base + s_off_blockName);
-            if (!blockNameWidget || !isWidgetAlive(blockNameWidget)) return L"";
+            if (!blockNameWidget || !isObjectAlive(blockNameWidget)) return L"";
 
             auto* getTextFunc = blockNameWidget->GetFunctionByNameInChain(STR("GetText"));
             if (!getTextFunc || getTextFunc->GetParmsSize() != sizeof(FText)) return L"";
@@ -1046,7 +1028,7 @@
 
         void quickBuildSlot(int slot)
         {
-            if (slot < 0 || slot >= OVERLAY_BUILD_SLOTS) return; // F1-F8 only
+            if (slot < 0 || slot >= OVERLAY_BUILD_SLOTS) return;
             logGameState(STR("QB-pre"));
 
             if (!m_recipeSlots[slot].used)
@@ -1056,7 +1038,7 @@
                 return;
             }
 
-            // Guard: block F-keys while handle resolution is in progress
+
             if (m_handleResolvePhase == HandleResolvePhase::Priming
                 || m_handleResolvePhase == HandleResolvePhase::Resolving)
             {
@@ -1064,7 +1046,7 @@
                 return;
             }
 
-            // which corrupt MovieScene entity state cumulatively.
+
             if (m_qbPhase != PlacePhase::Idle)
             {
                 QBLOG(STR("[MoriaCppMod] [QuickBuild] F{} pressed while phase {} active -- updating pending slot\n"),
@@ -1073,7 +1055,7 @@
                 return;
             }
 
-            // Originally 300ms — increased to 500ms for additional settle time.
+
             {
                 ULONGLONG now = GetTickCount64();
                 if (now - m_lastQBSelectTime < 500)
@@ -1084,15 +1066,15 @@
                 }
             }
 
-            // Delegate to placement manager (owns DIRECT path, SM start, menu mgmt)
+
             startOrSwitchBuild(slot);
             logGameState(STR("QB-post"));
         }
 
-        // Build-from-target: same guards/cooldown as F-key quickbuild
+
         void quickBuildFromTarget()
         {
-            // Guard: block while handle resolution is in progress
+
             if (m_handleResolvePhase == HandleResolvePhase::Priming
                 || m_handleResolvePhase == HandleResolvePhase::Resolving)
             {
@@ -1100,21 +1082,21 @@
                 return;
             }
 
-            // Guard: check target data exists
+
             if (!m_lastTargetBuildable || (m_targetBuildName.empty() && m_targetBuildRecipeRef.empty()))
             {
                 showErrorBox(Loc::get("msg.no_buildable_target"));
                 return;
             }
 
-            // Debounce: if SM already running, ignore (target build doesn't update pending slot)
+
             if (m_qbPhase != PlacePhase::Idle)
             {
                 QBLOG(STR("[MoriaCppMod] [TargetBuild] Blocked (SM phase {} active)\n"), static_cast<int>(m_qbPhase));
                 return;
             }
 
-            // Post-completion cooldown (same 500ms as F-keys)
+
             {
                 ULONGLONG now = GetTickCount64();
                 if (now - m_lastQBSelectTime < 500)
@@ -1128,7 +1110,7 @@
             QBLOG(STR("[MoriaCppMod] [TargetBuild] ACTIVATE target='{}' recipeRef='{}'\n"),
                   m_targetBuildName, m_targetBuildRecipeRef);
 
-            // Delegate to placement manager (target-build mode)
+
             startBuildFromTarget();
         }
 

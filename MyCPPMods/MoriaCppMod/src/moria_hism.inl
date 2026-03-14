@@ -1,14 +1,6 @@
-// ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  moria_hism.inl — HISM removal, line tracing, replay, dumpAimedActor      ║
-// ║  #include inside MoriaCppMod class body                                    ║
-// ╚══════════════════════════════════════════════════════════════════════════════╝
 
-        // Ã¢â€â‚¬Ã¢â€â‚¬ Camera & Trace Ã¢â€â‚¬Ã¢â€â‚¬
 
-        // Ã¢â€â‚¬Ã¢â€â‚¬ 6D: HISM Removal System Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // CRITICAL: Max 3 hides/frame to avoid render thread crash
 
-        // Construct camera ray from viewport center, offset past pawn to avoid self-hits.
         bool getCameraRay(FVec3f& outStart, FVec3f& outEnd)
         {
             auto* pc = findPlayerController();
@@ -31,20 +23,20 @@
             std::memcpy(&cameraLoc, buf.data() + s_dsp.WorldLocation, 12);
             std::memcpy(&worldDir, buf.data() + s_dsp.WorldDirection, 12);
 
-            // Start past character to avoid hitting objects between camera and pawn
+
             FVec3f pawnLoc = getPawnLocation();
             float dx = pawnLoc.X - cameraLoc.X;
             float dy = pawnLoc.Y - cameraLoc.Y;
             float dz = pawnLoc.Z - cameraLoc.Z;
             float camToChar = std::sqrt(dx * dx + dy * dy + dz * dz);
-            float startOffset = camToChar + 50.0f; // 50 units past the character
+            float startOffset = camToChar + 50.0f;
 
             outStart = {cameraLoc.X + worldDir.X * startOffset, cameraLoc.Y + worldDir.Y * startOffset, cameraLoc.Z + worldDir.Z * startOffset};
             outEnd = {cameraLoc.X + worldDir.X * TRACE_DIST, cameraLoc.Y + worldDir.Y * TRACE_DIST, cameraLoc.Z + worldDir.Z * TRACE_DIST};
             return true;
         }
 
-        // Extract hit UObject* from FHitResult Component FWeakObjectPtr.
+
         UObject* resolveHitComponent(const uint8_t* hitBuf)
         {
             auto* hit = reinterpret_cast<const FHitResultLocal*>(hitBuf);
@@ -60,7 +52,7 @@
             return clsName.find(STR("InstancedStaticMeshComponent")) != std::wstring::npos;
         }
 
-        // Hide instance by moving underground + tiny scale (safe, no crash unlike RemoveInstance).
+
         bool hideInstance(UObject* comp, int32_t instanceIndex)
         {
             auto* updateFunc = comp->GetFunctionByNameInChain(STR("UpdateInstanceTransform"));
@@ -72,7 +64,7 @@
             auto* transFunc = comp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
             if (!transFunc) return false;
 
-            // One-time: validate GetInstanceTransform_Params layout against reflection
+
             static bool s_gtpValidated = false;
             if (!s_gtpValidated)
             {
@@ -114,7 +106,7 @@
             return params[s_uit.ReturnValue] != 0;
         }
 
-        // Restore instance to original transform (undo a hide)
+
         bool restoreInstance(UObject* comp, int32_t instanceIndex, const FTransformRaw& original)
         {
             auto* updateFunc = comp->GetFunctionByNameInChain(STR("UpdateInstanceTransform"));
@@ -133,7 +125,7 @@
             return params[s_uit.ReturnValue] != 0;
         }
 
-        // LineTraceSingle via ProcessEvent. Returns true + fills hitBuf (136B) on hit.
+
         bool doLineTrace(const FVec3f& start, const FVec3f& end, uint8_t* hitBuf, bool debugDraw = false)
         {
             auto* ltFunc = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:LineTraceSingle"));
@@ -148,8 +140,8 @@
             std::memcpy(params.data() + s_lt.WorldContextObject, &pc, 8);
             std::memcpy(params.data() + s_lt.Start, &start, 12);
             std::memcpy(params.data() + s_lt.End, &end, 12);
-            params[s_lt.TraceChannel] = 0;  // Visibility
-            params[s_lt.bTraceComplex] = 1; // Per-triangle for accuracy
+            params[s_lt.TraceChannel] = 0;
+            params[s_lt.bTraceComplex] = 1;
             params[s_lt.bIgnoreSelf] = 1;
 
             auto* pawn = getPawn();
@@ -164,7 +156,7 @@
 
             if (debugDraw)
             {
-                params[s_lt.DrawDebugType] = 2; // ForDuration
+                params[s_lt.DrawDebugType] = 2;
                 float greenColor[4] = {0.0f, 1.0f, 0.0f, 1.0f};
                 float redColor[4] = {1.0f, 0.0f, 0.0f, 1.0f};
                 float drawTime = 5.0f;
@@ -174,7 +166,7 @@
             }
             else
             {
-                params[s_lt.DrawDebugType] = 0; // None
+                params[s_lt.DrawDebugType] = 0;
             }
 
             kslCDO->ProcessEvent(ltFunc, params.data());
@@ -187,11 +179,10 @@
             return bHit;
         }
 
-        // Ã¢â€â‚¬Ã¢â€â‚¬ Throttled Replay Ã¢â€â‚¬Ã¢â€â‚¬
 
         void startReplay()
         {
-            if (m_replay.active) return; // don't interrupt active replay
+            if (m_replay.active) return;
             m_replay = {};
             if (m_savedRemovals.empty() && m_typeRemovals.empty()) return;
 
@@ -199,7 +190,7 @@
             UObjectGlobals::FindAllOf(STR("GlobalHierarchicalInstancedStaticMeshComponent"), rawComps);
             if (rawComps.empty()) UObjectGlobals::FindAllOf(STR("HierarchicalInstancedStaticMeshComponent"), rawComps);
 
-            // Store as weak pointers — GC can run between replay frames
+
             m_replay.compQueue.reserve(rawComps.size());
             for (auto* c : rawComps) m_replay.compQueue.emplace_back(c);
 
@@ -212,7 +203,7 @@
             }
         }
 
-        // Process up to MAX_HIDES_PER_FRAME instances per frame. Returns true if more work remains.
+
         bool processReplayBatch()
         {
             if (!m_replay.active) return false;
@@ -278,21 +269,21 @@
                 {
                     if (hidesThisBatch >= MAX_HIDES_PER_FRAME)
                     {
-                        return true; // Budget exhausted, continue next frame
+                        return true;
                     }
 
                     int i = m_replay.instanceIdx++;
 
                     if (isTypeRule)
                     {
-                        // For type rules, skip already-hidden instances
+
                         if (transFunc)
                         {
                             GetInstanceTransform_Params tp{};
                             tp.InstanceIndex = i;
                             tp.bWorldSpace = 1;
                             comp->ProcessEvent(transFunc, &tp);
-                            if (tp.ReturnValue && tp.OutTransform.Translation.Z < -40000.0f) continue; // already hidden
+                            if (tp.ReturnValue && tp.OutTransform.Translation.Z < -40000.0f) continue;
                         }
                         if (hideInstance(comp, i))
                         {
@@ -311,7 +302,7 @@
                         float px = tp.OutTransform.Translation.X;
                         float py = tp.OutTransform.Translation.Y;
                         float pz = tp.OutTransform.Translation.Z;
-                        if (pz < -40000.0f) continue; // already hidden
+                        if (pz < -40000.0f) continue;
 
                         for (size_t si = 0; si < m_savedRemovals.size(); si++)
                         {
@@ -346,7 +337,7 @@
         void checkForNewComponents()
         {
             if (m_savedRemovals.empty() && m_typeRemovals.empty()) return;
-            if (m_replay.active) return; // don't interfere with active replay
+            if (m_replay.active) return;
 
             std::vector<UObject*> comps;
             UObjectGlobals::FindAllOf(STR("GlobalHierarchicalInstancedStaticMeshComponent"), comps);
@@ -364,10 +355,7 @@
             VLOG(STR("[MoriaCppMod] Streaming: {} new components queued for replay\n"), m_replay.compQueue.size());
         }
 
-        // Ã¢â€â‚¬Ã¢â€â‚¬ Actions Ã¢â€â‚¬Ã¢â€â‚¬
 
-        // LINT NOTE (#18): removeAimed is keypress-only (~20 Hz), not per-frame. Throttle would
-        // risk partial stack removal and corrupt undo. Replay path has MAX_HIDES_PER_FRAME.
         void removeAimed()
         {
             FVec3f start{}, end{};
@@ -420,7 +408,7 @@
             std::wstring compName(hitComp->GetName());
             std::string meshId = componentNameToMeshId(compName);
 
-            // Find ALL instances at the same position (stacked instances)
+
             GetInstanceCount_Params cp{};
             hitComp->ProcessEvent(countFunc, &cp);
             int count = cp.ReturnValue;
@@ -445,7 +433,7 @@
                 float ddz = pz - targetZ;
                 if (ddx * ddx + ddy * ddy + ddz * ddz < POS_TOLERANCE * POS_TOLERANCE)
                 {
-                    // Save for undo (weak ptr guards against GC)
+
                     m_undoStack.push_back({RC::Unreal::FWeakObjectPtr(hitComp), i, itp.OutTransform, compName});
 
                     SavedRemoval sr;
@@ -499,7 +487,7 @@
             std::wstring compName(hitComp->GetName());
             std::string meshId = componentNameToMeshId(compName);
 
-            // Save as type rule -- removes ALL of this mesh on every world
+
             if (!m_typeRemovals.count(meshId))
             {
                 m_typeRemovals.insert(meshId);
@@ -569,7 +557,7 @@
             constexpr uint8_t MOVE_Falling = 3;
             constexpr uint8_t MOVE_Flying  = 5;
 
-            // Ã¢â€â‚¬Ã¢â€â‚¬ Fly toggle Ã¢â€â‚¬Ã¢â€â‚¬
+
             for (auto* dwarf : dwarves)
             {
                 auto** movCompPtr = dwarf->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
@@ -581,8 +569,7 @@
                     continue;
                 }
 
-                // Order: Disable clears bCheatFlying first; Enable sets movement mode first,
-                // then bCheatFlying, to satisfy engine transition requirements.
+
                 if (!m_flyMode)
                     setBoolProp(movComp, L"bCheatFlying", false);
 
@@ -601,7 +588,7 @@
 
                 VLOG(STR("[MoriaCppMod] bCheatFlying = {}\n"), m_flyMode ? 1 : 0);
 
-                // Toggle actor collision AFTER fly is set
+
                 bool shouldDisableCollision = m_flyMode && m_noCollisionWhileFlying;
                 bool shouldRestoreCollision = !m_flyMode;
                 if (shouldDisableCollision || shouldRestoreCollision)
@@ -636,7 +623,7 @@
                 return;
             }
 
-            // Simple trace (bTraceComplex=0) to hit actors, not just HISM instances
+
             auto* ltFunc = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:LineTraceSingle"));
             auto* kslCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Engine.Default__KismetSystemLibrary"));
             auto* pc = findPlayerController();
@@ -649,10 +636,10 @@
             std::memcpy(params.data() + s_lt.WorldContextObject, &pc, 8);
             std::memcpy(params.data() + s_lt.Start, &start, 12);
             std::memcpy(params.data() + s_lt.End, &end, 12);
-            params[s_lt.TraceChannel] = 0;  // Visibility
-            params[s_lt.bTraceComplex] = 0; // Simple trace to hit actor bounds
+            params[s_lt.TraceChannel] = 0;
+            params[s_lt.bTraceComplex] = 0;
             params[s_lt.bIgnoreSelf] = 1;
-            params[s_lt.DrawDebugType] = 2; // ForDuration
+            params[s_lt.DrawDebugType] = 2;
             float greenColor[4] = {0.0f, 1.0f, 1.0f, 1.0f};
             float redColor[4] = {1.0f, 1.0f, 0.0f, 1.0f};
             float drawTime = 5.0f;
@@ -718,7 +705,7 @@
 
             std::wstring assetPath(actor->GetPathName());
 
-            // NOTE: AMorBreakable lacks GetDisplayName -- needs DataTable lookup
+
             std::wstring displayName;
             auto* getDispFn = actor->GetFunctionByNameInChain(STR("GetDisplayName"));
             if (getDispFn)
@@ -737,7 +724,7 @@
             }
             if (displayName.empty())
             {
-                // Fallback: strip BP_ prefix and _C suffix, replace underscores with spaces
+
                 std::wstring cleaned = actorClassName;
                 if (cleaned.size() > 3 && cleaned.substr(0, 3) == L"BP_") cleaned.erase(0, 3);
                 if (cleaned.size() > 2 && cleaned.substr(cleaned.size() - 2) == L"_C") cleaned.resize(cleaned.size() - 2);
@@ -753,7 +740,7 @@
             VLOG(STR("[MoriaCppMod] Display: {}\n"), displayName);
             VLOG(STR("[MoriaCppMod] Path: {}\n"), assetPath);
 
-            // Detect if player-buildable via construction components/base classes
+
             bool isBuildable = false;
             std::wstring recipeRef;
             auto* actorCls = actor->GetClassPrivate();
@@ -797,7 +784,7 @@
 
             VLOG(STR("[MoriaCppMod] Buildable: {} Recipe: {}\n"), isBuildable ? STR("Yes") : STR("No"), recipeRef);
 
-            // Ã¢â€â‚¬Ã¢â€â‚¬ DT_Constructions lookup: find real display name for this actor Ã¢â€â‚¬Ã¢â€â‚¬
+
             std::wstring dtDisplayName;
             std::wstring dtRowName;
             {
@@ -816,7 +803,7 @@
                     dumpFile << L"\n";
                     dumpFile.flush();
 
-                    // Use DataTableUtil for DT_Constructions lookup
+
                     if (!m_dtConstructions.isBound()) m_dtConstructions.bind(L"DT_Constructions");
 
                     if (!m_dtConstructions.isBound())
@@ -842,7 +829,7 @@
                             uint8_t* rowData = m_dtConstructions.findRowData(rowNameStr.c_str());
                             if (!rowData) continue;
 
-                            // Actor is TSoftClassPtr — AssetPathName FName at sub-offset +0x10
+
                             std::wstring rowAssetPath;
                             if (actorOff >= 0 && isReadableMemory(rowData + actorOff + SOFTCLASSPTR_ASSETPATH_FNAME, 8))
                             {
@@ -897,10 +884,10 @@
                 VLOG(STR("[MoriaCppMod] DT display name: '{}' (row '{}')\n"), displayName, dtRowName);
             }
 
-            // Store for Shift+F10 build-from-target
+
             m_lastTargetBuildable = isBuildable;
             m_targetBuildRecipeRef = recipeRef;
-            m_targetBuildRowName = dtRowName; // DT_Constructions row name (also key for DT_ConstructionRecipes)
+            m_targetBuildRowName = dtRowName;
             if (isBuildable && !displayName.empty())
             {
                 m_targetBuildName = displayName;
@@ -914,7 +901,7 @@
                 m_targetBuildName.clear();
             }
 
-            // Non-buildable: second HISM-aware trace for component/mesh inspect
+
             if (!isBuildable)
             {
                 uint8_t inspectHitBuf[136]{};
@@ -962,14 +949,14 @@
                         VLOG(STR("[MoriaCppMod] [F10] Non-buildable inspect: {} | HISM={} | MeshID={}\n"),
                                                         inspCompName, inspIsHISM, inspMeshIdW);
 
-                        showTargetInfo(inspCompName, friendlyName, inspMeshIdW, inspClassName, false, posInfo, L"");
+                        showTargetInfoUMG(inspCompName, friendlyName, inspMeshIdW, inspClassName, false, posInfo, L"");
                         VLOG(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
                         return;
                     }
                 }
             }
 
-            showTargetInfo(actorName, displayName, assetPath, actorClassName, isBuildable, recipeRef, dtRowName);
+            showTargetInfoUMG(actorName, displayName, assetPath, actorClassName, isBuildable, recipeRef, dtRowName);
 
             VLOG(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
         }

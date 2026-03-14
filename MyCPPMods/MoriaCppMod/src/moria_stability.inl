@@ -1,9 +1,6 @@
-        // ════════════════════════════════════════════════════════════════════════════
-        // Stability Audit — scans AllStabilityComponents, highlights problem pieces
-        // with Niagara VFX + colored PointLights. Auto-clears after 10s.
-        // ════════════════════════════════════════════════════════════════════════════
 
-        // EStabilityState values
+
+
         static constexpr uint8_t STAB_UNINITIALIZED = 0;
         static constexpr uint8_t STAB_INITIALIZING  = 1;
         static constexpr uint8_t STAB_UNSTABLE      = 3;
@@ -13,12 +10,12 @@
         static constexpr float THRESHOLD_CRITICAL = 20.0f;
         static constexpr float THRESHOLD_MARGINAL = 50.0f;
 
-        // PointLight tuning
+
         static constexpr float AUDIT_LIGHT_CRITICAL_INTENSITY = 25000.0f;
         static constexpr float AUDIT_LIGHT_MARGINAL_INTENSITY = 15000.0f;
         static constexpr float AUDIT_LIGHT_RADIUS              = 10.0f;
 
-        // ── Spawn a one-shot Niagara VFX at a world location ─────────────────────
+
         void spawnVfxAtLocation(UObject* worldContext, UObject* niagaraSystem,
                                 float x, float y, float z)
         {
@@ -75,11 +72,11 @@
             s_cdo->ProcessEvent(s_fn, buf.data());
         }
 
-        // Spawn a colored PointLight via deferred spawn; tracked for cleanup
+
         void spawnPointLightAtLocation(UObject* worldContext,
                                        float x, float y, float z, bool critical)
         {
-            // ── Resolve spawn functions (once) ───────────────────────────────────
+
             static UFunction* s_spawnFn = nullptr;
             static UObject* s_gsCDO = nullptr;
             static UClass* s_lightClass = nullptr;
@@ -144,7 +141,7 @@
             if (!s_spawnFn || !s_gsCDO || !s_lightClass) return;
             if (s_sClass < 0 || s_sXform < 0) return;
 
-            // ── Spawn the PointLight actor ───────────────────────────────────────
+
             FTransformRaw xform{};
             xform.Rotation = {0.0f, 0.0f, 0.0f, 1.0f};
             xform.Translation = {x, y, z};
@@ -175,8 +172,7 @@
                 s_gsCDO->ProcessEvent(s_finishFn, finBuf.data());
             }
 
-            // ── Configure light properties via PointLightComponent ───────────────
-            // The root component of a PointLight actor IS the PointLightComponent.
+
             {
                 static UFunction* s_setIntFn = nullptr;
                 static UFunction* s_setColorFn = nullptr;
@@ -248,7 +244,7 @@
                     lightComp->ProcessEvent(s_setIntFn, b.data());
                 }
 
-                // Color: red={1,0,0,1} for critical, amber={1,0.8,0,1} for marginal
+
                 if (s_setColorFn && s_colOff >= 0)
                 {
                     std::vector<uint8_t> b(s_colSize, 0);
@@ -261,7 +257,7 @@
                     lightComp->ProcessEvent(s_setColorFn, b.data());
                 }
 
-                // Attenuation radius: 5 for both (tight focused highlight)
+
                 if (s_setRadFn && s_radOff >= 0)
                 {
                     std::vector<uint8_t> b(s_radSize, 0);
@@ -276,7 +272,7 @@
                  x, y, z, critical ? STR("CRITICAL/red") : STR("MARGINAL/yellow"));
         }
 
-        // ── Destroy all spawned PointLight actors ────────────────────────────────
+
         void destroyAuditActors()
         {
             for (auto* actor : m_auditSpawnedActors)
@@ -292,7 +288,7 @@
             m_auditSpawnedActors.clear();
         }
 
-        // Clear all audit state (called on re-scan, timeout, world unload)
+
         void clearStabilityHighlights()
         {
             destroyAuditActors();
@@ -303,14 +299,14 @@
             m_auditClearTime = 0;
         }
 
-        // Scan AllStabilityComponents, classify and highlight problems
+
         void runStabilityAudit()
         {
             clearStabilityHighlights();
 
             VLOG(STR("[MoriaCppMod] [STAB] === Stability Audit ===\n"));
 
-            // ── Find the Construction Manager singleton (skip CDOs) ──────────────
+
             UObject* mgr = nullptr;
             {
                 std::vector<UObject*> mgrs;
@@ -332,11 +328,11 @@
                 return;
             }
 
-            // ── Get StabilityLossVFX from manager (for one-shot particle bursts) ─
+
             void* vfxPtr = mgr->GetValuePtrByPropertyNameInChain(STR("StabilityLossVFX"));
             UObject* stabilityVfx = vfxPtr ? *static_cast<UObject**>(vfxPtr) : nullptr;
 
-            // ── Read AllStabilityComponents TArray ───────────────────────────────
+
             void* arrPtr = mgr->GetValuePtrByPropertyNameInChain(STR("AllStabilityComponents"));
             if (!arrPtr || !isReadableMemory(arrPtr, 16)) return;
 
@@ -353,7 +349,7 @@
             struct ProblemInfo { UObject* actor; float stability; uint8_t state; float x, y, z; };
             std::vector<ProblemInfo> problems;
 
-            // ── Classify each component ──────────────────────────────────────────
+
             for (int32_t i = 0; i < arrNum; i++)
             {
                 UObject* comp = arrData[i];
@@ -403,7 +399,7 @@
                 return;
             }
 
-            // ── Highlight each problem piece ─────────────────────────────────────
+
             for (auto& p : problems)
             {
                 float dx = p.x - playerLoc.X, dy = p.y - playerLoc.Y, dz = p.z - playerLoc.Z;
@@ -424,6 +420,6 @@
 
             VLOG(STR("[MoriaCppMod] [STAB] {} PointLight(s) + VFX spawned\n"), problems.size());
 
-            // Auto-clear lights after 10 seconds
+
             m_auditClearTime = GetTickCount64() + 10000;
         }

@@ -1,12 +1,9 @@
-// ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  moria_common.h — Shared types, constants, macros, and RAII utilities     ║
-// ║  Included by all MoriaCppMod source files.                                ║
-// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+
 #pragma once
 
-// ════════════════════════════════════════════════════════════════════════════════
-// Standard Library & Platform Includes
-// ════════════════════════════════════════════════════════════════════════════════
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -33,9 +30,7 @@
 #include <gdiplus.h>
 #pragma comment(lib, "gdiplus.lib")
 
-// ════════════════════════════════════════════════════════════════════════════════
-// UE4SS Includes
-// ════════════════════════════════════════════════════════════════════════════════
+
 #include <DynamicOutput/Output.hpp>
 #include <Mod/CppUserModBase.hpp>
 #include <Unreal/UObjectGlobals.hpp>
@@ -54,6 +49,8 @@
 #include <Unreal/Property/FBoolProperty.hpp>
 #include <Unreal/Property/FEnumProperty.hpp>
 #include <Unreal/Property/NumericPropertyTypes.hpp>
+#include <Unreal/Property/FObjectProperty.hpp>
+#include <Unreal/Property/FArrayProperty.hpp>
 #include <Unreal/UEnum.hpp>
 
 #include "moria_testable.h"
@@ -63,51 +60,74 @@ namespace MoriaMods
     using namespace RC;
     using namespace RC::Unreal;
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Logging Macros
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // Verbose logging gate (false = short-circuits all VLOG calls)
     inline bool s_verbose = false;
     inline std::string s_language = "en";
-    // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+
     #define VLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
 
     #define QUICKBUILD_LOGGING 1
-    // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+
     #if QUICKBUILD_LOGGING
         #define QBLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
     #else
         #define QBLOG(...) do {} while (0)
     #endif
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Constants
-    // ════════════════════════════════════════════════════════════════════════════
-    static constexpr float TRACE_DIST = 5000.0f;   // 50m
-    static constexpr float POS_TOLERANCE = 100.0f; // 1m in game units
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Struct-Internal Offsets (NOT resolvable via ForEachProperty)
-    // ════════════════════════════════════════════════════════════════════════════
-    static constexpr int BRUSH_IMAGE_SIZE_X = 0x08;     // FSlateBrush::ImageSize.X
-    static constexpr int BRUSH_IMAGE_SIZE_Y = 0x0C;     // FSlateBrush::ImageSize.Y
-    static constexpr int BRUSH_RESOURCE_OBJECT = 0x48;  // FSlateBrush::ResourceObject
-    static constexpr int FONT_TYPEFACE_NAME = 0x40;     // FSlateFontInfo::TypefaceFontName
-    static constexpr int FONT_SIZE = 0x48;              // FSlateFontInfo::Size
-    static constexpr int FONT_STRUCT_SIZE = 0x58;       // sizeof(FSlateFontInfo)
-    static constexpr int RECIPE_BLOCK_VARIANTS = 0x68;   // FMorRecipeBlock::Variants (TArray data ptr)
-    static constexpr int RECIPE_BLOCK_VARIANTS_NUM = 0x70; // FMorRecipeBlock::Variants.Num (int32)
-    static constexpr int VARIANT_ROW_CI = 0xE0;         // FMorConstructionRecipeDefinition::ResultConstructionHandle.RowName.ComparisonIndex
-    static constexpr int VARIANT_ROW_NUM = 0xE4;        // FMorConstructionRecipeDefinition::ResultConstructionHandle.RowName.Number
-    static constexpr int VARIANT_ENTRY_SIZE = 0xE8;     // sizeof(FMorConstructionRecipeDefinition) — minimum readable size per variant entry
-    static constexpr int TEX_PARAM_VALUE_PTR = 0x10;     // FTextureParameterValue::ParameterValue (UTexture*)
-    static constexpr int DT_ROWMAP_OFFSET = 0x30;       // UDataTable internal RowMap offset
-    static constexpr int SOFTCLASSPTR_ASSETPATH_FNAME = 0x10; // TSoftClassPtr internal: AssetPathName FName offset
+    static constexpr float TRACE_DIST = 5000.0f;
+    static constexpr float POS_TOLERANCE = 100.0f;
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Raw UE4.27 Types (floats, not doubles)
-    // ════════════════════════════════════════════════════════════════════════════
+
+    static constexpr int BRUSH_IMAGE_SIZE_X = 0x08;
+    static constexpr int BRUSH_IMAGE_SIZE_Y = 0x0C;
+    static constexpr int BRUSH_RESOURCE_OBJECT = 0x48;
+    static constexpr int FONT_TYPEFACE_NAME = 0x40;
+    static constexpr int FONT_SIZE = 0x48;
+    static constexpr int FONT_STRUCT_SIZE = 0x58;
+    static constexpr int RECIPE_BLOCK_VARIANTS = 0x68;
+    static constexpr int RECIPE_BLOCK_VARIANTS_NUM = 0x70;
+    static constexpr int VARIANT_ROW_CI = 0xE0;
+    static constexpr int VARIANT_ROW_NUM = 0xE4;
+    static constexpr int VARIANT_ENTRY_SIZE = 0xE8;
+    static constexpr int TEX_PARAM_VALUE_PTR = 0x10;
+    static constexpr int DT_ROWMAP_OFFSET = 0x30;
+    static constexpr int SOFTCLASSPTR_ASSETPATH_FNAME = 0x10;
+
+
+    struct TArrayView
+    {
+        uint8_t* data{nullptr};
+        int32_t  num{0};
+        int32_t  elemSize{0};
+
+        TArrayView() = default;
+
+
+        TArrayView(FArrayProperty* arrProp, uint8_t* arrayField)
+        {
+            if (!arrProp || !arrayField) return;
+            FProperty* inner = arrProp->GetInner();
+            if (!inner) return;
+            elemSize = inner->GetSize();
+            if (elemSize <= 0) return;
+            if (!isReadableMemory(arrayField, 16)) return;
+
+            std::memcpy(&data, arrayField, 8);
+            std::memcpy(&num, arrayField + 8, 4);
+        }
+
+        [[nodiscard]] int32_t Num() const { return num; }
+        [[nodiscard]] bool IsValidIndex(int32_t idx) const { return idx >= 0 && idx < num && data != nullptr; }
+
+        [[nodiscard]] uint8_t* GetRawPtr(int32_t idx) const
+        {
+            if (!IsValidIndex(idx)) return nullptr;
+            return data + idx * elemSize;
+        }
+    };
+
+
     struct FVec3f
     {
         float X, Y, Z;
@@ -126,9 +146,7 @@ namespace MoriaMods
     };
     static_assert(sizeof(FTransformRaw) == 48, "FTransformRaw must be 48 bytes");
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // ProcessEvent Param Structs (layouts confirmed by probe)
-    // ════════════════════════════════════════════════════════════════════════════
+
     struct GetInstanceCount_Params
     {
         int32_t ReturnValue{0};
@@ -146,37 +164,34 @@ namespace MoriaMods
 #pragma pack(pop)
     static_assert(sizeof(GetInstanceTransform_Params) == 66, "Must be 66 bytes");
 
-    // FHitResult (0x88 = 136 bytes, matches Engine.hpp:2742)
+
 #pragma pack(push, 1)
     struct FHitResultLocal
     {
-        int32_t FaceIndex;                       // 0x00
-        float Time;                              // 0x04
-        float Distance;                          // 0x08
-        FVec3f Location;                         // 0x0C
-        FVec3f ImpactPoint;                      // 0x18
-        FVec3f Normal;                           // 0x24
-        FVec3f ImpactNormal;                     // 0x30
-        FVec3f TraceStart;                       // 0x3C
-        FVec3f TraceEnd;                         // 0x48
-        float PenetrationDepth;                  // 0x54
-        int32_t Item;                            // 0x58
-        uint8_t ElementIndex;                    // 0x5C
-        uint8_t bBlockingHit;                    // 0x5D
-        uint8_t bStartPenetrating;               // 0x5E
-        uint8_t _pad5F;                          // 0x5F
-        RC::Unreal::FWeakObjectPtr PhysMaterial; // 0x60
-        RC::Unreal::FWeakObjectPtr Actor;        // 0x68
-        RC::Unreal::FWeakObjectPtr Component;    // 0x70
-        uint8_t BoneName[8];                     // 0x78 (FName)
-        uint8_t MyBoneName[8];                   // 0x80 (FName)
-    }; // 0x88
+        int32_t FaceIndex;
+        float Time;
+        float Distance;
+        FVec3f Location;
+        FVec3f ImpactPoint;
+        FVec3f Normal;
+        FVec3f ImpactNormal;
+        FVec3f TraceStart;
+        FVec3f TraceEnd;
+        float PenetrationDepth;
+        int32_t Item;
+        uint8_t ElementIndex;
+        uint8_t bBlockingHit;
+        uint8_t bStartPenetrating;
+        uint8_t _pad5F;
+        RC::Unreal::FWeakObjectPtr PhysMaterial;
+        RC::Unreal::FWeakObjectPtr Actor;
+        RC::Unreal::FWeakObjectPtr Component;
+        uint8_t BoneName[8];
+        uint8_t MyBoneName[8];
+    };
 #pragma pack(pop)
     static_assert(sizeof(FHitResultLocal) == 0x88, "FHitResult must be 136 bytes");
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Application Structs
-    // ════════════════════════════════════════════════════════════════════════════
 
     struct RemovedInstance
     {
@@ -188,7 +203,7 @@ namespace MoriaMods
         std::string typeRuleMeshId;
     };
 
-    // PrintString param offsets (runtime-discovered)
+
     struct PSOffsets
     {
         int worldContext{-1};
@@ -201,9 +216,6 @@ namespace MoriaMods
         bool valid{false};
     };
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Win32 Overlay State
-    // ════════════════════════════════════════════════════════════════════════════
 
     static constexpr int OVERLAY_SLOTS = 12;
 
@@ -235,7 +247,7 @@ namespace MoriaMods
 
     namespace Loc
     {
-        // Load string table from JSON, falling back to compiled English defaults
+
         inline void load(const std::string& locDir, const std::string& lang = "en")
         {
             initDefaults();
@@ -250,12 +262,10 @@ namespace MoriaMods
                 VLOG(STR("[MoriaCppMod] Using compiled English defaults (no localization file)\n"));
             }
         }
-    } // namespace Loc
+    }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Config State & Cross-Thread Signals
-    // ════════════════════════════════════════════════════════════════════════════
-    static constexpr int CONFIG_TAB_COUNT = 3;  // Game Mods tab hidden (WIP) — set to 4 to re-enable
+
+    static constexpr int CONFIG_TAB_COUNT = 3;
     inline const wchar_t* CONFIG_TAB_NAMES[4] = {L"Optional Mods", L"Key Mapping", L"Hide Environment", L"Game Mods"};
 
     struct ConfigState
@@ -273,9 +283,7 @@ namespace MoriaMods
 
     inline std::atomic<bool> s_pendingKeyLabelRefresh{false};
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // RAII CriticalSection Lock
-    // ════════════════════════════════════════════════════════════════════════════
+
     struct CriticalSectionLock
     {
         CRITICAL_SECTION& cs;
@@ -285,4 +293,4 @@ namespace MoriaMods
         CriticalSectionLock& operator=(const CriticalSectionLock&) = delete;
     };
 
-} // namespace MoriaMods
+}

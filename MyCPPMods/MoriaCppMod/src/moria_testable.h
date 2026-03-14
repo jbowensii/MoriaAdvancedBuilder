@@ -1,9 +1,6 @@
-// ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  moria_testable.h — Pure-logic functions extracted for unit testing        ║
-// ║                                                                            ║
-// ║  These functions depend only on the C++ standard library and Windows.h.    ║
-// ║  They are included by both dllmain.cpp (production) and the test suite.    ║
-// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+
 #pragma once
 #ifndef MORIA_TESTABLE_H
 #define MORIA_TESTABLE_H
@@ -28,9 +25,7 @@
 
 namespace MoriaMods
 {
-    // ════════════════════════════════════════════════════════════════════════════
-    // Data Structures (used by both production code and tests)
-    // ════════════════════════════════════════════════════════════════════════════
+
 
     struct SavedRemoval
     {
@@ -48,23 +43,17 @@ namespace MoriaMods
         std::wstring coordsW;
     };
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Constants
-    // ════════════════════════════════════════════════════════════════════════════
 
     static constexpr int BIND_COUNT = 22;
     static constexpr int OVERLAY_BUILD_SLOTS = 8;
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Localization String Table (flat JSON with compiled English defaults)
-    // ════════════════════════════════════════════════════════════════════════════
 
     namespace Loc
     {
         static std::unordered_map<std::string, std::wstring> s_table;
         static const std::wstring s_empty;
 
-        // UTF-8 string to wstring via Win32 MultiByteToWideChar
+
         static std::wstring utf8ToWide(const std::string& s)
         {
             if (s.empty()) return {};
@@ -75,7 +64,7 @@ namespace MoriaMods
             return w;
         }
 
-        // Flat JSON parser: string key-value pairs only, with escape support
+
         static bool parseJsonFile(const std::string& path)
         {
             std::ifstream file(path, std::ios::binary);
@@ -83,22 +72,22 @@ namespace MoriaMods
             std::string json((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
             file.close();
 
-            // Skip BOM if present
+
             size_t pos = 0;
             if (json.size() >= 3 && json[0] == '\xEF' && json[1] == '\xBB' && json[2] == '\xBF')
                 pos = 3;
 
-            // Find opening brace
+
             while (pos < json.size() && json[pos] != '{') pos++;
             if (pos >= json.size()) return false;
-            pos++; // skip '{'
+            pos++;
 
             auto skipWS = [&]() { while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r')) pos++; };
 
             auto parseString = [&](std::string& out) -> bool {
                 skipWS();
                 if (pos >= json.size() || json[pos] != '"') return false;
-                pos++; // skip opening quote
+                pos++;
                 out.clear();
                 while (pos < json.size() && json[pos] != '"')
                 {
@@ -114,7 +103,7 @@ namespace MoriaMods
                         case 'r': out += '\r'; break;
                         case '/': out += '/'; break;
                         case 'u': {
-                            // \uXXXX — parse 4 hex digits, encode as UTF-8
+
                             if (pos + 4 < json.size())
                             {
                                 unsigned cp = 0;
@@ -127,7 +116,7 @@ namespace MoriaMods
                                     else if (c >= 'A' && c <= 'F') cp |= (c - 'A' + 10);
                                 }
                                 pos += 4;
-                                // Encode codepoint as UTF-8
+
                                 if (cp < 0x80) out += static_cast<char>(cp);
                                 else if (cp < 0x800) { out += static_cast<char>(0xC0 | (cp >> 6)); out += static_cast<char>(0x80 | (cp & 0x3F)); }
                                 else { out += static_cast<char>(0xE0 | (cp >> 12)); out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F)); out += static_cast<char>(0x80 | (cp & 0x3F)); }
@@ -143,7 +132,7 @@ namespace MoriaMods
                     }
                     pos++;
                 }
-                if (pos < json.size()) pos++; // skip closing quote
+                if (pos < json.size()) pos++;
                 return true;
             };
 
@@ -158,7 +147,7 @@ namespace MoriaMods
                 if (!parseString(key)) break;
                 skipWS();
                 if (pos >= json.size() || json[pos] != ':') break;
-                pos++; // skip ':'
+                pos++;
                 if (!parseString(value)) break;
 
                 s_table[key] = utf8ToWide(value);
@@ -167,10 +156,10 @@ namespace MoriaMods
             return count > 0;
         }
 
-        // Register all English default strings (compiled fallback)
+
         static void initDefaults()
         {
-            // ── Keybind labels ──
+
             s_table["bind.quick_build_1"] = L"Quick Build 1";
             s_table["bind.quick_build_2"] = L"Quick Build 2";
             s_table["bind.quick_build_3"] = L"Quick Build 3";
@@ -193,18 +182,18 @@ namespace MoriaMods
             s_table["bind.trash_item"] = L"Trash Item";
             s_table["bind.replenish_item"] = L"Replenish Item";
             s_table["bind.remove_attrs"] = L"Remove Attributes";
-            // ── Keybind section names ──
+
             s_table["bind.section_quick_building"] = L"Quick Building";
             s_table["bind.section_mod_controller"] = L"Mod Controller";
             s_table["bind.section_advanced_builder"] = L"Advanced Builder";
             s_table["bind.section_diagnostics"] = L"Diagnostics";
             s_table["bind.section_game_options"] = L"Game Options";
-            // ── Modifier key names ──
+
             s_table["key.shift"] = L"SHIFT";
             s_table["key.ctrl"] = L"CTRL";
             s_table["key.alt"] = L"ALT";
             s_table["key.ralt"] = L"RALT";
-            // ── Key display names (non-trivial only) ──
+
             s_table["key.num_multiply"] = L"Num*";
             s_table["key.num_add"] = L"Num+";
             s_table["key.num_separator"] = L"NumSep";
@@ -220,11 +209,11 @@ namespace MoriaMods
             s_table["key.end"] = L"End";
             s_table["key.page_up"] = L"PgUp";
             s_table["key.page_down"] = L"PgDn";
-            // ── Config tabs ──
+
             s_table["tab.optional_mods"] = L"Optional Mods";
             s_table["tab.key_mapping"] = L"Key Mapping";
             s_table["tab.hide_environment"] = L"Hide Environment";
-            // ── UI labels: config menu ──
+
             s_table["ui.config_title"] = L"Building Mod Configuration Menu";
             s_table["ui.cheat_toggles"] = L"Cheat Toggles";
             s_table["ui.free_build"] = L"  Free Build";
@@ -238,7 +227,7 @@ namespace MoriaMods
             s_table["ui.saved_removals_prefix"] = L"Saved Removals (";
             s_table["ui.saved_removals_suffix"] = L" entries)";
             s_table["ui.type_rule"] = L"TYPE RULE";
-            // ── UI labels: target info ──
+
             s_table["ui.target_info_title"] = L"Target Info";
             s_table["ui.label_class"] = L"Class:";
             s_table["ui.label_name"] = L"Name:";
@@ -254,13 +243,13 @@ namespace MoriaMods
             s_table["ui.value_recipe_prefix"] = L"Recipe:   ";
             s_table["ui.yes"] = L"Yes";
             s_table["ui.no"] = L"No";
-            // ── UI labels: info box ──
+
             s_table["ui.info_title"] = L"Info";
-            // ── Overlay text ──
+
             s_table["ovr.target"] = L"TGT";
             s_table["ovr.config"] = L"CFG";
             s_table["ovr.degree"] = L"\xB0";
-            // ── On-screen messages ──
+
             s_table["msg.no_hit"] = L"[Inspect] No hit";
             s_table["msg.actor_dump_no_hit"] = L"[ActorDump] No hit";
             s_table["msg.no_buildable_target"] = L"No buildable target \x2014 aim at a building and press F10 first";
@@ -278,7 +267,7 @@ namespace MoriaMods
             s_table["msg.char_hidden"] = L"Character hidden";
             s_table["msg.char_visible"] = L"Character visible";
             s_table["msg.fly_off"] = L"Fly mode OFF";
-            // ── Save file headers ──
+
             s_table["save.removal_header"] = L"# MoriaCppMod removed instances";
             s_table["save.removal_format1"] = L"# meshName|posX|posY|posZ = single instance";
             s_table["save.removal_format2"] = L"# @meshName = remove ALL of this type";
@@ -287,25 +276,21 @@ namespace MoriaMods
             s_table["save.keybind_header"] = L"# MoriaCppMod keybindings (index|VK_code)";
         }
 
-        // Get localized string by key (const ref, zero-copy)
+
         static const std::wstring& get(const char* key)
         {
             auto it = s_table.find(key);
             return (it != s_table.end()) ? it->second : s_empty;
         }
 
-        // Clear the string table (for test isolation)
+
         static void clear()
         {
             s_table.clear();
         }
-    } // namespace Loc
+    }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // String Helpers
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // Word-wrap a prefixed string to fit within maxLine chars
     static std::wstring wrapText(const std::wstring& prefix, const std::wstring& value, size_t maxLine = 70)
     {
         std::wstring full = prefix + value;
@@ -321,7 +306,7 @@ namespace MoriaMods
                 result += full.substr(lineStart);
                 break;
             }
-            // Try to break at a word boundary
+
             size_t breakAt = lineEnd;
             for (size_t j = lineEnd; j > lineStart + maxLine / 2; j--)
             {
@@ -345,7 +330,7 @@ namespace MoriaMods
         return std::wstring(shortName.begin(), shortName.end());
     }
 
-    // Strip numeric suffix from component name to get stable mesh ID
+
     static std::string componentNameToMeshId(const std::wstring& name)
     {
         std::string narrow;
@@ -372,9 +357,6 @@ namespace MoriaMods
         return narrow;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Key Name Helpers
-    // ════════════════════════════════════════════════════════════════════════════
 
     static const wchar_t* modifierName(uint8_t vk)
     {
@@ -413,13 +395,13 @@ namespace MoriaMods
     static std::wstring keyName(uint8_t vk)
     {
         if (vk >= 0x70 && vk <= 0x7B)
-        { // F1-F12
+        {
             wchar_t buf[8];
             swprintf_s(buf, L"F%d", vk - 0x70 + 1);
             return buf;
         }
         if (vk >= 0x60 && vk <= 0x69)
-        { // Numpad 0-9
+        {
             wchar_t buf[8];
             swprintf_s(buf, L"Num%d", vk - 0x60);
             return buf;
@@ -496,11 +478,7 @@ namespace MoriaMods
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Reverse Key Name Mapping
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // Helper: case-insensitive wstring compare
     static bool wstrEqualCI(const std::wstring& a, const wchar_t* b)
     {
         std::wstring la = a, lb = b;
@@ -511,12 +489,12 @@ namespace MoriaMods
         return la == lb;
     }
 
-    // Reverse of keyName(): human-readable key name -> VK code
+
     static std::optional<uint8_t> nameToVK(const std::wstring& name)
     {
         if (name.empty()) return std::nullopt;
 
-        // F-keys: F1-F24
+
         if ((name[0] == L'F' || name[0] == L'f') && name.size() >= 2 && name.size() <= 3)
         {
             bool allDigits = true;
@@ -531,13 +509,13 @@ namespace MoriaMods
             }
         }
 
-        // Numpad digits: Num0-Num9
+
         if (name.size() == 4 && wstrEqualCI(name.substr(0, 3), L"Num") && iswdigit(name[3]))
         {
             return static_cast<uint8_t>(0x60 + (name[3] - L'0'));
         }
 
-        // Numpad operators
+
         if (wstrEqualCI(name, L"Num*")) return 0x6A;
         if (wstrEqualCI(name, L"Num+")) return 0x6B;
         if (wstrEqualCI(name, L"NumSep")) return 0x6C;
@@ -545,7 +523,7 @@ namespace MoriaMods
         if (wstrEqualCI(name, L"Num.")) return 0x6E;
         if (wstrEqualCI(name, L"Num/")) return 0x6F;
 
-        // Symbol keys (single-char)
+
         if (name.size() == 1)
         {
             switch (name[0])
@@ -563,16 +541,16 @@ namespace MoriaMods
             case L'\'': return 0xDE;
             default: break;
             }
-            // Single digit 0-9
+
             if (name[0] >= L'0' && name[0] <= L'9')
                 return static_cast<uint8_t>(name[0]);
-            // Single letter A-Z (case-insensitive)
+
             wchar_t upper = towupper(name[0]);
             if (upper >= L'A' && upper <= L'Z')
                 return static_cast<uint8_t>(upper);
         }
 
-        // Special keys
+
         if (wstrEqualCI(name, L"Space")) return 0x20;
         if (wstrEqualCI(name, L"Tab")) return 0x09;
         if (wstrEqualCI(name, L"Enter")) return 0x0D;
@@ -583,7 +561,7 @@ namespace MoriaMods
         if (wstrEqualCI(name, L"PgUp")) return 0x21;
         if (wstrEqualCI(name, L"PgDn")) return 0x22;
 
-        // Hex fallback: "0xFF" format
+
         if (name.size() == 4 && name[0] == L'0' && (name[1] == L'x' || name[1] == L'X'))
         {
             try
@@ -599,7 +577,7 @@ namespace MoriaMods
         return std::nullopt;
     }
 
-    // Reverse of modifierName(): modifier string -> VK code (case-insensitive)
+
     static std::optional<uint8_t> modifierNameToVK(const std::wstring& name)
     {
         if (wstrEqualCI(name, L"SHIFT")) return VK_SHIFT;
@@ -609,7 +587,7 @@ namespace MoriaMods
         return std::nullopt;
     }
 
-    // Modifier VK code -> INI string (narrow, for file output)
+
     static std::string modifierToIniName(uint8_t vk)
     {
         switch (vk)
@@ -622,9 +600,6 @@ namespace MoriaMods
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // INI File Parsing
-    // ════════════════════════════════════════════════════════════════════════════
 
     struct ParsedIniSection
     {
@@ -637,7 +612,7 @@ namespace MoriaMods
     };
     using ParsedIniLine = std::variant<std::monostate, ParsedIniSection, ParsedIniKeyValue>;
 
-    // Helper: trim leading/trailing whitespace from a string
+
     static std::string trimStr(const std::string& s)
     {
         size_t start = s.find_first_not_of(" \t\r\n");
@@ -646,14 +621,14 @@ namespace MoriaMods
         return s.substr(start, end - start + 1);
     }
 
-    // Parse one line of an INI file
+
     static ParsedIniLine parseIniLine(const std::string& line)
     {
         std::string trimmed = trimStr(line);
         if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#')
             return std::monostate{};
 
-        // Section header: [Name]
+
         if (trimmed.front() == '[' && trimmed.back() == ']')
         {
             std::string name = trimStr(trimmed.substr(1, trimmed.size() - 2));
@@ -661,14 +636,14 @@ namespace MoriaMods
             return std::monostate{};
         }
 
-        // Key = Value
+
         auto eq = trimmed.find('=');
         if (eq == std::string::npos) return std::monostate{};
 
         std::string key = trimStr(trimmed.substr(0, eq));
         std::string value = trimStr(trimmed.substr(eq + 1));
 
-        // Strip inline comment (space+semicolon), but not a bare semicolon as value
+
         for (size_t i = 1; i < value.size(); i++)
         {
             if (value[i] == ';' && value[i - 1] == ' ')
@@ -682,38 +657,38 @@ namespace MoriaMods
         return std::monostate{};
     }
 
-    // INI key name <-> bind index mapping
+
     static const char* bindIndexToIniKey(int idx)
     {
         static const char* keys[BIND_COUNT] = {
-            "QuickBuild1",        // 0
-            "QuickBuild2",        // 1
-            "QuickBuild3",        // 2
-            "QuickBuild4",        // 3
-            "QuickBuild5",        // 4
-            "QuickBuild6",        // 5
-            "QuickBuild7",        // 6
-            "QuickBuild8",        // 7
-            "Rotation",           // 8  (MC slot 0)
-            "SnapToggle",         // 9  (MC slot 1)
-            "StabilityCheck",     // 10 (MC slot 2)
-            "SuperDwarf",         // 11 (MC slot 3)
-            "Target",             // 12 (MC slot 4)
-            "Configuration",      // 13 (MC slot 5)
-            "RemoveTarget",       // 14 (MC slot 6)
-            "UndoLast",           // 15 (MC slot 7)
-            "RemoveAll",          // 16 (MC slot 8)
-            "AdvancedBuilderOpen", // 17
-            "Reserved1",          // 18 (placeholder)
-            "TrashItem",          // 19
-            "ReplenishItem",      // 20
-            "RemoveAttributes"    // 21
+            "QuickBuild1",
+            "QuickBuild2",
+            "QuickBuild3",
+            "QuickBuild4",
+            "QuickBuild5",
+            "QuickBuild6",
+            "QuickBuild7",
+            "QuickBuild8",
+            "Rotation",
+            "SnapToggle",
+            "StabilityCheck",
+            "SuperDwarf",
+            "Target",
+            "Configuration",
+            "RemoveTarget",
+            "UndoLast",
+            "RemoveAll",
+            "AdvancedBuilderOpen",
+            "Reserved1",
+            "TrashItem",
+            "ReplenishItem",
+            "RemoveAttributes"
         };
         if (idx < 0 || idx >= BIND_COUNT) return nullptr;
         return keys[idx];
     }
 
-    // Helper: case-insensitive narrow string compare
+
     static bool strEqualCI(const std::string& a, const std::string& b)
     {
         if (a.size() != b.size()) return false;
@@ -732,9 +707,6 @@ namespace MoriaMods
         return -1;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // Memory Safety Helper
-    // ════════════════════════════════════════════════════════════════════════════
 
     static bool isReadableMemory(const void* ptr, size_t size = 8)
     {
@@ -747,7 +719,7 @@ namespace MoriaMods
             return (protect == PAGE_READONLY || protect == PAGE_READWRITE || protect == PAGE_EXECUTE_READ || protect == PAGE_EXECUTE_READWRITE);
         };
         if (!checkPage(ptr)) return false;
-        // Also check the last byte of the range to catch cross-page boundary reads
+
         if (size > 1)
         {
             const void* end = static_cast<const uint8_t*>(ptr) + size - 1;
@@ -756,11 +728,7 @@ namespace MoriaMods
         return true;
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // File Format Parse Helpers (shared by production and tests)
-    // ════════════════════════════════════════════════════════════════════════════
 
-    // Result types for parsed lines
     struct ParsedRemovalPosition
     {
         std::string meshName;
@@ -774,7 +742,7 @@ namespace MoriaMods
 
     using ParsedRemovalLine = std::variant<std::monostate, ParsedRemovalPosition, ParsedRemovalTypeRule>;
 
-    // Parse a single line from removed_instances.txt
+
     static ParsedRemovalLine parseRemovalLine(const std::string& line)
     {
         if (line.empty() || line[0] == '#') return std::monostate{};
@@ -802,13 +770,13 @@ namespace MoriaMods
         return result;
     }
 
-    // Result for parsed quickbuild slot line
+
     struct ParsedSlot
     {
         int slotIndex;
         std::string displayName;
-        std::string textureName; // may be empty (backward compat)
-        std::string rowName;     // may be empty (backward compat with 3-field lines)
+        std::string textureName;
+        std::string rowName;
     };
 
     struct ParsedRotation
@@ -818,7 +786,7 @@ namespace MoriaMods
 
     using ParsedSlotLine = std::variant<std::monostate, ParsedSlot, ParsedRotation>;
 
-    // Parse a single line from quickbuild_slots.txt
+
     static ParsedSlotLine parseSlotLine(const std::string& line)
     {
         if (line.empty() || line[0] == '#') return std::monostate{};
@@ -826,7 +794,7 @@ namespace MoriaMods
         if (sep1 == std::string::npos) return std::monostate{};
         std::string key = line.substr(0, sep1);
 
-        // Rotation step persistence
+
         if (key == "rotation")
         {
             try
@@ -849,7 +817,7 @@ namespace MoriaMods
         }
         if (slot < 0 || slot >= OVERLAY_BUILD_SLOTS) return std::monostate{};
 
-        // Parse: displayName|textureName|rowName (textureName and rowName optional)
+
         auto sep2 = line.find('|', sep1 + 1);
         std::string name, tex, row;
         if (sep2 != std::string::npos)
@@ -873,7 +841,7 @@ namespace MoriaMods
         return ParsedSlot{slot, name, tex, row};
     }
 
-    // Result for parsed keybind line
+
     struct ParsedKeybind
     {
         int bindIndex;
@@ -887,12 +855,12 @@ namespace MoriaMods
 
     using ParsedKeybindLine = std::variant<std::monostate, ParsedKeybind, ParsedModifier>;
 
-    // Parse a single line from keybindings.txt
+
     static ParsedKeybindLine parseKeybindLine(const std::string& line)
     {
         if (line.empty() || line[0] == '#') return std::monostate{};
 
-        // Check for modifier line: "mod|VK_code"
+
         if (line.size() > 4 && line.substr(0, 4) == "mod|")
         {
             try
@@ -922,6 +890,6 @@ namespace MoriaMods
         return std::monostate{};
     }
 
-} // namespace MoriaMods
+}
 
-#endif // MORIA_TESTABLE_H
+#endif

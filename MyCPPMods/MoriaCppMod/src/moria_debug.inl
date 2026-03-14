@@ -1,10 +1,6 @@
-// ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  moria_debug.inl — Display, debug, and cheat command methods               ║
-// ║  #include inside MoriaCppMod class body                                    ║
-// ╚══════════════════════════════════════════════════════════════════════════════╝
 
-        // â"€â"€ 6C: Display & UI Helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // Discover PrintString param offsets via ForEachProperty
+
+
         void probePrintString()
         {
             auto* fn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:PrintString"));
@@ -41,7 +37,7 @@
             VLOG(STR("[MoriaCppMod] PrintString valid={}\n"), m_ps.valid);
         }
 
-        // Display text on screen via PrintString (requires probePrintString first)
+
         void showOnScreen(const std::wstring& text, float duration = 5.0f, float r = 0.0f, float g = 1.0f, float b = 0.5f)
         {
             if (!m_ps.valid) return;
@@ -58,10 +54,10 @@
 
             std::vector<uint8_t> buf(m_ps.parmsSize, 0);
 
-            // WorldContextObject
+
             std::memcpy(buf.data() + m_ps.worldContext, &pc, 8);
 
-            // FString in param buffer: Data ptr (8) + ArrayNum (4) + ArrayMax (4)
+
             const wchar_t* textPtr = text.c_str();
             int32_t len = static_cast<int32_t>(text.size() + 1);
             uintptr_t ptrVal = reinterpret_cast<uintptr_t>(textPtr);
@@ -69,32 +65,30 @@
             std::memcpy(buf.data() + m_ps.inString + 8, &len, 4);
             std::memcpy(buf.data() + m_ps.inString + 12, &len, 4);
 
-            // bPrintToScreen = true
+
             buf[m_ps.printToScreen] = 1;
 
-            // bPrintToLog = false (don't spam log)
+
             if (m_ps.printToLog >= 0) buf[m_ps.printToLog] = 0;
 
-            // TextColor (FLinearColor: R, G, B, A)
+
             if (m_ps.textColor >= 0)
             {
                 float color[4] = {r, g, b, 1.0f};
                 std::memcpy(buf.data() + m_ps.textColor, color, 16);
             }
 
-            // Duration
+
             std::memcpy(buf.data() + m_ps.duration, &duration, 4);
 
             cdo->ProcessEvent(fn, buf.data());
             VLOG(STR("[MoriaCppMod] showOnScreen: '{}' dur={:.1f}\n"), text, duration);
         }
 
-        // ── Game State Diagnostic Logger ──
-        // Queries UMoriaUtils::GetMoriaGameState() and logs IsWorldReady / GetShadersFinishedCompiling.
-        // Also queries GetManager() for the construction manager and compares with our cached resolution.
+
         void logGameState(const wchar_t* label)
         {
-            // Resolve UMoriaUtils CDO + functions once
+
             static UObject* s_utilsCDO = nullptr;
             static UFunction* s_fnGetGameState = nullptr;
             static UFunction* s_fnGetManager = nullptr;
@@ -152,7 +146,7 @@
                 return;
             }
 
-            // ── GetMoriaGameState ──
+
             UObject* gameState = nullptr;
             if (s_fnGetGameState && s_gsWorldCtx >= 0 && s_gsRet >= 0)
             {
@@ -185,7 +179,7 @@
             VLOG(STR("[MoriaCppMod] [GS] [{}] GameState={} WorldReady={} ShadersCompiled={}\n"),
                 label, (void*)gameState, worldReady, shadersCompiled);
 
-            // ── GetManager (construction manager) ──
+
             if (s_fnGetManager && s_gmWorldCtx >= 0 && s_gmClass >= 0 && s_gmRet >= 0)
             {
                 auto* cmClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
@@ -203,13 +197,10 @@
             }
         }
 
-        // â"€â"€ Chat/Widget display â"€â"€
 
-                // â"€â"€ Debug Cheat Functions â"€â"€
-        // Call a 0-param function on a debug actor (direct class search + actor scan fallback)
         bool callDebugFunc(const wchar_t* actorClass, const wchar_t* funcName)
         {
-            // Try direct class search first (faster and more reliable)
+
             {
                 std::vector<UObject*> directObjs;
                 UObjectGlobals::FindAllOf(actorClass, directObjs);
@@ -218,7 +209,7 @@
                     for (auto* a : directObjs)
                     {
                         if (!a) continue;
-                        if (!isWidgetAlive(a)) continue;
+                        if (!isObjectAlive(a)) continue;
                         auto* fn = a->GetFunctionByNameInChain(funcName);
                         if (fn)
                         {
@@ -231,7 +222,7 @@
                 }
             }
 
-            // Fallback: scan all actors by class name
+
             std::vector<UObject*> actors;
             UObjectGlobals::FindAllOf(STR("Actor"), actors);
             for (auto* a : actors)
@@ -240,7 +231,7 @@
                 std::wstring cls = safeClassName(a);
                 if (cls == actorClass)
                 {
-                    if (!isWidgetAlive(a)) continue;
+                    if (!isObjectAlive(a)) continue;
                     auto* fn = a->GetFunctionByNameInChain(funcName);
                     if (fn)
                     {
@@ -252,7 +243,7 @@
                     return false;
                 }
             }
-            // Only log on first retry (not every frame)
+
             static int s_debugNotFoundCount = 0;
             if (++s_debugNotFoundCount <= 3)
                 VLOG(STR("[MoriaCppMod] Actor {} not found (attempt {})\n"), std::wstring(actorClass), s_debugNotFoundCount);
@@ -260,9 +251,6 @@
         }
 
 
-        // â"€â"€ 6F: Debug & Cheat Commands â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-
-        // Read and display debug menu toggle states
         void showDebugMenuState()
         {
             std::vector<UObject*> actors;
@@ -292,15 +280,15 @@
             showErrorBox(Loc::get("msg.debug_actor_not_found"));
         }
 
-        // Sync s_config flags from actual debug menu state (called on character load)
+
         bool syncDebugToggleState()
         {
-            // Try direct class search first
+
             std::vector<UObject*> objs;
             UObjectGlobals::FindAllOf(STR("BP_DebugMenu_CraftingAndConstruction_C"), objs);
             if (objs.empty())
             {
-                // Fallback: scan all actors
+
                 std::vector<UObject*> actors;
                 UObjectGlobals::FindAllOf(STR("Actor"), actors);
                 for (auto* a : actors)
@@ -334,11 +322,11 @@
             { std::scoped_lock lock(m_charNameMutex); newName = m_pendingCharName; m_pendingCharName.clear(); }
             if (newName.empty()) return;
 
-            // Find CustomizationManager component
+
             std::vector<UObject*> mgrs;
             UObjectGlobals::FindAllOf(STR("CustomizationManager"), mgrs);
 
-            // Filter to our player's component
+
             UObject* pawn = getPawn();
             UObject* target = nullptr;
             for (auto* mgr : mgrs) {
@@ -346,7 +334,7 @@
                 auto* outer = mgr->GetOuterPrivate();
                 if (outer == pawn) { target = mgr; break; }
             }
-            if (!target && !mgrs.empty()) target = mgrs[0]; // fallback: first found
+            if (!target && !mgrs.empty()) target = mgrs[0];
 
             if (!target) {
                 showErrorBox(L"CustomizationManager not found");
@@ -361,11 +349,11 @@
                 return;
             }
 
-            // Build FString param: { wchar_t* Data, int32 Num, int32 Max }
+
             int32_t parmsSize = fn->GetParmsSize();
             std::vector<uint8_t> buf(parmsSize, 0);
 
-            // Find the NewCharacterName param offset
+
             int nameOffset = -1;
             for (auto* prop : fn->ForEachProperty()) {
                 if (prop->GetName() == STR("NewCharacterName")) {
@@ -392,14 +380,14 @@
             VLOG(STR("[MoriaCppMod] SetCharacterName('{}') called\n"), newName);
         }
 
-        // Dispatch MC toolbar slot action (keyboard and click handlers)
+
         void dispatchMcSlot(int slot)
         {
             VLOG(STR("[MoriaCppMod] [MC] dispatchMcSlot({}) BEGIN\n"), slot);
             logGameState(STR("MC-pre"));
             switch (slot)
             {
-            case 0: // Rotation
+            case 0:
             {
                 bool modDown = isModifierDown();
                 int cur = s_overlay.rotationStep;
@@ -418,20 +406,20 @@
                 updateMcRotationLabel();
                 break;
             }
-            case 1: // Snap Toggle (only while placing a piece)
+            case 1:
                 if (resolveGATA())
                     toggleSnap();
                 break;
-            case 2: // Stability Check
+            case 2:
                 runStabilityAudit();
                 break;
-            case 3: // Super Dwarf
+            case 3:
                 if (isModifierDown())
                     toggleFlyMode();
                 else
                     toggleHideCharacter();
                 break;
-            case 4: // Target
+            case 4:
                 if (isModifierDown())
                     quickBuildFromTarget();
                 else if (m_tiShowTick > 0)
@@ -439,15 +427,15 @@
                 else
                     dumpAimedActor();
                 break;
-            case 5: // Configuration — handled separately
+            case 5:
                 break;
-            case 6: // Remove Target
+            case 6:
                 removeAimed();
                 break;
-            case 7: // Undo Last
+            case 7:
                 undoLast();
                 break;
-            case 8: // Remove All
+            case 8:
                 removeAllOfType();
                 break;
             default:

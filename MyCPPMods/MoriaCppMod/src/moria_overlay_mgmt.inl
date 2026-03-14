@@ -1,10 +1,6 @@
-// ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║  moria_overlay_mgmt.inl — startOverlay, stopOverlay, input mode helpers   ║
-// ║  #include inside MoriaCppMod class body                                    ║
-// ╚══════════════════════════════════════════════════════════════════════════════╝
 
-        // Ã¢â€â‚¬Ã¢â€â‚¬ 6J: Overlay & Window Management Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // Sync overlay slot display from m_recipeSlots[], load icon PNGs
+
+
         void updateOverlaySlots()
         {
             if (!s_overlay.csInit) return;
@@ -13,13 +9,13 @@
             {
                 s_overlay.slots[i].used = m_recipeSlots[i].used;
                 s_overlay.slots[i].displayName = m_recipeSlots[i].displayName;
-                // If texture changed, discard old icon so new one loads
+
                 if (s_overlay.slots[i].textureName != m_recipeSlots[i].textureName)
                 {
                     s_overlay.slots[i].icon.reset();
                 }
                 s_overlay.slots[i].textureName = m_recipeSlots[i].textureName;
-                // Try loading PNG icon if we have a texture name and no icon yet
+
                 if (s_overlay.slots[i].used && !s_overlay.slots[i].textureName.empty() && !s_overlay.slots[i].icon && !s_overlay.iconFolder.empty())
                 {
                     std::wstring pngPath = s_overlay.iconFolder + L"\\" + s_overlay.slots[i].textureName + L".png";
@@ -37,11 +33,6 @@
             s_overlay.needsUpdate = true;
         }
 
-        void updateOverlayText()
-        {
-            updateOverlaySlots();
-        }
-
         void startOverlay()
         {
             if (s_overlay.thread) return;
@@ -50,7 +41,7 @@
                 InitializeCriticalSection(&s_overlay.slotCS);
                 s_overlay.csInit = true;
             }
-            // Set icon folder to Mods/MoriaCppMod/icons/
+
             wchar_t dllPath[MAX_PATH]{};
             GetModuleFileNameW(nullptr, dllPath, MAX_PATH);
             std::wstring gamePath(dllPath);
@@ -58,7 +49,7 @@
             if (pos != std::wstring::npos) gamePath = gamePath.substr(0, pos);
             s_overlay.iconFolder = gamePath + L"\\Mods\\MoriaCppMod\\icons";
 
-            // Initialize GDI+ early so updateOverlaySlots can load cached icon PNGs
+
             if (!s_overlay.gdipToken)
             {
                 Gdiplus::GdiplusStartupInput gdipInput;
@@ -72,8 +63,7 @@
             VLOG(STR("[MoriaCppMod] Overlay thread started, icons: {}\n"), s_overlay.iconFolder);
         }
 
-        // LINT NOTE (#9): 3s WaitForSingleObject may leave slotCS held at shutdown.
-        // Acceptable: INFINITE wait risks hanging if GDI+ is stuck; crash invisible.
+
         void stopOverlay()
         {
             s_overlay.running = false;
@@ -84,7 +74,7 @@
                 CloseHandle(s_overlay.thread);
                 s_overlay.thread = nullptr;
             }
-            // Release icons before GDI+ shutdown, reset token for potential restart
+
             for (int i = 0; i < OVERLAY_SLOTS; i++)
             {
                 s_overlay.slots[i].icon.reset();
@@ -102,8 +92,6 @@
         }
 
 
-        // Ã¢â€â‚¬Ã¢â€â‚¬ Input Mode Helpers (for modal UI: Config Menu, Reposition Mode) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        // Switch to UI-only input mode (shows cursor, blocks game input)
         void setInputModeUI(UObject* focusWidget = nullptr)
         {
             auto* pc = findPlayerController();
@@ -111,7 +99,7 @@
             if (!focusWidget) focusWidget = m_fontTestWidget;
             if (!focusWidget) return;
 
-            // Find SetInputMode_UIOnlyEx on WidgetBlueprintLibrary CDO
+
             auto* uiFunc = UObjectGlobals::StaticFindObject<UFunction*>(
                 nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:SetInputMode_UIOnlyEx"));
             auto* wblCDO = UObjectGlobals::StaticFindObject<UObject*>(
@@ -121,7 +109,7 @@
                 return;
             }
 
-            // Resolve param offsets via reflection
+
             resolveSIMUIOffsets(uiFunc);
             if (s_simui.PlayerController < 0) return;
             std::vector<uint8_t> params(s_simui.parmsSize, 0);
@@ -129,16 +117,16 @@
             if (s_simui.InWidgetToFocus >= 0)
                 std::memcpy(params.data() + s_simui.InWidgetToFocus, &focusWidget, 8);
             if (s_simui.InMouseLockMode >= 0)
-                params[s_simui.InMouseLockMode] = 0; // EMouseLockMode::DoNotLock
+                params[s_simui.InMouseLockMode] = 0;
             wblCDO->ProcessEvent(uiFunc, params.data());
 
-            // Set bShowMouseCursor via FBoolProperty API
+
             setBoolProp(pc, L"bShowMouseCursor", true);
 
             VLOG(STR("[MoriaCppMod] Input mode Ã¢â€ â€™ UI Only (mouse cursor ON)\n"));
         }
 
-        // Restore game-only input mode (hides cursor)
+
         void setInputModeGame()
         {
             auto* pc = findPlayerController();
@@ -153,41 +141,38 @@
                 return;
             }
 
-            // Resolve param offsets via reflection
+
             resolveSIMGOffsets(gameFunc);
             if (s_simg.PlayerController < 0) return;
             std::vector<uint8_t> params(s_simg.parmsSize, 0);
             std::memcpy(params.data() + s_simg.PlayerController, &pc, 8);
             wblCDO->ProcessEvent(gameFunc, params.data());
 
-            // Clear bShowMouseCursor via FBoolProperty API
+
             setBoolProp(pc, L"bShowMouseCursor", false);
 
             VLOG(STR("[MoriaCppMod] Input mode Ã¢â€ â€™ Game Only (mouse cursor OFF)\n"));
         }
 
-        // (toggleConfig removed — F12 now uses toggleFontTestPanel)
 
-
-        // Ã¢â€â‚¬Ã¢â€â‚¬ Toolbar Repositioning Mode Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         void createRepositionMessage()
         {
             if (m_repositionMsgWidget) return;
-            // Use showOnScreen for simplicity Ã¢â‚¬â€ centered UMG message
-            // Create a simple UUserWidget with a TextBlock
+
+
             auto* uwClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
             if (!uwClass) return;
             auto* pc = findPlayerController();
             if (!pc) return;
 
-            // CreateWidget<UUserWidget>
+
             auto* createFn = uwClass->GetFunctionByNameInChain(STR("CreateWidgetOfClass"));
             if (!createFn) return;
             FStaticConstructObjectParameters uwP(uwClass, reinterpret_cast<UObject*>(pc));
             auto* userWidget = UObjectGlobals::StaticConstructObject(uwP);
             if (!userWidget) return;
 
-            // Create WidgetTree
+
             auto* wtClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetTree"));
             if (wtClass)
             {
@@ -195,11 +180,11 @@
                 auto* widgetTree = UObjectGlobals::StaticConstructObject(wtP);
                 if (widgetTree)
                 {
-                    // Set WidgetTree on UserWidget via reflected property
+
                     auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
                     if (wtSlot) *wtSlot = widgetTree;
 
-                    // Create a TextBlock as root
+
                     auto* tbClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
                     if (tbClass)
                     {
@@ -209,14 +194,14 @@
                         {
                             setRootWidget(widgetTree, textBlock);
                             umgSetText(textBlock, L"Using the mouse move the toolbar(s) into your desired positions, hit ESC to exit.");
-                            // Yellow text for visibility
+
                             umgSetTextColor(textBlock, 1.0f, 0.95f, 0.2f, 1.0f);
                         }
                     }
                 }
             }
 
-            // Add to viewport at high Z-order
+
             auto* addFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
             if (addFn)
             {
@@ -227,11 +212,11 @@
                 userWidget->ProcessEvent(addFn, vp.data());
             }
 
-            // Get viewport and position centered
+
             m_screen.refresh(findPlayerController());
             float uiScale = m_screen.uiScale;
 
-            // Set desired size and alignment
+
             auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
             if (setDesiredSizeFn)
             {
@@ -271,7 +256,7 @@
             m_repositionMsgWidget = nullptr;
         }
 
-        // Create placeholder Info Box for repositioning mode
+
         void createPlaceholderInfoBox()
         {
             if (m_repositionInfoBoxWidget) return;
@@ -308,7 +293,7 @@
             UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
-            // Root SizeBox -- matches real Target Info widget structure (width constraint 550)
+
             UObject* rootSizeBox = nullptr;
             if (sizeBoxClass)
             {
@@ -325,7 +310,7 @@
                 }
             }
 
-            // Border (transparent bg -- matches real Target Info widget)
+
             FStaticConstructObjectParameters borderP(borderClass, outer);
             UObject* rootBorder = UObjectGlobals::StaticConstructObject(borderP);
             if (!rootBorder) return;
@@ -355,7 +340,7 @@
                     int sz = setBrushColorFn->GetParmsSize();
                     std::vector<uint8_t> cb(sz, 0);
                     auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
-                    c[0] = 0.0f; c[1] = 0.0f; c[2] = 0.0f; c[3] = 0.0f; // transparent
+                    c[0] = 0.0f; c[1] = 0.0f; c[2] = 0.0f; c[3] = 0.0f;
                     rootBorder->ProcessEvent(setBrushColorFn, cb.data());
                 }
             }
@@ -373,7 +358,7 @@
                 }
             }
 
-            // VBox with example text rows -- mirrors real Target Info layout
+
             FStaticConstructObjectParameters vboxP(vboxClass, outer);
             UObject* vbox = UObjectGlobals::StaticConstructObject(vboxP);
             if (!vbox) return;
@@ -396,7 +381,7 @@
                 addToVBox(vbox, tb);
             };
 
-            // Example content matching real Target Info structure
+
             makeTextBlock(Loc::get("ui.target_info_title"), 0.78f, 0.86f, 1.0f, 1.0f);
             makeTextBlock(L"--------------------------------", 0.31f, 0.51f, 0.78f, 0.5f);
             makeTextBlock(L"Class: BP_Example_Actor_C", 0.86f, 0.90f, 0.96f, 0.9f);
@@ -406,7 +391,7 @@
             makeTextBlock(L"Buildable: Yes", 0.31f, 0.86f, 0.31f, 1.0f);
             makeTextBlock(L"Recipe: ExampleRecipe", 0.86f, 0.90f, 0.96f, 0.9f);
 
-            // Add to viewport at high Z-order
+
             auto* addFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
             if (addFn)
             {
@@ -417,15 +402,15 @@
                 userWidget->ProcessEvent(addFn, vp.data());
             }
 
-            // Get viewport size for uiScale + positioning
+
             m_screen.refresh(findPlayerController());
             int32_t viewW = m_screen.viewW, viewH = m_screen.viewH;
             float uiScale = m_screen.uiScale;
 
-            // Render scale 1.0 -- engine DPI handles resolution scaling via Slate
+
             if (rootSizeBox) umgSetRenderScale(rootSizeBox, 1.0f, 1.0f);
 
-            // Desired size in Slate units -- matches real Target Info widget
+
             auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
             if (setDesiredSizeFn)
             {
@@ -440,7 +425,7 @@
                 }
             }
 
-            // Center alignment
+
             auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
             if (setAlignFn)
             {
@@ -455,13 +440,13 @@
                 }
             }
 
-            // Position from saved or default
+
             float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
             float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
             setWidgetPosition(userWidget, m_screen.fracToPixelX(fracX),
                                           m_screen.fracToPixelY(fracY), true);
 
-            // Cache size for hit-test -- matches real Target Info dimensions
+
             m_toolbarSizeW[3] = m_screen.slateToFracX(1100.0f * uiScale);
             m_toolbarSizeH[3] = m_screen.slateToFracY(320.0f * uiScale);
 
@@ -479,17 +464,16 @@
 
         void toggleRepositionMode()
         {
-            // Guard: need at least one toolbar created before entering reposition mode
+
             if (!m_repositionMode && !m_umgBarWidget && !m_abBarWidget && !m_mcBarWidget)
                 return;
 
             m_repositionMode = !m_repositionMode;
             m_dragToolbar = -1;
-            m_hitDebugDone = false; // reset so debug fires on first click each reposition session
 
             if (m_repositionMode)
             {
-                // Ensure toolbars are visible (don't move them Ã¢â‚¬â€ let user adjust from current positions)
+
                 if (!m_toolbarsVisible)
                 {
                     m_toolbarsVisible = true;
@@ -498,7 +482,7 @@
                 }
                 createRepositionMessage();
                 createPlaceholderInfoBox();
-                // Use the message widget for focus, or fall back to any toolbar
+
                 UObject* focusW = m_repositionMsgWidget ? m_repositionMsgWidget
                                 : m_umgBarWidget ? m_umgBarWidget
                                 : m_abBarWidget;
@@ -515,17 +499,6 @@
             }
         }
 
-        void showTargetInfo(const std::wstring& name,
-                            const std::wstring& display,
-                            const std::wstring& path,
-                            const std::wstring& cls,
-                            bool buildable = false,
-                            const std::wstring& recipe = L"",
-                            const std::wstring& rowName = L"")
-        {
-            showTargetInfoUMG(name, display, path, cls, buildable, recipe, rowName);
-        }
-
         void undoLast()
         {
             if (m_undoStack.empty())
@@ -536,12 +509,12 @@
 
             auto& last = m_undoStack.back();
 
-            // Type rule undo: restore all instances and remove the @rule
+
             if (last.isTypeRule)
             {
                 std::string meshId = last.typeRuleMeshId;
 
-                // Collect all undo entries for this type rule (they're contiguous at the back)
+
                 std::vector<RemovedInstance> toRestore;
                 while (!m_undoStack.empty())
                 {
@@ -551,11 +524,11 @@
                     m_undoStack.pop_back();
                 }
 
-                // Restore all instances (un-hide them by restoring original transform)
+
                 int restored = 0;
                 for (auto& ri : toRestore)
                 {
-                    // Validate via weak pointer (safe against GC slab reuse)
+
                     UObject* comp = ri.component.Get();
                     if (comp)
                     {
@@ -563,7 +536,7 @@
                     }
                 }
 
-                // Remove the type rule
+
                 m_typeRemovals.erase(meshId);
                 rewriteSaveFile();
                 buildRemovalEntries();
@@ -573,7 +546,7 @@
                 return;
             }
 
-            // Single instance undo
+
             std::string meshId = componentNameToMeshId(last.componentName);
             float px = last.transform.Translation.X;
             float py = last.transform.Translation.Y;
@@ -602,7 +575,7 @@
                 buildRemovalEntries();
             }
 
-            // Validate via weak pointer (safe against GC slab reuse)
+
             bool ok = false;
             UObject* comp = last.component.Get();
             if (comp)
