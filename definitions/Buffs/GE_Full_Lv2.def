@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Full Buff Level 2 Duration</title>
+  <author>Nexus Mods Member:kenuaena</author>
+  <description>Increase Buff Durations for all Buffs known in game, value in seconds</description>
+  <mod file="Moria\Content\Character\Shared\Effects\Survival\GE_Full_Lv2.json">
+    <change item="Default__GE_Full_Lv2_C" property="DurationMagnitude.ScalableFloatMagnitude.Value" value="1800" />
+  </mod>
+</definition>

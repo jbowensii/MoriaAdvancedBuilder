@@ -1,0 +1,50 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Trade Goods Base Trade Value</title>
+  <author>Nexus Mods Member:MereakFirmaxe wrote Fat Trade and Sqitey wrote Moria Black Friday</author>
+  <description>Allow trade goods base trade value to be adjusted, there is a sliding scale for trade values and cost in the game based on orders fullfilled</description>
+  <mod file="Moria\Content\Tech\Data\Economy\DT_TradeGoods.json">
+    <change item="TG_BrassButtons" property="BaseTradeValue" value="100" />
+    <change item="TG_BronzeCoins" property="BaseTradeValue" value="100" />
+    <change item="TG_ArmyAle" property="BaseTradeValue" value="1000" />
+    <change item="TG_WoodworkingTools" property="BaseTradeValue" value="100" />
+    <change item="TG_CeremonialArmorLot" property="BaseTradeValue" value="100" />
+    <change item="TG_CeremonialWeapons" property="BaseTradeValue" value="100" />
+    <change item="TG_CopperBeltBuckles" property="BaseTradeValue" value="100" />
+    <change item="TG_CopperCoins" property="BaseTradeValue" value="100" />
+    <change item="TG_CrossbowLot" property="BaseTradeValue" value="100" />
+    <change item="TG_CrystalLamps" property="BaseTradeValue" value="100" />
+    <change item="TG_OrnateMetalwork" property="BaseTradeValue" value="100" />
+    <change item="TG_DiamondJewelry" property="BaseTradeValue" value="200" />
+    <change item="TG_BuildingHouseingTools" property="BaseTradeValue" value="100" />
+    <change item="TG_DwarvenHistories" property="BaseTradeValue" value="100" />
+    <change item="TG_MechanicalToys" property="BaseTradeValue" value="100" />
+    <change item="TG_EngravedAkhfurChests" property="BaseTradeValue" value="100" />
+    <change item="TG_MirroredGlass" property="BaseTradeValue" value="100" />
+    <change item="TG_GemSetFiligreeInlay" property="BaseTradeValue" value="100" />
+    <change item="TG_GoldSilverFilligree" property="BaseTradeValue" value="100" />
+    <change item="TG_GoldJewelry" property="BaseTradeValue" value="100" />
+    <change item="TG_HealingSupplies" property="BaseTradeValue" value="100" />
+    <change item="TG_HorsemansIronwork" property="BaseTradeValue" value="100" />
+    <change item="TG_CarvedMuralSections" property="BaseTradeValue" value="100" />
+    <change item="TG_IronPotsAndPans" property="BaseTradeValue" value="100" />
+    <change item="TG_MithrilJewelry" property="BaseTradeValue" value="200" />
+    <change item="TG_DecorativeMithrilWork" property="BaseTradeValue" value="200" />
+    <change item="TG_BronzeShipFittings" property="BaseTradeValue" value="100" />
+    <change item="TG_ArnorBrew" property="BaseTradeValue" value="1000" />
+    <change item="TG_OrnateTablewear" property="BaseTradeValue" value="100" />
+    <change item="TG_EliteArmor" property="BaseTradeValue" value="200" />
+    <change item="TG_EliteWeapons" property="BaseTradeValue" value="200" />
+    <change item="TG_RohanAle" property="BaseTradeValue" value="1000" />
+    <change item="TG_RunicHearthstones" property="BaseTradeValue" value="100" />
+    <change item="TG_TrebuchetParts" property="BaseTradeValue" value="100" />
+    <change item="TG_SilverCoin" property="BaseTradeValue" value="100" />
+    <change item="TG_StarmetalCoins" property="BaseTradeValue" value="100" />
+    <change item="TG_DwarvenArrowheads" property="BaseTradeValue" value="100" />
+    <change item="TG_PrecisionMeasurementTools" property="BaseTradeValue" value="100" />
+    <change item="TG_TinCoins" property="BaseTradeValue" value="100" />
+    <change item="TG_TravelingGear" property="BaseTradeValue" value="100" />
+    <change item="TG_ShireAle" property="BaseTradeValue" value="1000" />
+    <change item="TG_SteelWeaponsLot" property="BaseTradeValue" value="100" />
+  </mod>
+</definition>

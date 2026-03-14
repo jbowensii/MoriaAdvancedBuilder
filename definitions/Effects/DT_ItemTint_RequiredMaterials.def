@@ -1,0 +1,666 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>More Wardrobe Colors - DT_ItemTint (RequiredMaterials)</title>
+  <author>GreenGorilla23</author>
+  <description>A mod that adds more colors to the wardrobe</description>
+  <mod file="Moria\Content\Items\Effects\DT_ItemTint.json">
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Cyan (Added)  -->
+    <change item="Cyan" property="RequiredMaterials" value="">
+      <add_property item="Cyan"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.ArrayPropertyData, UAssetAPI",
+  "ArrayType": "StructProperty",
+  "Name": "RequiredMaterials",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": [
+    {
+      "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+      "StructType": "MorRequiredRecipeMaterial",
+      "SerializeNone": true,
+      "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+      "SerializationControl": "NoExtension",
+      "Operation": "None",
+      "Name": "RequiredMaterials",
+      "ArrayIndex": 0,
+      "IsZero": false,
+      "PropertyTagFlags": "None",
+      "PropertyTagExtensions": "NoExtension",
+      "Value": [
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorAnyItemRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "MaterialHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "Ore.Moonstone"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorCategoryTagRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "WildcardHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "None"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Objects.IntPropertyData, UAssetAPI",
+          "Name": "Count",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": 3
+        }
+      ]
+    }
+  ]
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Red (Added)  -->
+    <change item="Red" property="RequiredMaterials" value="">
+      <add_property item="Red"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.ArrayPropertyData, UAssetAPI",
+  "ArrayType": "StructProperty",
+  "Name": "RequiredMaterials",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": [
+    {
+      "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+      "StructType": "MorRequiredRecipeMaterial",
+      "SerializeNone": true,
+      "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+      "SerializationControl": "NoExtension",
+      "Operation": "None",
+      "Name": "RequiredMaterials",
+      "ArrayIndex": 0,
+      "IsZero": false,
+      "PropertyTagFlags": "None",
+      "PropertyTagExtensions": "NoExtension",
+      "Value": [
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorAnyItemRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "MaterialHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "Ore.Ruby"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorCategoryTagRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "WildcardHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "None"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Objects.IntPropertyData, UAssetAPI",
+          "Name": "Count",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": 3
+        }
+      ]
+    }
+  ]
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Magenta (Added)  -->
+    <change item="Magenta" property="RequiredMaterials" value="">
+      <add_property item="Magenta"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.ArrayPropertyData, UAssetAPI",
+  "ArrayType": "StructProperty",
+  "Name": "RequiredMaterials",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": [
+    {
+      "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+      "StructType": "MorRequiredRecipeMaterial",
+      "SerializeNone": true,
+      "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+      "SerializationControl": "NoExtension",
+      "Operation": "None",
+      "Name": "RequiredMaterials",
+      "ArrayIndex": 0,
+      "IsZero": false,
+      "PropertyTagFlags": "None",
+      "PropertyTagExtensions": "NoExtension",
+      "Value": [
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorAnyItemRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "MaterialHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "Consumables.TeaFlower"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorCategoryTagRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "WildcardHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "None"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Objects.IntPropertyData, UAssetAPI",
+          "Name": "Count",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": 3
+        }
+      ]
+    }
+  ]
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Orange (Added)  -->
+    <change item="Orange" property="RequiredMaterials" value="">
+      <add_property item="Orange"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.ArrayPropertyData, UAssetAPI",
+  "ArrayType": "StructProperty",
+  "Name": "RequiredMaterials",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": [
+    {
+      "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+      "StructType": "MorRequiredRecipeMaterial",
+      "SerializeNone": true,
+      "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+      "SerializationControl": "NoExtension",
+      "Operation": "None",
+      "Name": "RequiredMaterials",
+      "ArrayIndex": 0,
+      "IsZero": false,
+      "PropertyTagFlags": "None",
+      "PropertyTagExtensions": "NoExtension",
+      "Value": [
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorAnyItemRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "MaterialHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "Ore.Anorin"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorCategoryTagRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "WildcardHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "None"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Objects.IntPropertyData, UAssetAPI",
+          "Name": "Count",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": 3
+        }
+      ]
+    }
+  ]
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Black (Added)  -->
+    <change item="Black" property="RequiredMaterials" value="">
+      <add_property item="Black"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.ArrayPropertyData, UAssetAPI",
+  "ArrayType": "StructProperty",
+  "Name": "RequiredMaterials",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": [
+    {
+      "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+      "StructType": "MorRequiredRecipeMaterial",
+      "SerializeNone": true,
+      "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+      "SerializationControl": "NoExtension",
+      "Operation": "None",
+      "Name": "RequiredMaterials",
+      "ArrayIndex": 0,
+      "IsZero": false,
+      "PropertyTagFlags": "None",
+      "PropertyTagExtensions": "NoExtension",
+      "Value": [
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorAnyItemRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "MaterialHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "Ore.Coal"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorCategoryTagRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "WildcardHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "None"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Objects.IntPropertyData, UAssetAPI",
+          "Name": "Count",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": 3
+        }
+      ]
+    }
+  ]
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Brown (Added)  -->
+    <change item="Brown" property="RequiredMaterials" value="">
+      <add_property item="Brown"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.ArrayPropertyData, UAssetAPI",
+  "ArrayType": "StructProperty",
+  "Name": "RequiredMaterials",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": [
+    {
+      "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+      "StructType": "MorRequiredRecipeMaterial",
+      "SerializeNone": true,
+      "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+      "SerializationControl": "NoExtension",
+      "Operation": "None",
+      "Name": "RequiredMaterials",
+      "ArrayIndex": 0,
+      "IsZero": false,
+      "PropertyTagFlags": "None",
+      "PropertyTagExtensions": "NoExtension",
+      "Value": [
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorAnyItemRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "MaterialHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "Item.Ironwood"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorCategoryTagRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "WildcardHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "None"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Objects.IntPropertyData, UAssetAPI",
+          "Name": "Count",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": 3
+        }
+      ]
+    }
+  ]
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Azure (Added)  -->
+    <change item="Azure" property="RequiredMaterials" value="">
+      <add_property item="Azure"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.ArrayPropertyData, UAssetAPI",
+  "ArrayType": "StructProperty",
+  "Name": "RequiredMaterials",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": [
+    {
+      "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+      "StructType": "MorRequiredRecipeMaterial",
+      "SerializeNone": true,
+      "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+      "SerializationControl": "NoExtension",
+      "Operation": "None",
+      "Name": "RequiredMaterials",
+      "ArrayIndex": 0,
+      "IsZero": false,
+      "PropertyTagFlags": "None",
+      "PropertyTagExtensions": "NoExtension",
+      "Value": [
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorAnyItemRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "MaterialHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "Ore.Arrizite"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI",
+          "StructType": "MorCategoryTagRowHandle",
+          "SerializeNone": true,
+          "StructGUID": "{00000000-0000-0000-0000-000000000000}",
+          "SerializationControl": "NoExtension",
+          "Operation": "None",
+          "Name": "WildcardHandle",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": [
+            {
+              "$type": "UAssetAPI.PropertyTypes.Objects.NamePropertyData, UAssetAPI",
+              "Name": "RowName",
+              "ArrayIndex": 0,
+              "IsZero": false,
+              "PropertyTagFlags": "None",
+              "PropertyTagExtensions": "NoExtension",
+              "Value": "None"
+            }
+          ]
+        },
+        {
+          "$type": "UAssetAPI.PropertyTypes.Objects.IntPropertyData, UAssetAPI",
+          "Name": "Count",
+          "ArrayIndex": 0,
+          "IsZero": false,
+          "PropertyTagFlags": "None",
+          "PropertyTagExtensions": "NoExtension",
+          "Value": 3
+        }
+      ]
+    }
+  ]
+}]]></add_property>
+    </change>
+  </mod>
+</definition>

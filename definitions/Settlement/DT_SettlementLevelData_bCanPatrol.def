@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>My Mod Progression - DT_SettlementLevelData (bCanPatrol)</title>
+  <author>Nexus Mods Member</author>
+  <description>janvsjdncjksdncjknsdcnhsnckhfnvhjfnvhdnfvhjndhghdgnbhgjnbdjlgbvnfkvnkgv</description>
+  <mod file="Moria\Content\Tech\Data\Settlements\DT_SettlementLevelData.json">
+    <change item="1" property="LevelData.bCanPatrol" value="True" />
+  </mod>
+</definition>

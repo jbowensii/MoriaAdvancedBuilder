@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Monument Progression</title>
+  <author>Nexus Mods Member: MereakFirmaxe</author>
+  <description>Change the number of build points needed to build a monument stage, 0 = instant, build points depends on number of builders and time, &gt; number is longer</description>
+  <mod file="Moria\Content\Tech\Data\Settlements\DT_MonumentData.json">
+    <change item="Monument_1" property="StageDataList[3].MonumentProgressonPointsNeeded" value="0" />
+    <change item="Monument_1" property="StageDataList[1].MonumentProgressonPointsNeeded" value="0" />
+    <change item="Monument_2" property="StageDataList[3].MonumentProgressonPointsNeeded" value="0" />
+    <change item="Monument_2" property="StageDataList[1].MonumentProgressonPointsNeeded" value="0" />
+    <change item="Monument_3" property="StageDataList[3].MonumentProgressonPointsNeeded" value="0" />
+    <change item="Monument_3" property="StageDataList[1].MonumentProgressonPointsNeeded" value="0" />
+    <change item="Monument_4" property="StageDataList[3].MonumentProgressonPointsNeeded" value="0" />
+    <change item="Monument_4" property="StageDataList[1].MonumentProgressonPointsNeeded" value="0" />
+    <change item="Monument_5" property="StageDataList[3].MonumentProgressonPointsNeeded" value="0" />
+    <change item="Monument_5" property="StageDataList[1].MonumentProgressonPointsNeeded" value="0" />
+    <change item="OathCircle" property="StageDataList[3].MonumentProgressonPointsNeeded" value="0" />
+    <change item="OathCircle" property="StageDataList[1].MonumentProgressonPointsNeeded" value="0" />
+  </mod>
+</definition>

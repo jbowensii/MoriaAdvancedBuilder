@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Properties_RedhornPumice DropRate Fix</title>
+  <author>kenuaena</author>
+  <description>Adds DropRate parameter to Properties_RedhornPumice</description>
+  <mod file="Moria\Content\Environments\Voxels\Baking\Properties_RedhornPumice.json">
+    <change item="Properties_RedhornPumice" property="PrimaryDrop.DropRate" value="1800.0">
+      <add_property item="Properties_RedhornPumice"><![CDATA[{
+        "$type": "UAssetAPI.PropertyTypes.Objects.FloatPropertyData, UAssetAPI",
+        "Name": "DropRate",
+        "Value": 0.0
+      }]]></add_property>
+    </change>
+  </mod>
+</definition>

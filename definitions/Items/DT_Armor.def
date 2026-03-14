@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Clean Fat Stacks Armor</title>
+  <author>Nexus Mods Member: @TheRareKiwi, @momenaya and @MereakFirmaxe</author>
+  <description>For all valid items in DT_Armor, change stacks size up to 9999</description>
+  <mod file="\Moria\Content\Tech\Data\Items\DT_Armor.json">
+    <change item="NPC_MinerOutfit_Hat" property="MaxStackSize" value="100" />
+    <change item="NPC_ArtisanOutfit_Hat" property="MaxStackSize" value="100" />
+    <change item="NPC_BlacksmithOutfit_Hat" property="MaxStackSize" value="100" />
+    <change item="NPC_BrewerOutfit_Hat" property="MaxStackSize" value="100" />
+    <change item="NPC_BuilderOutfit_Hat" property="MaxStackSize" value="100" />
+    <change item="NPC_CookOutfit_Hat" property="MaxStackSize" value="100" />
+    <change item="Amazing_Set_HelmetArmor" property="MaxStackSize" value="100" />
+    <change item="NPC_TavernOutfit_Torso" property="MaxStackSize" value="100" />
+    <change item="NPC_ShopkeeperOutfit_Torso" property="MaxStackSize" value="100" />
+    <change item="NPC_CookOutfit_Torso" property="MaxStackSize" value="100" />
+    <change item="NPC_RestorerOutfit_Hat" property="MaxStackSize" value="100" />
+    <change item="NPC_TraderOutfit_Torso" property="MaxStackSize" value="100" />
+    <change item="NPC_MetalworkerOutfit_Hat" property="MaxStackSize" value="100" />
+    <change item="NPC_BlacksmithOutfit_Torso" property="MaxStackSize" value="100" />
+    <change item="NPC_RestorerOutfit_Torso" property="MaxStackSize" value="100" />
+  </mod>
+</definition>

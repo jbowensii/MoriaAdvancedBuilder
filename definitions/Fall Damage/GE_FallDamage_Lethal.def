@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Fall Damage Lethal</title>
+  <author>Nexus Mods Member:momenaya wrote No Fall Damage</author>
+  <description>Remove Damage from the Lethal Fall Table</description>
+  <mod file="Moria\Content\Character\Shared\Effects\Stats\GE_FallDamage_Lethal.json">
+    <change item="GE_FallDamage_Lethal" property="Modifiers[0].ModifierMagnitude.AttributeBasedMagnitude.Coefficient.Value" value="0.0" />
+    <change item="GE_FallDamage_Lethal" property="Modifiers[0].ModifierMagnitude.CustomMagnitude.Coefficient.Value" value="0.0" />
+    <change item="GE_FallDamage_Lethal" property="Modifiers[0].ModifierMagnitude.ScalableFloatMagnitude.Value" value="0.0" />
+  </mod>
+</definition>

@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Curve for Treasure Pile Buff</title>
+  <author>Nexus Mods Member:Deathmajesty created Longer Treasure Pile Buff</author>
+  <description>Increase Buff Durations for the treasure pile buff, value in seconds</description>
+  <mod file="Moria\Content\Character\Shared\Effects\TreasurePileBuffs\Curve_AdmiringTreasurePiles_Noble.json">
+    <change item="Curve_AdmiringTreasurePiles_Noble" property="FloatCurve.Keys[1].Keys.Time" value="1800" />
+    <change item="Curve_AdmiringTreasurePiles_Noble" property="FloatCurve.Keys[2].Keys.Time" value="1800" />
+    <change item="Curve_AdmiringTreasurePiles_Noble" property="FloatCurve.Keys[3].Keys.Time" value="1800" />
+    <change item="Curve_AdmiringTreasurePiles_Noble" property="FloatCurve.Keys[4].Keys.Time" value="1800" />
+    <change item="Curve_AdmiringTreasurePiles_Noble" property="FloatCurve.Keys[5].Keys.Time" value="1800" />
+  </mod>
+</definition>

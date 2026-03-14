@@ -1,0 +1,232 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>More Wardrobe Colors - DT_ItemTint (TintName)</title>
+  <author>GreenGorilla23</author>
+  <description>A mod that adds more colors to the wardrobe</description>
+  <mod file="Moria\Content\Items\Effects\DT_ItemTint.json">
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Cyan (Added)  -->
+    <change item="Cyan" property="TintName" value="Items.Ores.MoonStone.Name">
+      <add_property item="Cyan"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.TextPropertyData, UAssetAPI",
+  "Flags": 0,
+  "HistoryType": "StringTableEntry",
+  "TableId": "/Game/Tech/Data/StringTables/Items.Items",
+  "Namespace": null,
+  "CultureInvariantString": null,
+  "SourceFmt": null,
+  "Arguments": null,
+  "ArgumentsData": null,
+  "TransformType": "ToLower",
+  "SourceValue": null,
+  "FormatOptions": null,
+  "TargetCulture": null,
+  "Name": "TintName",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "Items.Ores.MoonStone.Name"
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Red (Added)  -->
+    <change item="Red" property="TintName" value="Items.Item.PreciousGem.Ruby.Name">
+      <add_property item="Red"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.TextPropertyData, UAssetAPI",
+  "Flags": 0,
+  "HistoryType": "StringTableEntry",
+  "TableId": "/Game/Tech/Data/StringTables/Items.Items",
+  "Namespace": null,
+  "CultureInvariantString": null,
+  "SourceFmt": null,
+  "Arguments": null,
+  "ArgumentsData": null,
+  "TransformType": "ToLower",
+  "SourceValue": null,
+  "FormatOptions": null,
+  "TargetCulture": null,
+  "Name": "TintName",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "Items.Item.PreciousGem.Ruby.Name"
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Magenta (Added)  -->
+    <change item="Magenta" property="TintName" value="Items.Consumables.TeaFlower.Name">
+      <add_property item="Magenta"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.TextPropertyData, UAssetAPI",
+  "Flags": 0,
+  "HistoryType": "StringTableEntry",
+  "TableId": "/Game/Tech/Data/StringTables/Items.Items",
+  "Namespace": null,
+  "CultureInvariantString": null,
+  "SourceFmt": null,
+  "Arguments": null,
+  "ArgumentsData": null,
+  "TransformType": "ToLower",
+  "SourceValue": null,
+  "FormatOptions": null,
+  "TargetCulture": null,
+  "Name": "TintName",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "Items.Consumables.TeaFlower.Name"
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Orange (Added)  -->
+    <change item="Orange" property="TintName" value="Items.Item.PreciousGem.Anorin.Name">
+      <add_property item="Orange"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.TextPropertyData, UAssetAPI",
+  "Flags": 0,
+  "HistoryType": "StringTableEntry",
+  "TableId": "/Game/Tech/Data/StringTables/Items.Items",
+  "Namespace": null,
+  "CultureInvariantString": null,
+  "SourceFmt": null,
+  "Arguments": null,
+  "ArgumentsData": null,
+  "TransformType": "ToLower",
+  "SourceValue": null,
+  "FormatOptions": null,
+  "TargetCulture": null,
+  "Name": "TintName",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "Items.Item.PreciousGem.Anorin.Name"
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Black (Added)  -->
+    <change item="Black" property="TintName" value="Items.Ores.Coal.Name">
+      <add_property item="Black"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.TextPropertyData, UAssetAPI",
+  "Flags": 0,
+  "HistoryType": "StringTableEntry",
+  "TableId": "/Game/Tech/Data/StringTables/Items.Items",
+  "Namespace": null,
+  "CultureInvariantString": null,
+  "SourceFmt": null,
+  "Arguments": null,
+  "ArgumentsData": null,
+  "TransformType": "ToLower",
+  "SourceValue": null,
+  "FormatOptions": null,
+  "TargetCulture": null,
+  "Name": "TintName",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "Items.Ores.Coal.Name"
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Brown (Added)  -->
+    <change item="Brown" property="TintName" value="Items.Items.Ironwood.Name">
+      <add_property item="Brown"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.TextPropertyData, UAssetAPI",
+  "Flags": 0,
+  "HistoryType": "StringTableEntry",
+  "TableId": "/Game/Tech/Data/StringTables/Items.Items",
+  "Namespace": null,
+  "CultureInvariantString": null,
+  "SourceFmt": null,
+  "Arguments": null,
+  "ArgumentsData": null,
+  "TransformType": "ToLower",
+  "SourceValue": null,
+  "FormatOptions": null,
+  "TargetCulture": null,
+  "Name": "TintName",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "Items.Items.Ironwood.Name"
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Azure (Added)  -->
+    <change item="Azure" property="TintName" value="Items.Ores.ConsumableCraftingOre.Name">
+      <add_property item="Azure"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.TextPropertyData, UAssetAPI",
+  "Flags": 0,
+  "HistoryType": "StringTableEntry",
+  "TableId": "/Game/Tech/Data/StringTables/Items.Items",
+  "Namespace": null,
+  "CultureInvariantString": null,
+  "SourceFmt": null,
+  "Arguments": null,
+  "ArgumentsData": null,
+  "TransformType": "ToLower",
+  "SourceValue": null,
+  "FormatOptions": null,
+  "TargetCulture": null,
+  "Name": "TintName",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "Items.Ores.ConsumableCraftingOre.Name"
+}]]></add_property>
+    </change>
+  </mod>
+</definition>

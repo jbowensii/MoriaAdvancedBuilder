@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Properties_RedSandstone DropRate Fix</title>
+  <author>kenuaena</author>
+  <description>Adds DropRate parameter to Properties_RedSandstone</description>
+  <mod file="Moria\Content\Environments\Voxels\Baking\Properties_RedSandstone.json">
+    <change item="Properties_RedSandstone" property="PrimaryDrop.DropRate" value="1800.0">
+      <add_property item="Properties_RedSandstone"><![CDATA[{
+        "$type": "UAssetAPI.PropertyTypes.Objects.FloatPropertyData, UAssetAPI",
+        "Name": "DropRate",
+        "Value": 0.0
+      }]]></add_property>
+    </change>
+  </mod>
+</definition>

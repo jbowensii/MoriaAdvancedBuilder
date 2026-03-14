@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>My Mod Progression - DT_SettlementLevelData (bCanAssignBeds)</title>
+  <author>Nexus Mods Member</author>
+  <description>janvsjdncjksdncjknsdcnhsnckhfnvhjfnvhdnfvhjndhghdgnbhgjnbdjlgbvnfkvnkgv</description>
+  <mod file="Moria\Content\Tech\Data\Settlements\DT_SettlementLevelData.json">
+    <change item="1" property="LevelData.bCanAssignBeds" value="True" />
+    <change item="2" property="LevelData.bCanAssignBeds" value="True" />
+  </mod>
+</definition>

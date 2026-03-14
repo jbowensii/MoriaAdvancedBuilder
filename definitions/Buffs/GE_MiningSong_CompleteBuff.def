@@ -1,0 +1,9 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<definition>
+<title>Mining Buff Duration</title>
+<author>Nexus Mods Member:kenuaena</author>
+<description>Increase Buff Durations for all Buffs known in game, value in seconds</description>
+<mod file="\Moria\Content\Character\Shared\Effects\GE_MiningSong_CompleteBuff.json">
+  <change item="GE_MiningSong_CompleteBuff" property="DurationMagnitude.ScalableFloatMagnitude.Value" value="1800"/>
+</mod>
+</definition>

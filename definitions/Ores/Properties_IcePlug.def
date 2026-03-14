@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Properties_IcePlug DropRate Fix</title>
+  <author>kenuaena</author>
+  <description>Adds DropRate parameter to Properties_IcePlug</description>
+  <mod file="Moria\Content\Environments\Voxels\Baking\Properties_IcePlug.json">
+    <change item="Properties_IcePlug" property="PrimaryDrop.DropRate" value="1800.0">
+      <add_property item="Properties_IcePlug"><![CDATA[{
+        "$type": "UAssetAPI.PropertyTypes.Objects.FloatPropertyData, UAssetAPI",
+        "Name": "DropRate",
+        "Value": 0.0
+      }]]></add_property>
+    </change>
+  </mod>
+</definition>

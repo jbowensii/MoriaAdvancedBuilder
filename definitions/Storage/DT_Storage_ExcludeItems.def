@@ -1,0 +1,50 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Epic Packs Everywhere - DT_Storage (ExcludeItems)</title>
+  <author>Mereak Firmaxe</author>
+  <description>Allow Epic items and Packs in any inventory slot</description>
+  <mod file="Moria\Content\Tech\Data\Items\DT_Storage.json">
+    <!--  Dwarf.Inventory (Delete tag Item.EpicPack)  -->
+    <delete item="Dwarf.Inventory" property="ExcludeItems" value="Item.EpicPack" />
+    <!--  Dwarf.BodyInventory (Delete tag Item.EpicItem)  -->
+    <delete item="Dwarf.BodyInventory" property="ExcludeItems" value="Item.EpicItem" />
+    <!--  Dwarf.BodyInventory (Delete tag Item.EpicPack)  -->
+    <delete item="Dwarf.BodyInventory" property="ExcludeItems" value="Item.EpicPack" />
+    <!--  Chest (Delete tag Item.EpicItem)  -->
+    <delete item="Chest" property="ExcludeItems" value="Item.EpicItem" />
+    <!--  Chest (Delete tag Item.EpicPack)  -->
+    <delete item="Chest" property="ExcludeItems" value="Item.EpicPack" />
+    <!--  Chest_Advanced (Delete tag Item.EpicItem)  -->
+    <delete item="Chest_Advanced" property="ExcludeItems" value="Item.EpicItem" />
+    <!--  Chest_Advanced (Delete tag Item.EpicPack)  -->
+    <delete item="Chest_Advanced" property="ExcludeItems" value="Item.EpicPack" />
+    <!--  Chest_Ornate (Delete tag Item.EpicItem)  -->
+    <delete item="Chest_Ornate" property="ExcludeItems" value="Item.EpicItem" />
+    <!--  Chest_Ornate (Delete tag Item.EpicPack)  -->
+    <delete item="Chest_Ornate" property="ExcludeItems" value="Item.EpicPack" />
+    <!--  AdventurersPack (Delete tag Item.EpicItem)  -->
+    <delete item="AdventurersPack" property="ExcludeItems" value="Item.EpicItem" />
+    <!--  AdventurersPack (Delete tag Item.EpicPack)  -->
+    <delete item="AdventurersPack" property="ExcludeItems" value="Item.EpicPack" />
+    <!--  AdventurersPack_Small (Delete tag Item.EpicItem)  -->
+    <delete item="AdventurersPack_Small" property="ExcludeItems" value="Item.EpicItem" />
+    <!--  AdventurersPack_Small (Delete tag Item.EpicPack)  -->
+    <delete item="AdventurersPack_Small" property="ExcludeItems" value="Item.EpicPack" />
+    <!--  AdventurersPack_Large (Delete tag Item.EpicItem)  -->
+    <delete item="AdventurersPack_Large" property="ExcludeItems" value="Item.EpicItem" />
+    <!--  AdventurersPack_Large (Delete tag Item.EpicPack)  -->
+    <delete item="AdventurersPack_Large" property="ExcludeItems" value="Item.EpicPack" />
+    <!--  Chest_Exploration (Delete tag Item.EpicItem)  -->
+    <delete item="Chest_Exploration" property="ExcludeItems" value="Item.EpicItem" />
+    <!--  Chest_Exploration (Delete tag Item.EpicPack)  -->
+    <delete item="Chest_Exploration" property="ExcludeItems" value="Item.EpicPack" />
+    <!--  AdventurersPack_Krampus (Delete tag Item.EpicItem)  -->
+    <delete item="AdventurersPack_Krampus" property="ExcludeItems" value="Item.EpicItem" />
+    <!--  AdventurersPack_Krampus (Delete tag Item.EpicPack)  -->
+    <delete item="AdventurersPack_Krampus" property="ExcludeItems" value="Item.EpicPack" />
+    <!--  Chest_DwarvenPuzzle (Delete tag Item.EpicItem)  -->
+    <delete item="Chest_DwarvenPuzzle" property="ExcludeItems" value="Item.EpicItem" />
+    <!--  Chest_DwarvenPuzzle (Delete tag Item.EpicPack)  -->
+    <delete item="Chest_DwarvenPuzzle" property="ExcludeItems" value="Item.EpicPack" />
+  </mod>
+</definition>

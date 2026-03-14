@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Max Horizontal Stability</title>
+  <author>Nexus Mods Member:Member stiffmeds wrote Mental Stability</author>
+  <description>Vertical Stability is already maxed at 1E+09, this applies the same to Horizontal Stability</description>
+  <mod file="Moria\Content\Tech\Data\Building\DT_ConstructionStabilities.json">
+    <change item="Advanced" property="HorizontalDistance" value="1000000000.0" />
+    <change item="Advanced_Column" property="HorizontalDistance" value="1000000000.0" />
+    <change item="Advanced_Stairs" property="HorizontalDistance" value="1000000000.0" />
+    <change item="Crude" property="HorizontalDistance" value="1000000000.0" />
+    <change item="Crude_Column" property="HorizontalDistance" value="1000000000.0" />
+    <change item="Elder" property="HorizontalDistance" value="1000000000.0" />
+    <change item="Elder_Column" property="HorizontalDistance" value="1000000000.0" />
+    <change item="Foundations" property="HorizontalDistance" value="1000000000.0" />
+    <change item="QuickPlatform" property="HorizontalDistance" value="1000000000.0" />
+    <change item="Scaffolding" property="HorizontalDistance" value="1000000000.0" />
+    <change item="Stone" property="HorizontalDistance" value="1000000000.0" />
+    <change item="Wood" property="HorizontalDistance" value="1000000000.0" />
+  </mod>
+</definition>

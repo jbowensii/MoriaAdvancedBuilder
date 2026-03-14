@@ -1,0 +1,30 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Durable Tools</title>
+  <author>Nexus Mods Member: @momenaya wrote Durable Tools</author>
+  <description>For all valid items in DT_Tools, change durability up to 99999</description>
+  <mod file="\Moria\Content\Tech\Data\Items\DT_Tools.json">
+    <change item="Restoration_Hammer_Adamant" property="Durability" value="99999" />
+    <change item="Loupe_1h_NPCTool" property="Durability" value="99999" />
+    <change item="BlacksmithHammer_1h_NPCTool" property="Durability" value="99999" />
+    <change item="MashPaddle_2h_NPCTool" property="Durability" value="99999" />
+    <change item="Chisel_1h_NPCTool" property="Durability" value="99999" />
+    <change item="FryingPan_1h_NPCTool" property="Durability" value="99999" />
+    <change item="Epic_Durins_Axe" property="Durability" value="99999" />
+    <change item="Pickaxe_1h_t3" property="Durability" value="99999" />
+    <change item="Restoration_Hammer_Iron" property="Durability" value="99999" />
+    <change item="Pickaxe_1h_t4" property="Durability" value="99999" />
+    <change item="Pickaxe_Magic" property="Durability" value="99999" />
+    <change item="Tong_1h_NPCTool" property="Durability" value="99999" />
+    <change item="Pickaxe_2h" property="Durability" value="99999" />
+    <change item="Basket_1h_NPCTool" property="Durability" value="99999" />
+    <change item="Restoration_Hammer_Gunmetal" property="Durability" value="99999" />
+    <change item="Pickaxe_1h_t1" property="Durability" value="99999" />
+    <change item="Restoration_Hammer_Starmetal" property="Durability" value="99999" />
+    <change item="Restoration_Hammer_Steel" property="Durability" value="99999" />
+    <change item="Pickaxe_1h_t2" property="Durability" value="99999" />
+    <change item="Scissors_1h_NPCTool" property="Durability" value="99999" />
+    <change item="Spanner_1h_NPCTool" property="Durability" value="99999" />
+    <change item="Torch" property="Durability" value="99999" />
+  </mod>
+</definition>

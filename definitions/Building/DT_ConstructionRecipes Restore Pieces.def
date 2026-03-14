@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Restore building pieces from patch 1.2</title>
+  <author>Nexus Mods Member:Member tobiichiro wrote Restore Buildings</author>
+  <description>Flip the switch to restore the extra building pieces removed form the game in patch 1.2</description>
+  <mod file="Moria\Content\Tech\Data\Building\DT_ConstructionRecipes.json">
+    <change item="NONE" property="" value="100" />
+  </mod>
+</definition>

@@ -1,0 +1,48 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Clean Fat Stacks Ores</title>
+  <author>Nexus Mods Member: @TheRareKiwi, @momenaya and @MereakFirmaxe</author>
+  <description>For all valid items in DT_Ores, change stacks size up to 9999</description>
+  <mod file="\Moria\Content\Tech\Data\Items\DT_Ores.json">
+    <change item="Adamant" property="MaxStackSize" value="9999" />
+    <change item="Amber" property="MaxStackSize" value="9999" />
+    <change item="Amethyst" property="MaxStackSize" value="9999" />
+    <change item="AncientBones" property="MaxStackSize" value="9999" />
+    <change item="Anorin" property="MaxStackSize" value="9999" />
+    <change item="ConsumableCraftingOre" property="MaxStackSize" value="9999" />
+    <change item="Azide" property="MaxStackSize" value="9999" />
+    <change item="BlackDiamond" property="MaxStackSize" value="9999" />
+    <change item="Citrine" property="MaxStackSize" value="9999" />
+    <change item="Coal" property="MaxStackSize" value="9999" />
+    <change item="Marble" property="MaxStackSize" value="9999" />
+    <change item="Copper" property="MaxStackSize" value="9999" />
+    <change item="Diamond" property="MaxStackSize" value="9999" />
+    <change item="Emerald" property="MaxStackSize" value="9999" />
+    <change item="EternalIce" property="MaxStackSize" value="9999" />
+    <change item="Garnet" property="MaxStackSize" value="9999" />
+    <change item="Gold" property="MaxStackSize" value="9999" />
+    <change item="Granite" property="MaxStackSize" value="9999" />
+    <change item="Iolite" property="MaxStackSize" value="9999" />
+    <change item="Iron" property="MaxStackSize" value="9999" />
+    <change item="Jade" property="MaxStackSize" value="9999" />
+    <change item="Mithril" property="MaxStackSize" value="9999" />
+    <change item="Onyx" property="MaxStackSize" value="9999" />
+    <change item="RedhornPumice" property="MaxStackSize" value="9999" />
+    <change item="Quartz" property="MaxStackSize" value="9999" />
+    <change item="RedBeryl" property="MaxStackSize" value="9999" />
+    <change item="RedSandstone" property="MaxStackSize" value="9999" />
+    <change item="Resin" property="MaxStackSize" value="9999" />
+    <change item="Ruby" property="MaxStackSize" value="9999" />
+    <change item="Salt" property="MaxStackSize" value="9999" />
+    <change item="Sapphire" property="MaxStackSize" value="9999" />
+    <change item="Silver" property="MaxStackSize" value="9999" />
+    <change item="StarMetal" property="MaxStackSize" value="9999" />
+    <change item="Stone" property="MaxStackSize" value="9999" />
+    <change item="SunStone" property="MaxStackSize" value="9999" />
+    <change item="Tin" property="MaxStackSize" value="9999" />
+    <change item="Topaz" property="MaxStackSize" value="9999" />
+    <change item="MoonStone" property="MaxStackSize" value="9999" />
+    <change item="Obsidian" property="MaxStackSize" value="9999" />
+    <change item="LapisLazuli" property="MaxStackSize" value="9999" />
+  </mod>
+</definition>

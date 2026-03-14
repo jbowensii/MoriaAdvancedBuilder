@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>My Mod Progression - DT_WorldLevelData (SettlementLevelCap)</title>
+  <author>Nexus Mods Member</author>
+  <description>janvsjdncjksdncjknsdcnhsnckhfnvhjfnvhdnfvhjndhghdgnbhgjnbdjlgbvnfkvnkgv</description>
+  <mod file="Moria\Content\Tech\Data\Settlements\DT_WorldLevelData.json">
+    <change item="FirstSettlement" property="LevelData.SettlementLevelCap" value="7" />
+    <change item="Beacon" property="LevelData.SettlementLevelCap" value="7" />
+    <change item="Monument_1" property="LevelData.SettlementLevelCap" value="7" />
+    <change item="Monument_2" property="LevelData.SettlementLevelCap" value="7" />
+    <change item="Monument_3" property="LevelData.SettlementLevelCap" value="7" />
+  </mod>
+</definition>

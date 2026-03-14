@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definition>
+  <title>Earlier Elven Farmbox_MODIFY DT_ConstructionRecipes</title>
+  <author>Moria MOD Creator</author>
+  <description>3 modifications to DT_ConstructionRecipes.json</description>
+  <mod file="Moria\Content\Tech\Data\Building\DT_ConstructionRecipes.json">
+    <change item="TU14_ElvenSecretIngredientStatue" property="DefaultRequiredMaterials[0].MaterialHandle.RowName" value="Item.QualityWood" />
+    <change item="TU14_ElvenSecretIngredientStatue" property="DefaultRequiredMaterials[1].MaterialHandle.RowName" value="Ore.Stone" />
+    <change item="TU14_ElvenSecretIngredientStatue" property="DefaultRequiredMaterials[2].MaterialHandle.RowName" value="Item.IronIngot" />
+  </mod>
+</definition>

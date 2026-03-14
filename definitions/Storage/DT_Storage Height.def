@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Epic Packs Everywhere Height</title>
+  <author>Nexus Mods Member: @MereakFirmaxe</author>
+  <description>For all valid items in DT_Storage, Adjust Width - Packs 9 MAX, Storage 8 MAX based on UI</description>
+  <mod file="\Moria\Content\Tech\Data\Items\DT_Storage.json">
+    <change item="AdventurersPack" property="InventoryHeight" value="9" />
+    <change item="AdventurersPack_Krampus" property="InventoryHeight" value="9" />
+    <change item="AdventurersPack_Large" property="InventoryHeight" value="9" />
+    <change item="AdventurersPack_Small" property="InventoryHeight" value="9" />
+    <change item="Chest" property="InventoryHeight" value="8" />
+    <change item="Chest_Advanced" property="InventoryHeight" value="8" />
+    <change item="Chest_DwarvenPuzzle" property="InventoryHeight" value="8" />
+    <change item="Chest_Exploration" property="InventoryHeight" value="8" />
+    <change item="Chest_Ornate" property="InventoryHeight" value="8" />
+  </mod>
+</definition>

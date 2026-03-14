@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definition>
+  <title>Can build this Anywhere</title>
+  <author>Letimineur</author>
+  <description>Modify DT_ConstructionRecipes.json to remove Base LocationRequirement</description>
+  <mod file="Moria\Content\Tech\Data\Building\DT_ConstructionRecipes.json">
+    <change item="FastTravelMapstone" property="LocationRequirement" value="EConstructionLocation::Anywhere" />
+    <change item="Crude_Stairs" property="LocationRequirement" value="EConstructionLocation::Anywhere" />
+    <change item="Crude_Stairs_05M_3mWide" property="LocationRequirement" value="EConstructionLocation::Anywhere" />
+    <change item="Crude_Stairs_2mWide" property="LocationRequirement" value="EConstructionLocation::Anywhere" />
+    <change item="Crude_Stairs_3m" property="LocationRequirement" value="EConstructionLocation::Anywhere" />
+    <change item="Crude_Stairs_3mWide_1M" property="LocationRequirement" value="EConstructionLocation::Anywhere" />
+    <change item="Crude_Stairs_3mWide_4M" property="LocationRequirement" value="EConstructionLocation::Anywhere" />
+  </mod>
+</definition>

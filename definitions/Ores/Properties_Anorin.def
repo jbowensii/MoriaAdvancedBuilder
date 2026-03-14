@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Properties_Anorin DropRate Fix</title>
+  <author>kenuaena</author>
+  <description>Adds DropRate parameter to Properties_Anorin</description>
+  <mod file="Moria\Content\Environments\Voxels\Baking\Properties_Anorin.json">
+    <change item="Properties_Anorin" property="PrimaryDrop.DropRate" value="1800.0">
+      <add_property item="Properties_Anorin"><![CDATA[{
+        "$type": "UAssetAPI.PropertyTypes.Objects.FloatPropertyData, UAssetAPI",
+        "Name": "DropRate",
+        "Value": 0.0
+      }]]></add_property>
+    </change>
+  </mod>
+</definition>

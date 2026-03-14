@@ -1,0 +1,64 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Clean Fat Stacks Consumables</title>
+  <author>Nexus Mods Member: @TheRareKiwi, @momenaya and @MereakFirmaxe</author>
+  <description>For all valid items in DT_Consumables, change stacks size up to 9999</description>
+  <mod file="\Moria\Content\Tech\Data\Items\DT_Consumables.json">
+    <change item="TeaFlower" property="MaxStackSize" value="9999" />
+    <change item="HoneyCakes_Ration" property="MaxStackSize" value="9999" />
+    <change item="DriedMeat_Ration" property="MaxStackSize" value="9999" />
+    <change item="HarshFlower" property="MaxStackSize" value="9999" />
+    <change item="StaminaBoost_Consumable" property="MaxStackSize" value="9999" />
+    <change item="IceCabbage" property="MaxStackSize" value="9999" />
+    <change item="CaveHoney" property="MaxStackSize" value="9999" />
+    <change item="RareMushroom" property="MaxStackSize" value="9999" />
+    <change item="Cheese_Ration" property="MaxStackSize" value="9999" />
+    <change item="Chives" property="MaxStackSize" value="9999" />
+    <change item="AntiPoison_Consumable" property="MaxStackSize" value="9999" />
+    <change item="Cookies_Ration" property="MaxStackSize" value="9999" />
+    <change item="Cram_Ration" property="MaxStackSize" value="9999" />
+    <change item="Cranberries" property="MaxStackSize" value="9999" />
+    <change item="DeepHash_Meal" property="MaxStackSize" value="9999" />
+    <change item="DeepMushroom" property="MaxStackSize" value="9999" />
+    <change item="Dough" property="MaxStackSize" value="9999" />
+    <change item="DriedFruit_Ration" property="MaxStackSize" value="9999" />
+    <change item="Eggs" property="MaxStackSize" value="9999" />
+    <change item="Elanor" property="MaxStackSize" value="9999" />
+    <change item="ElvenSecretIngredient" property="MaxStackSize" value="9999" />
+    <change item="Fennel" property="MaxStackSize" value="9999" />
+    <change item="OrcTemper_Consumable" property="MaxStackSize" value="9999" />
+    <change item="Grabapple" property="MaxStackSize" value="9999" />
+    <change item="Journeybread_Ration" property="MaxStackSize" value="9999" />
+    <change item="DwarfOat" property="MaxStackSize" value="9999" />
+    <change item="Lembas_Ration" property="MaxStackSize" value="9999" />
+    <change item="ShadowCraftingConsumable" property="MaxStackSize" value="9999" />
+    <change item="Meat" property="MaxStackSize" value="9999" />
+    <change item="MilledOats" property="MaxStackSize" value="9999" />
+    <change item="Mint" property="MaxStackSize" value="9999" />
+    <change item="MountainPotato" property="MaxStackSize" value="9999" />
+    <change item="Mushroom" property="MaxStackSize" value="9999" />
+    <change item="Niphredil" property="MaxStackSize" value="9999" />
+    <change item="OatMilk" property="MaxStackSize" value="9999" />
+    <change item="Parsnips" property="MaxStackSize" value="9999" />
+    <change item="Pasties_Ration" property="MaxStackSize" value="9999" />
+    <change item="PoisonMushroom" property="MaxStackSize" value="9999" />
+    <change item="AttackBoost_Consumable" property="MaxStackSize" value="9999" />
+    <change item="Pumpkin" property="MaxStackSize" value="9999" />
+    <change item="FreeDodge_Consumable" property="MaxStackSize" value="9999" />
+    <change item="AntiShadowPoison_Consumable" property="MaxStackSize" value="9999" />
+    <change item="Saffron" property="MaxStackSize" value="9999" />
+    <change item="DriedFish_Ration" property="MaxStackSize" value="9999" />
+    <change item="SaltedMeat_Ration" property="MaxStackSize" value="9999" />
+    <change item="OliveOil" property="MaxStackSize" value="9999" />
+    <change item="Sunion" property="MaxStackSize" value="9999" />
+    <change item="Sweetroot" property="MaxStackSize" value="9999" />
+    <change item="FreeSprint_Consumable" property="MaxStackSize" value="9999" />
+    <change item="HealingFlower" property="MaxStackSize" value="9999" />
+    <change item="Thyme" property="MaxStackSize" value="9999" />
+    <change item="DefenseBoost_Consumable" property="MaxStackSize" value="9999" />
+    <change item="WhaleTalow" property="MaxStackSize" value="9999" />
+    <change item="WhiteBeans" property="MaxStackSize" value="9999" />
+    <change item="HolidayPack_Cookies_Ration" property="MaxStackSize" value="9999" />
+    <change item="HolidayPack_HolidayMeal_Meal" property="MaxStackSize" value="9999" />
+  </mod>
+</definition>

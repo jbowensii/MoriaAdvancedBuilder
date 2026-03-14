@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Properties_Adamant DropRate Fix</title>
+  <author>kenuaena</author>
+  <description>Adds DropRate parameter to Properties_Adamant</description>
+  <mod file="Moria\Content\Environments\Voxels\Baking\Properties_Adamant.json">
+    <change item="Properties_Adamant" property="PrimaryDrop.DropRate" value="1">
+      <add_property item="Properties_Adamant"><![CDATA[{
+        "$type": "UAssetAPI.PropertyTypes.Objects.FloatPropertyData, UAssetAPI",
+        "Name": "DropRate",
+        "Value": 0.0
+      }]]></add_property>
+    </change>
+  </mod>
+</definition>

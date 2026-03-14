@@ -1,0 +1,16 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Clean Fat Stacks Tools</title>
+  <author>Nexus Mods Member: @TheRareKiwi, @momenaya and @MereakFirmaxe</author>
+  <description>For all valid items in DT_Tools, change stacks size up to 9999</description>
+  <mod file="\Moria\Content\Tech\Data\Items\DT_Tools.json">
+    <change item="Loupe_1h_NPCTool" property="MaxStackSize" value="100" />
+    <change item="BlacksmithHammer_1h_NPCTool" property="MaxStackSize" value="100" />
+    <change item="Wanderer_RingTestSequence_Hammer" property="MaxStackSize" value="100" />
+    <change item="MashPaddle_2h_NPCTool" property="MaxStackSize" value="100" />
+    <change item="Chisel_1h_NPCTool" property="MaxStackSize" value="100" />
+    <change item="FryingPan_1h_NPCTool" property="MaxStackSize" value="100" />
+    <change item="Tong_1h_NPCTool" property="MaxStackSize" value="100" />
+    <change item="Basket_1h_NPCTool" property="MaxStackSize" value="100" />
+  </mod>
+</definition>

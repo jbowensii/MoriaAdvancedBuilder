@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Clean Fat Stacks Weapons</title>
+  <author>Nexus Mods Member: @TheRareKiwi, @momenaya and @MereakFirmaxe</author>
+  <description>For all valid items in DT_Weapons, change stacks size up to 9999</description>
+  <mod file="\Moria\Content\Tech\Data\Items\DT_Weapons.json">
+    <change item="Arrow_Basic_t1" property="MaxStackSize" value="9999" />
+    <change item="Arrow_Elven_t2" property="MaxStackSize" value="9999" />
+    <change item="CrossbowBolt_Basic_t1" property="MaxStackSize" value="9999" />
+    <change item="Arrow_Khazad_t3" property="MaxStackSize" value="9999" />
+    <change item="CrossbowBolt_Khazad_t2" property="MaxStackSize" value="9999" />
+    <change item="CrossbowBolt_Nogrod_t3" property="MaxStackSize" value="9999" />
+  </mod>
+</definition>

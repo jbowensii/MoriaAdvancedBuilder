@@ -1,0 +1,39 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Trader sold recipies price adjustment</title>
+  <author>Nexus Mods Member:MereakFirmaxe wrote Fat Trade and Sqitey wrote Moria Black Friday</author>
+  <description>Allow recipies sold by the Traders base trade value to be adjusted, there is a sliding scale for trade values and cost in the game based on orders fullfilled</description>
+  <mod file="Moria\Content\Tech\Data\Economy\DT_RecipeBundles.json">
+    <change item="NPCOutfit_Miner_Hat" property="BaseTradeValue" value="10" />
+    <change item="DurinsTowerBuildingSet" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Artisan_Hat" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Blacksmith_Hat" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Brewer_Hat" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Builder_Hat" property="BaseTradeValue" value="10" />
+    <change item="WhiteMarbleBuildingSet" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Cook_Hat" property="BaseTradeValue" value="10" />
+    <change item="ShireDecoration" property="BaseTradeValue" value="10" />
+    <change item="RedMountainDecoration" property="BaseTradeValue" value="10" />
+    <change item="Orcbane_Set_ArmorTorso" property="BaseTradeValue" value="10" />
+    <change item="BlueMountainDecoration" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Grocer_Hat" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Guard_Hat" property="BaseTradeValue" value="10" />
+    <change item="RivendellDecoration" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Tavern_Torso" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Shopkeeper_Torso" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Cook_Torso" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Restorer_Hat" property="BaseTradeValue" value="10" />
+    <change item="MeatHat" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Trader_Torso" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Metalworker_Hat" property="BaseTradeValue" value="10" />
+    <change item="Starlight_Weapon" property="BaseTradeValue" value="10" />
+    <change item="RedRockBuildingSet" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Gatherer_Hat" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Researcher_Hat" property="BaseTradeValue" value="200.0" />
+    <change item="SeaWax" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Blacksmith_Torso" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Restorer_Torso" property="BaseTradeValue" value="10" />
+    <change item="NPCOutfit_Tinker_Hat" property="BaseTradeValue" value="10" />
+    <change item="GondorDecoration" property="BaseTradeValue" value="10" />
+  </mod>
+</definition>

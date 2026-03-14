@@ -1,0 +1,92 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Clean Fat Stacks Items</title>
+  <author>Nexus Mods Member: @TheRareKiwi, @momenaya and @MereakFirmaxe</author>
+  <description>For all valid items in DT_Items, change stacks size up to 9999</description>
+  <mod file="\Moria\Content\Tech\Data\Items\DT_Items.json">
+    <change item="Spices" property="MaxStackSize" value="9999" />
+    <change item="OilyPeatMoss" property="MaxStackSize" value="9999" />
+    <change item="Bone" property="MaxStackSize" value="9999" />
+    <change item="BronzeIngot" property="MaxStackSize" value="9999" />
+    <change item="KnowledgeScrollA" property="MaxStackSize" value="9999" />
+    <change item="KnowledgeBookA" property="MaxStackSize" value="9999" />
+    <change item="Chitin" property="MaxStackSize" value="9999" />
+    <change item="ChiveSeed" property="MaxStackSize" value="9999" />
+    <change item="ClothScraps" property="MaxStackSize" value="9999" />
+    <change item="Coin" property="MaxStackSize" value="9999" />
+    <change item="CopperIngot" property="MaxStackSize" value="9999" />
+    <change item="Remedy_Ingredient" property="MaxStackSize" value="9999" />
+    <change item="DrakeBones" property="MaxStackSize" value="9999" />
+    <change item="PurifiedDarkIngot" property="MaxStackSize" value="9999" />
+    <change item="AltarFigurineDurin" property="MaxStackSize" value="9999" />
+    <change item="ElanorSeeds" property="MaxStackSize" value="9999" />
+    <change item="Silk" property="MaxStackSize" value="9999" />
+    <change item="ElvenTreeCutting" property="MaxStackSize" value="9999" />
+    <change item="QualityWood" property="MaxStackSize" value="9999" />
+    <change item="EntPack_EntMoss" property="MaxStackSize" value="9999" />
+    <change item="Feathers" property="MaxStackSize" value="9999" />
+    <change item="FellBeastHead" property="MaxStackSize" value="9999" />
+    <change item="FennelSeed" property="MaxStackSize" value="9999" />
+    <change item="FineCloth" property="MaxStackSize" value="9999" />
+    <change item="FineLeather" property="MaxStackSize" value="9999" />
+    <change item="FireclayBrick" property="MaxStackSize" value="9999" />
+    <change item="AltarFigurnieDwalinBalin" property="MaxStackSize" value="9999" />
+    <change item="AltarFigurineBelgost" property="MaxStackSize" value="9999" />
+    <change item="AltarFigurineGimol" property="MaxStackSize" value="9999" />
+    <change item="GoldIngot" property="MaxStackSize" value="9999" />
+    <change item="GundabadScrap" property="MaxStackSize" value="9999" />
+    <change item="Memorial_Item" property="MaxStackSize" value="9999" />
+    <change item="Hide" property="MaxStackSize" value="9999" />
+    <change item="HideScraps" property="MaxStackSize" value="9999" />
+    <change item="HollyTreeCutting" property="MaxStackSize" value="9999" />
+    <change item="IronIngot" property="MaxStackSize" value="9999" />
+    <change item="Ironwood" property="MaxStackSize" value="9999" />
+    <change item="IthildinIngot" property="MaxStackSize" value="9999" />
+    <change item="KhazadSteelIngot" property="MaxStackSize" value="9999" />
+    <change item="Leather" property="MaxStackSize" value="9999" />
+    <change item="Scrap" property="MaxStackSize" value="9999" />
+    <change item="MintSeed" property="MaxStackSize" value="9999" />
+    <change item="PolishedSilver" property="MaxStackSize" value="9999" />
+    <change item="MithrilIngot" property="MaxStackSize" value="9999" />
+    <change item="AltarFigurineNarvi" property="MaxStackSize" value="9999" />
+    <change item="NaturalFiber" property="MaxStackSize" value="9999" />
+    <change item="Biofuel" property="MaxStackSize" value="9999" />
+    <change item="NeedleandThread" property="MaxStackSize" value="9999" />
+    <change item="NiphredilSeeds" property="MaxStackSize" value="9999" />
+    <change item="NogrodSteelIngot" property="MaxStackSize" value="9999" />
+    <change item="Wool" property="MaxStackSize" value="9999" />
+    <change item="BoltsOfCloth" property="MaxStackSize" value="9999" />
+    <change item="AltarFigurnie" property="MaxStackSize" value="9999" />
+    <change item="Key_Orc" property="MaxStackSize" value="9999" />
+    <change item="PumpkinSeeds" property="MaxStackSize" value="9999" />
+    <change item="StriderPage_WesternMines" property="MaxStackSize" value="9999" />
+    <change item="StriderPage_Grottos" property="MaxStackSize" value="9999" />
+    <change item="StriderPage_Bridge" property="MaxStackSize" value="9999" />
+    <change item="StriderPage_Dwarrowdelf" property="MaxStackSize" value="9999" />
+    <change item="StriderPage_Crossroads" property="MaxStackSize" value="9999" />
+    <change item="RopeVines" property="MaxStackSize" value="9999" />
+    <change item="OrcSkull" property="MaxStackSize" value="9999" />
+    <change item="Scales" property="MaxStackSize" value="9999" />
+    <change item="SeaWax" property="MaxStackSize" value="9999" />
+    <change item="GunMetalIngot" property="MaxStackSize" value="9999" />
+    <change item="Shell" property="MaxStackSize" value="9999" />
+    <change item="SilverIngot" property="MaxStackSize" value="9999" />
+    <change item="Droppings" property="MaxStackSize" value="9999" />
+    <change item="Fertilizer" property="MaxStackSize" value="9999" />
+    <change item="SpiderSilk" property="MaxStackSize" value="9999" />
+    <change item="StarAlloyIngot" property="MaxStackSize" value="9999" />
+    <change item="SteelIngot" property="MaxStackSize" value="9999" />
+    <change item="SterlingIngot" property="MaxStackSize" value="9999" />
+    <change item="QuietMoss" property="MaxStackSize" value="9999" />
+    <change item="SweetrootSeeds" property="MaxStackSize" value="9999" />
+    <change item="AltarFigurnieTelchar" property="MaxStackSize" value="9999" />
+    <change item="ThymeSeed" property="MaxStackSize" value="9999" />
+    <change item="TrollHIde" property="MaxStackSize" value="9999" />
+    <change item="FungalTreeCutting" property="MaxStackSize" value="9999" />
+    <change item="AncientWood" property="MaxStackSize" value="9999" />
+    <change item="WargPelt" property="MaxStackSize" value="9999" />
+    <change item="WhiteBeanSeed" property="MaxStackSize" value="9999" />
+    <change item="Wood" property="MaxStackSize" value="9999" />
+    <change item="OldRing" property="MaxStackSize" value="9999" />
+  </mod>
+</definition>

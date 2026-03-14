@@ -1,0 +1,86 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Durable Weapons</title>
+  <author>Nexus Mods Member: @momenaya wrote Durable Weapons</author>
+  <description>For all valid items in DT_Weapons, change durability up to 99999</description>
+  <mod file="\Moria\Content\Tech\Data\Items\DT_Weapons.json">
+    <change item="BalinsCompany_TBDSet_Shield" property="Durability" value="99999" />
+    <change item="Battleaxe_2h_t4" property="Durability" value="99999" />
+    <change item="Halberd_2h_t1" property="Durability" value="99999" />
+    <change item="Belegost_Shield" property="Durability" value="99999" />
+    <change item="WarAxe_1h_t3" property="Durability" value="99999" />
+    <change item="MoriaCompany_Shield" property="Durability" value="99999" />
+    <change item="FamousElvenSword_1h" property="Durability" value="99999" />
+    <change item="Awesome_TBDSet_Shield" property="Durability" value="99999" />
+    <change item="Spear_1h_t3" property="Durability" value="99999" />
+    <change item="Weapon_Starlight" property="Durability" value="99999" />
+    <change item="Durins_Axe" property="Durability" value="99999" />
+    <change item="Durin_TBDSet_Shield" property="Durability" value="99999" />
+    <change item="Arrow_Elven_t2" property="Durability" value="99999" />
+    <change item="EntPack_Shield" property="Durability" value="99999" />
+    <change item="EregionElf_Set_Shield" property="Durability" value="99999" />
+    <change item="Spear_1h_t2" property="Durability" value="99999" />
+    <change item="Battleaxe_2h_t2" property="Durability" value="99999" />
+    <change item="CrossbowBolt_Basic_t1" property="Durability" value="99999" />
+    <change item="Crossbow" property="Durability" value="99999" />
+    <change item="Sword_2h_t1" property="Durability" value="99999" />
+    <change item="Sword_1h_t3" property="Durability" value="99999" />
+    <change item="OrcHunter_GreatAxe_2h" property="Durability" value="99999" />
+    <change item="Battleaxe_2h_Gimli" property="Durability" value="99999" />
+    <change item="GlitteringCaves_StaminaSet_Shield" property="Durability" value="99999" />
+    <change item="Grand_TBDSet_Shield" property="Durability" value="99999" />
+    <change item="Wonderful_TBDSet_Shield" property="Durability" value="99999" />
+    <change item="Shortbow" property="Durability" value="99999" />
+    <change item="WarAxe_1h_t0" property="Durability" value="99999" />
+    <change item="IronHills_APSet_Shield" property="Durability" value="99999" />
+    <change item="Spear_1h_t1" property="Durability" value="99999" />
+    <change item="Sword_1h_t1" property="Durability" value="99999" />
+    <change item="WarAxe_1h_t1" property="Durability" value="99999" />
+    <change item="Greenbeard_Sword_2h" property="Durability" value="99999" />
+    <change item="Sword_2h_t2" property="Durability" value="99999" />
+    <change item="Halberd_2h_t2" property="Durability" value="99999" />
+    <change item="Arrow_Khazad_t3" property="Durability" value="99999" />
+    <change item="CrossbowBolt_Khazad_t2" property="Durability" value="99999" />
+    <change item="Mattock_1h_t2" property="Durability" value="99999" />
+    <change item="WarAxe_1h_t4" property="Durability" value="99999" />
+    <change item="Hammer_2h_t1" property="Durability" value="99999" />
+    <change item="WarAxe_1h_t5" property="Durability" value="99999" />
+    <change item="Halberd_2h_t3" property="Durability" value="99999" />
+    <change item="Mattock_1h_t1" property="Durability" value="99999" />
+    <change item="Amazing_TBDSet_Shield" property="Durability" value="99999" />
+    <change item="Mithril_TBDSet_Shield" property="Durability" value="99999" />
+    <change item="Mattock_1h_t3" property="Durability" value="99999" />
+    <change item="CrossbowBolt_Nogrod_t3" property="Durability" value="99999" />
+    <change item="Nogrod_TBDSet_Shield" property="Durability" value="99999" />
+    <change item="OakenShield_TBDSet_Shield" property="Durability" value="99999" />
+    <change item="Orc_Bow_01" property="Durability" value="99999" />
+    <change item="Orc_Bow_02" property="Durability" value="99999" />
+    <change item="RingHunter_Orc_Bow" property="Durability" value="99999" />
+    <change item="Orc_Mace_1h" property="Durability" value="99999" />
+    <change item="Orc_Sword_1h_OLD" property="Durability" value="99999" />
+    <change item="Stunning_TBDSet_Shield" property="Durability" value="99999" />
+    <change item="Taunting_TBDSet_Shield" property="Durability" value="99999" />
+    <change item="Battleaxe_2h_t3" property="Durability" value="99999" />
+    <change item="Sword_1h_t4_Old" property="Durability" value="99999" />
+    <change item="Sword_1h_t4_FireRune" property="Durability" value="99999" />
+    <change item="RohanPack_Shield" property="Durability" value="99999" />
+    <change item="RohanPack_Spear_1h" property="Durability" value="99999" />
+    <change item="Sword_1h_t5" property="Durability" value="99999" />
+    <change item="Hammer_2h_t2" property="Durability" value="99999" />
+    <change item="Broken_Battleaxe_2h_t4" property="Durability" value="99999" />
+    <change item="Broken_FamousElvenSword_1h" property="Durability" value="99999" />
+    <change item="Broken_WarAxe_1h_t5" property="Durability" value="99999" />
+    <change item="Broken_Halberd_2h_t3" property="Durability" value="99999" />
+    <change item="Broken_Mattock_1h_t3" property="Durability" value="99999" />
+    <change item="Broken_Sword_1h_t5" property="Durability" value="99999" />
+    <change item="Broken_Hammer_2h_t2" property="Durability" value="99999" />
+    <change item="Epic_DragonSpear_Broken" property="Durability" value="99999" />
+    <change item="Broken_Sword_2h_t3" property="Durability" value="99999" />
+    <change item="Epic_DragonSpear" property="Durability" value="99999" />
+    <change item="Epic_TowerShield" property="Durability" value="99999" />
+    <change item="Battleaxe_2h_t1" property="Durability" value="99999" />
+    <change item="Sword_1h_t2" property="Durability" value="99999" />
+    <change item="WarAxe_1h_t2" property="Durability" value="99999" />
+    <change item="Sword_2h_t3" property="Durability" value="99999" />
+  </mod>
+</definition>

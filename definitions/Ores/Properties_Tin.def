@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Properties_Tin DropRate Fix</title>
+  <author>kenuaena</author>
+  <description>Adds DropRate parameter to Properties_Tin</description>
+  <mod file="Moria\Content\Environments\Voxels\Baking\Properties_Tin.json">
+    <change item="Properties_Tin" property="PrimaryDrop.DropRate" value="1800.0">
+      <add_property item="Properties_Tin"><![CDATA[{
+        "$type": "UAssetAPI.PropertyTypes.Objects.FloatPropertyData, UAssetAPI",
+        "Name": "DropRate",
+        "Value": 0.0
+      }]]></add_property>
+    </change>
+  </mod>
+</definition>

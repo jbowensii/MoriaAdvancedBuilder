@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>My Mod Progression - DT_WorldLevelData (AvailableRecruits)</title>
+  <author>Nexus Mods Member</author>
+  <description>janvsjdncjksdncjknsdcnhsnckhfnvhjfnvhdnfvhjndhghdgnbhgjnbdjlgbvnfkvnkgv</description>
+  <mod file="Moria\Content\Tech\Data\Settlements\DT_WorldLevelData.json">
+    <change item="FirstSettlement" property="LevelData.AvailableRecruits" value="5" />
+    <change item="Beacon" property="LevelData.AvailableRecruits" value="5" />
+    <change item="Monument_1" property="LevelData.AvailableRecruits" value="5" />
+    <change item="Monument_2" property="LevelData.AvailableRecruits" value="5" />
+  </mod>
+</definition>

@@ -1,0 +1,162 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>More Wardrobe Colors - DT_ItemTint (EnabledState)</title>
+  <author>GreenGorilla23</author>
+  <description>A mod that adds more colors to the wardrobe</description>
+  <mod file="Moria\Content\Items\Effects\DT_ItemTint.json">
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Cyan (Added)  -->
+    <change item="Cyan" property="EnabledState" value="ERowEnabledState::Live">
+      <add_property item="Cyan"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.EnumPropertyData, UAssetAPI",
+  "EnumType": "ERowEnabledState",
+  "InnerType": null,
+  "Name": "EnabledState",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "ERowEnabledState::Live"
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Red (Added)  -->
+    <change item="Red" property="EnabledState" value="ERowEnabledState::Live">
+      <add_property item="Red"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.EnumPropertyData, UAssetAPI",
+  "EnumType": "ERowEnabledState",
+  "InnerType": null,
+  "Name": "EnabledState",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "ERowEnabledState::Live"
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Magenta (Added)  -->
+    <change item="Magenta" property="EnabledState" value="ERowEnabledState::Live">
+      <add_property item="Magenta"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.EnumPropertyData, UAssetAPI",
+  "EnumType": "ERowEnabledState",
+  "InnerType": null,
+  "Name": "EnabledState",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "ERowEnabledState::Live"
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Orange (Added)  -->
+    <change item="Orange" property="EnabledState" value="ERowEnabledState::Live">
+      <add_property item="Orange"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.EnumPropertyData, UAssetAPI",
+  "EnumType": "ERowEnabledState",
+  "InnerType": null,
+  "Name": "EnabledState",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "ERowEnabledState::Live"
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Black (Added)  -->
+    <change item="Black" property="EnabledState" value="ERowEnabledState::Live">
+      <add_property item="Black"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.EnumPropertyData, UAssetAPI",
+  "EnumType": "ERowEnabledState",
+  "InnerType": null,
+  "Name": "EnabledState",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "ERowEnabledState::Live"
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Brown (Added)  -->
+    <change item="Brown" property="EnabledState" value="ERowEnabledState::Live">
+      <add_property item="Brown"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.EnumPropertyData, UAssetAPI",
+  "EnumType": "ERowEnabledState",
+  "InnerType": null,
+  "Name": "EnabledState",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "ERowEnabledState::Live"
+}]]></add_property>
+    </change>
+    <!--  colors added
+
+Cyan
+Ruby
+Magenta
+Orange
+Black
+Reddish Brown
+Azure - Azure (Added)  -->
+    <change item="Azure" property="EnabledState" value="ERowEnabledState::Live">
+      <add_property item="Azure"><![CDATA[{
+  "$type": "UAssetAPI.PropertyTypes.Objects.EnumPropertyData, UAssetAPI",
+  "EnumType": "ERowEnabledState",
+  "InnerType": null,
+  "Name": "EnabledState",
+  "ArrayIndex": 0,
+  "IsZero": false,
+  "PropertyTagFlags": "None",
+  "PropertyTagExtensions": "NoExtension",
+  "Value": "ERowEnabledState::Live"
+}]]></add_property>
+    </change>
+  </mod>
+</definition>

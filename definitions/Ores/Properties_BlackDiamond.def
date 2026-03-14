@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Properties_BlackDiamond DropRate Fix</title>
+  <author>kenuaena</author>
+  <description>Adds DropRate parameter to Properties_BlackDiamond</description>
+  <mod file="Moria\Content\Environments\Voxels\Baking\Properties_BlackDiamond.json">
+    <change item="Properties_BlackDiamond" property="PrimaryDrop.DropRate" value="200">
+      <add_property item="Properties_BlackDiamond"><![CDATA[{
+        "$type": "UAssetAPI.PropertyTypes.Objects.FloatPropertyData, UAssetAPI",
+        "Name": "DropRate",
+        "Value": 0.0
+      }]]></add_property>
+    </change>
+  </mod>
+</definition>

@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Properties_Gold DropRate Fix</title>
+  <author>kenuaena</author>
+  <description>Adds DropRate parameter to Properties_Gold</description>
+  <mod file="Moria\Content\Environments\Voxels\Baking\Properties_Gold.json">
+    <change item="Properties_Gold" property="PrimaryDrop.DropRate" value="1800.0">
+      <add_property item="Properties_Gold"><![CDATA[{
+        "$type": "UAssetAPI.PropertyTypes.Objects.FloatPropertyData, UAssetAPI",
+        "Name": "DropRate",
+        "Value": 0.0
+      }]]></add_property>
+    </change>
+  </mod>
+</definition>

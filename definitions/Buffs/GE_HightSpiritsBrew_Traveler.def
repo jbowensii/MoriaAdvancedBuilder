@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>High Spirits Brew Traveller Buff Duration</title>
+  <author>Nexus Mods Member:kenuaena</author>
+  <description>Increase Buff Durations for all Buffs known in game, value in seconds</description>
+  <mod file="Moria\Content\Items\GE_HightSpiritsBrew_Traveler.json">
+    <change item="Default__GE_HightSpiritsBrew_Traveler_C" property="DurationMagnitude.ScalableFloatMagnitude.Value" value="1800" />
+  </mod>
+</definition>

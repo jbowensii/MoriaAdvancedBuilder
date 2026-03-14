@@ -1,0 +1,50 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<definition>
+  <title>Trade Goods Fat Stacks</title>
+  <author>Nexus Mods Member:MereakFirmaxe wrote Fat Trade and Sqitey wrote Moria Black Friday</author>
+  <description>Allow trade goods to stack to 100</description>
+  <mod file="Moria\Content\Tech\Data\Economy\DT_TradeGoods.json">
+    <change item="TG_BrassButtons" property="MaxStackSize" value="100" />
+    <change item="TG_BronzeCoins" property="MaxStackSize" value="100" />
+    <change item="TG_ArmyAle" property="MaxStackSize" value="100" />
+    <change item="TG_WoodworkingTools" property="MaxStackSize" value="100" />
+    <change item="TG_CeremonialArmorLot" property="MaxStackSize" value="100" />
+    <change item="TG_CeremonialWeapons" property="MaxStackSize" value="100" />
+    <change item="TG_CopperBeltBuckles" property="MaxStackSize" value="100" />
+    <change item="TG_CopperCoins" property="MaxStackSize" value="100" />
+    <change item="TG_CrossbowLot" property="MaxStackSize" value="100" />
+    <change item="TG_CrystalLamps" property="MaxStackSize" value="100" />
+    <change item="TG_OrnateMetalwork" property="MaxStackSize" value="100" />
+    <change item="TG_DiamondJewelry" property="MaxStackSize" value="100" />
+    <change item="TG_BuildingHouseingTools" property="MaxStackSize" value="100" />
+    <change item="TG_DwarvenHistories" property="MaxStackSize" value="100" />
+    <change item="TG_MechanicalToys" property="MaxStackSize" value="100" />
+    <change item="TG_EngravedAkhfurChests" property="MaxStackSize" value="100" />
+    <change item="TG_MirroredGlass" property="MaxStackSize" value="100" />
+    <change item="TG_GemSetFiligreeInlay" property="MaxStackSize" value="100" />
+    <change item="TG_GoldSilverFilligree" property="MaxStackSize" value="100" />
+    <change item="TG_GoldJewelry" property="MaxStackSize" value="100" />
+    <change item="TG_HealingSupplies" property="MaxStackSize" value="100" />
+    <change item="TG_HorsemansIronwork" property="MaxStackSize" value="100" />
+    <change item="TG_CarvedMuralSections" property="MaxStackSize" value="100" />
+    <change item="TG_IronPotsAndPans" property="MaxStackSize" value="100" />
+    <change item="TG_MithrilJewelry" property="MaxStackSize" value="100" />
+    <change item="TG_DecorativeMithrilWork" property="MaxStackSize" value="100" />
+    <change item="TG_BronzeShipFittings" property="MaxStackSize" value="100" />
+    <change item="TG_ArnorBrew" property="MaxStackSize" value="100" />
+    <change item="TG_OrnateTablewear" property="MaxStackSize" value="100" />
+    <change item="TG_EliteArmor" property="MaxStackSize" value="100" />
+    <change item="TG_EliteWeapons" property="MaxStackSize" value="100" />
+    <change item="TG_RohanAle" property="MaxStackSize" value="100" />
+    <change item="TG_RunicHearthstones" property="MaxStackSize" value="100" />
+    <change item="TG_TrebuchetParts" property="MaxStackSize" value="100" />
+    <change item="TG_SilverCoin" property="MaxStackSize" value="100" />
+    <change item="TG_StarmetalCoins" property="MaxStackSize" value="100" />
+    <change item="TG_DwarvenArrowheads" property="MaxStackSize" value="100" />
+    <change item="TG_PrecisionMeasurementTools" property="MaxStackSize" value="100" />
+    <change item="TG_TinCoins" property="MaxStackSize" value="100" />
+    <change item="TG_TravelingGear" property="MaxStackSize" value="100" />
+    <change item="TG_ShireAle" property="MaxStackSize" value="100" />
+    <change item="TG_SteelWeaponsLot" property="MaxStackSize" value="100" />
+  </mod>
+</definition>
