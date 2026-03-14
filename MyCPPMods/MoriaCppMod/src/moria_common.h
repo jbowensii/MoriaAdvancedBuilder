@@ -265,7 +265,7 @@ namespace MoriaMods
     }
 
 
-    static constexpr int CONFIG_TAB_COUNT = 3;
+    static constexpr int CONFIG_TAB_COUNT = 4;
     inline const wchar_t* CONFIG_TAB_NAMES[4] = {L"Optional Mods", L"Key Mapping", L"Hide Environment", L"Game Mods"};
 
     struct ConfigState
