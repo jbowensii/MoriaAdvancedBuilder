@@ -2616,9 +2616,6 @@
                 for (auto& l : m_ftKeyBoxLabels) l = nullptr;
                 for (auto& c : m_ftCheckImages) c = nullptr;
                 m_ftModBoxLabel = nullptr;
-                m_ftFreeBuildCheckImg = nullptr;
-                m_ftFreeBuildLabel = nullptr;
-                m_ftFreeBuildKeyLabel = nullptr;
                 m_ftNoCollisionCheckImg = nullptr;
                 m_ftNoCollisionLabel = nullptr;
                 m_ftNoCollisionKeyLabel = nullptr;
@@ -2975,72 +2972,9 @@
                                     FStaticConstructObjectParameters secImgP(imageClass, outer);
                                     UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
                                     if (secImg) { umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn); umgSetBrushSize(secImg, 900.0f, 80.0f); addToOverlay(secOl, secImg); }
-                                    UObject* secLabel = makeTB(Loc::get("ui.cheat_toggles"), 0.78f, 0.86f, 1.0f, 1.0f, 28);
+                                    UObject* secLabel = makeTB(L"Options", 0.78f, 0.86f, 1.0f, 1.0f, 28);
                                     if (secLabel) { umgSetBold(secLabel); UObject* ts = addToOverlay(secOl, secLabel); if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); } }
                                     addToVBox(t1, secOl);
-                                }
-                            }
-
-
-                            {
-                                FStaticConstructObjectParameters rowP(hboxClass, outer);
-                                UObject* fbRow = UObjectGlobals::StaticConstructObject(rowP);
-                                if (fbRow)
-                                {
-
-                                    if (texCB)
-                                    {
-                                        FStaticConstructObjectParameters olP(overlayClass, outer);
-                                        UObject* cbOl = UObjectGlobals::StaticConstructObject(olP);
-                                        if (cbOl)
-                                        {
-                                            FStaticConstructObjectParameters imgP(imageClass, outer);
-                                            UObject* cbBg = UObjectGlobals::StaticConstructObject(imgP);
-                                            if (cbBg) { umgSetBrushNoMatch(cbBg, texCB, setBrushFn); umgSetBrushSize(cbBg, 80.0f, 80.0f); addToOverlay(cbOl, cbBg); }
-                                            if (texCheck)
-                                            {
-                                                FStaticConstructObjectParameters chkP(imageClass, outer);
-                                                UObject* chkImg = UObjectGlobals::StaticConstructObject(chkP);
-                                                if (chkImg)
-                                                {
-                                                    umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
-                                                    umgSetBrushSize(chkImg, 80.0f, 80.0f);
-                                                    addToOverlay(cbOl, chkImg);
-                                                    m_ftFreeBuildCheckImg = chkImg;
-
-                                                    auto* visFn = chkImg->GetFunctionByNameInChain(STR("SetVisibility"));
-                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = 1; chkImg->ProcessEvent(visFn, vp); }
-                                                }
-                                            }
-                                            UObject* cbSlot = addToHBox(fbRow, cbOl);
-                                            if (cbSlot) umgSetSlotPadding(cbSlot, 4.0f, 24.0f, 8.0f, 24.0f);
-                                        }
-                                    }
-
-                                    UObject* fbLabel = makeTB(Loc::get("ui.free_build"), 0.55f, 0.55f, 0.55f, 1.0f, 24);
-                                    m_ftFreeBuildLabel = fbLabel;
-                                    if (fbLabel)
-                                    {
-                                        UObject* ls = addToHBox(fbRow, fbLabel);
-                                        if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 0.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
-                                    }
-
-                                    if (texKeyBox)
-                                    {
-                                        FStaticConstructObjectParameters kbOlP(overlayClass, outer);
-                                        UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
-                                        if (kbOl)
-                                        {
-                                            FStaticConstructObjectParameters kbImgP(imageClass, outer);
-                                            UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
-                                            if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
-                                            UObject* kbLabel = makeTB(L"OFF", 0.7f, 0.3f, 0.3f, 1.0f, 24);
-                                            if (kbLabel) { umgSetBold(kbLabel); m_ftFreeBuildKeyLabel = kbLabel; UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
-                                            UObject* kbSlot = addToHBox(fbRow, kbOl);
-                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
-                                        }
-                                    }
-                                    addToVBox(t1, fbRow);
                                 }
                             }
 
@@ -3103,37 +3037,6 @@
                                         }
                                     }
                                     addToVBox(t1, ncRow);
-                                }
-                            }
-
-
-                            {
-                                FStaticConstructObjectParameters rowP(hboxClass, outer);
-                                UObject* ulRow = UObjectGlobals::StaticConstructObject(rowP);
-                                if (ulRow)
-                                {
-                                    UObject* ulLabel = makeTB(Loc::get("ui.unlock_all_recipes"), 0.86f, 0.90f, 0.96f, 0.85f, 24);
-                                    if (ulLabel)
-                                    {
-                                        UObject* ls = addToHBox(ulRow, ulLabel);
-                                        if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 92.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
-                                    }
-                                    if (texKeyBox)
-                                    {
-                                        FStaticConstructObjectParameters kbOlP(overlayClass, outer);
-                                        UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
-                                        if (kbOl)
-                                        {
-                                            FStaticConstructObjectParameters kbImgP(imageClass, outer);
-                                            UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
-                                            if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
-                                            UObject* kbLabel = makeTB(L"UNLOCK", 0.9f, 0.75f, 0.2f, 1.0f, 24);
-                                            if (kbLabel) { umgSetBold(kbLabel); UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
-                                            UObject* kbSlot = addToHBox(ulRow, kbOl);
-                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
-                                        }
-                                    }
-                                    addToVBox(t1, ulRow);
                                 }
                             }
 
@@ -3680,7 +3583,6 @@
             m_ftVisible = true;
             setInputModeUI(userWidget);
 
-            updateFtFreeBuild();
             updateFtNoCollision();
             updateFtGameOptCheckboxes();
             showOnScreen(L"Settings panel opened (ALT+INS to close)", 3.0f, 0.0f, 1.0f, 0.0f);
@@ -3759,21 +3661,6 @@
                 umgSetText(m_ftModBoxLabel, std::wstring(modifierName(s_modifierVK)));
         }
 
-
-        void updateFtFreeBuild()
-        {
-            bool on = s_config.freeBuild;
-            if (m_ftFreeBuildCheckImg)
-            {
-                auto* visFn = m_ftFreeBuildCheckImg->GetFunctionByNameInChain(STR("SetVisibility"));
-                if (visFn) { uint8_t p[8]{}; p[0] = on ? 0 : 1; m_ftFreeBuildCheckImg->ProcessEvent(visFn, p); }
-            }
-            if (m_ftFreeBuildKeyLabel)
-            {
-                umgSetText(m_ftFreeBuildKeyLabel, on ? L"ON" : L"OFF");
-                umgSetTextColor(m_ftFreeBuildKeyLabel, on ? 0.31f : 0.7f, on ? 0.86f : 0.3f, on ? 0.47f : 0.3f, 1.0f);
-            }
-        }
 
         void updateFtNoCollision()
         {

@@ -215,11 +215,6 @@ namespace MoriaMods
             s_table["tab.hide_environment"] = L"Hide Environment";
 
             s_table["ui.config_title"] = L"Building Mod Configuration Menu";
-            s_table["ui.cheat_toggles"] = L"Cheat Toggles";
-            s_table["ui.free_build"] = L"  Free Build";
-            s_table["ui.free_build_on"] = L"  Free Build  (ON)";
-            s_table["ui.free_build_desc"] = L"  Build without materials";
-            s_table["ui.unlock_all_recipes"] = L"Unlock All Recipes";
             s_table["ui.set_modifier_key"] = L"Set Modifier Key:  ";
             s_table["ui.set_modifier_key_short"] = L"Set Modifier Key";
             s_table["ui.press_key"] = L"Press key...";
@@ -254,12 +249,8 @@ namespace MoriaMods
             s_table["msg.actor_dump_no_hit"] = L"[ActorDump] No hit";
             s_table["msg.no_buildable_target"] = L"No buildable target \x2014 aim at a building and press F10 first";
             s_table["msg.build_menu_timeout"] = L"Build menu didn't open (timeout)";
-            s_table["msg.all_recipes_unlocked"] = L"ALL RECIPES UNLOCKED!";
-            s_table["msg.recipe_actor_not_found"] = L"Recipe debug actor not found";
-            s_table["msg.free_build_failed"] = L"Free Build toggle failed - debug actor not found";
             s_table["msg.hotbar_overlay_on"] = L"Hotbar overlay ON";
             s_table["msg.hotbar_overlay_off"] = L"Hotbar overlay OFF";
-            s_table["msg.debug_actor_not_found"] = L"Debug menu actor not found";
             s_table["msg.builders_bar_created"] = L"Builders bar created!";
             s_table["msg.mod_controller_created"] = L"Mod Controller created!";
             s_table["msg.umg_bar_removed"] = L"UMG bar removed";

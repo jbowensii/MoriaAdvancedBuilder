@@ -312,9 +312,6 @@ namespace MoriaMods
         UObject* m_ftCheckImages[BIND_COUNT]{};
         UObject* m_ftModBoxLabel{nullptr};
 
-        UObject* m_ftFreeBuildCheckImg{nullptr};
-        UObject* m_ftFreeBuildLabel{nullptr};
-        UObject* m_ftFreeBuildKeyLabel{nullptr};
         UObject* m_ftNoCollisionCheckImg{nullptr};
         UObject* m_ftNoCollisionLabel{nullptr};
         UObject* m_ftNoCollisionKeyLabel{nullptr};
@@ -1381,10 +1378,8 @@ namespace MoriaMods
                             int y = curY - contentY + static_cast<int>(scrollOff * s2p);
 
 
-                            int fbY0 = sectionH;
-                            int ncY0 = fbY0 + rowH;
-                            int ulY0 = ncY0 + rowH;
-                            int rcY0 = ulY0 + rowH;
+                            int ncY0 = sectionH;
+                            int rcY0 = ncY0 + rowH;
                             int trY0 = rcY0 + rowH;
                             int rpY0 = trY0 + rowH;
                             int raY0 = rpY0 + rowH;
@@ -1394,24 +1389,12 @@ namespace MoriaMods
                             bool inFullRow = (curX >= cbX0 && curX <= kbX1);
 
 
-                            if (inCheckBox && y >= fbY0 && y < fbY0 + rowH)
-                            {
-                                s_config.pendingToggleFreeBuild = true;
-                                VLOG(STR("[MoriaCppMod] [Settings] Free Build toggle via checkbox\n"));
-                            }
-
-                            else if (inCheckBox && y >= ncY0 && y < ncY0 + rowH)
+                            if (inCheckBox && y >= ncY0 && y < ncY0 + rowH)
                             {
                                 m_noCollisionWhileFlying = !m_noCollisionWhileFlying;
                                 saveConfig();
                                 updateFtNoCollision();
                                 VLOG(STR("[MoriaCppMod] [Settings] No Collision toggle: {}\n"), m_noCollisionWhileFlying ? 1 : 0);
-                            }
-
-                            else if (inKeyBox && y >= ulY0 && y < ulY0 + rowH)
-                            {
-                                s_config.pendingUnlockAllRecipes = true;
-                                VLOG(STR("[MoriaCppMod] [Settings] Unlock All Recipes via button\n"));
                             }
 
                             else if (inFullRow && y >= rcY0 && y < rcY0 + rowH)
@@ -1616,43 +1599,7 @@ namespace MoriaMods
                         rebuildFtRemovalList();
                 }
 
-                static int s_freeBuildRetries = 0;
-                static int s_freeBuildThrottle = 0;
-                constexpr int MAX_RETRIES = 12;
-                constexpr int RETRY_INTERVAL = 10;
-
-                if (s_config.pendingToggleFreeBuild)
-                {
-                    if (++s_freeBuildThrottle >= RETRY_INTERVAL)
-                    {
-                        s_freeBuildThrottle = 0;
-                        if (callDebugFunc(STR("BP_DebugMenu_CraftingAndConstruction_C"), STR("Toggle Free Construction")))
-                        {
-                            s_config.pendingToggleFreeBuild = false;
-                            syncDebugToggleState();
-                            showDebugMenuState();
-                            if (m_ftVisible) { updateFtFreeBuild(); updateFtNoCollision(); updateFtGameOptCheckboxes(); }
-                            s_freeBuildRetries = 0;
-                        }
-                        else if (++s_freeBuildRetries > MAX_RETRIES)
-                        {
-                            s_config.pendingToggleFreeBuild = false;
-                            s_freeBuildRetries = 0;
-                            showErrorBox(Loc::get("msg.free_build_failed"));
-                            VLOG(STR("[MoriaCppMod] Toggle Free Construction FAILED after {} retries\n"), MAX_RETRIES);
-                        }
-                    }
                 }
-            }
-            if (s_config.pendingUnlockAllRecipes)
-            {
-                if (callDebugFunc(STR("BP_DebugMenu_Recipes_C"), STR("All Recipes")))
-                    showOnScreen(Loc::get("msg.all_recipes_unlocked"), 5.0f, 0.0f, 1.0f, 0.0f);
-                else
-                    showErrorBox(Loc::get("msg.recipe_actor_not_found"));
-                s_config.pendingUnlockAllRecipes = false;
-            }
-
 
             {
                 int removeIdx = s_config.pendingRemoveIndex.load();
@@ -1900,9 +1847,6 @@ namespace MoriaMods
                     for (auto& l : m_ftKeyBoxLabels) l = nullptr;
                     for (auto& c : m_ftCheckImages) c = nullptr;
                     m_ftModBoxLabel = nullptr;
-                    m_ftFreeBuildCheckImg = nullptr;
-                    m_ftFreeBuildLabel = nullptr;
-                    m_ftFreeBuildKeyLabel = nullptr;
                     m_ftNoCollisionCheckImg = nullptr;
                     m_ftNoCollisionLabel = nullptr;
                     m_ftNoCollisionKeyLabel = nullptr;
@@ -1962,12 +1906,6 @@ namespace MoriaMods
                     m_ebShowTick = 0;
 
                     clearStabilityHighlights();
-
-
-                    s_config.freeBuild = false;
-                    s_config.pendingToggleFreeBuild = false;
-                    s_config.pendingUnlockAllRecipes = false;
-                    VLOG(STR("[MoriaCppMod] Cleared cheat toggles\n"));
                 }
             }
 
@@ -2001,7 +1939,6 @@ namespace MoriaMods
                 }
 
 
-                syncDebugToggleState();
             }
 
 

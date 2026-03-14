@@ -270,9 +270,6 @@ namespace MoriaMods
 
     struct ConfigState
     {
-        std::atomic<bool> freeBuild{false};
-        std::atomic<bool> pendingToggleFreeBuild{false};
-        std::atomic<bool> pendingUnlockAllRecipes{false};
         CRITICAL_SECTION removalCS;
         std::atomic<bool> removalCSInit{false};
         std::vector<RemovalEntry> removalEntries;
