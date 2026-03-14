@@ -261,6 +261,8 @@ namespace MoriaMods
         bool m_deferHideAndRefresh{false};
 
         bool m_showHotbar{true};
+        bool m_gameHudVisible{true};
+        bool m_inFreeCam{false};
 
 
         std::atomic<bool> m_pendingCharNameReady{false};
@@ -532,7 +534,7 @@ namespace MoriaMods
             register_keydown_event(Input::Key::MULTIPLY, [this]() {
                 if (m_ftVisible) return;
                 m_showHotbar = !m_showHotbar;
-                s_overlay.visible = m_showHotbar;
+                s_overlay.visible = m_showHotbar && m_gameHudVisible;
                 s_overlay.needsUpdate = true;
                 showOnScreen(m_showHotbar ? Loc::get("msg.hotbar_overlay_on") : Loc::get("msg.hotbar_overlay_off"), 2.0f, 0.2f, 0.8f, 1.0f);
             });
@@ -623,6 +625,40 @@ namespace MoriaMods
                         {
                             s_instance->onGhostDisappeared();
                         }
+                    }
+                    return;
+                }
+
+
+                // FreeCam enter: hide all mod toolbars
+                if (wcscmp(fnStr2, STR("ExecuteUbergraph_WBP_FreeCamHUD")) == 0)
+                {
+                    if (!s_instance->m_inFreeCam)
+                    {
+                        s_instance->m_inFreeCam = true;
+                        s_instance->m_gameHudVisible = false;
+                        VLOG(STR("[MoriaCppMod] [HUD] Entered FreeCam — hiding toolbars\n"));
+                        s_overlay.visible = false;
+                        s_overlay.needsUpdate = true;
+                        s_instance->setWidgetVisibility(s_instance->m_umgBarWidget, 1);
+                        s_instance->setWidgetVisibility(s_instance->m_abBarWidget, 1);
+                        s_instance->setWidgetVisibility(s_instance->m_mcBarWidget, 1);
+                    }
+                    return;
+                }
+
+                // FreeCam exit: restore all mod toolbars
+                if (wcscmp(fnStr2, STR("OnCustomDisableCamera")) == 0)
+                {
+                    s_instance->m_inFreeCam = false;
+                    s_instance->m_gameHudVisible = true;
+                    VLOG(STR("[MoriaCppMod] [HUD] Exited FreeCam — restoring toolbars\n"));
+                    if (s_instance->m_toolbarsVisible)
+                    {
+                        if (s_instance->m_showHotbar) { s_overlay.visible = true; s_overlay.needsUpdate = true; }
+                        s_instance->setWidgetVisibility(s_instance->m_umgBarWidget, 0);
+                        s_instance->setWidgetVisibility(s_instance->m_abBarWidget, 0);
+                        s_instance->setWidgetVisibility(s_instance->m_mcBarWidget, 0);
                     }
                     return;
                 }
@@ -800,6 +836,7 @@ namespace MoriaMods
                     setWidgetVisibility(m_umgBarWidget, 1);
                 }
             }
+
 
 
             if (s_pendingKeyLabelRefresh.exchange(false))
@@ -1064,7 +1101,7 @@ namespace MoriaMods
 
                             toggleRepositionMode();
                         }
-                        else if (!m_repositionMode)
+                        else if (!m_repositionMode && m_gameHudVisible)
                         {
 
                             m_toolbarsVisible = !m_toolbarsVisible;
@@ -1151,7 +1188,7 @@ namespace MoriaMods
             }
 
 
-            if (m_toolbarsVisible && !m_repositionMode && !m_ftVisible)
+            if (m_toolbarsVisible && !m_repositionMode && !m_ftVisible && m_gameHudVisible)
             {
                 auto* pc = findPlayerController();
                 if (pc && !m_bpShowMouseCursor)
@@ -1817,6 +1854,8 @@ namespace MoriaMods
 
                     m_appliedRemovals.assign(m_appliedRemovals.size(), false);
                     m_deferHideAndRefresh = false;
+                    m_gameHudVisible = true;
+                    m_inFreeCam = false;
 
                     m_umgBarWidget = nullptr;
                     for (int i = 0; i < 8; i++)
