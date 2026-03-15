@@ -420,14 +420,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("4.3");
+            ModVersion = STR("5.0.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v4.3\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v5.0.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -763,7 +763,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v4.3: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v5.0.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
             Unreal::Hook::RegisterLoadMapPreCallback(
