@@ -1514,7 +1514,7 @@
             m_toolbarSizeW[1] = m_screen.slateToFracX(abTotalW);
             m_toolbarSizeH[1] = m_screen.slateToFracY(abTotalH);
             m_abBarWidget = userWidget;
-            showOnScreen(L"Advanced Builder toolbar created!", 3.0f, 0.0f, 1.0f, 0.0f);
+            showOnScreen(Loc::get("msg.ab_toolbar_created"), 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [AB] === Advanced Builder toolbar created ({}x{}) ===\n"),
                                             abTotalW, abTotalH);
         }
@@ -2484,7 +2484,7 @@
                 UObject* singleLabel = UObjectGlobals::StaticConstructObject(tbP);
                 if (singleLabel)
                 {
-                    umgSetText(singleLabel, L"Single");
+                    umgSetText(singleLabel, Loc::get("ui.label_single"));
                     umgSetTextColor(singleLabel, 0.85f, 0.05f, 0.05f, 1.0f);
                     umgSetFontSize(singleLabel, 31);
 
@@ -2505,7 +2505,7 @@
                 UObject* allLabel = UObjectGlobals::StaticConstructObject(tbP);
                 if (allLabel)
                 {
-                    umgSetText(allLabel, L"All");
+                    umgSetText(allLabel, Loc::get("ui.label_all"));
                     umgSetTextColor(allLabel, 0.85f, 0.05f, 0.05f, 1.0f);
                     umgSetFontSize(allLabel, 31);
 
@@ -2626,7 +2626,7 @@
                 m_ftGameModEntries.clear();
                 if (s_capturingBind >= 0) { s_capturingBind = -1; }
                 setInputModeGame();
-                showOnScreen(L"Settings panel closed", 2.0f, 0.8f, 0.8f, 0.8f);
+                showOnScreen(Loc::get("msg.settings_closed"), 2.0f, 0.8f, 0.8f, 0.8f);
                 return;
             }
 
@@ -2972,7 +2972,7 @@
                                     FStaticConstructObjectParameters secImgP(imageClass, outer);
                                     UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
                                     if (secImg) { umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn); umgSetBrushSize(secImg, 900.0f, 80.0f); addToOverlay(secOl, secImg); }
-                                    UObject* secLabel = makeTB(L"Options", 0.78f, 0.86f, 1.0f, 1.0f, 28);
+                                    UObject* secLabel = makeTB(Loc::get("ui.options_title"), 0.78f, 0.86f, 1.0f, 1.0f, 28);
                                     if (secLabel) { umgSetBold(secLabel); UObject* ts = addToOverlay(secOl, secLabel); if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); } }
                                     addToVBox(t1, secOl);
                                 }
@@ -3030,7 +3030,7 @@
                                             FStaticConstructObjectParameters kbImgP(imageClass, outer);
                                             UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
                                             if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
-                                            UObject* kbLabel = makeTB(L"OFF", 0.7f, 0.3f, 0.3f, 1.0f, 24);
+                                            UObject* kbLabel = makeTB(Loc::get("ui.status_off"), 0.7f, 0.3f, 0.3f, 1.0f, 24);
                                             if (kbLabel) { umgSetBold(kbLabel); m_ftNoCollisionKeyLabel = kbLabel; UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
                                             UObject* kbSlot = addToHBox(ncRow, kbOl);
                                             if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
@@ -3046,7 +3046,7 @@
                                 UObject* rcRow = UObjectGlobals::StaticConstructObject(rowP);
                                 if (rcRow)
                                 {
-                                    UObject* rcLabel = makeTB(L"Rename Character", 0.86f, 0.90f, 0.96f, 0.85f, 24);
+                                    UObject* rcLabel = makeTB(Loc::get("ui.rename_character"), 0.86f, 0.90f, 0.96f, 0.85f, 24);
                                     if (rcLabel)
                                     {
                                         UObject* ls = addToHBox(rcRow, rcLabel);
@@ -3061,7 +3061,7 @@
                                             FStaticConstructObjectParameters kbImgP(imageClass, outer);
                                             UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
                                             if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
-                                            UObject* kbLabel = makeTB(L"RENAME", 0.9f, 0.75f, 0.2f, 1.0f, 24);
+                                            UObject* kbLabel = makeTB(Loc::get("ui.button_rename"), 0.9f, 0.75f, 0.2f, 1.0f, 24);
                                             if (kbLabel) { umgSetBold(kbLabel); UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
                                             UObject* kbSlot = addToHBox(rcRow, kbOl);
                                             if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
@@ -3220,7 +3220,7 @@
 
                             if (m_ftGameModEntries.empty())
                             {
-                                UObject* noMods = makeTB(L"No definition packs found in Mods/MoriaCppMod/definitions/",
+                                UObject* noMods = makeTB(Loc::get("msg.no_definition_packs"),
                                     0.7f, 0.7f, 0.7f, 1.0f, 22);
                                 if (noMods)
                                 {
@@ -3240,7 +3240,7 @@
                                         FStaticConstructObjectParameters secImgP(imageClass, outer);
                                         UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
                                         if (secImg) { umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn); umgSetBrushSize(secImg, 900.0f, 80.0f); addToOverlay(secOl, secImg); }
-                                        UObject* secLabel = makeTB(L"Definition Packs", 0.78f, 0.86f, 1.0f, 1.0f, 28);
+                                        UObject* secLabel = makeTB(Loc::get("ui.definition_packs_title"), 0.78f, 0.86f, 1.0f, 1.0f, 28);
                                         if (secLabel) { umgSetBold(secLabel); UObject* ts = addToOverlay(secOl, secLabel); if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); } }
                                         addToVBox(t3, secOl);
                                     }
@@ -3343,7 +3343,7 @@
                                 }
 
 
-                                UObject* footerTB = makeTB(L"Changes take effect on next game launch",
+                                UObject* footerTB = makeTB(Loc::get("msg.game_mods_restart_notice"),
                                     1.0f, 0.2f, 0.2f, 1.0f, 20);
                                 if (footerTB)
                                 {
@@ -3585,7 +3585,7 @@
 
             updateFtNoCollision();
             updateFtGameOptCheckboxes();
-            showOnScreen(L"Settings panel opened (ALT+INS to close)", 3.0f, 0.0f, 1.0f, 0.0f);
+            showOnScreen(Loc::get("msg.settings_opened"), 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [Settings] Panel created and displayed\n"));
         }
 
@@ -3696,7 +3696,7 @@
         void showRenameDialog()
         {
             if (m_ftRenameVisible) { VLOG(STR("[MoriaCppMod] [Rename] BLOCKED: already visible\n")); return; }
-            if (!m_characterLoaded) { showErrorBox(L"Character not loaded"); return; }
+            if (!m_characterLoaded) { showErrorBox(Loc::get("err.character_not_loaded")); return; }
             VLOG(STR("[MoriaCppMod] [Rename] Starting dialog creation...\n"));
 
             auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
@@ -3799,7 +3799,7 @@
                         FStaticConstructObjectParameters secImgP(imageClass, outer);
                         UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
                         if (secImg) { umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn); umgSetBrushSize(secImg, dlgW - 40.0f, 50.0f); addToOverlay(secOl, secImg); }
-                        UObject* secLabel = createTextBlock(L"Rename Character", 0.78f, 0.86f, 1.0f, 1.0f, 24);
+                        UObject* secLabel = createTextBlock(Loc::get("ui.rename_character"), 0.78f, 0.86f, 1.0f, 1.0f, 24);
                         if (secLabel) { umgSetBold(secLabel); UObject* ts = addToOverlay(secOl, secLabel); if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); } }
                         addToVBox(contentVBox, secOl);
                     }
@@ -3842,7 +3842,7 @@
                     UObject* nameRow = UObjectGlobals::StaticConstructObject(nameHbP);
                     if (nameRow)
                     {
-                        UObject* curLbl = createTextBlock(L"Current name:  ", 0.55f, 0.55f, 0.6f, 0.8f, 22);
+                        UObject* curLbl = createTextBlock(Loc::get("ui.current_name_prefix"), 0.55f, 0.55f, 0.6f, 0.8f, 22);
                         if (curLbl) { UObject* ls = addToHBox(nameRow, curLbl); if (ls) { umgSetSlotPadding(ls, 0.0f, 10.0f, 0.0f, 5.0f); umgSetVAlign(ls, 2); } }
                         UObject* nameLbl = createTextBlock(currentName, 0.9f, 0.75f, 0.2f, 1.0f, 22);
                         if (nameLbl) { umgSetBold(nameLbl); UObject* ls = addToHBox(nameRow, nameLbl); if (ls) { umgSetSlotPadding(ls, 0.0f, 10.0f, 0.0f, 5.0f); umgSetVAlign(ls, 2); } }
@@ -3928,7 +3928,7 @@
                                 FStaticConstructObjectParameters cImgP(imageClass, outer);
                                 UObject* cImg = UObjectGlobals::StaticConstructObject(cImgP);
                                 if (cImg) { umgSetBrushSize(cImg, 250.0f, 55.0f); umgSetImageColor(cImg, 0.6f, 0.12f, 0.12f, 1.0f); addToOverlay(cancelOl, cImg); }
-                                UObject* cLbl = createTextBlock(L"CANCEL", 1.0f, 1.0f, 1.0f, 1.0f, 22);
+                                UObject* cLbl = createTextBlock(Loc::get("ui.button_cancel"), 1.0f, 1.0f, 1.0f, 1.0f, 22);
                                 if (cLbl) { umgSetBold(cLbl); UObject* cs = addToOverlay(cancelOl, cLbl); if (cs) { umgSetHAlign(cs, 2); umgSetVAlign(cs, 2); } }
                                 UObject* cSlot = addToHBox(btnRow, cancelOl);
                                 if (cSlot) umgSetSlotPadding(cSlot, 20.0f, 0.0f, 30.0f, 0.0f);
@@ -3943,7 +3943,7 @@
                                 FStaticConstructObjectParameters cfImgP(imageClass, outer);
                                 UObject* cfImg = UObjectGlobals::StaticConstructObject(cfImgP);
                                 if (cfImg) { umgSetBrushSize(cfImg, 250.0f, 55.0f); umgSetImageColor(cfImg, 0.12f, 0.5f, 0.15f, 1.0f); addToOverlay(confirmOl, cfImg); }
-                                UObject* cfLbl = createTextBlock(L"CONFIRM", 1.0f, 1.0f, 1.0f, 1.0f, 22);
+                                UObject* cfLbl = createTextBlock(Loc::get("ui.button_confirm"), 1.0f, 1.0f, 1.0f, 1.0f, 22);
                                 if (cfLbl) { umgSetBold(cfLbl); m_ftRenameConfirmLabel = cfLbl; UObject* cs = addToOverlay(confirmOl, cfLbl); if (cs) { umgSetHAlign(cs, 2); umgSetVAlign(cs, 2); } }
                                 UObject* cfSlot = addToHBox(btnRow, confirmOl);
                                 if (cfSlot) umgSetSlotPadding(cfSlot, 0.0f, 0.0f, 20.0f, 0.0f);
@@ -4030,7 +4030,7 @@
             if (ftext->Data)
                 newName = ftext->ToString();
 
-            if (newName.empty()) { showErrorBox(L"Name cannot be empty"); return; }
+            if (newName.empty()) { showErrorBox(Loc::get("err.rename_name_empty")); return; }
 
 
             {

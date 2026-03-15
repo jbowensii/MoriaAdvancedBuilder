@@ -193,7 +193,7 @@
                         if (textBlock)
                         {
                             setRootWidget(widgetTree, textBlock);
-                            umgSetText(textBlock, L"Using the mouse move the toolbar(s) into your desired positions, hit ESC to exit.");
+                            umgSetText(textBlock, Loc::get("msg.toolbar_reposition_help"));
 
                             umgSetTextColor(textBlock, 1.0f, 0.95f, 0.2f, 1.0f);
                         }

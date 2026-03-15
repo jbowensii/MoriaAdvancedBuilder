@@ -421,7 +421,7 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("5.0.0");
+            ModVersion = STR("5.1.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
@@ -458,7 +458,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v5.0.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v5.1.0 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -773,7 +773,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v5.0.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v5.1.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
             Unreal::Hook::RegisterLoadMapPreCallback(
@@ -1138,7 +1138,7 @@ namespace MoriaMods
                     if (nowDown && !s_lastReplenishKey && !m_ftVisible)
                     {
                         if (m_replenishItemEnabled) replenishLastItem();
-                        else showOnScreen(L"Replenish Item is disabled (enable in F12 settings)", 2.0f, 1.0f, 0.4f, 0.4f);
+                        else showOnScreen(Loc::get("msg.replenish_disabled"), 2.0f, 1.0f, 0.4f, 0.4f);
                     }
                     s_lastReplenishKey = nowDown;
                 }
@@ -1152,7 +1152,7 @@ namespace MoriaMods
                     if (nowDown && !s_lastRemoveAttrsKey && !m_ftVisible)
                     {
                         if (m_removeAttrsEnabled) removeItemAttributes();
-                        else showOnScreen(L"Remove Attributes is disabled (enable in F12 settings)", 2.0f, 1.0f, 0.4f, 0.4f);
+                        else showOnScreen(Loc::get("msg.remove_attrs_disabled"), 2.0f, 1.0f, 0.4f, 0.4f);
                     }
                     s_lastRemoveAttrsKey = nowDown;
                 }
@@ -1166,7 +1166,7 @@ namespace MoriaMods
                     if (nowDown && !s_lastTrashKey && !m_ftVisible && !m_trashDlgVisible)
                     {
                         if (m_trashItemEnabled) showTrashDialog();
-                        else showOnScreen(L"Trash Item is disabled (enable in F12 settings)", 2.0f, 1.0f, 0.4f, 0.4f);
+                        else showOnScreen(Loc::get("msg.trash_disabled"), 2.0f, 1.0f, 0.4f, 0.4f);
                     }
                     s_lastTrashKey = nowDown;
                 }

@@ -447,7 +447,7 @@
         {
             if (!m_lastPickedUpItemClass)
             {
-                showOnScreen(L"No item selected — move an item in inventory first", 3.0f, 1.0f, 0.4f, 0.4f);
+                showOnScreen(Loc::get("msg.no_item_selected"), 3.0f, 1.0f, 0.4f, 0.4f);
                 return;
             }
 
@@ -525,7 +525,7 @@
             UObject* invComp = findPlayerInventoryComponent(pawn);
             if (!invComp)
             {
-                showOnScreen(L"Replenish failed: no inventory", 3.0f, 1.0f, 0.4f, 0.4f);
+                showOnScreen(Loc::get("err.replenish_no_inventory"), 3.0f, 1.0f, 0.4f, 0.4f);
                 return;
             }
 
@@ -596,7 +596,7 @@
         {
             if (!m_lastPickedUpItemClass || !m_lastItemInvComp)
             {
-                showOnScreen(L"No item selected — move an item in inventory first", 3.0f, 1.0f, 0.4f, 0.4f);
+                showOnScreen(Loc::get("msg.no_item_selected"), 3.0f, 1.0f, 0.4f, 0.4f);
                 return;
             }
 
@@ -604,14 +604,14 @@
             UObject* pawn = getPawn();
             if (!pawn)
             {
-                showOnScreen(L"Remove Attributes failed: no pawn", 3.0f, 1.0f, 0.4f, 0.4f);
+                showOnScreen(Loc::get("err.remove_attrs_no_pawn"), 3.0f, 1.0f, 0.4f, 0.4f);
                 return;
             }
 
             UObject* craftComp = findActorComponentByClass(pawn, STR("MorCraftingComponent"));
             if (!craftComp)
             {
-                showOnScreen(L"Remove Attributes failed: no crafting component", 3.0f, 1.0f, 0.4f, 0.4f);
+                showOnScreen(Loc::get("err.remove_attrs_no_craft"), 3.0f, 1.0f, 0.4f, 0.4f);
                 return;
             }
 
@@ -639,7 +639,7 @@
             }
             else
             {
-                showOnScreen(L"Remove Attributes failed: no tint/rune functions found", 3.0f, 1.0f, 0.4f, 0.4f);
+                showOnScreen(Loc::get("err.remove_attrs_no_functions"), 3.0f, 1.0f, 0.4f, 0.4f);
             }
         }
 
@@ -649,7 +649,7 @@
             if (m_trashDlgVisible) { VLOG(STR("[MoriaCppMod] [Trash] BLOCKED: already visible\n")); return; }
             if (!m_lastPickedUpItemClass)
             {
-                showOnScreen(L"No item selected — move an item in inventory first", 3.0f, 1.0f, 0.4f, 0.4f);
+                showOnScreen(Loc::get("msg.no_item_selected"), 3.0f, 1.0f, 0.4f, 0.4f);
                 return;
             }
             VLOG(STR("[MoriaCppMod] [Trash] Starting dialog creation for {}...\n"), m_lastPickedUpItemName);
@@ -748,7 +748,7 @@
                         FStaticConstructObjectParameters secImgP(imageClass, outer);
                         UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
                         if (secImg) { umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn); umgSetBrushSize(secImg, dlgW - 40.0f, 50.0f); addToOverlay(secOl, secImg); }
-                        UObject* secLabel = createTextBlock(L"Trash Item", 0.78f, 0.86f, 1.0f, 1.0f, 24);
+                        UObject* secLabel = createTextBlock(Loc::get("ui.trash_item_title"), 0.78f, 0.86f, 1.0f, 1.0f, 24);
                         if (secLabel) { umgSetBold(secLabel); UObject* ts = addToOverlay(secOl, secLabel); if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); } }
                         addToVBox(contentVBox, secOl);
                     }
@@ -850,7 +850,7 @@
                                 FStaticConstructObjectParameters cImgP(imageClass, outer);
                                 UObject* cImg = UObjectGlobals::StaticConstructObject(cImgP);
                                 if (cImg) { umgSetBrushSize(cImg, 200.0f, 50.0f); umgSetImageColor(cImg, 0.6f, 0.12f, 0.12f, 1.0f); addToOverlay(cancelOl, cImg); }
-                                UObject* cLbl = createTextBlock(L"CANCEL", 1.0f, 1.0f, 1.0f, 1.0f, 22);
+                                UObject* cLbl = createTextBlock(Loc::get("ui.button_cancel"), 1.0f, 1.0f, 1.0f, 1.0f, 22);
                                 if (cLbl) { umgSetBold(cLbl); UObject* cs = addToOverlay(cancelOl, cLbl); if (cs) { umgSetHAlign(cs, 2); umgSetVAlign(cs, 2); } }
                                 UObject* cSlot = addToHBox(btnRow, cancelOl);
                                 if (cSlot) umgSetSlotPadding(cSlot, 20.0f, 0.0f, 30.0f, 0.0f);
@@ -865,7 +865,7 @@
                                 FStaticConstructObjectParameters dImgP(imageClass, outer);
                                 UObject* dImg = UObjectGlobals::StaticConstructObject(dImgP);
                                 if (dImg) { umgSetBrushSize(dImg, 200.0f, 50.0f); umgSetImageColor(dImg, 0.12f, 0.5f, 0.15f, 1.0f); addToOverlay(deleteOl, dImg); }
-                                UObject* dLbl = createTextBlock(L"DELETE", 1.0f, 1.0f, 1.0f, 1.0f, 22);
+                                UObject* dLbl = createTextBlock(Loc::get("ui.button_delete"), 1.0f, 1.0f, 1.0f, 1.0f, 22);
                                 if (dLbl) { umgSetBold(dLbl); UObject* ds = addToOverlay(deleteOl, dLbl); if (ds) { umgSetHAlign(ds, 2); umgSetVAlign(ds, 2); } }
                                 UObject* dSlot = addToHBox(btnRow, deleteOl);
                                 if (dSlot) umgSetSlotPadding(dSlot, 0.0f, 0.0f, 20.0f, 0.0f);
@@ -960,7 +960,7 @@
             UObject* invComp = findPlayerInventoryComponent(pawn);
             if (!invComp)
             {
-                showOnScreen(L"Trash failed: no inventory", 3.0f, 1.0f, 0.4f, 0.4f);
+                showOnScreen(Loc::get("err.trash_no_inventory"), 3.0f, 1.0f, 0.4f, 0.4f);
                 hideTrashDialog();
                 return;
             }

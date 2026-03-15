@@ -258,6 +258,40 @@ namespace MoriaMods
             s_table["msg.char_hidden"] = L"Character hidden";
             s_table["msg.char_visible"] = L"Character visible";
             s_table["msg.fly_off"] = L"Fly mode OFF";
+            s_table["msg.fly_noclip_on"] = L"Fly + Noclip ON";
+
+            s_table["ui.options_title"] = L"Options";
+            s_table["ui.status_off"] = L"OFF";
+            s_table["ui.status_on"] = L"ON";
+            s_table["ui.rename_character"] = L"Rename Character";
+            s_table["ui.button_rename"] = L"RENAME";
+            s_table["ui.button_cancel"] = L"CANCEL";
+            s_table["ui.button_delete"] = L"DELETE";
+            s_table["ui.button_confirm"] = L"CONFIRM";
+            s_table["ui.trash_item_title"] = L"Trash Item";
+            s_table["ui.definition_packs_title"] = L"Definition Packs";
+            s_table["ui.current_name_prefix"] = L"Current name:  ";
+            s_table["ui.label_single"] = L"Single";
+            s_table["ui.label_all"] = L"All";
+
+            s_table["msg.no_item_selected"] = L"No item selected \u2014 move an item in inventory first";
+            s_table["msg.replenish_disabled"] = L"Replenish Item is disabled (enable in F12 settings)";
+            s_table["msg.remove_attrs_disabled"] = L"Remove Attributes is disabled (enable in F12 settings)";
+            s_table["msg.trash_disabled"] = L"Trash Item is disabled (enable in F12 settings)";
+            s_table["msg.no_definition_packs"] = L"No definition packs found";
+            s_table["msg.game_mods_restart_notice"] = L"Changes take effect on next game launch";
+            s_table["msg.settings_closed"] = L"Settings panel closed";
+            s_table["msg.settings_opened"] = L"Settings panel opened";
+            s_table["msg.ab_toolbar_created"] = L"Advanced Builder toolbar created!";
+            s_table["msg.toolbar_reposition_help"] = L"Using the mouse move the toolbar(s) into your desired positions, hit ESC to exit.";
+
+            s_table["err.replenish_no_inventory"] = L"Replenish failed: no inventory";
+            s_table["err.remove_attrs_no_pawn"] = L"Remove Attributes failed: no pawn";
+            s_table["err.remove_attrs_no_craft"] = L"Remove Attributes failed: no crafting component";
+            s_table["err.remove_attrs_no_functions"] = L"Remove Attributes failed: no tint/rune functions found";
+            s_table["err.trash_no_inventory"] = L"Trash failed: no inventory";
+            s_table["err.rename_name_empty"] = L"Name cannot be empty";
+            s_table["err.character_not_loaded"] = L"Character not loaded";
 
             s_table["save.removal_header"] = L"# MoriaCppMod removed instances";
             s_table["save.removal_format1"] = L"# meshName|posX|posY|posZ = single instance";

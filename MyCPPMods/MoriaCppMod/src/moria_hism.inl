@@ -606,7 +606,7 @@
             }
 
             if (m_flyMode)
-                showOnScreen(m_noCollisionWhileFlying ? L"Fly + Noclip ON" : L"Fly ON", 2.0f, 0.3f, 0.8f, 1.0f);
+                showOnScreen(m_noCollisionWhileFlying ? Loc::get("msg.fly_noclip_on") : Loc::get("msg.fly_on"), 2.0f, 0.3f, 0.8f, 1.0f);
             else
                 showOnScreen(Loc::get("msg.fly_off"), 2.0f, 0.3f, 1.0f, 0.3f);
             VLOG(STR("[MoriaCppMod] Fly mode = {}, noCollision = {}\n"), m_flyMode ? 1 : 0, m_noCollisionWhileFlying ? 1 : 0);
