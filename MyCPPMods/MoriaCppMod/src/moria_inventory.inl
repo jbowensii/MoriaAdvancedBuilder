@@ -232,6 +232,142 @@
         }
 
 
+        // Inventory audit: detect/remove orphaned items at invalid slots, verify Body Inventory size.
+        // Verbose logging only when s_verbose is true; corrections always run.
+        void auditInventory()
+        {
+            std::vector<UObject*> dwarves;
+            UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
+            if (dwarves.empty()) return;
+            UObject* pawn = dwarves[0];
+
+            std::vector<UObject*> allComps;
+            UObjectGlobals::FindAllOf(STR("InventoryComponent"), allComps);
+
+            for (auto* comp : allComps)
+            {
+                if (!comp) continue;
+                auto* ownerFunc = comp->GetFunctionByNameInChain(STR("GetOwner"));
+                if (!ownerFunc) continue;
+                struct { UObject* Ret{nullptr}; } op{};
+                if (!safeProcessEvent(comp, ownerFunc, &op)) continue;
+                if (op.Ret != pawn) continue;
+
+                probeItemInstanceStruct(comp);
+
+                FProperty* itemsProp = comp->GetPropertyByNameInChain(STR("Items"));
+                if (!itemsProp) continue;
+                int itemsOff = itemsProp->GetOffset_Internal();
+                uint8_t* listBase = reinterpret_cast<uint8_t*>(comp) + itemsOff + iiaListOff();
+                if (!isReadableMemory(listBase, 16)) continue;
+
+                uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+                int32_t arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
+                if (!arrData || arrNum <= 0 || arrNum > 10000) continue;
+
+                int stride = iiSize();
+                int itemOff = iiItemOff();
+                int countOff = 0x18;
+                int slotOff  = 0x1C;
+                int idOff    = iiIDOff();
+                int containerStartSlotOff = 0x2C;
+
+                VLOG(STR("[MoriaCppMod] [InvAudit] ===== Inventory: {} items =====\n"), arrNum);
+
+                // First pass: log all items (verbose only), collect container info
+                int numContainers = 0;
+                for (int32_t i = 0; i < arrNum; i++)
+                {
+                    uint8_t* entry = arrData + i * stride;
+                    if (!isReadableMemory(entry, stride)) continue;
+                    int32_t cs = *reinterpret_cast<int32_t*>(entry + containerStartSlotOff);
+                    if (cs > 0) numContainers++;
+
+                    if (s_verbose)
+                    {
+                        UClass* ic = *reinterpret_cast<UClass**>(entry + itemOff);
+                        int32_t cnt = *reinterpret_cast<int32_t*>(entry + countOff);
+                        int32_t sl  = *reinterpret_cast<int32_t*>(entry + slotOff);
+                        int32_t id  = *reinterpret_cast<int32_t*>(entry + idOff);
+                        std::wstring nm = ic ? ic->GetName() : STR("(null)");
+                        std::wstring extra;
+                        if (cs > 0) extra = STR(" [CONTAINER start=") + std::to_wstring(cs) + STR("]");
+                        RC::Output::send<RC::LogLevel::Warning>(
+                            STR("[MoriaCppMod] [InvAudit]   [{}] id={} slot={} count={} class={}{}\n"),
+                            i, id, sl, cnt, nm, extra);
+                    }
+                }
+
+                // Second pass: find and remove orphaned items not in any container
+                for (int32_t i = 0; i < arrNum; i++)
+                {
+                    uint8_t* entry = arrData + i * stride;
+                    if (!isReadableMemory(entry, stride)) continue;
+
+                    int32_t slot = *reinterpret_cast<int32_t*>(entry + slotOff);
+                    int32_t cs2  = *reinterpret_cast<int32_t*>(entry + containerStartSlotOff);
+                    if (cs2 > 0) continue;  // skip containers themselves
+
+                    bool inContainer = false;
+                    for (int32_t j = 0; j < arrNum; j++)
+                    {
+                        uint8_t* cEntry = arrData + j * stride;
+                        if (!isReadableMemory(cEntry, stride)) continue;
+                        int32_t cStart = *reinterpret_cast<int32_t*>(cEntry + containerStartSlotOff);
+                        if (cStart <= 0) continue;
+                        int32_t cMax = 101; // safe fallback (game uses ~101 slot spacing)
+                        UClass* cClass = *reinterpret_cast<UClass**>(cEntry + itemOff);
+                        if (cClass)
+                        {
+                            if (UObject* cdo = cClass->GetClassDefaultObject())
+                            {
+                                FProperty* sp = cdo->GetPropertyByNameInChain(STR("Storage"));
+                                if (sp)
+                                {
+                                    uint8_t* sPtr = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(cdo) + sp->GetOffset_Internal());
+                                    if (sPtr && isReadableMemory(sPtr, 0x44))
+                                        cMax = *reinterpret_cast<int32_t*>(sPtr + 0x38);
+                                }
+                            }
+                        }
+                        if (slot >= cStart && slot < cStart + cMax) { inContainer = true; break; }
+                    }
+
+                    if (!inContainer)
+                    {
+                        UClass* ic2 = *reinterpret_cast<UClass**>(entry + itemOff);
+                        int32_t id2 = *reinterpret_cast<int32_t*>(entry + idOff);
+                        int32_t count2 = *reinterpret_cast<int32_t*>(entry + countOff);
+                        std::wstring orphanName = ic2 ? ic2->GetName() : STR("(null)");
+
+                        VLOG(STR("[MoriaCppMod] [InvAudit] *** ORPHANED: id={} slot={} count={} class={} — removing...\n"),
+                            id2, slot, count2, orphanName);
+
+                        auto* removeFn = comp->GetFunctionByNameInChain(STR("RemoveItem"));
+                        if (removeFn && ic2)
+                        {
+                            int dsz = removeFn->GetParmsSize();
+                            std::vector<uint8_t> dp(dsz, 0);
+                            auto* itemParam = findParam(removeFn, STR("Item"));
+                            auto* countParam = findParam(removeFn, STR("Count"));
+                            auto* fromParam = findParam(removeFn, STR("From"));
+                            if (itemParam) *reinterpret_cast<UClass**>(dp.data() + itemParam->GetOffset_Internal()) = ic2;
+                            if (countParam) *reinterpret_cast<int32_t*>(dp.data() + countParam->GetOffset_Internal()) = count2;
+                            if (fromParam) *reinterpret_cast<uint8_t*>(dp.data() + fromParam->GetOffset_Internal()) = 0;
+                            if (safeProcessEvent(comp, removeFn, dp.data()))
+                                VLOG(STR("[MoriaCppMod] [InvAudit] *** REMOVED orphaned {} x{}\n"), orphanName, count2);
+                            else
+                                VLOG(STR("[MoriaCppMod] [InvAudit] *** REMOVE FAILED for {}\n"), orphanName);
+                        }
+                    }
+                }
+
+                VLOG(STR("[MoriaCppMod] [InvAudit] ===== END ({} containers, {} items) =====\n"), numContainers, arrNum);
+                break;  // only process the first matching inventory component
+            }
+        }
+
+
         void captureLastChangedItem(UObject* invComp, void* parms)
         {
             if (!invComp || !parms) return;

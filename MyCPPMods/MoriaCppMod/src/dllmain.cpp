@@ -24,6 +24,7 @@ namespace MoriaMods
         bool m_replayActive{false};
         bool m_characterLoaded{false};
         bool m_initialReplayDone{false};
+        bool m_inventoryAuditDone{false};
         bool m_definitionsApplied{false};
         int m_stuckLogCount{0};
         std::string m_saveFilePath;
@@ -419,14 +420,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("4.1.0");
+            ModVersion = STR("4.3");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v4.1.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v4.3\n"));
         }
 
         ~MoriaCppMod() override
@@ -762,7 +763,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v4.1.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v4.3: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
             Unreal::Hook::RegisterLoadMapPreCallback(
@@ -1844,6 +1845,7 @@ namespace MoriaMods
                     }
                     s_overlay.visible = false;
                     m_initialReplayDone = false;
+                    m_inventoryAuditDone = false;
                     m_definitionsApplied = false;
                     m_processedComps.clear();
                     m_undoStack.clear();
@@ -1976,8 +1978,13 @@ namespace MoriaMods
                     VLOG(STR("[MoriaCppMod] Starting initial replay (15s after char load)...\n"));
                     startReplay();
                 }
+            }
 
-
+            if (m_initialReplayDone && !m_inventoryAuditDone && msSinceChar >= 20000)
+            {
+                m_inventoryAuditDone = true;
+                VLOG(STR("[MoriaCppMod] [InvAudit] Running one-shot inventory audit (20s post-load)...\n"));
+                auditInventory();
             }
 
 
