@@ -788,7 +788,7 @@
             std::wstring dtDisplayName;
             std::wstring dtRowName;
             {
-                std::wofstream dumpFile("Mods/MoriaCppMod/actor_dump.txt", std::ios::trunc);
+                std::wofstream dumpFile(modPath("Mods/MoriaCppMod/actor_dump.txt"), std::ios::trunc);
                 if (dumpFile.is_open())
                 {
                     dumpFile << L"=== DT_Constructions SCAN for: " << actorClassName << L" ===\n";

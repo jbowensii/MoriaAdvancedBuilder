@@ -59,8 +59,8 @@ namespace MoriaMods
     inline std::atomic<uint8_t> s_modifierVK{VK_SHIFT};
 
 
-    inline const char* INI_PATH = "Mods/MoriaCppMod/MoriaCppMod.ini";
-    inline const char* OLD_KEYBIND_PATH = "Mods/MoriaCppMod/keybindings.txt";
+    inline std::string iniPath() { return modPath("Mods/MoriaCppMod/MoriaCppMod.ini"); }
+    inline std::string oldKeybindPath() { return modPath("Mods/MoriaCppMod/keybindings.txt"); }
 
 
     inline bool isModifierDown()

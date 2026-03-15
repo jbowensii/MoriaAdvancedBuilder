@@ -624,7 +624,7 @@ std::string readFieldAsString(uint8_t* fieldData, FProperty* prop)
     {
         FString outStr{};
         prop->ExportText_Direct(outStr, fieldData, nullptr, nullptr, 0, nullptr);
-        const wchar_t* ws = outStr.GetCharArray();
+        const wchar_t* ws = *outStr;
         if (!ws || ws[0] == L'\0') return "<empty>";
         std::string result;
         for (const wchar_t* p = ws; *p != L'\0'; ++p)
@@ -1540,8 +1540,8 @@ DataTableUtil& getOrBindDataTable(const std::string& dtName, std::unordered_map<
 }
 
 
-static inline const std::string GAMEMODS_INI_PATH = "Mods/GameMods.ini";
-static inline const std::string DEFINITIONS_DIR = "Mods/MoriaCppMod/definitions";
+static inline std::string gameModsIniPath() { return modPath("Mods/GameMods.ini"); }
+static inline std::string definitionsDir() { return modPath("Mods/MoriaCppMod/definitions"); }
 
 struct GameModEntry
 {
@@ -1559,7 +1559,7 @@ std::vector<GameModEntry> discoverGameMods()
 
     std::unordered_map<std::string, bool> enabledMap;
     {
-        std::ifstream file(GAMEMODS_INI_PATH);
+        std::ifstream file(gameModsIniPath());
         if (file.is_open())
         {
             std::string section, line;
@@ -1578,7 +1578,7 @@ std::vector<GameModEntry> discoverGameMods()
     }
 
 
-    auto iniFiles = listFiles(DEFINITIONS_DIR, "*.ini");
+    auto iniFiles = listFiles(definitionsDir(), "*.ini");
     for (auto& iniFile : iniFiles)
     {
 
@@ -1587,8 +1587,8 @@ std::vector<GameModEntry> discoverGameMods()
             name = name.substr(0, name.size() - 4);
 
 
-        std::string iniPath = DEFINITIONS_DIR + "\\" + iniFile;
-        DefManifest manifest = parseManifest(iniPath, DEFINITIONS_DIR);
+        std::string iniPath = definitionsDir() + "\\" + iniFile;
+        DefManifest manifest = parseManifest(iniPath, definitionsDir());
 
 
         if (manifest.defPaths.empty()) continue;
@@ -1611,7 +1611,7 @@ std::vector<GameModEntry> discoverGameMods()
 
 void saveGameMods(const std::vector<GameModEntry>& entries)
 {
-    std::ofstream file(GAMEMODS_INI_PATH, std::ios::trunc);
+    std::ofstream file(gameModsIniPath(), std::ios::trunc);
     if (!file.is_open())
     {
         RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Failed to write Mods/GameMods.ini\n"));
@@ -1655,7 +1655,7 @@ static std::vector<std::string> readEnabledMods(const std::string& gameModsPath)
 void loadAndApplyDefinitions()
 {
 
-    auto enabledMods = readEnabledMods(GAMEMODS_INI_PATH);
+    auto enabledMods = readEnabledMods(gameModsIniPath());
     if (enabledMods.empty())
     {
         VLOG(STR("[MoriaCppMod] [Def] No mods enabled in Mods/GameMods.ini (or file not found)\n"));
@@ -1664,7 +1664,7 @@ void loadAndApplyDefinitions()
 
 
     WIN32_FIND_DATAA fd;
-    HANDLE hTest = FindFirstFileA((DEFINITIONS_DIR + "\\*").c_str(), &fd);
+    HANDLE hTest = FindFirstFileA((definitionsDir() + "\\*").c_str(), &fd);
     if (hTest == INVALID_HANDLE_VALUE)
     {
         VLOG(STR("[MoriaCppMod] [Def] No definitions directory found at Mods/MoriaCppMod/definitions/\n"));
@@ -1687,7 +1687,7 @@ void loadAndApplyDefinitions()
     for (auto& modName : enabledMods)
     {
 
-        std::string iniPath = DEFINITIONS_DIR + "\\" + modName + ".ini";
+        std::string iniPath = definitionsDir() + "\\" + modName + ".ini";
         std::ifstream testFile(iniPath);
         if (!testFile.is_open())
         {
@@ -1699,7 +1699,7 @@ void loadAndApplyDefinitions()
         }
         testFile.close();
 
-        DefManifest manifest = parseManifest(iniPath, DEFINITIONS_DIR);
+        DefManifest manifest = parseManifest(iniPath, definitionsDir());
         if (manifest.defPaths.empty())
         {
             VLOG(STR("[MoriaCppMod] [Def] Manifest '{}' has no .def paths, skipping\n"),

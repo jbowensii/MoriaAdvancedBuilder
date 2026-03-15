@@ -124,7 +124,7 @@
 
             if (m_wllClass)
             {
-                auto* cdo = m_wllClass->GetClassDefaultObject();
+                UObject* cdo = m_wllClass->GetClassDefaultObject();
                 auto* fn2 = m_wllClass->GetFunctionByNameInChain(STR("GetMousePositionOnViewport"));
                 if (cdo && fn2)
                 {
@@ -3013,7 +3013,7 @@
                                         }
                                     }
 
-                                    UObject* ncLabel = makeTB(Loc::get("ui.no_collision"), 0.55f, 0.55f, 0.55f, 1.0f, 24);
+                                    UObject* ncLabel = makeTB(Loc::get("ui.no_collision"), 0.86f, 0.90f, 0.96f, 1.0f, 24);
                                     m_ftNoCollisionLabel = ncLabel;
                                     if (ncLabel)
                                     {

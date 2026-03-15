@@ -5,6 +5,7 @@
 #include "moria_reflection.h"
 #include "moria_keybinds.h"
 #include <Unreal/Hooks.hpp>
+#include <UE4SSProgram.hpp>
 
 namespace MoriaMods
 {
@@ -446,13 +447,22 @@ namespace MoriaMods
 
         auto on_unreal_init() -> void override
         {
-            VLOG(STR("[MoriaCppMod] Unreal initialized.\n"));
-
+            // Resolve UE4SS working directory for all file I/O (process CWD may differ)
+            {
+                auto wd = UE4SSProgram::get_program().get_working_directory();
+                // Safe wchar_t→char conversion (paths are ASCII)
+                s_ue4ssWorkDir.clear();
+                for (auto ch : wd) s_ue4ssWorkDir += static_cast<char>(ch);
+                if (!s_ue4ssWorkDir.empty() && s_ue4ssWorkDir.back() != '\\' && s_ue4ssWorkDir.back() != '/')
+                    s_ue4ssWorkDir += '/';
+            }
 
             loadConfig();
+            VLOG(STR("[MoriaCppMod] Loaded v5.0.0 (workDir={})\n"),
+                 std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
-            Loc::load("Mods/MoriaCppMod/localization/", s_language);
+            Loc::load(modPath("Mods/MoriaCppMod/localization/"), s_language);
 
             s_bindings[0].label = Loc::get("bind.quick_build_1").c_str();
             s_bindings[0].section = Loc::get("bind.section_quick_building").c_str();
@@ -490,8 +500,8 @@ namespace MoriaMods
             s_bindings[16].section = Loc::get("bind.section_mod_controller").c_str();
             s_bindings[17].label = Loc::get("bind.ab_open").c_str();
             s_bindings[17].section = Loc::get("bind.section_advanced_builder").c_str();
-            s_bindings[18].label = Loc::get("bind.empty").c_str();
-            s_bindings[18].section = Loc::get("bind.section_diagnostics").c_str();
+            s_bindings[18].label = L"Reserved";
+            s_bindings[18].section = L"Reserved";
             s_bindings[19].label = Loc::get("bind.trash_item").c_str();
             s_bindings[19].section = Loc::get("bind.section_game_options").c_str();
             s_bindings[20].label = Loc::get("bind.replenish_item").c_str();
@@ -503,7 +513,7 @@ namespace MoriaMods
             CONFIG_TAB_NAMES[1] = Loc::get("tab.key_mapping").c_str();
             CONFIG_TAB_NAMES[2] = Loc::get("tab.hide_environment").c_str();
 
-            m_saveFilePath = "Mods/MoriaCppMod/removed_instances.txt";
+            m_saveFilePath = modPath("Mods/MoriaCppMod/removed_instances.txt");
             loadSaveFile();
             buildRemovalEntries();
             probePrintString();

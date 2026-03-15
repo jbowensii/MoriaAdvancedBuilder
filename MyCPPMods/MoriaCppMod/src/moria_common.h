@@ -63,6 +63,16 @@ namespace MoriaMods
 
     inline bool s_verbose = false;
     inline std::string s_language = "en";
+    inline std::string s_ue4ssWorkDir;  // set once in on_unreal_init from UE4SSProgram::get_working_directory
+
+    inline std::string modPath(const char* relativePath)
+    {
+        return s_ue4ssWorkDir + relativePath;
+    }
+    inline std::string modPath(const std::string& relativePath)
+    {
+        return s_ue4ssWorkDir + relativePath;
+    }
 
     #define VLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
 
