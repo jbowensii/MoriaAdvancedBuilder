@@ -322,6 +322,8 @@ namespace MoriaMods
         UObject* m_ftTrashCheckImg{nullptr};
         UObject* m_ftReplenishCheckImg{nullptr};
         UObject* m_ftRemoveAttrsCheckImg{nullptr};
+        UObject* m_ftPitchCheckImg{nullptr};
+        UObject* m_ftRollCheckImg{nullptr};
         UObject* m_ftRenameWidget{nullptr};
         UObject* m_ftRenameInput{nullptr};
         UObject* m_ftRenameConfirmLabel{nullptr};
@@ -351,6 +353,8 @@ namespace MoriaMods
         bool m_trashItemEnabled{true};
         bool m_replenishItemEnabled{true};
         bool m_removeAttrsEnabled{true};
+        bool m_pitchRotateEnabled{true};
+        bool m_rollRotateEnabled{true};
         bool m_buildMenuPrimed{false};
         bool m_buildTabAfterShowFired{false};
 
@@ -421,7 +425,7 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("5.1.0");
+            ModVersion = STR("5.2.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
@@ -458,7 +462,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v5.1.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v5.2.0 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -553,6 +557,8 @@ namespace MoriaMods
 
             register_keydown_event(Input::Key::NUM_SEVEN, [this]() { if (m_ftVisible) return; createModControllerBar(); });
 
+            // Pitch/Roll rotation — uses keybind system (BIND_PITCH_ROTATE, BIND_ROLL_ROTATE)
+            // Registered dynamically after config load via registerPitchRollKeys()
 
             s_instance = this;
             Unreal::Hook::RegisterProcessEventPreCallback([](UObject* context, UFunction* func, void* parms) {
@@ -579,6 +585,16 @@ namespace MoriaMods
                             s_overlay.needsUpdate = true;
                             s_instance->updateMcRotationLabel();
                         }
+                    }
+                }
+                else if (wcscmp(fnStr, STR("BuildNewConstruction")) == 0)
+                {
+                    // Pitch/Roll experiment: intercept the server build call and patch FTransform
+                    s_instance->onBuildNewConstruction(context, func, parms);
+                    if (!s_instance->m_snapEnabled)
+                    {
+                        VLOG(STR("[MoriaCppMod] [Snap] Placement detected (BuildNewConstruction), auto-restoring snap\n"));
+                        s_instance->restoreSnap();
                     }
                 }
                 else if (!s_instance->m_snapEnabled &&
@@ -773,7 +789,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v5.1.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v5.2.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
             Unreal::Hook::RegisterLoadMapPreCallback(
@@ -1138,7 +1154,7 @@ namespace MoriaMods
                     if (nowDown && !s_lastReplenishKey && !m_ftVisible)
                     {
                         if (m_replenishItemEnabled) replenishLastItem();
-                        else showOnScreen(Loc::get("msg.replenish_disabled"), 2.0f, 1.0f, 0.4f, 0.4f);
+                        else showInfoMessage(Loc::get("msg.replenish_disabled"));
                     }
                     s_lastReplenishKey = nowDown;
                 }
@@ -1152,7 +1168,7 @@ namespace MoriaMods
                     if (nowDown && !s_lastRemoveAttrsKey && !m_ftVisible)
                     {
                         if (m_removeAttrsEnabled) removeItemAttributes();
-                        else showOnScreen(Loc::get("msg.remove_attrs_disabled"), 2.0f, 1.0f, 0.4f, 0.4f);
+                        else showInfoMessage(Loc::get("msg.remove_attrs_disabled"));
                     }
                     s_lastRemoveAttrsKey = nowDown;
                 }
@@ -1166,12 +1182,55 @@ namespace MoriaMods
                     if (nowDown && !s_lastTrashKey && !m_ftVisible && !m_trashDlgVisible)
                     {
                         if (m_trashItemEnabled) showTrashDialog();
-                        else showOnScreen(Loc::get("msg.trash_disabled"), 2.0f, 1.0f, 0.4f, 0.4f);
+                        else showInfoMessage(Loc::get("msg.trash_disabled"));
                     }
                     s_lastTrashKey = nowDown;
                 }
             }
-
+            // Pitch rotation (,  / SHIFT+,)
+            {
+                static bool s_lastPitchKey = false;
+                uint8_t vk = s_bindings[BIND_PITCH_ROTATE].key;
+                if (vk != 0)
+                {
+                    bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
+                    if (nowDown && !s_lastPitchKey && !m_ftVisible)
+                    {
+                        if (m_pitchRotateEnabled)
+                        {
+                            float step = static_cast<float>(s_overlay.rotationStep.load());
+                            if (isModifierDown()) step = -step;
+                            m_experimentPitch += step;
+                            if (m_experimentPitch >= 360.0f) m_experimentPitch -= 360.0f;
+                            if (m_experimentPitch <= -360.0f) m_experimentPitch += 360.0f;
+                            injectPitchRoll(m_experimentPitch, m_experimentRoll);
+                        }
+                    }
+                    s_lastPitchKey = nowDown;
+                }
+            }
+            // Roll rotation (.  / SHIFT+.)
+            {
+                static bool s_lastRollKey = false;
+                uint8_t vk = s_bindings[BIND_ROLL_ROTATE].key;
+                if (vk != 0)
+                {
+                    bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
+                    if (nowDown && !s_lastRollKey && !m_ftVisible)
+                    {
+                        if (m_rollRotateEnabled)
+                        {
+                            float step = static_cast<float>(s_overlay.rotationStep.load());
+                            if (isModifierDown()) step = -step;
+                            m_experimentRoll += step;
+                            if (m_experimentRoll >= 360.0f) m_experimentRoll -= 360.0f;
+                            if (m_experimentRoll <= -360.0f) m_experimentRoll += 360.0f;
+                            injectPitchRoll(m_experimentPitch, m_experimentRoll);
+                        }
+                    }
+                    s_lastRollKey = nowDown;
+                }
+            }
 
             {
                 HWND gameWnd = findGameWindow();
@@ -1428,9 +1487,12 @@ namespace MoriaMods
 
                             int ncY0 = sectionH;
                             int rcY0 = ncY0 + rowH;
-                            int trY0 = rcY0 + rowH;
+                            int sgY0 = rcY0 + rowH;
+                            int trY0 = sgY0 + rowH;
                             int rpY0 = trY0 + rowH;
                             int raY0 = rpY0 + rowH;
+                            int ptY0 = raY0 + rowH;
+                            int rlY0 = ptY0 + rowH;
 
                             bool inKeyBox = (curX >= kbX0 && curX <= kbX1);
                             bool inCheckBox = (curX >= cbX0 && curX <= cbX1);
@@ -1449,6 +1511,12 @@ namespace MoriaMods
                             {
                                 showRenameDialog();
                                 VLOG(STR("[MoriaCppMod] [Settings] Rename Character via button\n"));
+                            }
+
+                            else if (inFullRow && y >= sgY0 && y < sgY0 + rowH)
+                            {
+                                triggerSaveGame();
+                                VLOG(STR("[MoriaCppMod] [Settings] Save Game via button\n"));
                             }
 
                             else if (inCheckBox && y >= trY0 && y < trY0 + rowH)
@@ -1475,6 +1543,22 @@ namespace MoriaMods
                                 VLOG(STR("[MoriaCppMod] [Settings] Remove Attributes toggle: {}\n"), m_removeAttrsEnabled ? 1 : 0);
                             }
 
+                            else if (inCheckBox && y >= ptY0 && y < ptY0 + rowH)
+                            {
+                                m_pitchRotateEnabled = !m_pitchRotateEnabled;
+                                saveConfig();
+                                updateFtGameOptCheckboxes();
+                                VLOG(STR("[MoriaCppMod] [Settings] Pitch Rotate toggle: {}\n"), m_pitchRotateEnabled ? 1 : 0);
+                            }
+
+                            else if (inCheckBox && y >= rlY0 && y < rlY0 + rowH)
+                            {
+                                m_rollRotateEnabled = !m_rollRotateEnabled;
+                                saveConfig();
+                                updateFtGameOptCheckboxes();
+                                VLOG(STR("[MoriaCppMod] [Settings] Roll Rotate toggle: {}\n"), m_rollRotateEnabled ? 1 : 0);
+                            }
+
                             else if (inKeyBox && y >= trY0 && y < trY0 + rowH)
                             {
                                 s_capturingBind = BIND_TRASH_ITEM;
@@ -1497,6 +1581,22 @@ namespace MoriaMods
                                 s_ftCaptureSkipTick = true;
                                 updateFontTestKeyLabels();
                                 VLOG(STR("[MoriaCppMod] [Settings] Capturing key for Remove Attributes (label={} cur={})\n"), (void*)m_ftKeyBoxLabels[BIND_REMOVE_ATTRS], keyName(s_bindings[BIND_REMOVE_ATTRS].key));
+                            }
+
+                            else if (inKeyBox && y >= ptY0 && y < ptY0 + rowH)
+                            {
+                                s_capturingBind = BIND_PITCH_ROTATE;
+                                s_ftCaptureSkipTick = true;
+                                updateFontTestKeyLabels();
+                                VLOG(STR("[MoriaCppMod] [Settings] Capturing key for Pitch Rotate\n"));
+                            }
+
+                            else if (inKeyBox && y >= rlY0 && y < rlY0 + rowH)
+                            {
+                                s_capturingBind = BIND_ROLL_ROTATE;
+                                s_ftCaptureSkipTick = true;
+                                updateFontTestKeyLabels();
+                                VLOG(STR("[MoriaCppMod] [Settings] Capturing key for Roll Rotate\n"));
                             }
                         }
 
@@ -1808,6 +1908,7 @@ namespace MoriaMods
 
 
             placementTick();
+            tickPitchRoll();
 
             if (!m_replayActive) return;
             m_frameCounter++;

@@ -19,6 +19,8 @@ namespace MoriaMods
     static constexpr int BIND_TRASH_ITEM     = 19;
     static constexpr int BIND_REPLENISH_ITEM = 20;
     static constexpr int BIND_REMOVE_ATTRS   = 21;
+    static constexpr int BIND_PITCH_ROTATE   = 22;
+    static constexpr int BIND_ROLL_ROTATE    = 23;
 
     struct KeyBind
     {
@@ -51,6 +53,8 @@ namespace MoriaMods
             {L"Trash Item", L"Game Options", VK_DELETE},
             {L"Replenish Item", L"Game Options", VK_INSERT},
             {L"Remove Attributes", L"Game Options", VK_END},
+            {L"Pitch Rotate", L"Game Options", Input::Key::OEM_COMMA},
+            {L"Roll Rotate", L"Game Options", Input::Key::OEM_PERIOD},
     };
 
     inline std::atomic<int> s_capturingBind{-1};

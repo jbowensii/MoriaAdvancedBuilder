@@ -119,6 +119,8 @@
             file << "TrashItem = " << (m_trashItemEnabled ? "true" : "false") << "\n";
             file << "ReplenishItem = " << (m_replenishItemEnabled ? "true" : "false") << "\n";
             file << "RemoveAttributes = " << (m_removeAttrsEnabled ? "true" : "false") << "\n";
+            file << "PitchRotate = " << (m_pitchRotateEnabled ? "true" : "false") << "\n";
+            file << "RollRotate = " << (m_rollRotateEnabled ? "true" : "false") << "\n";
 
             bool hasCustomPos = false;
             for (int i = 0; i < TB_COUNT; i++)
@@ -237,6 +239,14 @@
                             else if (strEqualCI(kv->key, "RemoveAttributes"))
                             {
                                 m_removeAttrsEnabled = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                            else if (strEqualCI(kv->key, "PitchRotate"))
+                            {
+                                m_pitchRotateEnabled = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                            else if (strEqualCI(kv->key, "RollRotate"))
+                            {
+                                m_rollRotateEnabled = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
                             }
                         }
                         else if (strEqualCI(section, "Positions"))

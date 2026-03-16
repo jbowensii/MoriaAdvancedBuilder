@@ -2006,14 +2006,13 @@
             m_ebShowTick = 0;
         }
 
-        void showErrorBox(const std::wstring& message)
+        // Show a message in the info box widget (always visible, auto-hides)
+        void showInfoMessage(const std::wstring& message)
         {
-            if (!s_verbose) return;
             if (!m_errorBoxWidget) createErrorBox();
-            if (!m_errorBoxWidget) { showOnScreen(message, 5.0f, 1.0f, 0.3f, 0.3f); return; }
+            if (!m_errorBoxWidget) return;
 
             umgSetText(m_ebMessageLabel, message);
-
 
             {
                 m_screen.refresh(findPlayerController());
@@ -2027,7 +2026,13 @@
             if (fn) { uint8_t p[8]{}; p[0] = 0; m_errorBoxWidget->ProcessEvent(fn, p); }
 
             m_ebShowTick = GetTickCount64();
-            VLOG(STR("[MoriaCppMod] [EB] showErrorBox: '{}'\n"), message);
+            VLOG(STR("[MoriaCppMod] [EB] showInfoMessage: '{}'\n"), message);
+        }
+
+        void showErrorBox(const std::wstring& message)
+        {
+            if (!s_verbose) return;
+            showInfoMessage(message);
         }
 
 
@@ -3071,6 +3076,36 @@
                                 }
                             }
 
+                            // Save Game button row (same pattern as Rename Character)
+                            {
+                                FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                UObject* sgRow = UObjectGlobals::StaticConstructObject(rowP);
+                                if (sgRow)
+                                {
+                                    UObject* sgLabel = makeTB(L"Save Game", 0.86f, 0.90f, 0.96f, 0.85f, 24);
+                                    if (sgLabel)
+                                    {
+                                        UObject* ls = addToHBox(sgRow, sgLabel);
+                                        if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 92.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
+                                    }
+                                    if (texKeyBox)
+                                    {
+                                        FStaticConstructObjectParameters kbOlP(overlayClass, outer);
+                                        UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
+                                        if (kbOl)
+                                        {
+                                            FStaticConstructObjectParameters kbImgP(imageClass, outer);
+                                            UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
+                                            if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
+                                            UObject* kbLabel = makeTB(L"SAVE NOW", 0.31f, 0.78f, 0.47f, 1.0f, 24);
+                                            if (kbLabel) { umgSetBold(kbLabel); UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
+                                            UObject* kbSlot = addToHBox(sgRow, kbOl);
+                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                        }
+                                    }
+                                    addToVBox(t1, sgRow);
+                                }
+                            }
 
                             {
                                 struct GameOptBind { int bindIdx; UObject** checkImgPtr; bool* enabledPtr; };
@@ -3078,6 +3113,8 @@
                                     { BIND_TRASH_ITEM,     &m_ftTrashCheckImg,      &m_trashItemEnabled },
                                     { BIND_REPLENISH_ITEM, &m_ftReplenishCheckImg,  &m_replenishItemEnabled },
                                     { BIND_REMOVE_ATTRS,   &m_ftRemoveAttrsCheckImg,&m_removeAttrsEnabled },
+                                    { BIND_PITCH_ROTATE,   &m_ftPitchCheckImg,      &m_pitchRotateEnabled },
+                                    { BIND_ROLL_ROTATE,    &m_ftRollCheckImg,       &m_rollRotateEnabled },
                                 };
                                 for (auto& gob : gameOptBinds)
                                 {
@@ -3683,6 +3720,8 @@
                 { m_ftTrashCheckImg,      m_trashItemEnabled },
                 { m_ftReplenishCheckImg,  m_replenishItemEnabled },
                 { m_ftRemoveAttrsCheckImg,m_removeAttrsEnabled },
+                { m_ftPitchCheckImg,      m_pitchRotateEnabled },
+                { m_ftRollCheckImg,       m_rollRotateEnabled },
             };
             for (auto& item : items)
             {
@@ -3690,6 +3729,84 @@
                 auto* visFn = item.img->GetFunctionByNameInChain(STR("SetVisibility"));
                 if (visFn) { uint8_t p[8]{}; p[0] = item.on ? 0 : 1; item.img->ProcessEvent(visFn, p); }
             }
+        }
+
+
+        ULONGLONG m_lastSaveTime{0};
+
+        void triggerSaveGame()
+        {
+            // Cooldown: prevent double-trigger (10s minimum between saves)
+            ULONGLONG now = GetTickCount64();
+            if (now - m_lastSaveTime < 10000)
+            {
+                showInfoMessage(L"Save: please wait...");
+                return;
+            }
+
+            // Find the player character
+            std::vector<UObject*> dwarves;
+            UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
+            UObject* pawn = dwarves.empty() ? nullptr : dwarves[0];
+            if (!pawn)
+            {
+                showErrorBox(L"Save: no player character");
+                return;
+            }
+
+            // Check if save system is valid via blueprint library
+            auto* validFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
+                STR("/Script/Moria.MorSaveSystemBlueprintLibrary:IsSaveSystemWorldStateValid"));
+            auto* libCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr,
+                STR("/Script/Moria.Default__MorSaveSystemBlueprintLibrary"));
+            if (validFn && libCDO)
+            {
+                struct { bool ReturnValue{false}; } vp{};
+                libCDO->ProcessEvent(validFn, &vp);
+                if (!vp.ReturnValue)
+                {
+                    showErrorBox(L"Save: system not ready");
+                    VLOG(STR("[MoriaCppMod] [Save] IsSaveSystemWorldStateValid returned false\n"));
+                    return;
+                }
+            }
+
+            // Use ServerAutoSave on MorCheatsComponent (Server RPC — safest path)
+            UObject* cheatsComp = findActorComponentByClass(pawn, STR("MorCheatsComponent"));
+            if (!cheatsComp)
+            {
+                VLOG(STR("[MoriaCppMod] [Save] MorCheatsComponent not found, trying CheatManager\n"));
+                // Fallback: try CheatManager on PlayerController
+                auto* pc = findPlayerController();
+                if (pc)
+                {
+                    auto* cmFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
+                        STR("/Script/Moria.MorCheatManager:SaveSystemAutoSave"));
+                    auto* cm = pc->GetValuePtrByPropertyNameInChain<UObject*>(STR("CheatManager"));
+                    if (cmFn && cm && *cm)
+                    {
+                        (*cm)->ProcessEvent(cmFn, nullptr);
+                        m_lastSaveTime = now;
+                        showInfoMessage(L"Game Saved");
+                        VLOG(STR("[MoriaCppMod] [Save] Triggered via CheatManager::SaveSystemAutoSave\n"));
+                        return;
+                    }
+                }
+                showErrorBox(L"Save: no save component found");
+                return;
+            }
+
+            auto* saveFn = cheatsComp->GetFunctionByNameInChain(STR("ServerAutoSave"));
+            if (!saveFn)
+            {
+                showErrorBox(L"Save: ServerAutoSave not found");
+                return;
+            }
+
+            cheatsComp->ProcessEvent(saveFn, nullptr);
+            m_lastSaveTime = now;
+            showInfoMessage(L"Game Saved");
+            VLOG(STR("[MoriaCppMod] [Save] Triggered via MorCheatsComponent::ServerAutoSave\n"));
         }
 
 

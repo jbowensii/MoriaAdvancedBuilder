@@ -44,7 +44,7 @@ namespace MoriaMods
     };
 
 
-    static constexpr int BIND_COUNT = 22;
+    static constexpr int BIND_COUNT = 24;
     static constexpr int OVERLAY_BUILD_SLOTS = 8;
 
 
@@ -707,7 +707,9 @@ namespace MoriaMods
             "Reserved1",
             "TrashItem",
             "ReplenishItem",
-            "RemoveAttributes"
+            "RemoveAttributes",
+            "PitchRotate",
+            "RollRotate"
         };
         if (idx < 0 || idx >= BIND_COUNT) return nullptr;
         return keys[idx];

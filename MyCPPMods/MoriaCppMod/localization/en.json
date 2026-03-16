@@ -135,6 +135,8 @@
   "bind.trash_item": "Trash Item",
   "bind.replenish_item": "Replenish Item",
   "bind.remove_attrs": "Remove Attributes",
+  "bind.pitch_rotate": "Pitch Rotate",
+  "bind.roll_rotate": "Roll Rotate",
   "bind.snap_off": "Snap Toggle",
   "bind.section_game_options": "Game Options",
 
