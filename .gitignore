@@ -51,3 +51,6 @@ signing-config.ps1
 
 # Test build artifacts
 MyCPPMods/MoriaCppMod/tests/build/
+
+# Orphaned definition files (not referenced by any .ini manifest)
+definitions/Orphaned/
