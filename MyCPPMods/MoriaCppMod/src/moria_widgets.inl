@@ -2748,7 +2748,7 @@
                 if (bgImg)
                 {
                     umgSetBrush(bgImg, texBG, setBrushFn);
-                    umgSetBrushSize(bgImg, 1439.0f, 879.0f);
+                    umgSetBrushSize(bgImg, 1539.0f, 879.0f);
                     umgSetOpacity(bgImg, 0.5f);
                     UObject* bgSlot = addToOverlay(rootOverlay, bgImg);
                     if (bgSlot) { umgSetHAlign(bgSlot, 2); umgSetVAlign(bgSlot, 2); }
@@ -2932,6 +2932,10 @@
                         auto* setHOvFn = rightSizeBox->GetFunctionByNameInChain(STR("SetHeightOverride"));
                         if (setHOvFn) { int sz = setHOvFn->GetParmsSize(); std::vector<uint8_t> hp(sz, 0); auto* p = findParam(setHOvFn, STR("InHeightOverride")); if (p) *reinterpret_cast<float*>(hp.data() + p->GetOffset_Internal()) = 815.0f; rightSizeBox->ProcessEvent(setHOvFn, hp.data()); }
 
+                        // Set width to fill available space (fixes scrollbar not expanding)
+                        auto* setWOvFn = rightSizeBox->GetFunctionByNameInChain(STR("SetWidthOverride"));
+                        if (setWOvFn) { int sz = setWOvFn->GetParmsSize(); std::vector<uint8_t> wp(sz, 0); auto* p = findParam(setWOvFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = 960.0f; rightSizeBox->ProcessEvent(setWOvFn, wp.data()); }
+
                         auto* setChildFn = rightSizeBox->GetFunctionByNameInChain(STR("SetContent"));
                         if (!setChildFn) setChildFn = rightSizeBox->GetFunctionByNameInChain(STR("AddChild"));
                         if (setChildFn)
@@ -2945,7 +2949,7 @@
                         {
                             umgSetHAlign(sbSlot, 0);
                             umgSetVAlign(sbSlot, 0);
-                            umgSetSlotPadding(sbSlot, 10.0f, 15.0f, 60.0f, 10.0f);
+                            umgSetSlotPadding(sbSlot, 10.0f, 15.0f, 0.0f, 10.0f);
                         }
 
                         auto* alwaysShowFn = scrollBox->GetFunctionByNameInChain(STR("SetAlwaysShowScrollbar"));
@@ -2956,6 +2960,25 @@
                             std::vector<uint8_t> buf(sz, 0);
                             if (p) *reinterpret_cast<bool*>(buf.data() + p->GetOffset_Internal()) = true;
                             scrollBox->ProcessEvent(alwaysShowFn, buf.data());
+                        }
+
+                        // Add padding between content and scrollbar
+                        auto* setPaddingFn = scrollBox->GetFunctionByNameInChain(STR("SetScrollbarPadding"));
+                        if (setPaddingFn)
+                        {
+                            auto* pPad = findParam(setPaddingFn, STR("InScrollbarPadding"));
+                            if (pPad)
+                            {
+                                int sz = setPaddingFn->GetParmsSize();
+                                std::vector<uint8_t> buf(sz, 0);
+                                // FMargin: Left, Top, Right, Bottom
+                                auto* m = reinterpret_cast<float*>(buf.data() + pPad->GetOffset_Internal());
+                                m[0] = 60.0f; // left padding (space between content and scrollbar)
+                                m[1] = 0.0f;
+                                m[2] = 0.0f;
+                                m[3] = 0.0f;
+                                scrollBox->ProcessEvent(setPaddingFn, buf.data());
+                            }
                         }
                     }
                     UObject* borderSlot = addToHBox(contentHBox, rightOverlay);
@@ -3056,7 +3079,7 @@
                                             UObject* kbLabel = makeTB(Loc::get("ui.status_off"), 0.7f, 0.3f, 0.3f, 1.0f, 24);
                                             if (kbLabel) { umgSetBold(kbLabel); m_ftNoCollisionKeyLabel = kbLabel; UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
                                             UObject* kbSlot = addToHBox(ncRow, kbOl);
-                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 50.0f, 0.0f);
                                         }
                                     }
                                     addToVBox(t1, ncRow);
@@ -3087,7 +3110,7 @@
                                             UObject* kbLabel = makeTB(Loc::get("ui.button_rename"), 0.9f, 0.75f, 0.2f, 1.0f, 24);
                                             if (kbLabel) { umgSetBold(kbLabel); UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
                                             UObject* kbSlot = addToHBox(rcRow, kbOl);
-                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 50.0f, 0.0f);
                                         }
                                     }
                                     addToVBox(t1, rcRow);
@@ -3118,7 +3141,7 @@
                                             UObject* kbLabel = makeTB(L"SAVE NOW", 0.31f, 0.78f, 0.47f, 1.0f, 24);
                                             if (kbLabel) { umgSetBold(kbLabel); UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
                                             UObject* kbSlot = addToHBox(sgRow, kbOl);
-                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 50.0f, 0.0f);
                                         }
                                     }
                                     addToVBox(t1, sgRow);
@@ -3194,7 +3217,7 @@
                                                 if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); }
                                             }
                                             UObject* kbSlot = addToHBox(goRow, kbOl);
-                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 50.0f, 0.0f);
                                         }
                                     }
                                     addToVBox(t1, goRow);
@@ -3530,7 +3553,7 @@
                                         if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); }
                                     }
                                     UObject* kbSlot = addToHBox(rowHBox, kbOl);
-                                    if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                    if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 50.0f, 0.0f);
                                 }
                             }
 
@@ -3576,7 +3599,7 @@
                                             if (ms) { umgSetHAlign(ms, 2); umgSetVAlign(ms, 2); }
                                         }
                                         UObject* mkSlot = addToHBox(modRow, mkOl);
-                                        if (mkSlot) umgSetSlotPadding(mkSlot, 0.0f, 0.0f, 4.0f, 0.0f);
+                                        if (mkSlot) umgSetSlotPadding(mkSlot, 0.0f, 0.0f, 50.0f, 0.0f);
                                     }
                                 }
                                 addChildToPanel(tab0Content ? tab0Content : scrollBox, STR("AddChild"), modRow);
@@ -3609,7 +3632,7 @@
                     int sz = setDesiredSizeFn->GetParmsSize();
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
-                    v[0] = 1540.0f; v[1] = 880.0f;
+                    v[0] = 1540.0f; v[1] = 880.0f;  // wider than original 1440 for scrollbar spacing
                     userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
                 }
             }

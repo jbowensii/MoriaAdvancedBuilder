@@ -1373,7 +1373,7 @@ namespace MoriaMods
                         if (m_ftSelectedTab == 0)
                         {
                             int kbX0 = static_cast<int>(wLeft + (1540.0f - 30.0f - 60.0f - 400.0f - 4.0f) * s2p);
-                            int kbX1 = static_cast<int>(wLeft + (1540.0f - 30.0f - 60.0f - 4.0f) * s2p);
+                            int kbX1 = static_cast<int>(wLeft + (1540.0f - 30.0f - 50.0f) * s2p);  // right edge of button area
 
                             int cbX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f + 4.0f) * s2p);
                             int cbX1 = static_cast<int>(cbX0 + 80.0f * s2p);
@@ -1462,7 +1462,7 @@ namespace MoriaMods
                             int cbX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f + 4.0f) * s2p);
                             int cbX1 = static_cast<int>(cbX0 + 80.0f * s2p);
                             int kbX0 = static_cast<int>(wLeft + (1540.0f - 30.0f - 60.0f - 400.0f - 4.0f) * s2p);
-                            int kbX1 = static_cast<int>(wLeft + (1540.0f - 30.0f - 60.0f - 4.0f) * s2p);
+                            int kbX1 = static_cast<int>(wLeft + (1540.0f - 30.0f - 50.0f) * s2p);  // right edge of button area
                             int contentY = static_cast<int>(wTop + 40.0f * s2p);
                             int sectionH = static_cast<int>(80.0f * s2p);
                             int rowH = static_cast<int>(128.0f * s2p);
