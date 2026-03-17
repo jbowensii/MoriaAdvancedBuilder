@@ -4106,24 +4106,44 @@
             VLOG(STR("[MoriaCppMod] [Rename] Dialog opened\n"));
         }
 
+        bool m_renamePendingClose{false};
+
         void hideRenameDialog()
         {
             if (!m_ftRenameVisible) return;
+            if (m_renamePendingClose) return;  // already closing
+
+            // First, hide the widget (makes it invisible this frame)
+            if (m_ftRenameWidget)
+            {
+                auto* visFn = m_ftRenameWidget->GetFunctionByNameInChain(STR("SetVisibility"));
+                if (visFn) { uint8_t p[8]{}; p[0] = 1; m_ftRenameWidget->ProcessEvent(visFn, p); }
+            }
+
+            // Defer the actual removal to next frame (avoids Slate paint queue crash)
+            m_renamePendingClose = true;
+            m_ftRenameVisible = false;
+            m_ftRenameInput = nullptr;
+            m_ftRenameConfirmLabel = nullptr;
+
+            if (m_ftVisible && m_fontTestWidget)
+                setInputModeUI(m_fontTestWidget);
+            else
+                setInputModeGame();
+            VLOG(STR("[MoriaCppMod] [Rename] Dialog hide requested (deferred removal)\n"));
+        }
+
+        void tickRenamePendingClose()
+        {
+            if (!m_renamePendingClose) return;
+            m_renamePendingClose = false;
             if (m_ftRenameWidget)
             {
                 auto* removeFn = m_ftRenameWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
                 if (removeFn) m_ftRenameWidget->ProcessEvent(removeFn, nullptr);
                 m_ftRenameWidget = nullptr;
             }
-            m_ftRenameInput = nullptr;
-            m_ftRenameConfirmLabel = nullptr;
-            m_ftRenameVisible = false;
-
-            if (m_ftVisible && m_fontTestWidget)
-                setInputModeUI(m_fontTestWidget);
-            else
-                setInputModeGame();
-            VLOG(STR("[MoriaCppMod] [Rename] Dialog closed\n"));
+            VLOG(STR("[MoriaCppMod] [Rename] Dialog removed (deferred)\n"));
         }
 
         void confirmRenameDialog()

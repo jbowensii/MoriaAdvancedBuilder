@@ -876,6 +876,7 @@ namespace MoriaMods
             if (m_pendingCharNameReady.exchange(false))
                 applyPendingCharacterName();
 
+            tickRenamePendingClose();
 
             if (m_ftRenameVisible)
             {
