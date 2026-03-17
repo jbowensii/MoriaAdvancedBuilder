@@ -1,6 +1,33 @@
 
 
 
+        // ---- Deferred Widget Removal (prevents Slate PaintFastPath crash) ----
+        // Widgets are hidden immediately but removed from viewport on next frame tick.
+        std::vector<UObject*> m_pendingWidgetRemovals;
+
+        void deferRemoveWidget(UObject* widget)
+        {
+            if (!widget) return;
+            // Hide immediately (prevents interaction and visual this frame)
+            auto* visFn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
+            if (visFn) { uint8_t p[8]{}; p[0] = 1; widget->ProcessEvent(visFn, p); }
+            m_pendingWidgetRemovals.push_back(widget);
+        }
+
+        void tickDeferredWidgetRemovals()
+        {
+            if (m_pendingWidgetRemovals.empty()) return;
+            for (auto* w : m_pendingWidgetRemovals)
+            {
+                if (!w) continue;
+                auto* removeFn = w->GetFunctionByNameInChain(STR("RemoveFromParent"));
+                if (!removeFn) removeFn = w->GetFunctionByNameInChain(STR("RemoveFromViewport"));
+                if (removeFn) w->ProcessEvent(removeFn, nullptr);
+            }
+            m_pendingWidgetRemovals.clear();
+        }
+        // ---- End Deferred Widget Removal ----
+
         void umgSetBrush(UObject* img, UObject* texture, UFunction* setBrushFn)
         {
             ensureBrushOffset(img);
@@ -520,9 +547,7 @@
         void destroyExperimentalBar()
         {
             if (!m_umgBarWidget) return;
-            auto* removeFn = m_umgBarWidget->GetFunctionByNameInChain(STR("RemoveFromViewport"));
-            if (removeFn)
-                m_umgBarWidget->ProcessEvent(removeFn, nullptr);
+            deferRemoveWidget(m_umgBarWidget);
             m_umgBarWidget = nullptr;
             m_umgSetBrushFn = nullptr;
             for (int i = 0; i < 8; i++)
@@ -1069,9 +1094,7 @@
         void destroyAdvancedBuilderBar()
         {
             if (!m_abBarWidget) return;
-            auto* removeFn = m_abBarWidget->GetFunctionByNameInChain(STR("RemoveFromViewport"));
-            if (removeFn)
-                m_abBarWidget->ProcessEvent(removeFn, nullptr);
+            deferRemoveWidget(m_abBarWidget);
             m_abBarWidget = nullptr;
             m_abKeyLabel = nullptr;
             m_abStateImage = nullptr;
@@ -1523,8 +1546,7 @@
         void destroyTargetInfoWidget()
         {
             if (!m_targetInfoWidget) return;
-            auto* removeFn = m_targetInfoWidget->GetFunctionByNameInChain(STR("RemoveFromViewport"));
-            if (removeFn) m_targetInfoWidget->ProcessEvent(removeFn, nullptr);
+            deferRemoveWidget(m_targetInfoWidget);
             m_targetInfoWidget = nullptr;
             m_tiTitleLabel = nullptr;
             m_tiClassLabel = nullptr;
@@ -1829,8 +1851,7 @@
         void destroyErrorBox()
         {
             if (!m_errorBoxWidget) return;
-            auto* removeFn = m_errorBoxWidget->GetFunctionByNameInChain(STR("RemoveFromViewport"));
-            if (removeFn) m_errorBoxWidget->ProcessEvent(removeFn, nullptr);
+            deferRemoveWidget(m_errorBoxWidget);
             m_errorBoxWidget = nullptr;
             m_ebMessageLabel = nullptr;
             m_ebShowTick = 0;
@@ -2039,9 +2060,7 @@
         void destroyModControllerBar()
         {
             if (!m_mcBarWidget) return;
-            auto* removeFn = m_mcBarWidget->GetFunctionByNameInChain(STR("RemoveFromViewport"));
-            if (removeFn)
-                m_mcBarWidget->ProcessEvent(removeFn, nullptr);
+            deferRemoveWidget(m_mcBarWidget);
             m_mcBarWidget = nullptr;
             for (int i = 0; i < MC_SLOTS; i++)
             {
@@ -2607,8 +2626,7 @@
 
             if (m_ftVisible && m_fontTestWidget && isObjectAlive(m_fontTestWidget))
             {
-                auto* fn = m_fontTestWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
-                if (fn) safeProcessEvent(m_fontTestWidget, fn, nullptr);
+                deferRemoveWidget(m_fontTestWidget);
                 m_fontTestWidget = nullptr;
                 m_ftVisible = false;
                 for (auto& t : m_ftTabImages) t = nullptr;
@@ -2717,7 +2735,7 @@
                 UObject* borderFrame = UObjectGlobals::StaticConstructObject(borderFrameP);
                 if (borderFrame)
                 {
-                    umgSetBrushSize(borderFrame, 1440.0f, 880.0f);
+                    umgSetBrushSize(borderFrame, 1540.0f, 880.0f);
                     umgSetImageColor(borderFrame, 0.08f, 0.14f, 0.32f, 0.55f);
                     addToOverlay(rootOverlay, borderFrame);
                 }
@@ -2927,7 +2945,7 @@
                         {
                             umgSetHAlign(sbSlot, 0);
                             umgSetVAlign(sbSlot, 0);
-                            umgSetSlotPadding(sbSlot, 10.0f, 15.0f, 10.0f, 10.0f);
+                            umgSetSlotPadding(sbSlot, 10.0f, 15.0f, 60.0f, 10.0f);
                         }
 
                         auto* alwaysShowFn = scrollBox->GetFunctionByNameInChain(STR("SetAlwaysShowScrollbar"));
@@ -3591,7 +3609,7 @@
                     int sz = setDesiredSizeFn->GetParmsSize();
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
-                    v[0] = 1440.0f; v[1] = 880.0f;
+                    v[0] = 1540.0f; v[1] = 880.0f;
                     userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
                 }
             }
@@ -4106,44 +4124,23 @@
             VLOG(STR("[MoriaCppMod] [Rename] Dialog opened\n"));
         }
 
-        bool m_renamePendingClose{false};
-
         void hideRenameDialog()
         {
             if (!m_ftRenameVisible) return;
-            if (m_renamePendingClose) return;  // already closing
-
-            // First, hide the widget (makes it invisible this frame)
             if (m_ftRenameWidget)
             {
-                auto* visFn = m_ftRenameWidget->GetFunctionByNameInChain(STR("SetVisibility"));
-                if (visFn) { uint8_t p[8]{}; p[0] = 1; m_ftRenameWidget->ProcessEvent(visFn, p); }
+                deferRemoveWidget(m_ftRenameWidget);
+                m_ftRenameWidget = nullptr;
             }
-
-            // Defer the actual removal to next frame (avoids Slate paint queue crash)
-            m_renamePendingClose = true;
-            m_ftRenameVisible = false;
             m_ftRenameInput = nullptr;
             m_ftRenameConfirmLabel = nullptr;
+            m_ftRenameVisible = false;
 
             if (m_ftVisible && m_fontTestWidget)
                 setInputModeUI(m_fontTestWidget);
             else
                 setInputModeGame();
-            VLOG(STR("[MoriaCppMod] [Rename] Dialog hide requested (deferred removal)\n"));
-        }
-
-        void tickRenamePendingClose()
-        {
-            if (!m_renamePendingClose) return;
-            m_renamePendingClose = false;
-            if (m_ftRenameWidget)
-            {
-                auto* removeFn = m_ftRenameWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
-                if (removeFn) m_ftRenameWidget->ProcessEvent(removeFn, nullptr);
-                m_ftRenameWidget = nullptr;
-            }
-            VLOG(STR("[MoriaCppMod] [Rename] Dialog removed (deferred)\n"));
+            VLOG(STR("[MoriaCppMod] [Rename] Dialog closed (deferred removal)\n"));
         }
 
         void confirmRenameDialog()
