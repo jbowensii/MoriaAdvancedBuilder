@@ -305,9 +305,15 @@
                 if (isModifierDown())
                     quickBuildFromTarget();
                 else if (m_tiShowTick > 0)
+                {
                     hideTargetInfo();
+                    hideCrosshair();
+                }
                 else
+                {
+                    showCrosshair();
                     dumpAimedActor();
+                }
                 break;
             case 5:
                 break;

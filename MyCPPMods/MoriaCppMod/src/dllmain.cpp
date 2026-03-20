@@ -402,6 +402,10 @@ namespace MoriaMods
         UObject* m_tiRecipeLabel{nullptr};
         ULONGLONG m_tiShowTick{0};
 
+        UObject* m_crosshairWidget{nullptr};
+        ULONGLONG m_crosshairShowTick{0};
+        static constexpr ULONGLONG CROSSHAIR_FADE_MS = 40000;
+
         UObject* m_errorBoxWidget{nullptr};
         UObject* m_ebMessageLabel{nullptr};
         ULONGLONG m_ebShowTick{0};
@@ -425,7 +429,7 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("5.3.5");
+            ModVersion = STR("5.3.6");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
@@ -462,7 +466,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v5.3.5 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v5.3.6 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -789,7 +793,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v5.3.5: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v5.3.6: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
             Unreal::Hook::RegisterLoadMapPreCallback(
@@ -979,6 +983,9 @@ namespace MoriaMods
 
             if (m_tiShowTick > 0 && (GetTickCount64() - m_tiShowTick) >= 10000)
                 hideTargetInfo();
+
+            if (m_crosshairShowTick > 0 && (GetTickCount64() - m_crosshairShowTick) >= CROSSHAIR_FADE_MS)
+                hideCrosshair();
 
 
             if (m_ebShowTick > 0 && (GetTickCount64() - m_ebShowTick) >= ERROR_BOX_DURATION_MS)
@@ -1372,8 +1379,9 @@ namespace MoriaMods
 
                         if (m_ftSelectedTab == 0)
                         {
-                            int kbX0 = static_cast<int>(wLeft + (1540.0f - 30.0f - 60.0f - 400.0f - 4.0f) * s2p);
-                            int kbX1 = static_cast<int>(wLeft + (1540.0f - 30.0f - 50.0f) * s2p);  // right edge of button area
+                            int kbImgX0 = static_cast<int>(wLeft + (1540.0f - 30.0f - 60.0f - 400.0f - 4.0f) * s2p);
+                            int kbX0 = static_cast<int>(kbImgX0 + 50.0f * s2p);   // inner dark area starts ~50px from image left
+                            int kbX1 = static_cast<int>(kbImgX0 + 350.0f * s2p);  // inner dark area ends ~50px from image right
 
                             int cbX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f + 4.0f) * s2p);
                             int cbX1 = static_cast<int>(cbX0 + 80.0f * s2p);
@@ -1461,8 +1469,9 @@ namespace MoriaMods
 
                             int cbX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f + 4.0f) * s2p);
                             int cbX1 = static_cast<int>(cbX0 + 80.0f * s2p);
-                            int kbX0 = static_cast<int>(wLeft + (1540.0f - 30.0f - 60.0f - 400.0f - 4.0f) * s2p);
-                            int kbX1 = static_cast<int>(wLeft + (1540.0f - 30.0f - 50.0f) * s2p);  // right edge of button area
+                            int kbImgX0 = static_cast<int>(wLeft + (1540.0f - 30.0f - 60.0f - 400.0f - 4.0f) * s2p);
+                            int kbX0 = static_cast<int>(kbImgX0 + 50.0f * s2p);   // inner dark area starts ~50px from image left
+                            int kbX1 = static_cast<int>(kbImgX0 + 350.0f * s2p);  // inner dark area ends ~50px from image right
                             int contentY = static_cast<int>(wTop + 40.0f * s2p);
                             int sectionH = static_cast<int>(80.0f * s2p);
                             int rowH = static_cast<int>(128.0f * s2p);
@@ -2053,6 +2062,9 @@ namespace MoriaMods
                     m_tiBuildLabel = nullptr;
                     m_tiRecipeLabel = nullptr;
                     m_tiShowTick = 0;
+
+                    m_crosshairWidget = nullptr;
+                    m_crosshairShowTick = 0;
 
                     m_errorBoxWidget = nullptr;
                     m_ebMessageLabel = nullptr;

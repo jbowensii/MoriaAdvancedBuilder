@@ -1848,6 +1848,146 @@
         }
 
 
+        // ── Crosshair reticle (centered, shown during inspect) ──────────
+
+        void createCrosshair()
+        {
+            if (m_crosshairWidget) return;
+            Output::send<LogLevel::Normal>(STR("[MoriaCppMod] [CH] createCrosshair() START\n"));
+
+            // Exact same class/function lookup pattern as createErrorBox
+            auto* imageClass      = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Image"));
+            auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
+            auto* borderClass     = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Border"));
+            auto* createFn        = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
+            auto* wblClass        = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
+            if (!imageClass || !userWidgetClass || !borderClass || !createFn || !wblClass)
+            { Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CH] Missing UMG classes\n")); return; }
+
+            auto* pc = findPlayerController();
+            if (!pc) { Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CH] No PC\n")); return; }
+            UObject* wblCDO = wblClass->GetClassDefaultObject();
+            if (!wblCDO) return;
+
+            // Find texture
+            UObject* texReticle = findTexture2DByName(L"T_UI_Bow_Reticle");
+            if (!texReticle) texReticle = findTexture2DByName(L"T_UI_Btn_P1_Active");
+            if (!texReticle) { Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CH] No texture\n")); return; }
+
+            // Create UserWidget — SAME pattern as createErrorBox (with WorldContextObject)
+            int csz = createFn->GetParmsSize();
+            std::vector<uint8_t> cp(csz, 0);
+            auto* pWC = findParam(createFn, STR("WorldContextObject"));
+            auto* pWT = findParam(createFn, STR("WidgetType"));
+            auto* pOP = findParam(createFn, STR("OwningPlayer"));
+            auto* pRV = findParam(createFn, STR("ReturnValue"));
+            if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
+            if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = userWidgetClass;
+            if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
+            wblCDO->ProcessEvent(createFn, cp.data());
+            UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
+            if (!userWidget) { Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CH] CreateWidget null\n")); return; }
+            m_crosshairWidget = userWidget;
+
+            // Get WidgetTree — CRITICAL, same as createErrorBox
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
+            UObject* outer = widgetTree ? widgetTree : userWidget;
+
+            // Create transparent border as root (no background)
+            FStaticConstructObjectParameters borderP(borderClass, outer);
+            UObject* rootBorder = UObjectGlobals::StaticConstructObject(borderP);
+            if (!rootBorder) return;
+            if (widgetTree) setRootWidget(widgetTree, rootBorder);
+
+            // Transparent background
+            auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
+            if (setBrushColorFn) {
+                auto* pColor = findParam(setBrushColorFn, STR("InBrushColor"));
+                if (pColor) {
+                    int sz = setBrushColorFn->GetParmsSize();
+                    std::vector<uint8_t> cb(sz, 0);
+                    auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
+                    c[0] = 0.0f; c[1] = 0.0f; c[2] = 0.0f; c[3] = 0.0f; // fully transparent
+                    rootBorder->ProcessEvent(setBrushColorFn, cb.data());
+                }
+            }
+
+            // Create image with reticle texture
+            FStaticConstructObjectParameters imgP(imageClass, outer);
+            UObject* img = UObjectGlobals::StaticConstructObject(imgP);
+            if (!img) return;
+
+            auto* setBrushFn = img->GetFunctionByNameInChain(STR("SetBrushFromTexture"));
+            if (setBrushFn) umgSetBrushNoMatch(img, texReticle, setBrushFn);
+            // Scale icon based on resolution — 64px at 1080p, scales up with uiScale
+            float iconSize = 64.0f * m_screen.uiScale;
+            umgSetBrushSize(img, iconSize, iconSize);
+
+            // Add image as content of the border
+            auto* setContentFn = rootBorder->GetFunctionByNameInChain(STR("SetContent"));
+            if (setContentFn) {
+                auto* pContent = findParam(setContentFn, STR("Content"));
+                int sz = setContentFn->GetParmsSize();
+                std::vector<uint8_t> sc(sz, 0);
+                if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = img;
+                rootBorder->ProcessEvent(setContentFn, sc.data());
+            }
+
+            // Add to viewport
+            auto* addFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
+            if (addFn) {
+                int sz = addFn->GetParmsSize();
+                std::vector<uint8_t> ap(sz, 0);
+                auto* pZ = addFn->GetPropertyByNameInChain(STR("ZOrder"));
+                if (pZ) *reinterpret_cast<int32_t*>(ap.data() + pZ->GetOffset_Internal()) = 100;
+                userWidget->ProcessEvent(addFn, ap.data());
+            }
+
+            // Position at exact center — same as showInfoMessage
+            m_screen.refresh(pc);
+            float halfIcon = iconSize / 2.0f;
+            float cx = m_screen.fracToPixelX(0.5f) - halfIcon;
+            float cy = m_screen.fracToPixelY(0.5f) - halfIcon;
+            setWidgetPosition(m_crosshairWidget, cx, cy, true);
+
+            // Start hidden
+            auto* visFn = userWidget->GetFunctionByNameInChain(STR("SetVisibility"));
+            if (visFn) { uint8_t vp[8]{}; vp[0] = 1; userWidget->ProcessEvent(visFn, vp); }
+
+            Output::send<LogLevel::Normal>(STR("[MoriaCppMod] [CH] Crosshair OK at ({},{}) scale={}\n"), cx, cy, m_screen.viewportScale);
+        }
+
+        void showCrosshair()
+        {
+            if (!m_crosshairWidget) createCrosshair();
+            if (!m_crosshairWidget) return;
+
+            // Reposition to exact center, scaled for resolution
+            UObject* pc = findPlayerController();
+            if (pc) {
+                m_screen.refresh(pc);
+                float halfIcon = (64.0f * m_screen.uiScale) / 2.0f;
+                float cx = m_screen.fracToPixelX(0.5f) - halfIcon;
+                float cy = m_screen.fracToPixelY(0.5f) - halfIcon;
+                setWidgetPosition(m_crosshairWidget, cx, cy, true);
+            }
+
+            auto* fn = m_crosshairWidget->GetFunctionByNameInChain(STR("SetVisibility"));
+            if (fn) { uint8_t p[8]{}; p[0] = 0; m_crosshairWidget->ProcessEvent(fn, p); }
+            m_crosshairShowTick = GetTickCount64();
+        }
+
+        void hideCrosshair()
+        {
+            if (!m_crosshairWidget) return;
+            auto* fn = m_crosshairWidget->GetFunctionByNameInChain(STR("SetVisibility"));
+            if (fn) { uint8_t p[8]{}; p[0] = 1; m_crosshairWidget->ProcessEvent(fn, p); }
+            m_crosshairShowTick = 0;
+        }
+
+        // ── Error Box ────────────────────────────────────────────────────
+
         void destroyErrorBox()
         {
             if (!m_errorBoxWidget) return;
