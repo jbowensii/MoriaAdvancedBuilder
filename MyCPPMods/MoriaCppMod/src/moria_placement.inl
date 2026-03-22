@@ -3,18 +3,18 @@
 
         UObject* getCachedBuildComp()
         {
-            if (m_cachedBuildComp && isObjectAlive(m_cachedBuildComp))
-                return m_cachedBuildComp;
-            m_cachedBuildComp = nullptr;
+            UObject* comp = m_cachedBuildComp.Get();
+            if (comp) return comp;
             std::vector<UObject*> comps;
             UObjectGlobals::FindAllOf(STR("MorBuildingComponent"), comps);
             if (!comps.empty() && comps[0])
             {
-                m_cachedBuildComp = comps[0];
+                m_cachedBuildComp = RC::Unreal::FWeakObjectPtr(comps[0]);
                 QBLOG(STR("[MoriaCppMod] [QB] getCachedBuildComp: found MorBuildingComponent {:p}\n"),
-                      static_cast<void*>(m_cachedBuildComp));
+                      static_cast<void*>(comps[0]));
+                return comps[0];
             }
-            return m_cachedBuildComp;
+            return nullptr;
         }
 
 
@@ -55,39 +55,37 @@
 
         UObject* getCachedBuildHUD()
         {
-            if (m_cachedBuildHUD)
-            {
-                if (!isObjectAlive(m_cachedBuildHUD) || safeClassName(m_cachedBuildHUD).find(L"BuildHUD") == std::wstring::npos)
-                    m_cachedBuildHUD = nullptr;
-            }
-            if (!m_cachedBuildHUD)
-            {
+            UObject* hud = m_cachedBuildHUD.Get();
+            if (hud && safeClassName(hud).find(L"BuildHUD") != std::wstring::npos)
+                return hud;
 
-                UObject* comp = getCachedBuildComp();
-                if (comp)
+            // Try via BuildComp API first
+            UObject* comp = getCachedBuildComp();
+            if (comp)
+            {
+                auto* fn = comp->GetFunctionByNameInChain(STR("GetActiveBuildingWidget"));
+                if (fn)
                 {
-                    auto* fn = comp->GetFunctionByNameInChain(STR("GetActiveBuildingWidget"));
-                    if (fn)
+                    struct { UObject* Ret{nullptr}; } params{};
+                    comp->ProcessEvent(fn, &params);
+                    if (params.Ret)
                     {
-                        struct { UObject* Ret{nullptr}; } params{};
-                        comp->ProcessEvent(fn, &params);
-                        if (params.Ret && isObjectAlive(params.Ret))
-                        {
-                            m_cachedBuildHUD = params.Ret;
-                            QBLOG(STR("[MoriaCppMod] [QB] getCachedBuildHUD: via GetActiveBuildingWidget -> {:p}\n"),
-                                  static_cast<void*>(m_cachedBuildHUD));
-                        }
+                        m_cachedBuildHUD = RC::Unreal::FWeakObjectPtr(params.Ret);
+                        QBLOG(STR("[MoriaCppMod] [QB] getCachedBuildHUD: via GetActiveBuildingWidget -> {:p}\n"),
+                              static_cast<void*>(params.Ret));
+                        return params.Ret;
                     }
                 }
-
-                if (!m_cachedBuildHUD)
-                {
-                    m_cachedBuildHUD = findWidgetByClass(L"UI_WBP_BuildHUDv2_C", false);
-                    if (m_cachedBuildHUD && !isObjectAlive(m_cachedBuildHUD))
-                        m_cachedBuildHUD = nullptr;
-                }
             }
-            return m_cachedBuildHUD;
+
+            // Fallback — search by class
+            UObject* found = findWidgetByClass(L"UI_WBP_BuildHUDv2_C", false);
+            if (found)
+            {
+                m_cachedBuildHUD = RC::Unreal::FWeakObjectPtr(found);
+                return found;
+            }
+            return nullptr;
         }
 
 
@@ -101,11 +99,10 @@
             hud->ProcessEvent(fn, &params);
             if (!params.Ret) { QBLOG(STR("[MoriaCppMod] [QB] isPlacementActive -> false (HUD not showing)\n")); return false; }
 
-            static FBoolProperty* s_bp_recipeSelectMode = nullptr;
-            if (!s_bp_recipeSelectMode)
-                s_bp_recipeSelectMode = resolveBoolProperty(hud, L"recipeSelectMode");
-            if (!s_bp_recipeSelectMode) return false;
-            bool recipeSelectMode = s_bp_recipeSelectMode->GetPropertyValueInContainer(hud);
+            // Re-resolve each call — cheap name-walk, safe across world transitions
+            FBoolProperty* bp_recipeSelectMode = resolveBoolProperty(hud, L"recipeSelectMode");
+            if (!bp_recipeSelectMode) return false;
+            bool recipeSelectMode = bp_recipeSelectMode->GetPropertyValueInContainer(hud);
             bool result = !recipeSelectMode;
             QBLOG(STR("[MoriaCppMod] [QB] isPlacementActive -> {} (recipeSelectMode={})\n"),
                   result ? STR("true") : STR("false"), recipeSelectMode ? STR("true") : STR("false"));
@@ -195,6 +192,25 @@
             return true;
         }
 
+
+        // Cancel the active placement ghost via CancelTargeting() on the GATA
+        // Returns true if cancel was issued, false if no GATA found
+        bool cancelPlacementViaAPI()
+        {
+            UObject* gata = resolveGATA();
+            if (!gata) return false;
+            auto* cancelFn = gata->GetFunctionByNameInChain(STR("CancelTargeting"));
+            if (!cancelFn)
+            {
+                QBLOG(STR("[MoriaCppMod] [QB] CancelTargeting not found on GATA, falling back to keybd_event\n"));
+                keybd_event(VK_ESCAPE, 0, 0, 0);
+                keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
+                return true;
+            }
+            gata->ProcessEvent(cancelFn, nullptr);
+            QBLOG(STR("[MoriaCppMod] [QB] CancelTargeting() called on GATA\n"));
+            return true;
+        }
 
         UObject* resolveGATA()
         {
@@ -445,6 +461,7 @@
         void tickPitchRoll()
         {
             if (!m_pitchRollActive) return;
+            if (!m_pitchRotateEnabled && !m_rollRotateEnabled) { m_pitchRollActive = false; return; }
             UObject* gata = resolveGATA();
             if (!gata) { m_pitchRollActive = false; return; }
 
@@ -748,16 +765,15 @@
             UObject* buildHUD = getCachedBuildHUD();
 
 
+            // FindAllOf the specific build item class — much smaller set than all UserWidgets
             std::vector<UObject*> widgets;
-            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
+            UObjectGlobals::FindAllOf(STR("UI_WBP_Build_Item_Medium_C"), widgets);
 
             UObject* matchedWidget = nullptr;
             int visibleCount = 0;
             for (auto* w : widgets)
             {
                 if (!w || !isObjectAlive(w)) continue;
-                std::wstring cls = safeClassName(w);
-                if (cls != L"UI_WBP_Build_Item_Medium_C") continue;
 
 
                 auto* visFunc = w->GetFunctionByNameInChain(STR("IsVisible"));
@@ -838,7 +854,6 @@
             *reinterpret_cast<int32_t*>(params.data() + s_bse.Index) = 0;
 
             QBLOG(STR("[MoriaCppMod] [QuickBuild]   calling blockSelectedEvent with selfRef={:p}\n"), static_cast<void*>(matchedWidget));
-
 
             m_isAutoSelecting = true;
             struct AutoSelectGuardFB
@@ -1184,29 +1199,32 @@
                 if (buildHUD)
                 {
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT SelectRecipe for F{} (skipping state machine)\n"), slot + 1);
-                    m_isAutoSelecting = true;
-                    if (trySelectRecipeByHandle(buildHUD, m_recipeSlots[slot].recipeHandle))
                     {
-                        m_isAutoSelecting = false;
+                        // RAII guard — ensures m_isAutoSelecting is always cleared
+                        m_isAutoSelecting = true;
+                        struct AutoSelectGuardDirect { bool& f; ~AutoSelectGuardDirect() { f = false; } } guardDirect{m_isAutoSelecting};
 
-                        if (isPlacementActive())
+                        if (trySelectRecipeByHandle(buildHUD, m_recipeSlots[slot].recipeHandle))
                         {
-                            m_lastDirectSelectTime = now;
-                            m_lastQBSelectTime = now;
+                            m_isAutoSelecting = false;
 
+                            if (isPlacementActive())
+                            {
+                                m_lastDirectSelectTime = now;
+                                m_lastQBSelectTime = now;
 
-                            m_deferHideAndRefresh = true;
-                            const std::wstring& targetName = m_recipeSlots[slot].displayName;
-                            showOnScreen((L"Build: " + targetName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
-                            m_buildMenuWasOpen = true;
-                            m_activeBuilderSlot = slot;
-                            updateBuildersBar();
-                            onGhostAppeared();
-                            return;
+                                m_deferHideAndRefresh = true;
+                                const std::wstring& targetName = m_recipeSlots[slot].displayName;
+                                showOnScreen((L"Build: " + targetName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
+                                m_buildMenuWasOpen = true;
+                                m_activeBuilderSlot = slot;
+                                updateBuildersBar();
+                                onGhostAppeared();
+                                return;
+                            }
+                            QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path: SelectRecipe succeeded but no ghost — stale handle, invalidating\n"));
                         }
-                        QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path: SelectRecipe succeeded but no ghost — stale handle, invalidating\n"));
-                    }
-                    m_isAutoSelecting = false;
+                    } // guardDirect clears m_isAutoSelecting
                     m_recipeSlots[slot].hasHandle = false;
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path failed, falling through to state machine\n"));
                 }
@@ -1230,9 +1248,8 @@
             {
 
 
-                QBLOG(STR("[MoriaCppMod] [QuickBuild] Placement active, cancelling ghost\n"));
-                keybd_event(VK_ESCAPE, 0, 0, 0);
-                keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
+                QBLOG(STR("[MoriaCppMod] [QuickBuild] Placement active, cancelling ghost via API\n"));
+                cancelPlacementViaAPI();
                 m_qbPhase = PlacePhase::CancelGhost;
             }
             else
@@ -1269,9 +1286,8 @@
             }
             else if (isPlacementActive())
             {
-                QBLOG(STR("[MoriaCppMod] [TargetBuild] Placement active, cancelling ghost\n"));
-                keybd_event(VK_ESCAPE, 0, 0, 0);
-                keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
+                QBLOG(STR("[MoriaCppMod] [TargetBuild] Placement active, cancelling ghost via API\n"));
+                cancelPlacementViaAPI();
                 m_qbPhase = PlacePhase::CancelGhost;
             }
             else
@@ -1327,11 +1343,23 @@
 
             if (m_qbPhase == PlacePhase::WaitingForShow)
             {
-                if (isBuildTabShowing())
+                if (m_showSettleTime > 0)
                 {
+                    // OnAfterShow fired — wait 350ms for animations to settle
+                    ULONGLONG settleElapsed = now - m_showSettleTime;
+                    if (settleElapsed >= 350)
+                    {
+                        QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: animation settled ({}ms), transitioning to SelectRecipeWalk\n"), settleElapsed);
+                        m_showSettleTime = 0;
+                        m_qbPhase = PlacePhase::SelectRecipeWalk;
+                    }
+                }
+                else if (isBuildTabShowing())
+                {
+                    // Fallback — OnAfterShow didn't fire but tab is visible
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: tab showing (fallback, {}ms)\n"), elapsed);
                     m_buildMenuPrimed = true;
-                    m_qbPhase = PlacePhase::SelectRecipeWalk;
+                    m_showSettleTime = now; // start settle from now
                 }
                 return;
             }

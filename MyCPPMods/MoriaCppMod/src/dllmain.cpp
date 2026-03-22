@@ -29,6 +29,9 @@ namespace MoriaMods
         bool m_definitionsApplied{false};
         int m_stuckLogCount{0};
         std::string m_saveFilePath;
+        UObject* m_worldLayout{nullptr};
+        std::string m_currentBubbleId;
+        std::wstring m_currentBubbleName;
         PSOffsets m_ps;
         std::vector<bool> m_appliedRemovals;
 
@@ -37,6 +40,7 @@ namespace MoriaMods
         ULONGLONG m_lastCharPoll{0};
         ULONGLONG m_lastStreamCheck{0};
         ULONGLONG m_lastRescanTime{0};
+        ULONGLONG m_lastBubbleCheck{0};
         ULONGLONG m_charLoadTime{0};
 
 
@@ -88,7 +92,7 @@ namespace MoriaMods
                 auto parsed = parseRemovalLine(line);
                 if (auto* pos = std::get_if<ParsedRemovalPosition>(&parsed))
                 {
-                    m_savedRemovals.push_back({pos->meshName, pos->posX, pos->posY, pos->posZ});
+                    m_savedRemovals.push_back({pos->meshName, pos->posX, pos->posY, pos->posZ, pos->bubbleId});
                 }
                 else if (auto* tr = std::get_if<ParsedRemovalTypeRule>(&parsed))
                 {
@@ -118,7 +122,9 @@ namespace MoriaMods
         {
             std::ofstream file(m_saveFilePath, std::ios::app);
             if (!file.is_open()) return;
-            file << sr.meshName << "|" << sr.posX << "|" << sr.posY << "|" << sr.posZ << "\n";
+            file << sr.meshName << "|" << sr.posX << "|" << sr.posY << "|" << sr.posZ;
+            if (!sr.bubbleId.empty()) file << "|" << sr.bubbleId;
+            file << "\n";
         }
 
         void rewriteSaveFile()
@@ -126,12 +132,16 @@ namespace MoriaMods
             std::ofstream file(m_saveFilePath, std::ios::trunc);
             if (!file.is_open()) return;
             file << "# MoriaCppMod removed instances\n";
-            file << "# meshName|posX|posY|posZ = single instance\n";
+            file << "# meshName|posX|posY|posZ[|bubbleId] = single instance\n";
             file << "# @meshName = remove ALL of this type\n";
             for (auto& type : m_typeRemovals)
                 file << "@" << type << "\n";
             for (auto& sr : m_savedRemovals)
-                file << sr.meshName << "|" << sr.posX << "|" << sr.posY << "|" << sr.posZ << "\n";
+            {
+                file << sr.meshName << "|" << sr.posX << "|" << sr.posY << "|" << sr.posZ;
+                if (!sr.bubbleId.empty()) file << "|" << sr.bubbleId;
+                file << "\n";
+            }
         }
 
 
@@ -173,6 +183,9 @@ namespace MoriaMods
                         {
                             continue;
                         }
+                        // Parse optional bubbleId (5th field)
+                        if (std::getline(ss, token, '|') && !token.empty())
+                            entry.bubbleId = token;
                         entry.friendlyName = extractFriendlyName(entry.meshName);
                         entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
                         entry.coordsW = std::format(L"X: {:.1f}   Y: {:.1f}   Z: {:.1f}", entry.posX, entry.posY, entry.posZ);
@@ -237,6 +250,8 @@ namespace MoriaMods
         enum class SelectResult { Found, Loading, NotFound };
         int m_pendingQuickBuildSlot{-1};
         PlacePhase m_qbPhase{PlacePhase::Idle};
+        ULONGLONG m_showSettleTime{0};
+        ULONGLONG m_lastHandleResolveSlotTime{0};
         ULONGLONG m_qbStartTime{0};
 
 
@@ -249,9 +264,9 @@ namespace MoriaMods
         ULONGLONG m_lastQBSelectTime{0};
 
 
-        UObject* m_cachedBuildComp{nullptr};
-        UObject* m_cachedBuildHUD{nullptr};
-        UObject* m_cachedBuildTab{nullptr};
+        RC::Unreal::FWeakObjectPtr m_cachedBuildComp;
+        RC::Unreal::FWeakObjectPtr m_cachedBuildHUD;
+        RC::Unreal::FWeakObjectPtr m_cachedBuildTab;
 
 
         std::wstring m_targetBuildName;
@@ -261,6 +276,7 @@ namespace MoriaMods
         bool m_isTargetBuild{false};
         bool m_buildMenuWasOpen{false};
         bool m_deferHideAndRefresh{false};
+        int m_deferRemovalRebuild{0};  // 0=none, 2=hide, 1=rebuild
 
         bool m_showHotbar{true};
         bool m_gameHudVisible{true};
@@ -429,7 +445,7 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("5.3.6");
+            ModVersion = STR("5.5.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
@@ -466,7 +482,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v5.3.6 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v5.5.0 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -629,8 +645,9 @@ namespace MoriaMods
 
                         if (s_instance->m_qbPhase == PlacePhase::WaitingForShow)
                         {
-                            QBLOG(STR("[MoriaCppMod] [QuickBuild] OnAfterShow: transitioning to SelectRecipeWalk\n"));
-                            s_instance->m_qbPhase = PlacePhase::SelectRecipeWalk;
+                            QBLOG(STR("[MoriaCppMod] [QuickBuild] OnAfterShow: recording settle time (350ms delay)\n"));
+                            s_instance->m_showSettleTime = GetTickCount64();
+                            // Don't transition yet — let placementTick handle after settle delay
                         }
                     }
                     return;
@@ -793,7 +810,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v5.3.6: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v5.5.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
             Unreal::Hook::RegisterLoadMapPreCallback(
@@ -1613,12 +1630,15 @@ namespace MoriaMods
 
                         if (m_ftSelectedTab == 2)
                         {
-
+                            // Use full width for icon detection — icons are at the left of the content area
                             int iconX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f + 4.0f) * s2p);
-                            int iconX1 = static_cast<int>(iconX0 + 70.0f * s2p);
+                            int iconX1 = static_cast<int>(wLeft + (1540.0f - 30.0f) * s2p); // full right side
 
                             int entryStart = static_cast<int>(wTop + 40.0f * s2p + 30.0f * s2p);
                             int entryH = static_cast<int>(72.0f * s2p);
+
+                            VLOG(STR("[MoriaCppMod] [Env] Click: cur=({},{}) iconX=[{},{}] entryStart={} count={}\n"),
+                                 curX, curY, iconX0, iconX1, entryStart, s_config.removalCount.load());
 
                             float scrollOff = 0.0f;
                             if (m_ftScrollBox)
@@ -1801,7 +1821,7 @@ namespace MoriaMods
                         }
                         rewriteSaveFile();
                         buildRemovalEntries();
-                        if (m_ftVisible) rebuildFtRemovalList();
+                        if (m_ftVisible) m_deferRemovalRebuild = 2;
                         VLOG(STR("[MoriaCppMod] Config UI: removed entry {} ({})\n"),
                                                         removeIdx,
                                                         std::wstring(toRemove.friendlyName));
@@ -1844,7 +1864,10 @@ namespace MoriaMods
                 }
                 else
                 {
-                    while (m_handleResolveSlotIdx < QUICK_BUILD_SLOTS)
+                    // Per-slot cooldown — 200ms between slot resolutions to let animations settle
+                    bool cooldownActive = (m_handleResolveSlotIdx > 0 && (GetTickCount64() - m_lastHandleResolveSlotTime) < 200);
+
+                    if (!cooldownActive) while (m_handleResolveSlotIdx < QUICK_BUILD_SLOTS)
                     {
                         auto& slot = m_recipeSlots[m_handleResolveSlotIdx];
                         if (slot.used && !slot.hasHandle && !slot.rowName.empty())
@@ -1852,7 +1875,11 @@ namespace MoriaMods
                         m_handleResolveSlotIdx++;
                     }
 
-                    if (m_handleResolveSlotIdx >= QUICK_BUILD_SLOTS)
+                    if (cooldownActive)
+                    {
+                        // waiting for cooldown, skip this tick
+                    }
+                    else if (m_handleResolveSlotIdx >= QUICK_BUILD_SLOTS)
                     {
                         hideBuildTab();
                         m_handleResolvePhase = HandleResolvePhase::Done;
@@ -1893,6 +1920,7 @@ namespace MoriaMods
                         }
 
                         m_handleResolveSlotIdx++;
+                        m_lastHandleResolveSlotTime = GetTickCount64();
                     }
                 }
             }
@@ -1902,9 +1930,9 @@ namespace MoriaMods
             {
                 m_buildMenuWasOpen = false;
 
-                m_cachedBuildComp = nullptr;
-                m_cachedBuildTab = nullptr;
-                m_cachedBuildHUD = nullptr;
+                m_cachedBuildComp = RC::Unreal::FWeakObjectPtr{};
+                m_cachedBuildTab = RC::Unreal::FWeakObjectPtr{};
+                m_cachedBuildHUD = RC::Unreal::FWeakObjectPtr{};
                 refreshActionBar();
             }
 
@@ -1914,6 +1942,19 @@ namespace MoriaMods
                 m_deferHideAndRefresh = false;
                 if (isBuildTabShowing()) hideBuildTab();
                 refreshActionBar();
+            }
+
+            if (m_deferRemovalRebuild == 2)
+            {
+                // Phase 1: close the F12 panel via toggle (deferred removal)
+                m_deferRemovalRebuild = 1;
+                if (m_ftVisible) toggleFontTestPanel(); // closes it
+            }
+            else if (m_deferRemovalRebuild == 1)
+            {
+                // Phase 2: reopen — toggle creates fresh panel with updated data
+                m_deferRemovalRebuild = 0;
+                if (!m_ftVisible) toggleFontTestPanel(); // reopens it
             }
 
 
@@ -1938,9 +1979,9 @@ namespace MoriaMods
                     m_savedMaxSnapDistance = -1.0f;
                     m_buildMenuPrimed = false;
 
-                    m_cachedBuildComp = nullptr;
-                    m_cachedBuildHUD = nullptr;
-                    m_cachedBuildTab = nullptr;
+                    m_cachedBuildComp = RC::Unreal::FWeakObjectPtr{};
+                    m_cachedBuildHUD = RC::Unreal::FWeakObjectPtr{};
+                    m_cachedBuildTab = RC::Unreal::FWeakObjectPtr{};
                     m_bpShowMouseCursor = nullptr;
                     m_lastPickedUpItemClass = nullptr;
                     m_lastPickedUpItemName.clear();
@@ -1949,6 +1990,7 @@ namespace MoriaMods
                     std::memset(m_lastItemHandle, 0, 20);
                     m_lastItemInvComp = nullptr;
                     m_qbPhase = PlacePhase::Idle;
+                    m_showSettleTime = 0;
                     m_isTargetBuild = false;
                     m_lastTargetBuildable = false;
                     m_targetBuildName.clear();
@@ -1973,10 +2015,15 @@ namespace MoriaMods
                     m_stuckLogCount = 0;
                     m_lastRescanTime = 0;
                     m_lastStreamCheck = 0;
+                    m_lastBubbleCheck = 0;
+                    m_worldLayout = nullptr;
+                    m_currentBubbleId.clear();
+                    m_currentBubbleName.clear();
                     m_replay = {};
 
                     m_appliedRemovals.assign(m_appliedRemovals.size(), false);
                     m_deferHideAndRefresh = false;
+                    m_deferRemovalRebuild = 0;
                     m_gameHudVisible = true;
                     m_inFreeCam = false;
 
@@ -2100,6 +2147,7 @@ namespace MoriaMods
                 if (!m_savedRemovals.empty() || !m_typeRemovals.empty())
                 {
                     VLOG(STR("[MoriaCppMod] Starting initial replay (15s after char load)...\n"));
+                    migrateRemovalsToBubbles();
                     startReplay();
                 }
             }
@@ -2117,6 +2165,16 @@ namespace MoriaMods
                 processReplayBatch();
             }
 
+
+            // Bubble tracking — poll every 1s
+            if (m_initialReplayDone && intervalElapsed(m_lastBubbleCheck, 1000))
+            {
+                if (updateCurrentBubble())
+                {
+                    VLOG(STR("[MoriaCppMod] [Bubble] Bubble changed — clearing processed comps for next scan\n"));
+                    m_processedComps.clear();
+                }
+            }
 
             if (m_initialReplayDone && !m_replay.active && intervalElapsed(m_lastStreamCheck, 3000))
             {

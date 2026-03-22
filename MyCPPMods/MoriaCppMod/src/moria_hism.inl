@@ -180,6 +180,111 @@
         }
 
 
+        // ── Bubble tracking ──────────────────────────────────────────
+        void findWorldLayout()
+        {
+            if (m_worldLayout) return;
+            std::vector<UObject*> objs;
+            UObjectGlobals::FindAllOf(STR("WorldLayout"), objs);
+            if (!objs.empty()) m_worldLayout = objs[0];
+            if (m_worldLayout) VLOG(STR("[MoriaCppMod] [Bubble] WorldLayout found: {}\n"), (void*)m_worldLayout);
+        }
+
+        bool updateCurrentBubble()
+        {
+            if (!m_characterLoaded) return false;
+
+            // Re-find WorldLayout each time — it may be destroyed on world transition
+            m_worldLayout = nullptr;
+            findWorldLayout();
+            if (!m_worldLayout) return false;
+
+            auto* pawn = getPawn();
+            if (!pawn) return false;
+
+            auto* getLocFn = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation"));
+            if (!getLocFn) return false;
+            struct { FVec3f ReturnValue; } locP{};
+            pawn->ProcessEvent(getLocFn, &locP);
+
+            auto* getBubbleFn = m_worldLayout->GetFunctionByNameInChain(STR("GetBubbleAt"));
+            if (!getBubbleFn) getBubbleFn = m_worldLayout->GetFunctionByNameInChain(STR("TryGetBubbleAt"));
+            if (!getBubbleFn) return false;
+
+            struct { FVec3f pos; UObject* ReturnValue; } bubbleP{};
+            bubbleP.pos = locP.ReturnValue;
+            bubbleP.ReturnValue = nullptr;
+            m_worldLayout->ProcessEvent(getBubbleFn, &bubbleP);
+
+            UObject* bubble = bubbleP.ReturnValue;
+            if (!bubble) return false;
+
+            auto* bubbleBytes = reinterpret_cast<uint8_t*>(bubble);
+            auto* displayText = reinterpret_cast<FText*>(bubbleBytes + 0x0130);
+            std::wstring newName = displayText->ToString();
+
+            std::string newId;
+            for (wchar_t c : newName)
+            {
+                if (c == L' ') newId += '_';
+                else if (c < 128 && (std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
+                    newId += static_cast<char>(c);
+            }
+            if (newId.empty()) newId = "unknown";
+
+            if (newId != m_currentBubbleId)
+            {
+                m_currentBubbleName = newName;
+                m_currentBubbleId = newId;
+                VLOG(STR("[MoriaCppMod] [Bubble] Entered: '{}' (id={})\n"),
+                     newName, std::wstring(newId.begin(), newId.end()));
+                return true;
+            }
+            return false;
+        }
+
+        void migrateRemovalsToBubbles()
+        {
+            if (!m_worldLayout) { findWorldLayout(); if (!m_worldLayout) return; }
+
+            auto* getBubbleFn = m_worldLayout->GetFunctionByNameInChain(STR("TryGetBubbleAt"));
+            if (!getBubbleFn) getBubbleFn = m_worldLayout->GetFunctionByNameInChain(STR("GetBubbleAt"));
+            if (!getBubbleFn) return;
+
+            int migrated = 0;
+            for (auto& sr : m_savedRemovals)
+            {
+                if (!sr.bubbleId.empty()) continue;
+
+                struct { FVec3f pos; UObject* ReturnValue; } p{};
+                p.pos = {sr.posX, sr.posY, sr.posZ};
+                p.ReturnValue = nullptr;
+                m_worldLayout->ProcessEvent(getBubbleFn, &p);
+
+                if (!p.ReturnValue) continue;
+
+                auto* bBytes = reinterpret_cast<uint8_t*>(p.ReturnValue);
+                auto* dt = reinterpret_cast<FText*>(bBytes + 0x0130);
+                std::wstring bName = dt->ToString();
+
+                std::string bId;
+                for (wchar_t c : bName)
+                {
+                    if (c == L' ') bId += '_';
+                    else if (c < 128 && (std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
+                        bId += static_cast<char>(c);
+                }
+                if (!bId.empty()) { sr.bubbleId = bId; migrated++; }
+            }
+
+            if (migrated > 0)
+            {
+                rewriteSaveFile();
+                VLOG(STR("[MoriaCppMod] [Bubble] Migrated {} removal entries with bubble IDs\n"), migrated);
+            }
+        }
+
+
         void startReplay()
         {
             if (m_replay.active) return;
@@ -308,6 +413,10 @@
                         {
                             if (m_appliedRemovals[si]) continue;
                             if (m_savedRemovals[si].meshName != meshId) continue;
+                            // Bubble filter: skip entries from other bubbles
+                            if (!m_savedRemovals[si].bubbleId.empty()
+                                && !m_currentBubbleId.empty()
+                                && m_savedRemovals[si].bubbleId != m_currentBubbleId) continue;
                             float ddx = px - m_savedRemovals[si].posX;
                             float ddy = py - m_savedRemovals[si].posY;
                             float ddz = pz - m_savedRemovals[si].posZ;
@@ -436,15 +545,34 @@
 
                     m_undoStack.push_back({RC::Unreal::FWeakObjectPtr(hitComp), i, itp.OutTransform, compName});
 
-                    SavedRemoval sr;
-                    sr.meshName = meshId;
-                    sr.posX = px;
-                    sr.posY = py;
-                    sr.posZ = pz;
-                    m_savedRemovals.push_back(sr);
-                    m_appliedRemovals.push_back(true);
-                    appendToSaveFile(sr);
-                    buildRemovalEntries();
+                    // Check for duplicate before saving
+                    bool isDuplicate = false;
+                    for (const auto& existing : m_savedRemovals)
+                    {
+                        if (existing.meshName != meshId) continue;
+                        float edx = existing.posX - px;
+                        float edy = existing.posY - py;
+                        float edz = existing.posZ - pz;
+                        if (edx * edx + edy * edy + edz * edz < POS_TOLERANCE * POS_TOLERANCE)
+                        {
+                            isDuplicate = true;
+                            break;
+                        }
+                    }
+
+                    if (!isDuplicate)
+                    {
+                        SavedRemoval sr;
+                        sr.meshName = meshId;
+                        sr.posX = px;
+                        sr.posY = py;
+                        sr.posZ = pz;
+                        sr.bubbleId = m_currentBubbleId;
+                        m_savedRemovals.push_back(sr);
+                        m_appliedRemovals.push_back(true);
+                        appendToSaveFile(sr);
+                        buildRemovalEntries();
+                    }
 
                     hideInstance(hitComp, i);
                     hiddenCount++;

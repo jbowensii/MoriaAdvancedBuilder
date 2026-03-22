@@ -31,6 +31,7 @@ namespace MoriaMods
     {
         std::string meshName;
         float posX{0}, posY{0}, posZ{0};
+        std::string bubbleId;
     };
 
     struct RemovalEntry
@@ -38,6 +39,7 @@ namespace MoriaMods
         bool isTypeRule{false};
         std::string meshName;
         float posX{0}, posY{0}, posZ{0};
+        std::string bubbleId;
         std::wstring friendlyName;
         std::wstring fullPathW;
         std::wstring coordsW;
@@ -760,6 +762,7 @@ namespace MoriaMods
     {
         std::string meshName;
         float posX, posY, posZ;
+        std::string bubbleId;
     };
 
     struct ParsedRemovalTypeRule
@@ -789,6 +792,9 @@ namespace MoriaMods
             result.posY = std::stof(token);
             if (!std::getline(ss, token, '|')) return std::monostate{};
             result.posZ = std::stof(token);
+            // Optional bubbleId (5th field)
+            if (std::getline(ss, token, '|') && !token.empty())
+                result.bubbleId = token;
         }
         catch (...)
         {

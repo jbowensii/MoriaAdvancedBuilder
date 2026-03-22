@@ -3,24 +3,19 @@
 
         UObject* getCachedBuildTab()
         {
-            if (m_cachedBuildTab)
+            UObject* tab = m_cachedBuildTab.Get();
+            if (tab && safeClassName(tab) == L"UI_WBP_Build_Tab_C")
+                return tab;
+
+            UObject* found = findWidgetByClass(L"UI_WBP_Build_Tab_C", false);
+            if (found)
             {
-                if (!isObjectAlive(m_cachedBuildTab) || safeClassName(m_cachedBuildTab) != L"UI_WBP_Build_Tab_C")
-                {
-                    QBLOG(STR("[MoriaCppMod] [QB] getCachedBuildTab: cached tab invalidated (alive={} cls='{}')\n"),
-                          isObjectAlive(m_cachedBuildTab), m_cachedBuildTab ? safeClassName(m_cachedBuildTab) : L"null");
-                    m_cachedBuildTab = nullptr;
-                }
+                m_cachedBuildTab = RC::Unreal::FWeakObjectPtr(found);
+                QBLOG(STR("[MoriaCppMod] [QB] getCachedBuildTab: fresh lookup -> FOUND\n"));
+                return found;
             }
-            if (!m_cachedBuildTab)
-            {
-                m_cachedBuildTab = findWidgetByClass(L"UI_WBP_Build_Tab_C", false);
-                if (m_cachedBuildTab && !isObjectAlive(m_cachedBuildTab))
-                    m_cachedBuildTab = nullptr;
-                QBLOG(STR("[MoriaCppMod] [QB] getCachedBuildTab: fresh lookup -> {}\n"),
-                      m_cachedBuildTab ? STR("FOUND") : STR("NOT FOUND"));
-            }
-            return m_cachedBuildTab;
+            QBLOG(STR("[MoriaCppMod] [QB] getCachedBuildTab: fresh lookup -> NOT FOUND\n"));
+            return nullptr;
         }
 
 

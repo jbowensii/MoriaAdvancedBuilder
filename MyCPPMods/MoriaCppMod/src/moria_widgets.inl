@@ -4385,12 +4385,38 @@
             if (s_config.removalCSInit)
             {
                 CriticalSectionLock removalLock(s_config.removalCS);
+
+                // Group entries by bubble, current bubble first
+                std::map<std::string, std::vector<size_t>> grouped;
+                std::vector<size_t> typeRuleIndices;
                 for (size_t i = 0; i < s_config.removalEntries.size(); i++)
                 {
                     const auto& entry = s_config.removalEntries[i];
+                    if (entry.isTypeRule)
+                        typeRuleIndices.push_back(i);
+                    else
+                    {
+                        std::string bId = entry.bubbleId.empty() ? "Unknown" : entry.bubbleId;
+                        grouped[bId].push_back(i);
+                    }
+                }
+
+                // Build ordered list: current bubble first, then rest alphabetically
+                std::vector<std::string> bubbleOrder;
+                if (!m_currentBubbleId.empty() && grouped.count(m_currentBubbleId))
+                    bubbleOrder.push_back(m_currentBubbleId);
+                for (auto& [bId, _] : grouped)
+                {
+                    if (bId != m_currentBubbleId)
+                        bubbleOrder.push_back(bId);
+                }
+
+                // Helper to add one entry row
+                auto addEntryRow = [&](size_t i) {
+                    const auto& entry = s_config.removalEntries[i];
                     FStaticConstructObjectParameters rowP(hboxClass, outer);
                     UObject* rowHBox = UObjectGlobals::StaticConstructObject(rowP);
-                    if (!rowHBox) continue;
+                    if (!rowHBox) return;
 
                     if (texDanger && setBrushFn)
                     {
@@ -4419,6 +4445,37 @@
                     }
 
                     addToVBox(m_ftRemovalVBox, rowHBox);
+                };
+
+                // Type rules first
+                if (!typeRuleIndices.empty())
+                {
+                    UObject* trHeader = makeTB2(L"— Type Rules —", 1.0f, 0.8f, 0.2f, 1.0f, 24);
+                    if (trHeader) { umgSetBold(trHeader); UObject* hs = addToVBox(m_ftRemovalVBox, trHeader); if (hs) umgSetSlotPadding(hs, 10.0f, 8.0f, 0.0f, 4.0f); }
+                    for (size_t i : typeRuleIndices)
+                        addEntryRow(i);
+                }
+
+                // Then each bubble group
+                for (const auto& bId : bubbleOrder)
+                {
+                    auto& indices = grouped[bId];
+                    // Make display name from bubble ID (replace _ with space)
+                    std::wstring displayName;
+                    for (char c : bId) displayName += (c == '_') ? L' ' : static_cast<wchar_t>(c);
+
+                    bool isCurrent = (bId == m_currentBubbleId);
+                    float hr = isCurrent ? 0.2f : 0.7f;
+                    float hg = isCurrent ? 0.9f : 0.7f;
+                    float hb = isCurrent ? 1.0f : 0.7f;
+                    std::wstring prefix = isCurrent ? L"★ " : L"— ";
+                    std::wstring suffix = L" (" + std::to_wstring(indices.size()) + L") —";
+
+                    UObject* bubbleHeader = makeTB2(prefix + displayName + suffix, hr, hg, hb, 1.0f, 24);
+                    if (bubbleHeader) { umgSetBold(bubbleHeader); UObject* hs = addToVBox(m_ftRemovalVBox, bubbleHeader); if (hs) umgSetSlotPadding(hs, 10.0f, 12.0f, 0.0f, 4.0f); }
+
+                    for (size_t i : indices)
+                        addEntryRow(i);
                 }
             }
             m_ftLastRemovalCount = count;
