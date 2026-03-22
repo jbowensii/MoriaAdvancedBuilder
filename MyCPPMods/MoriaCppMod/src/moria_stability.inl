@@ -267,7 +267,7 @@
                 }
             }
 
-            m_auditSpawnedActors.push_back(spawned);
+            m_auditSpawnedActors.push_back(RC::Unreal::FWeakObjectPtr(spawned));
             VLOG(STR("[MoriaCppMod] [STAB] PointLight spawned at ({:.0f},{:.0f},{:.0f}) {}\n"),
                  x, y, z, critical ? STR("CRITICAL/red") : STR("MARGINAL/yellow"));
         }
@@ -275,8 +275,9 @@
 
         void destroyAuditActors()
         {
-            for (auto* actor : m_auditSpawnedActors)
+            for (auto& weakActor : m_auditSpawnedActors)
             {
+                UObject* actor = weakActor.Get();
                 if (!actor) continue;
                 auto* destroyFn = actor->GetFunctionByNameInChain(STR("K2_DestroyActor"));
                 if (destroyFn)

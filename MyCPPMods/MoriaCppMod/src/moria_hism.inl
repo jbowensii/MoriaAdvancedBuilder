@@ -186,8 +186,10 @@
             if (m_worldLayout) return;
             std::vector<UObject*> objs;
             UObjectGlobals::FindAllOf(STR("WorldLayout"), objs);
+            UObject* prev = m_worldLayout;
             if (!objs.empty()) m_worldLayout = objs[0];
-            if (m_worldLayout) VLOG(STR("[MoriaCppMod] [Bubble] WorldLayout found: {}\n"), (void*)m_worldLayout);
+            if (m_worldLayout && m_worldLayout != prev)
+                VLOG(STR("[MoriaCppMod] [Bubble] WorldLayout found: {}\n"), (void*)m_worldLayout);
         }
 
         bool updateCurrentBubble()
@@ -219,8 +221,10 @@
             UObject* bubble = bubbleP.ReturnValue;
             if (!bubble) return false;
 
-            auto* bubbleBytes = reinterpret_cast<uint8_t*>(bubble);
-            auto* displayText = reinterpret_cast<FText*>(bubbleBytes + 0x0130);
+            // Resolve DisplayName via reflection (safe across game updates)
+            auto* displayProp = bubble->GetPropertyByNameInChain(STR("DisplayName"));
+            if (!displayProp) return false;
+            auto* displayText = reinterpret_cast<FText*>(reinterpret_cast<uint8_t*>(bubble) + displayProp->GetOffset_Internal());
             std::wstring newName = displayText->ToString();
 
             std::string newId;
@@ -245,7 +249,9 @@
 
         void migrateRemovalsToBubbles()
         {
-            if (!m_worldLayout) { findWorldLayout(); if (!m_worldLayout) return; }
+            m_worldLayout = nullptr;  // Clear before re-find to avoid stale early-return
+            findWorldLayout();
+            if (!m_worldLayout) return;
 
             auto* getBubbleFn = m_worldLayout->GetFunctionByNameInChain(STR("TryGetBubbleAt"));
             if (!getBubbleFn) getBubbleFn = m_worldLayout->GetFunctionByNameInChain(STR("GetBubbleAt"));
@@ -263,8 +269,9 @@
 
                 if (!p.ReturnValue) continue;
 
-                auto* bBytes = reinterpret_cast<uint8_t*>(p.ReturnValue);
-                auto* dt = reinterpret_cast<FText*>(bBytes + 0x0130);
+                auto* dnProp = p.ReturnValue->GetPropertyByNameInChain(STR("DisplayName"));
+                if (!dnProp) continue;
+                auto* dt = reinterpret_cast<FText*>(reinterpret_cast<uint8_t*>(p.ReturnValue) + dnProp->GetOffset_Internal());
                 std::wstring bName = dt->ToString();
 
                 std::string bId;

@@ -15,18 +15,14 @@ struct ScreenCoords
 
     static float queryViewportScale(UObject* worldContext)
     {
-        static UFunction* s_fn  = nullptr;
-        static UObject*   s_cdo = nullptr;
-        if (!s_fn)
-        {
-            s_fn  = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
+        if (!worldContext) return 1.0f;
+        auto* fn  = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
                       STR("/Script/UMG.WidgetLayoutLibrary:GetViewportScale"));
-            s_cdo = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr,
+        auto* cdo = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr,
                       STR("/Script/UMG.Default__WidgetLayoutLibrary"));
-        }
-        if (!s_fn || !s_cdo || !worldContext) return 1.0f;
+        if (!fn || !cdo) return 1.0f;
         struct { UObject* WCO{nullptr}; float RV{1.0f}; } p{worldContext};
-        s_cdo->ProcessEvent(s_fn, &p);
+        cdo->ProcessEvent(fn, &p);
         return (p.RV > 0.1f) ? p.RV : 1.0f;
     }
 

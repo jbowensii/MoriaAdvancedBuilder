@@ -54,6 +54,9 @@
         }
 
 
+        // WARNING [W4]: Direct TArray memory manipulation — no UFUNCTION alternative exists.
+        // Bypasses replication/internal bookkeeping. Bounds-checked. Single-player context only.
+        // See memory/deferred-fixes.md for rationale.
         bool removeItemEffectFromList(UObject* invComp, int32_t itemID, const wchar_t* effectClassName)
         {
             if (!invComp) return false;
@@ -434,7 +437,7 @@
                     m_lastPickedUpCount = *reinterpret_cast<int32_t*>(entry + 0x18);
 
                     std::memcpy(m_lastItemHandle, parms, 20);
-                    m_lastItemInvComp = invComp;
+                    m_lastItemInvComp = RC::Unreal::FWeakObjectPtr(invComp);
                     VLOG(STR("[MoriaCppMod] [Capture] item={} display='{}' ID={} count={}\n"), m_lastPickedUpItemName, m_lastPickedUpDisplayName, handleID, m_lastPickedUpCount);
 
                     if (s_verbose) dumpItemEffects(entryClass, handleID, invComp);
@@ -594,7 +597,7 @@
 
         void removeItemAttributes()
         {
-            if (!m_lastPickedUpItemClass || !m_lastItemInvComp)
+            if (!m_lastPickedUpItemClass || !m_lastItemInvComp.Get())
             {
                 showOnScreen(Loc::get("msg.no_item_selected"), 3.0f, 1.0f, 0.4f, 0.4f);
                 return;
@@ -1118,7 +1121,7 @@
                                 int32_t newCount = *reinterpret_cast<int32_t*>(entry2 + 0x18);
                                 if (newCount <= 0) break;
                                 m_lastPickedUpCount = newCount;
-                                m_lastItemInvComp = invComp;
+                                m_lastItemInvComp = RC::Unreal::FWeakObjectPtr(invComp);
                                 recaptured = true;
                                 VLOG(STR("[MoriaCppMod] [Trash] Same instance ID={} still exists — remaining count={}\n"),
                                      originalID, newCount);
@@ -1137,6 +1140,6 @@
                 m_lastPickedUpDisplayName.clear();
                 m_lastPickedUpCount = 0;
                 std::memset(m_lastItemHandle, 0, 20);
-                m_lastItemInvComp = nullptr;
+                m_lastItemInvComp = RC::Unreal::FWeakObjectPtr{};
             }
         }

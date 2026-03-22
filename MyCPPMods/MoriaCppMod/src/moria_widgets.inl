@@ -3580,14 +3580,14 @@
                         const wchar_t* lastSection = nullptr;
                         for (int b = 0; b < BIND_COUNT; b++)
                         {
-                            if (wcscmp(s_bindings[b].label, L"Reserved") == 0) continue;
+                            if (s_bindings[b].label == L"Reserved") continue;
 
-                            if (wcscmp(s_bindings[b].section, L"Game Options") == 0) continue;
+                            if (s_bindings[b].section == L"Game Options") continue;
 
 
-                            if (!lastSection || wcscmp(lastSection, s_bindings[b].section) != 0)
+                            if (!lastSection || s_bindings[b].section != lastSection)
                             {
-                                lastSection = s_bindings[b].section;
+                                lastSection = s_bindings[b].section.c_str();
                                 if (texSectionBg)
                                 {
                                     FStaticConstructObjectParameters secOlP(overlayClass, outer);

@@ -349,12 +349,14 @@
         }
 
 
-        // ---- Pitch/Roll Experiment (Phase 1: Diagnostics) ----
-        // GATA offsets from CXX dump / pitch-roll-research.md
+        // ---- Pitch/Roll Building Placement ----
+        // GATA offsets from CXX dump — validated at runtime on first use
+        // WARNING [C7]: Hardcoded offsets — will break if game updates GATA class layout
         static constexpr int GATA_TRACE_RESULTS     = 0x0418;  // FMorPerformTraceResults
         static constexpr int GATA_LAST_TRACE_RESULTS = 0x04F0;
         static constexpr int TRACE_TARGET_ROTATION   = 0x00AC;  // FRotator within TraceResults
         static constexpr int GATA_YAW_ACCUMULATOR    = 0x0658;  // hidden float
+        bool m_gataOffsetsValidated{false};
 
         float m_experimentPitch{0.0f};
         float m_experimentRoll{0.0f};
@@ -424,7 +426,9 @@
                          3.0f, 1.0f, 0.8f, 0.0f);
         }
 
-        // Reticle offsets from pitch-roll-research.md
+        // WARNING [C8]: Hardcoded reticle offsets — will break if game updates class layout
+        // CopiedComponents is Instanced UPROPERTY but not resolvable via GetPropertyByNameInChain
+        // RelativeRotation is on USceneComponent base (engine-level, stable)
         static constexpr int RETICLE_COPIED_COMPONENTS = 0x0260;  // TArray<UPrimitiveComponent*>
         static constexpr int COMPONENT_RELATIVE_ROTATION = 0x0128; // FRotator on USceneComponent
 
@@ -464,6 +468,28 @@
             if (!m_pitchRotateEnabled && !m_rollRotateEnabled) { m_pitchRollActive = false; return; }
             UObject* gata = resolveGATA();
             if (!gata) { m_pitchRollActive = false; return; }
+
+            // Validate hardcoded offsets on first use [C7]
+            if (!m_gataOffsetsValidated)
+            {
+                m_gataOffsetsValidated = true;
+                auto* trProp = gata->GetPropertyByNameInChain(STR("TraceResults"));
+                auto* ltrProp = gata->GetPropertyByNameInChain(STR("LastTraceResults"));
+                if (trProp && trProp->GetOffset_Internal() != GATA_TRACE_RESULTS)
+                {
+                    VLOG(STR("[MoriaCppMod] [PitchRoll] WARNING: TraceResults offset mismatch! Expected 0x{:X}, got 0x{:X} — disabling pitch/roll\n"),
+                         GATA_TRACE_RESULTS, trProp->GetOffset_Internal());
+                    m_pitchRollActive = false;
+                    return;
+                }
+                if (ltrProp && ltrProp->GetOffset_Internal() != GATA_LAST_TRACE_RESULTS)
+                {
+                    VLOG(STR("[MoriaCppMod] [PitchRoll] WARNING: LastTraceResults offset mismatch! Expected 0x{:X}, got 0x{:X} — disabling pitch/roll\n"),
+                         GATA_LAST_TRACE_RESULTS, ltrProp->GetOffset_Internal());
+                    m_pitchRollActive = false;
+                    return;
+                }
+            }
 
             // Re-inject every frame because GATA::Tick overwrites TraceResults
             auto tr = readGATARotation(gata, GATA_TRACE_RESULTS);

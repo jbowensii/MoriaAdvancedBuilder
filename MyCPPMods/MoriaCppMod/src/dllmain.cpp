@@ -405,7 +405,7 @@ namespace MoriaMods
         std::wstring m_lastPickedUpDisplayName;
         int32_t m_lastPickedUpCount{0};
         uint8_t m_lastItemHandle[20]{};
-        UObject* m_lastItemInvComp{nullptr};
+        RC::Unreal::FWeakObjectPtr m_lastItemInvComp;
         bool m_trashCursorWasVisible{false};
 
         UObject* m_targetInfoWidget{nullptr};
@@ -431,7 +431,7 @@ namespace MoriaMods
         ULONGLONG m_auditClearTime{0};
         struct AuditLoc { float x, y, z; bool critical; };
         std::vector<AuditLoc> m_auditLocations;
-        std::vector<UObject*> m_auditSpawnedActors;
+        std::vector<RC::Unreal::FWeakObjectPtr> m_auditSpawnedActors;
 
         #include "moria_placement.inl"
         #include "moria_quickbuild.inl"
@@ -452,7 +452,7 @@ namespace MoriaMods
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v5.0.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v5.5.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -488,50 +488,50 @@ namespace MoriaMods
 
             Loc::load(modPath("Mods/MoriaCppMod/localization/"), s_language);
 
-            s_bindings[0].label = Loc::get("bind.quick_build_1").c_str();
-            s_bindings[0].section = Loc::get("bind.section_quick_building").c_str();
-            s_bindings[1].label = Loc::get("bind.quick_build_2").c_str();
-            s_bindings[1].section = Loc::get("bind.section_quick_building").c_str();
-            s_bindings[2].label = Loc::get("bind.quick_build_3").c_str();
-            s_bindings[2].section = Loc::get("bind.section_quick_building").c_str();
-            s_bindings[3].label = Loc::get("bind.quick_build_4").c_str();
-            s_bindings[3].section = Loc::get("bind.section_quick_building").c_str();
-            s_bindings[4].label = Loc::get("bind.quick_build_5").c_str();
-            s_bindings[4].section = Loc::get("bind.section_quick_building").c_str();
-            s_bindings[5].label = Loc::get("bind.quick_build_6").c_str();
-            s_bindings[5].section = Loc::get("bind.section_quick_building").c_str();
-            s_bindings[6].label = Loc::get("bind.quick_build_7").c_str();
-            s_bindings[6].section = Loc::get("bind.section_quick_building").c_str();
-            s_bindings[7].label = Loc::get("bind.quick_build_8").c_str();
-            s_bindings[7].section = Loc::get("bind.section_quick_building").c_str();
-            s_bindings[8].label = Loc::get("bind.rotation").c_str();
-            s_bindings[8].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[9].label = Loc::get("bind.snap_off").c_str();
-            s_bindings[9].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[10].label = Loc::get("bind.integrity_check").c_str();
-            s_bindings[10].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[11].label = Loc::get("bind.mod_menu_4").c_str();
-            s_bindings[11].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[12].label = Loc::get("bind.target").c_str();
-            s_bindings[12].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[13].label = Loc::get("bind.configuration").c_str();
-            s_bindings[13].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[14].label = Loc::get("bind.remove_single").c_str();
-            s_bindings[14].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[15].label = Loc::get("bind.undo_last").c_str();
-            s_bindings[15].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[16].label = Loc::get("bind.remove_all").c_str();
-            s_bindings[16].section = Loc::get("bind.section_mod_controller").c_str();
-            s_bindings[17].label = Loc::get("bind.ab_open").c_str();
-            s_bindings[17].section = Loc::get("bind.section_advanced_builder").c_str();
+            s_bindings[0].label = Loc::get("bind.quick_build_1");
+            s_bindings[0].section = Loc::get("bind.section_quick_building");
+            s_bindings[1].label = Loc::get("bind.quick_build_2");
+            s_bindings[1].section = Loc::get("bind.section_quick_building");
+            s_bindings[2].label = Loc::get("bind.quick_build_3");
+            s_bindings[2].section = Loc::get("bind.section_quick_building");
+            s_bindings[3].label = Loc::get("bind.quick_build_4");
+            s_bindings[3].section = Loc::get("bind.section_quick_building");
+            s_bindings[4].label = Loc::get("bind.quick_build_5");
+            s_bindings[4].section = Loc::get("bind.section_quick_building");
+            s_bindings[5].label = Loc::get("bind.quick_build_6");
+            s_bindings[5].section = Loc::get("bind.section_quick_building");
+            s_bindings[6].label = Loc::get("bind.quick_build_7");
+            s_bindings[6].section = Loc::get("bind.section_quick_building");
+            s_bindings[7].label = Loc::get("bind.quick_build_8");
+            s_bindings[7].section = Loc::get("bind.section_quick_building");
+            s_bindings[8].label = Loc::get("bind.rotation");
+            s_bindings[8].section = Loc::get("bind.section_mod_controller");
+            s_bindings[9].label = Loc::get("bind.snap_off");
+            s_bindings[9].section = Loc::get("bind.section_mod_controller");
+            s_bindings[10].label = Loc::get("bind.integrity_check");
+            s_bindings[10].section = Loc::get("bind.section_mod_controller");
+            s_bindings[11].label = Loc::get("bind.mod_menu_4");
+            s_bindings[11].section = Loc::get("bind.section_mod_controller");
+            s_bindings[12].label = Loc::get("bind.target");
+            s_bindings[12].section = Loc::get("bind.section_mod_controller");
+            s_bindings[13].label = Loc::get("bind.configuration");
+            s_bindings[13].section = Loc::get("bind.section_mod_controller");
+            s_bindings[14].label = Loc::get("bind.remove_single");
+            s_bindings[14].section = Loc::get("bind.section_mod_controller");
+            s_bindings[15].label = Loc::get("bind.undo_last");
+            s_bindings[15].section = Loc::get("bind.section_mod_controller");
+            s_bindings[16].label = Loc::get("bind.remove_all");
+            s_bindings[16].section = Loc::get("bind.section_mod_controller");
+            s_bindings[17].label = Loc::get("bind.ab_open");
+            s_bindings[17].section = Loc::get("bind.section_advanced_builder");
             s_bindings[18].label = L"Reserved";
             s_bindings[18].section = L"Reserved";
-            s_bindings[19].label = Loc::get("bind.trash_item").c_str();
-            s_bindings[19].section = Loc::get("bind.section_game_options").c_str();
-            s_bindings[20].label = Loc::get("bind.replenish_item").c_str();
-            s_bindings[20].section = Loc::get("bind.section_game_options").c_str();
-            s_bindings[21].label = Loc::get("bind.remove_attrs").c_str();
-            s_bindings[21].section = Loc::get("bind.section_game_options").c_str();
+            s_bindings[19].label = Loc::get("bind.trash_item");
+            s_bindings[19].section = Loc::get("bind.section_game_options");
+            s_bindings[20].label = Loc::get("bind.replenish_item");
+            s_bindings[20].section = Loc::get("bind.section_game_options");
+            s_bindings[21].label = Loc::get("bind.remove_attrs");
+            s_bindings[21].section = Loc::get("bind.section_game_options");
 
             CONFIG_TAB_NAMES[0] = Loc::get("tab.optional_mods").c_str();
             CONFIG_TAB_NAMES[1] = Loc::get("tab.key_mapping").c_str();
@@ -549,6 +549,7 @@ namespace MoriaMods
             {
                 register_keydown_event(fkeys[i], [this, i]() {
                     if (m_ftVisible || !s_bindings[i].enabled) return;
+                    if (m_handleResolvePhase != HandleResolvePhase::Done) return;
                     quickBuildSlot(i);
                 });
                 register_keydown_event(fkeys[i], {Input::ModifierKey::SHIFT}, [this, i]() {
@@ -642,7 +643,6 @@ namespace MoriaMods
                         s_instance->m_buildMenuPrimed = true;
                         QBLOG(STR("[MoriaCppMod] [QuickBuild] OnAfterShow fired on Build_Tab\n"));
 
-
                         if (s_instance->m_qbPhase == PlacePhase::WaitingForShow)
                         {
                             QBLOG(STR("[MoriaCppMod] [QuickBuild] OnAfterShow: recording settle time (350ms delay)\n"));
@@ -661,6 +661,10 @@ namespace MoriaMods
                     {
                         QBLOG(STR("[MoriaCppMod] [Placement] OnAfterHide fired on {}\n"), cls);
 
+                        // Stop any lingering hide animation to prevent MovieScene crash
+                        // if another screen transition (e.g., ESC menu) calls StopAnimation later
+                        auto* stopFn = context->GetFunctionByNameInChain(STR("StopAllAnimations"));
+                        if (stopFn) context->ProcessEvent(stopFn, nullptr);
 
                         if (s_instance->m_qbPhase == PlacePhase::CancelGhost)
                         {
@@ -1318,9 +1322,13 @@ namespace MoriaMods
                         switch (hitTB)
                         {
                         case 0:
-
-                            if (hitSlot >= 0 && hitSlot < 8 && !isPlacementActive())
-                                quickBuildSlot(hitSlot);
+                            if (hitSlot >= 0 && hitSlot < 8
+                                && m_handleResolvePhase == HandleResolvePhase::Done)
+                            {
+                                ULONGLONG clickNow = GetTickCount64();
+                                if (clickNow - m_lastQBSelectTime >= 500)
+                                    quickBuildSlot(hitSlot);
+                            }
                             break;
                         case 1:
                         {
@@ -1373,7 +1381,7 @@ namespace MoriaMods
                     if (m_screen.getCursorClientPixels(curX, curY, viewW, viewH))
                     {
                         float s2p = m_screen.viewportScale;
-                        int wLeft = static_cast<int>(viewW / 2.0f - 720.0f * s2p);
+                        int wLeft = static_cast<int>(viewW / 2.0f - 770.0f * s2p);  // half of 1540px panel
                         int wTop  = static_cast<int>(viewH / 2.0f - 440.0f * s2p);
 
 
@@ -1433,10 +1441,10 @@ namespace MoriaMods
                                     bool bindMatched = false;
                                     for (int b = 0; b < BIND_COUNT; b++)
                                     {
-                                        if (wcscmp(s_bindings[b].label, L"Reserved") == 0) continue;
-                                        if (!lastSec || wcscmp(lastSec, s_bindings[b].section) != 0)
+                                        if (s_bindings[b].label == L"Reserved") continue;
+                                        if (!lastSec || s_bindings[b].section != lastSec)
                                         {
-                                            lastSec = s_bindings[b].section;
+                                            lastSec = s_bindings[b].section.c_str();
                                             currentY += sectionHeight;
                                         }
                                         if (y >= currentY && y < currentY + rowHeight)
@@ -1631,8 +1639,9 @@ namespace MoriaMods
                         if (m_ftSelectedTab == 2)
                         {
                             // Use full width for icon detection — icons are at the left of the content area
-                            int iconX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f + 4.0f) * s2p);
-                            int iconX1 = static_cast<int>(wLeft + (1540.0f - 30.0f) * s2p); // full right side
+                            // Icon is 56px wide with 4px left padding — click area covers just the icon
+                            int iconX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f) * s2p);
+                            int iconX1 = static_cast<int>(iconX0 + 64.0f * s2p);
 
                             int entryStart = static_cast<int>(wTop + 40.0f * s2p + 30.0f * s2p);
                             int entryH = static_cast<int>(72.0f * s2p);
@@ -1988,7 +1997,7 @@ namespace MoriaMods
                     m_lastPickedUpDisplayName.clear();
                     m_lastPickedUpCount = 0;
                     std::memset(m_lastItemHandle, 0, 20);
-                    m_lastItemInvComp = nullptr;
+                    m_lastItemInvComp = RC::Unreal::FWeakObjectPtr{};
                     m_qbPhase = PlacePhase::Idle;
                     m_showSettleTime = 0;
                     m_isTargetBuild = false;

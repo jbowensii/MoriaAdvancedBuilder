@@ -89,23 +89,18 @@
         void logGameState(const wchar_t* label)
         {
 
-            static UObject* s_utilsCDO = nullptr;
-            static UFunction* s_fnGetGameState = nullptr;
-            static UFunction* s_fnGetManager = nullptr;
-            static int s_gsWorldCtx = -1, s_gsRet = -1;
-            static int s_gmWorldCtx = -1, s_gmClass = -1, s_gmRet = -1;
-            static int s_gsParmsSize = 0, s_gmParmsSize = 0;
-            static bool s_resolved = false;
+            // Re-resolve each call — safe across world transitions (debug-only function)
+            auto* s_utilsCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr,
+                STR("/Script/Moria.Default__MoriaUtils"));
+            auto* s_fnGetGameState = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
+                STR("/Script/Moria.MoriaUtils:GetMoriaGameState"));
+            auto* s_fnGetManager = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
+                STR("/Script/Moria.MoriaUtils:GetManager"));
+            int s_gsWorldCtx = -1, s_gsRet = -1;
+            int s_gmWorldCtx = -1, s_gmClass = -1, s_gmRet = -1;
+            int s_gsParmsSize = 0, s_gmParmsSize = 0;
 
-            if (!s_resolved)
             {
-                s_resolved = true;
-                s_utilsCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr,
-                    STR("/Script/Moria.Default__MoriaUtils"));
-                s_fnGetGameState = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
-                    STR("/Script/Moria.MoriaUtils:GetMoriaGameState"));
-                s_fnGetManager = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
-                    STR("/Script/Moria.MoriaUtils:GetManager"));
 
                 if (s_fnGetGameState)
                 {

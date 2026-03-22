@@ -24,8 +24,8 @@ namespace MoriaMods
 
     struct KeyBind
     {
-        const wchar_t* label;
-        const wchar_t* section;
+        std::wstring label;
+        std::wstring section;
         uint8_t key;
         bool enabled = true;
     };
