@@ -81,7 +81,7 @@
 
             std::memcpy(buf.data() + m_ps.duration, &duration, 4);
 
-            cdo->ProcessEvent(fn, buf.data());
+            safeProcessEvent(cdo, fn, buf.data());
             VLOG(STR("[MoriaCppMod] showOnScreen: '{}' dur={:.1f}\n"), text, duration);
         }
 
@@ -147,7 +147,7 @@
             {
                 std::vector<uint8_t> buf(s_gsParmsSize, 0);
                 std::memcpy(buf.data() + s_gsWorldCtx, &pc, sizeof(UObject*));
-                s_utilsCDO->ProcessEvent(s_fnGetGameState, buf.data());
+                safeProcessEvent(s_utilsCDO, s_fnGetGameState, buf.data());
                 gameState = *reinterpret_cast<UObject**>(buf.data() + s_gsRet);
             }
 
@@ -159,14 +159,14 @@
                 if (fnReady)
                 {
                     struct { bool Ret{false}; } p{};
-                    gameState->ProcessEvent(fnReady, &p);
+                    safeProcessEvent(gameState, fnReady, &p);
                     worldReady = p.Ret;
                 }
                 auto* fnShaders = gameState->GetFunctionByNameInChain(STR("GetShadersFinishedCompiling"));
                 if (fnShaders)
                 {
                     struct { bool Ret{false}; } p{};
-                    gameState->ProcessEvent(fnShaders, &p);
+                    safeProcessEvent(gameState, fnShaders, &p);
                     shadersCompiled = p.Ret;
                 }
             }
@@ -184,7 +184,7 @@
                     std::vector<uint8_t> buf(s_gmParmsSize, 0);
                     std::memcpy(buf.data() + s_gmWorldCtx, &pc, sizeof(UObject*));
                     std::memcpy(buf.data() + s_gmClass, &cmClass, sizeof(UClass*));
-                    s_utilsCDO->ProcessEvent(s_fnGetManager, buf.data());
+                    safeProcessEvent(s_utilsCDO, s_fnGetManager, buf.data());
                     UObject* mgr = *reinterpret_cast<UObject**>(buf.data() + s_gmRet);
                     VLOG(STR("[MoriaCppMod] [GS] [{}] ConstructionManager via GetManager={}\n"),
                         label, (void*)mgr);
@@ -250,7 +250,7 @@
             std::memcpy(buf.data() + nameOffset + 8, &len, 4);
             std::memcpy(buf.data() + nameOffset + 12, &len, 4);
 
-            target->ProcessEvent(fn, buf.data());
+            safeProcessEvent(target, fn, buf.data());
 
             std::wstring msg = L"Character renamed to: " + newName;
             showOnScreen(msg, 5.0f, 0.0f, 1.0f, 0.5f);

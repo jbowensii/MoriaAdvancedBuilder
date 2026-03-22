@@ -36,7 +36,7 @@
                         {
                             bool Ret{false};
                         } vp{};
-                        w->ProcessEvent(visFunc, &vp);
+                        safeProcessEvent(w, visFunc, &vp);
                         if (vp.Ret) return w;
                     }
                 }
@@ -67,7 +67,7 @@
                 if (fn)
                 {
                     struct { UObject* Ret{nullptr}; } params{};
-                    comp->ProcessEvent(fn, &params);
+                    safeProcessEvent(comp, fn, &params);
                     if (params.Ret)
                     {
                         m_cachedBuildHUD = RC::Unreal::FWeakObjectPtr(params.Ret);
@@ -96,7 +96,7 @@
             auto* fn = hud->GetFunctionByNameInChain(STR("IsShowing"));
             if (!fn) { QBLOG(STR("[MoriaCppMod] [QB] isPlacementActive -> false (no IsShowing fn)\n")); return false; }
             struct { bool Ret{false}; } params{};
-            hud->ProcessEvent(fn, &params);
+            safeProcessEvent(hud, fn, &params);
             if (!params.Ret) { QBLOG(STR("[MoriaCppMod] [QB] isPlacementActive -> false (HUD not showing)\n")); return false; }
 
             // Re-resolve each call — cheap name-walk, safe across world transitions
@@ -118,7 +118,7 @@
             auto* visFunc = tab->GetFunctionByNameInChain(STR("IsVisible"));
             if (!visFunc) { s_lastState = false; return false; }
             struct { bool Ret{false}; } params{};
-            tab->ProcessEvent(visFunc, &params);
+            safeProcessEvent(tab, visFunc, &params);
             if (params.Ret != s_lastState)
             {
                 QBLOG(STR("[MoriaCppMod] [QB] isBuildTabShowing -> {}\n"), params.Ret ? STR("true") : STR("false"));
@@ -141,7 +141,7 @@
             if (!tab) { QBLOG(STR("[MoriaCppMod] [QB] showBuildTab: no tab found\n")); return; }
             auto* fn = tab->GetFunctionByNameInChain(STR("Show"));
             QBLOG(STR("[MoriaCppMod] [QB] showBuildTab: calling Show() fn={}\n"), fn ? STR("YES") : STR("NO"));
-            if (fn) tab->ProcessEvent(fn, nullptr);
+            if (!safeProcessEvent(tab, fn, nullptr)) { QBLOG(STR("[MoriaCppMod] [QB] showBuildTab: safeProcessEvent FAILED\n")); return; }
             m_lastShowHideTime = now;
         }
 
@@ -159,7 +159,7 @@
             if (!tab) { QBLOG(STR("[MoriaCppMod] [QB] hideBuildTab: no tab found\n")); return; }
             auto* fn = tab->GetFunctionByNameInChain(STR("Hide"));
             QBLOG(STR("[MoriaCppMod] [QB] hideBuildTab: calling Hide() fn={}\n"), fn ? STR("YES") : STR("NO"));
-            if (fn) tab->ProcessEvent(fn, nullptr);
+            if (!safeProcessEvent(tab, fn, nullptr)) { QBLOG(STR("[MoriaCppMod] [QB] hideBuildTab: safeProcessEvent FAILED\n")); return; }
             m_lastShowHideTime = now;
         }
 
@@ -188,7 +188,7 @@
                 return false;
             }
             QBLOG(STR("[MoriaCppMod] [QB] activateBuildMode: calling ConstructMode() on character\n"));
-            pawn->ProcessEvent(fn, nullptr);
+            safeProcessEvent(pawn, fn, nullptr);
             return true;
         }
 
@@ -207,7 +207,7 @@
                 keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
                 return true;
             }
-            gata->ProcessEvent(cancelFn, nullptr);
+            if (!safeProcessEvent(gata, cancelFn, nullptr)) { QBLOG(STR("[MoriaCppMod] [QB] CancelTargeting safeProcessEvent FAILED\n")); return false; }
             QBLOG(STR("[MoriaCppMod] [QB] CancelTargeting() called on GATA\n"));
             return true;
         }
@@ -439,7 +439,7 @@
             if (!getReticleFn) return;
 
             struct { UObject* ReturnValue{nullptr}; } retParams{};
-            gata->ProcessEvent(getReticleFn, &retParams);
+            safeProcessEvent(gata, getReticleFn, &retParams);
             UObject* reticle = retParams.ReturnValue;
             if (!reticle) return;
 
@@ -639,7 +639,7 @@
             if (getReticleFn)
             {
                 struct { UObject* ReturnValue{nullptr}; } rp{};
-                gata->ProcessEvent(getReticleFn, &rp);
+                safeProcessEvent(gata, getReticleFn, &rp);
                 if (rp.ReturnValue)
                     dumpObjectProperties(rp.ReturnValue, L"Reticle", 1);
             }
@@ -653,7 +653,7 @@
                 {
                     // FTransform is 48 bytes (Quat4 + Vec3 + pad + Vec3)
                     uint8_t buf[64]{};
-                    buildComp->ProcessEvent(transformFn, buf);
+                    if (!safeProcessEvent(buildComp, transformFn, buf)) return;
                     float* v = reinterpret_cast<float*>(buf);
                     VLOG(STR("[MoriaCppMod] [Dump] GetBuildTargetTransform:\n"));
                     VLOG(STR("[MoriaCppMod] [Dump]   Rotation(Quat): X={:.4f} Y={:.4f} Z={:.4f} W={:.4f}\n"),
@@ -809,7 +809,7 @@
                     {
                         bool Ret{false};
                     } vp{};
-                    w->ProcessEvent(visFunc, &vp);
+                    safeProcessEvent(w, visFunc, &vp);
                     if (!vp.Ret) continue;
                 }
 
@@ -887,7 +887,7 @@
                 bool& flag;
                 ~AutoSelectGuardFB() { flag = false; }
             } guardFB{m_isAutoSelecting};
-            buildTab->ProcessEvent(func, params.data());
+            if (!safeProcessEvent(buildTab, func, params.data())) { QBLOG(STR("[MoriaCppMod] [QB] blockSelectedEvent safeProcessEvent FAILED\n")); return SelectResult::NotFound; }
             m_isAutoSelecting = false;
 
 
@@ -941,7 +941,7 @@
             int hSz = getHandleFn->GetParmsSize();
             if (hSz < RECIPE_HANDLE_SIZE) return;
             std::vector<uint8_t> hParams(hSz, 0);
-            buildHUD->ProcessEvent(getHandleFn, hParams.data());
+            safeProcessEvent(buildHUD, getHandleFn, hParams.data());
             std::memcpy(m_recipeSlots[slot].recipeHandle, hParams.data(), RECIPE_HANDLE_SIZE);
             m_recipeSlots[slot].hasHandle = true;
             uint32_t ci = *reinterpret_cast<uint32_t*>(hParams.data() + 8);
@@ -1010,7 +1010,7 @@
                     {
                         bool Ret{false};
                     } vp{};
-                    w->ProcessEvent(visFunc, &vp);
+                    safeProcessEvent(w, visFunc, &vp);
                     if (!vp.Ret) continue;
                 }
 
@@ -1174,7 +1174,7 @@
                 bool& flag;
                 ~AutoSelectGuardTB() { flag = false; }
             } guardTB{m_isAutoSelecting};
-            buildTab->ProcessEvent(func, params.data());
+            safeProcessEvent(buildTab, func, params.data());
             m_isAutoSelecting = false;
 
             logBLockDiagnostics(L"TARGET-BUILD", matchedName, params.data());
@@ -1217,7 +1217,7 @@
                     if (fn)
                     {
                         struct { UObject* Ret{nullptr}; } params{};
-                        comp->ProcessEvent(fn, &params);
+                        safeProcessEvent(comp, fn, &params);
                         if (params.Ret && isObjectAlive(params.Ret))
                             buildHUD = params.Ret;
                     }

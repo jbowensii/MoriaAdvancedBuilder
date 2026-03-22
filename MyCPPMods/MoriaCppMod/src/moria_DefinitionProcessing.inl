@@ -1921,7 +1921,7 @@ void loadAndApplyDefinitions()
                 params.RowName = FName(wFirstRow.c_str(), FNAME_Find);
                 params.ReturnValue = false;
                 try {
-                    dtFuncLib->ProcessEvent(doesRowExistFn, &params);
+                    safeProcessEvent(dtFuncLib, doesRowExistFn, &params);
                     foundHash = params.ReturnValue;
                     hashTestRan = true;
                 } catch (...) {}
@@ -1943,7 +1943,7 @@ void loadAndApplyDefinitions()
                     ctrlP.RowName = controlFName;
                     ctrlP.ReturnValue = false;
                     try {
-                        dtFuncLib->ProcessEvent(doesRowExistFn, &ctrlP);
+                        safeProcessEvent(dtFuncLib, doesRowExistFn, &ctrlP);
                         controlHash = ctrlP.ReturnValue;
                         controlRan = true;
                     } catch (...) {}

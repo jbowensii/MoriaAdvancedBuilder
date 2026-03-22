@@ -118,7 +118,7 @@
                 std::memcpy(params.data() + s_simui.InWidgetToFocus, &focusWidget, 8);
             if (s_simui.InMouseLockMode >= 0)
                 params[s_simui.InMouseLockMode] = 0;
-            wblCDO->ProcessEvent(uiFunc, params.data());
+            safeProcessEvent(wblCDO, uiFunc, params.data());
 
 
             setBoolProp(pc, L"bShowMouseCursor", true);
@@ -146,7 +146,7 @@
             if (s_simg.PlayerController < 0) return;
             std::vector<uint8_t> params(s_simg.parmsSize, 0);
             std::memcpy(params.data() + s_simg.PlayerController, &pc, 8);
-            wblCDO->ProcessEvent(gameFunc, params.data());
+            safeProcessEvent(wblCDO, gameFunc, params.data());
 
 
             setBoolProp(pc, L"bShowMouseCursor", false);
@@ -209,7 +209,7 @@
                 int sz = addFn->GetParmsSize();
                 std::vector<uint8_t> vp(sz, 0);
                 if (pZ) *reinterpret_cast<int32_t*>(vp.data() + pZ->GetOffset_Internal()) = 250;
-                userWidget->ProcessEvent(addFn, vp.data());
+                safeProcessEvent(userWidget, addFn, vp.data());
             }
 
 
@@ -227,7 +227,7 @@
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
                     v[0] = 1200.0f * uiScale; v[1] = 60.0f * uiScale;
-                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
+                    safeProcessEvent(userWidget, setDesiredSizeFn, sb.data());
                 }
             }
             auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
@@ -240,7 +240,7 @@
                     std::vector<uint8_t> al(sz, 0);
                     auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
                     v[0] = 0.5f; v[1] = 0.5f;
-                    userWidget->ProcessEvent(setAlignFn, al.data());
+                    safeProcessEvent(userWidget, setAlignFn, al.data());
                 }
             }
             setWidgetPosition(userWidget, m_screen.fracToPixelX(0.5f), m_screen.fracToPixelY(0.5f), true);
@@ -252,7 +252,7 @@
         {
             if (!m_repositionMsgWidget) return;
             auto* removeFn = m_repositionMsgWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
-            if (removeFn) m_repositionMsgWidget->ProcessEvent(removeFn, nullptr);
+            if (removeFn) safeProcessEvent(m_repositionMsgWidget, removeFn, nullptr);
             m_repositionMsgWidget = nullptr;
         }
 
@@ -285,7 +285,7 @@
             if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
             if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = uwClass;
             if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
-            wblCDO->ProcessEvent(createFn, cp.data());
+            safeProcessEvent(wblCDO, createFn, cp.data());
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) return;
 
@@ -304,9 +304,9 @@
                     if (widgetTree)
                         setRootWidget(widgetTree, rootSizeBox);
                     auto* setWFn = rootSizeBox->GetFunctionByNameInChain(STR("SetWidthOverride"));
-                    if (setWFn) { int sz = setWFn->GetParmsSize(); std::vector<uint8_t> wp(sz, 0); auto* p = findParam(setWFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = 550.0f; rootSizeBox->ProcessEvent(setWFn, wp.data()); }
+                    if (setWFn) { int sz = setWFn->GetParmsSize(); std::vector<uint8_t> wp(sz, 0); auto* p = findParam(setWFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = 550.0f; safeProcessEvent(rootSizeBox, setWFn, wp.data()); }
                     auto* setClipFn = rootSizeBox->GetFunctionByNameInChain(STR("SetClipping"));
-                    if (setClipFn) { int sz = setClipFn->GetParmsSize(); std::vector<uint8_t> cp2(sz, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp2.data() + p->GetOffset_Internal()) = 1; rootSizeBox->ProcessEvent(setClipFn, cp2.data()); }
+                    if (setClipFn) { int sz = setClipFn->GetParmsSize(); std::vector<uint8_t> cp2(sz, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp2.data() + p->GetOffset_Internal()) = 1; safeProcessEvent(rootSizeBox, setClipFn, cp2.data()); }
                 }
             }
 
@@ -323,7 +323,7 @@
                     int sz = setContentFn2->GetParmsSize();
                     std::vector<uint8_t> sc(sz, 0);
                     if (pC) *reinterpret_cast<UObject**>(sc.data() + pC->GetOffset_Internal()) = rootBorder;
-                    rootSizeBox->ProcessEvent(setContentFn2, sc.data());
+                    safeProcessEvent(rootSizeBox, setContentFn2, sc.data());
                 }
             }
             else if (widgetTree)
@@ -341,7 +341,7 @@
                     std::vector<uint8_t> cb(sz, 0);
                     auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
                     c[0] = 0.0f; c[1] = 0.0f; c[2] = 0.0f; c[3] = 0.0f;
-                    rootBorder->ProcessEvent(setBrushColorFn, cb.data());
+                    safeProcessEvent(rootBorder, setBrushColorFn, cb.data());
                 }
             }
             auto* setBorderPadFn = rootBorder->GetFunctionByNameInChain(STR("SetPadding"));
@@ -354,7 +354,7 @@
                     std::vector<uint8_t> pp(sz, 0);
                     auto* m = reinterpret_cast<float*>(pp.data() + pPad->GetOffset_Internal());
                     m[0] = 12.0f; m[1] = 8.0f; m[2] = 12.0f; m[3] = 8.0f;
-                    rootBorder->ProcessEvent(setBorderPadFn, pp.data());
+                    safeProcessEvent(rootBorder, setBorderPadFn, pp.data());
                 }
             }
 
@@ -369,7 +369,7 @@
                 int sz = setContentFn->GetParmsSize();
                 std::vector<uint8_t> sc(sz, 0);
                 if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = vbox;
-                rootBorder->ProcessEvent(setContentFn, sc.data());
+                safeProcessEvent(rootBorder, setContentFn, sc.data());
             }
 
             auto makeTextBlock = [&](const std::wstring& text, float r, float g, float b, float a) {
@@ -399,7 +399,7 @@
                 int sz = addFn->GetParmsSize();
                 std::vector<uint8_t> vp(sz, 0);
                 if (pZ) *reinterpret_cast<int32_t*>(vp.data() + pZ->GetOffset_Internal()) = 249;
-                userWidget->ProcessEvent(addFn, vp.data());
+                safeProcessEvent(userWidget, addFn, vp.data());
             }
 
 
@@ -421,7 +421,7 @@
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
                     v[0] = 1100.0f; v[1] = 320.0f;
-                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
+                    safeProcessEvent(userWidget, setDesiredSizeFn, sb.data());
                 }
             }
 
@@ -436,7 +436,7 @@
                     std::vector<uint8_t> al(sz, 0);
                     auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
                     v[0] = 0.5f; v[1] = 0.5f;
-                    userWidget->ProcessEvent(setAlignFn, al.data());
+                    safeProcessEvent(userWidget, setAlignFn, al.data());
                 }
             }
 
@@ -458,7 +458,7 @@
         {
             if (!m_repositionInfoBoxWidget) return;
             auto* removeFn = m_repositionInfoBoxWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
-            if (removeFn) m_repositionInfoBoxWidget->ProcessEvent(removeFn, nullptr);
+            if (removeFn) safeProcessEvent(m_repositionInfoBoxWidget, removeFn, nullptr);
             m_repositionInfoBoxWidget = nullptr;
         }
 

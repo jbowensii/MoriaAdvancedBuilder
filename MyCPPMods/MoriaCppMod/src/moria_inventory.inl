@@ -4,7 +4,7 @@
         static bool safeProcessEvent(UObject* obj, RC::Unreal::UFunction* fn, void* params)
         {
             __try {
-                obj->ProcessEvent(fn, params);
+                safeProcessEvent(obj, fn, params);
                 return true;
             }
             __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -548,7 +548,7 @@
 
                     if (pItem) *reinterpret_cast<UClass**>(p.data() + pItem->GetOffset_Internal()) = m_lastPickedUpItemClass;
                     if (pFrom) *reinterpret_cast<uint8_t*>(p.data() + pFrom->GetOffset_Internal()) = 0;
-                    invComp->ProcessEvent(fn, p.data());
+                    safeProcessEvent(invComp, fn, p.data());
                     if (pRet) currentCount = *reinterpret_cast<int32_t*>(p.data() + pRet->GetOffset_Internal());
                 }
             }
@@ -587,7 +587,7 @@
 
                 VLOG(STR("[MoriaCppMod] [Replenish] Calling RequestAddItem({}, count={}, method=Normal)\n"),
                      m_lastPickedUpItemName, deficit);
-                invComp->ProcessEvent(addFn, p.data());
+                safeProcessEvent(invComp, addFn, p.data());
             }
 
             std::wstring msg = L"Replenished " + rowName + L" +" + std::to_wstring(deficit) + L" (→" + std::to_wstring(maxStack) + L")";
@@ -680,7 +680,7 @@
             if (!pOwner || !pClass || !pRet) { VLOG(STR("[MoriaCppMod] [Trash] FAIL: pOwner={} pClass={} pRet={}\n"), (void*)pOwner, (void*)pClass, (void*)pRet); return; }
             *reinterpret_cast<UObject**>(cp.data() + pOwner->GetOffset_Internal()) = pc;
             *reinterpret_cast<UObject**>(cp.data() + pClass->GetOffset_Internal()) = userWidgetClass;
-            wblClass->ProcessEvent(createFn, cp.data());
+            safeProcessEvent(wblClass, createFn, cp.data());
             UObject* userWidget = *reinterpret_cast<UObject**>(cp.data() + pRet->GetOffset_Internal());
             if (!userWidget) { VLOG(STR("[MoriaCppMod] [Trash] FAIL: userWidget is null\n")); return; }
             VLOG(STR("[MoriaCppMod] [Trash] CP1: userWidget created\n"));
@@ -705,7 +705,7 @@
 
             {
                 auto* setClipFn = rootOl->GetFunctionByNameInChain(STR("SetClipping"));
-                if (setClipFn) { int sz2 = setClipFn->GetParmsSize(); std::vector<uint8_t> cp2(sz2, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp2.data() + p->GetOffset_Internal()) = 1; rootOl->ProcessEvent(setClipFn, cp2.data()); }
+                if (setClipFn) { int sz2 = setClipFn->GetParmsSize(); std::vector<uint8_t> cp2(sz2, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp2.data() + p->GetOffset_Internal()) = 1; safeProcessEvent(rootOl, setClipFn, cp2.data()); }
             }
 
             VLOG(STR("[MoriaCppMod] [Trash] CP3: rootOl + clipping done\n"));
@@ -889,7 +889,7 @@
                 int avSz = addToViewportFn->GetParmsSize();
                 std::vector<uint8_t> vp(avSz, 0);
                 if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 300;
-                userWidget->ProcessEvent(addToViewportFn, vp.data());
+                safeProcessEvent(userWidget, addToViewportFn, vp.data());
             }
 
 
@@ -897,12 +897,12 @@
             if (setDesiredSizeFn)
             {
                 auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
-                if (pSize) { int ssz = setDesiredSizeFn->GetParmsSize(); std::vector<uint8_t> sb(ssz, 0); auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal()); v[0] = dlgW; v[1] = dlgH; userWidget->ProcessEvent(setDesiredSizeFn, sb.data()); }
+                if (pSize) { int ssz = setDesiredSizeFn->GetParmsSize(); std::vector<uint8_t> sb(ssz, 0); auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal()); v[0] = dlgW; v[1] = dlgH; safeProcessEvent(userWidget, setDesiredSizeFn, sb.data()); }
             }
 
 
             auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
-            if (setAlignFn) { auto* pAlign = findParam(setAlignFn, STR("Alignment")); if (pAlign) { int asz = setAlignFn->GetParmsSize(); std::vector<uint8_t> ab(asz, 0); auto* a = reinterpret_cast<float*>(ab.data() + pAlign->GetOffset_Internal()); a[0] = 0.5f; a[1] = 0.5f; userWidget->ProcessEvent(setAlignFn, ab.data()); } }
+            if (setAlignFn) { auto* pAlign = findParam(setAlignFn, STR("Alignment")); if (pAlign) { int asz = setAlignFn->GetParmsSize(); std::vector<uint8_t> ab(asz, 0); auto* a = reinterpret_cast<float*>(ab.data() + pAlign->GetOffset_Internal()); a[0] = 0.5f; a[1] = 0.5f; safeProcessEvent(userWidget, setAlignFn, ab.data()); } }
 
 
             setWidgetPosition(userWidget, m_screen.fracToPixelX(0.5f), m_screen.fracToPixelY(0.5f), true);
@@ -926,7 +926,7 @@
             if (m_trashDlgWidget)
             {
                 auto* removeFn = m_trashDlgWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
-                if (removeFn) m_trashDlgWidget->ProcessEvent(removeFn, nullptr);
+                if (removeFn) safeProcessEvent(m_trashDlgWidget, removeFn, nullptr);
                 m_trashDlgWidget = nullptr;
             }
             m_trashDlgVisible = false;

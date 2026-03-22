@@ -661,11 +661,6 @@ namespace MoriaMods
                     {
                         QBLOG(STR("[MoriaCppMod] [Placement] OnAfterHide fired on {}\n"), cls);
 
-                        // Stop any lingering hide animation to prevent MovieScene crash
-                        // if another screen transition (e.g., ESC menu) calls StopAnimation later
-                        auto* stopFn = context->GetFunctionByNameInChain(STR("StopAllAnimations"));
-                        if (stopFn) context->ProcessEvent(stopFn, nullptr);
-
                         if (s_instance->m_qbPhase == PlacePhase::CancelGhost)
                         {
                             QBLOG(STR("[MoriaCppMod] [QuickBuild] OnAfterHide: ghost cancelled, activating build mode\n"));
@@ -715,6 +710,21 @@ namespace MoriaMods
                     return;
                 }
 
+
+                // Bubble change — fired by AWorldLayout's OnPlayerEnteredBubble delegate
+                if (wcscmp(fnStr2, STR("OnPlayerEnteredBubble")) == 0)
+                {
+                    if (parms)
+                    {
+                        // Params: ACharacter* Character (offset 0), UWorldLayoutBubble* Bubble (offset 8)
+                        auto* bubble = *reinterpret_cast<UObject**>(static_cast<uint8_t*>(parms) + 8);
+                        if (bubble && isObjectAlive(bubble))
+                        {
+                            s_instance->onBubbleEnteredEvent(bubble);
+                        }
+                    }
+                    return;
+                }
 
                 if (wcscmp(fnStr2, STR("ServerMoveItem")) == 0 || wcscmp(fnStr2, STR("MoveSwapItem")) == 0 || wcscmp(fnStr2, STR("BroadcastToContainers_OnChanged")) == 0)
                 {
@@ -770,7 +780,7 @@ namespace MoriaMods
                         if (hSz >= RECIPE_HANDLE_SIZE)
                         {
                             std::vector<uint8_t> hParams(hSz, 0);
-                            buildHUD->ProcessEvent(getHandleFn, hParams.data());
+                            safeProcessEvent(buildHUD, getHandleFn, hParams.data());
                             std::memcpy(s_instance->m_lastCapturedHandle, hParams.data(), RECIPE_HANDLE_SIZE);
                             s_instance->m_hasLastHandle = true;
 
@@ -1422,7 +1432,7 @@ namespace MoriaMods
                                 {
                                     int sz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(sz, 0);
-                                    m_ftScrollBox->ProcessEvent(getScrollFn, sp.data());
+                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= sz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -1456,7 +1466,7 @@ namespace MoriaMods
                                                 if (m_ftCheckImages[b])
                                                 {
                                                     auto* visFn = m_ftCheckImages[b]->GetFunctionByNameInChain(STR("SetVisibility"));
-                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = s_bindings[b].enabled ? 0 : 2; m_ftCheckImages[b]->ProcessEvent(visFn, vp); }
+                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = s_bindings[b].enabled ? 0 : 2; safeProcessEvent(m_ftCheckImages[b], visFn, vp); }
                                                 }
                                                 saveConfig();
                                                 VLOG(STR("[MoriaCppMod] [Settings] Bind {} enabled={}\n"), b, s_bindings[b].enabled);
@@ -1510,7 +1520,7 @@ namespace MoriaMods
                                 {
                                     int gsz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(gsz, 0);
-                                    m_ftScrollBox->ProcessEvent(getScrollFn, sp.data());
+                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -1657,7 +1667,7 @@ namespace MoriaMods
                                 {
                                     int sz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(sz, 0);
-                                    m_ftScrollBox->ProcessEvent(getScrollFn, sp.data());
+                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= sz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -1694,7 +1704,7 @@ namespace MoriaMods
                                 {
                                     int gsz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(gsz, 0);
-                                    m_ftScrollBox->ProcessEvent(getScrollFn, sp.data());
+                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -1715,7 +1725,7 @@ namespace MoriaMods
                                         if (m_ftGameModCheckImages[idx])
                                         {
                                             auto* visFn = m_ftGameModCheckImages[idx]->GetFunctionByNameInChain(STR("SetVisibility"));
-                                            if (visFn) { uint8_t vp[8]{}; vp[0] = m_ftGameModEntries[idx].enabled ? 0 : 2; m_ftGameModCheckImages[idx]->ProcessEvent(visFn, vp); }
+                                            if (visFn) { uint8_t vp[8]{}; vp[0] = m_ftGameModEntries[idx].enabled ? 0 : 2; safeProcessEvent(m_ftGameModCheckImages[idx], visFn, vp); }
                                         }
 
                                         saveGameMods(m_ftGameModEntries);
@@ -2176,7 +2186,7 @@ namespace MoriaMods
 
 
             // Bubble tracking — poll every 1s
-            if (m_initialReplayDone && intervalElapsed(m_lastBubbleCheck, 1000))
+            if (m_initialReplayDone && intervalElapsed(m_lastBubbleCheck, 30000))
             {
                 if (updateCurrentBubble())
                 {

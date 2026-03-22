@@ -85,6 +85,30 @@ namespace MoriaMods
     #endif
 
 
+    // Safe ProcessEvent wrapper — validates object and function before calling
+    inline bool safeProcessEvent(UObject* obj, UFunction* fn, void* parms)
+    {
+        if (!obj || !fn) {
+            VLOG(STR("[MoriaCppMod] [SAFE] ProcessEvent BLOCKED: obj={} fn={}\n"), (void*)obj, (void*)fn);
+            return false;
+        }
+        __try {
+            if (obj->HasAnyFlags(static_cast<EObjectFlags>(0x00200000 | 0x00400000))) {
+                VLOG(STR("[MoriaCppMod] [SAFE] ProcessEvent BLOCKED: obj {} is BeginDestroyed/FinishDestroyed\n"), (void*)obj);
+                return false;
+            }
+            if (obj->IsUnreachable()) {
+                VLOG(STR("[MoriaCppMod] [SAFE] ProcessEvent BLOCKED: obj {} is Unreachable\n"), (void*)obj);
+                return false;
+            }
+            obj->ProcessEvent(fn, parms);
+            return true;
+        } __except(1) {
+            VLOG(STR("[MoriaCppMod] [SAFE] ProcessEvent CAUGHT SEH exception on obj={}\n"), (void*)obj);
+            return false;
+        }
+    }
+
     static constexpr float TRACE_DIST = 5000.0f;
     static constexpr float POS_TOLERANCE = 100.0f;
 

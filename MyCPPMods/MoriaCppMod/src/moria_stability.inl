@@ -69,7 +69,7 @@
             }
             if (s_offAutoDestroy >= 0) buf[s_offAutoDestroy] = 1;
             if (s_offAutoActivate >= 0) buf[s_offAutoActivate] = 1;
-            s_cdo->ProcessEvent(s_fn, buf.data());
+            safeProcessEvent(s_cdo, s_fn, buf.data());
         }
 
 
@@ -151,7 +151,7 @@
             if (s_sWCO >= 0) std::memcpy(buf.data() + s_sWCO, &worldContext, 8);
             std::memcpy(buf.data() + s_sClass, &s_lightClass, 8);
             std::memcpy(buf.data() + s_sXform, &xform, 48);
-            s_gsCDO->ProcessEvent(s_spawnFn, buf.data());
+            safeProcessEvent(s_gsCDO, s_spawnFn, buf.data());
 
             UObject* spawned = nullptr;
             if (s_sRet >= 0)
@@ -169,7 +169,7 @@
                 std::memcpy(finBuf.data() + s_fActor, &spawned, 8);
                 if (s_fXform >= 0)
                     std::memcpy(finBuf.data() + s_fXform, &xform, 48);
-                s_gsCDO->ProcessEvent(s_finishFn, finBuf.data());
+                safeProcessEvent(s_gsCDO, s_finishFn, finBuf.data());
             }
 
 
@@ -187,7 +187,7 @@
                 if (getRootFn)
                 {
                     struct { UObject* Ret{nullptr}; } rp{};
-                    spawned->ProcessEvent(getRootFn, &rp);
+                    safeProcessEvent(spawned, getRootFn, &rp);
                     lightComp = rp.Ret;
                 }
                 if (!lightComp) lightComp = spawned;
@@ -241,7 +241,7 @@
                     std::vector<uint8_t> b(s_intSize, 0);
                     float intensity = critical ? AUDIT_LIGHT_CRITICAL_INTENSITY : AUDIT_LIGHT_MARGINAL_INTENSITY;
                     std::memcpy(b.data() + s_intOff, &intensity, 4);
-                    lightComp->ProcessEvent(s_setIntFn, b.data());
+                    safeProcessEvent(lightComp, s_setIntFn, b.data());
                 }
 
 
@@ -254,7 +254,7 @@
                     else
                         { color[0] = 1.0f; color[1] = 0.8f; color[2] = 0.0f; color[3] = 1.0f; }
                     std::memcpy(b.data() + s_colOff, color, 16);
-                    lightComp->ProcessEvent(s_setColorFn, b.data());
+                    safeProcessEvent(lightComp, s_setColorFn, b.data());
                 }
 
 
@@ -263,7 +263,7 @@
                     std::vector<uint8_t> b(s_radSize, 0);
                     float radius = AUDIT_LIGHT_RADIUS;
                     std::memcpy(b.data() + s_radOff, &radius, 4);
-                    lightComp->ProcessEvent(s_setRadFn, b.data());
+                    safeProcessEvent(lightComp, s_setRadFn, b.data());
                 }
             }
 
@@ -281,7 +281,7 @@
                 if (!actor) continue;
                 auto* destroyFn = actor->GetFunctionByNameInChain(STR("K2_DestroyActor"));
                 if (destroyFn)
-                    actor->ProcessEvent(destroyFn, nullptr);
+                    safeProcessEvent(actor, destroyFn, nullptr);
             }
             if (!m_auditSpawnedActors.empty())
                 VLOG(STR("[MoriaCppMod] [STAB] Destroyed {} spawned actor(s)\n"),
@@ -379,12 +379,12 @@
                     auto* ownerFunc = comp->GetFunctionByNameInChain(STR("GetOwner"));
                     if (!ownerFunc) continue;
                     struct { UObject* Ret{nullptr}; } op{};
-                    comp->ProcessEvent(ownerFunc, &op);
+                    safeProcessEvent(comp, ownerFunc, &op);
                     if (!op.Ret) continue;
 
                     FVec3f loc{0, 0, 0};
                     auto* locFunc = op.Ret->GetFunctionByNameInChain(STR("K2_GetActorLocation"));
-                    if (locFunc) op.Ret->ProcessEvent(locFunc, &loc);
+                    if (locFunc) safeProcessEvent(op.Ret, locFunc, &loc);
 
                     problems.push_back({op.Ret, stability, state, loc.X, loc.Y, loc.Z});
                 }

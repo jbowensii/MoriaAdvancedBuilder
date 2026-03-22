@@ -10,7 +10,7 @@
             if (!widget) return;
             // Hide immediately (prevents interaction and visual this frame)
             auto* visFn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (visFn) { uint8_t p[8]{}; p[0] = 1; widget->ProcessEvent(visFn, p); }
+            if (visFn) { uint8_t p[8]{}; p[0] = 1; safeProcessEvent(widget, visFn, p); }
             m_pendingWidgetRemovals.push_back(widget);
         }
 
@@ -22,7 +22,7 @@
                 if (!w) continue;
                 auto* removeFn = w->GetFunctionByNameInChain(STR("RemoveFromParent"));
                 if (!removeFn) removeFn = w->GetFunctionByNameInChain(STR("RemoveFromViewport"));
-                if (removeFn) w->ProcessEvent(removeFn, nullptr);
+                if (removeFn) safeProcessEvent(w, removeFn, nullptr);
             }
             m_pendingWidgetRemovals.clear();
         }
@@ -37,7 +37,7 @@
             std::vector<uint8_t> bp(sz, 0);
             if (pTex) *reinterpret_cast<UObject**>(bp.data() + pTex->GetOffset_Internal()) = texture;
             if (pMatch) *reinterpret_cast<bool*>(bp.data() + pMatch->GetOffset_Internal()) = true;
-            img->ProcessEvent(setBrushFn, bp.data());
+            safeProcessEvent(img, setBrushFn, bp.data());
         }
 
 
@@ -50,7 +50,7 @@
             int sz = fn->GetParmsSize();
             std::vector<uint8_t> buf(sz, 0);
             *reinterpret_cast<float*>(buf.data() + p->GetOffset_Internal()) = opacity;
-            img->ProcessEvent(fn, buf.data());
+            safeProcessEvent(img, fn, buf.data());
         }
 
 
@@ -65,7 +65,7 @@
             auto* base = buf.data() + p->GetOffset_Internal();
             *reinterpret_cast<float*>(base + 0) = value;
             *reinterpret_cast<uint8_t*>(base + 4) = sizeRule;
-            slot->ProcessEvent(fn, buf.data());
+            safeProcessEvent(slot, fn, buf.data());
         }
 
 
@@ -79,7 +79,7 @@
             std::vector<uint8_t> buf(sz, 0);
             auto* m = reinterpret_cast<float*>(buf.data() + p->GetOffset_Internal());
             m[0] = left; m[1] = top; m[2] = right; m[3] = bottom;
-            slot->ProcessEvent(fn, buf.data());
+            safeProcessEvent(slot, fn, buf.data());
         }
 
 
@@ -92,7 +92,7 @@
             int sz = fn->GetParmsSize();
             std::vector<uint8_t> buf(sz, 0);
             *reinterpret_cast<uint8_t*>(buf.data() + p->GetOffset_Internal()) = align;
-            slot->ProcessEvent(fn, buf.data());
+            safeProcessEvent(slot, fn, buf.data());
         }
 
 
@@ -105,7 +105,7 @@
             int sz = fn->GetParmsSize();
             std::vector<uint8_t> buf(sz, 0);
             *reinterpret_cast<uint8_t*>(buf.data() + p->GetOffset_Internal()) = align;
-            slot->ProcessEvent(fn, buf.data());
+            safeProcessEvent(slot, fn, buf.data());
         }
 
 
@@ -119,7 +119,7 @@
             std::vector<uint8_t> buf(sz, 0);
             auto* v = reinterpret_cast<float*>(buf.data() + p->GetOffset_Internal());
             v[0] = sx; v[1] = sy;
-            widget->ProcessEvent(fn, buf.data());
+            safeProcessEvent(widget, fn, buf.data());
         }
 
 
@@ -141,7 +141,7 @@
                     std::vector<uint8_t> buf(sz, 0);
 
                     if (pPlayer) *reinterpret_cast<UObject**>(buf.data() + pPlayer->GetOffset_Internal()) = pc;
-                    pc->ProcessEvent(fn, buf.data());
+                    safeProcessEvent(pc, fn, buf.data());
                     float x = *reinterpret_cast<float*>(buf.data() + pLocX->GetOffset_Internal());
                     float y = *reinterpret_cast<float*>(buf.data() + pLocY->GetOffset_Internal());
                     bool ok = pRV ? *reinterpret_cast<bool*>(buf.data() + pRV->GetOffset_Internal()) : true;
@@ -162,7 +162,7 @@
                         int sz = fn2->GetParmsSize();
                         std::vector<uint8_t> buf(sz, 0);
                         if (pWC && pc) *reinterpret_cast<UObject**>(buf.data() + pWC->GetOffset_Internal()) = pc;
-                        cdo->ProcessEvent(fn2, buf.data());
+                        safeProcessEvent(cdo, fn2, buf.data());
                         auto* rv = reinterpret_cast<float*>(buf.data() + pRV->GetOffset_Internal());
                         if (rv[0] > 0.0f || rv[1] > 0.0f) { outX = rv[0]; outY = rv[1]; return true; }
                     }
@@ -185,7 +185,7 @@
             auto* v = reinterpret_cast<float*>(buf.data() + pPos->GetOffset_Internal());
             v[0] = x; v[1] = y;
             if (pDPI) *reinterpret_cast<bool*>(buf.data() + pDPI->GetOffset_Internal()) = bRemoveDPIScale;
-            widget->ProcessEvent(fn, buf.data());
+            safeProcessEvent(widget, fn, buf.data());
         }
 
 
@@ -200,7 +200,7 @@
             std::vector<uint8_t> buf(sz, 0);
             auto* c = reinterpret_cast<float*>(buf.data() + p->GetOffset_Internal());
             c[0] = r; c[1] = g; c[2] = b; c[3] = a;
-            img->ProcessEvent(fn, buf.data());
+            safeProcessEvent(img, fn, buf.data());
         }
 
 
@@ -262,7 +262,7 @@
             int sz = fn->GetParmsSize();
             std::vector<uint8_t> buf(sz, 0);
             std::memcpy(buf.data() + pInText->GetOffset_Internal(), &ftext, sizeof(FText));
-            textBlock->ProcessEvent(fn, buf.data());
+            safeProcessEvent(textBlock, fn, buf.data());
         }
 
 
@@ -278,7 +278,7 @@
             auto* color = reinterpret_cast<float*>(buf.data() + p->GetOffset_Internal());
             color[0] = r; color[1] = g; color[2] = b; color[3] = a;
 
-            textBlock->ProcessEvent(fn, buf.data());
+            safeProcessEvent(textBlock, fn, buf.data());
         }
 
 
@@ -306,7 +306,7 @@
             int sz = setFontFn->GetParmsSize();
             std::vector<uint8_t> buf(sz, 0);
             std::memcpy(buf.data() + pFontInfo->GetOffset_Internal(), fontBuf, FONT_STRUCT_SIZE);
-            textBlock->ProcessEvent(setFontFn, buf.data());
+            safeProcessEvent(textBlock, setFontFn, buf.data());
         }
 
         void umgSetFontSize(UObject* textBlock, int32_t fontSize)
@@ -327,7 +327,7 @@
             int sz = setFontFn->GetParmsSize();
             std::vector<uint8_t> buf(sz, 0);
             std::memcpy(buf.data() + pFontInfo->GetOffset_Internal(), fontBuf, FONT_STRUCT_SIZE);
-            textBlock->ProcessEvent(setFontFn, buf.data());
+            safeProcessEvent(textBlock, setFontFn, buf.data());
         }
 
 
@@ -349,7 +349,7 @@
             int sz = setFontFn->GetParmsSize();
             std::vector<uint8_t> buf(sz, 0);
             std::memcpy(buf.data() + pFontInfo->GetOffset_Internal(), fontBuf, FONT_STRUCT_SIZE);
-            textBlock->ProcessEvent(setFontFn, buf.data());
+            safeProcessEvent(textBlock, setFontFn, buf.data());
         }
 
 
@@ -416,7 +416,7 @@
             std::vector<uint8_t> bp(sz, 0);
             if (pTex) *reinterpret_cast<UObject**>(bp.data() + pTex->GetOffset_Internal()) = texture;
             if (pMatch) *reinterpret_cast<bool*>(bp.data() + pMatch->GetOffset_Internal()) = false;
-            img->ProcessEvent(setBrushFn, bp.data());
+            safeProcessEvent(img, setBrushFn, bp.data());
         }
 
 
@@ -430,7 +430,7 @@
             std::vector<uint8_t> buf(sz, 0);
             auto* v = reinterpret_cast<float*>(buf.data() + p->GetOffset_Internal());
             v[0] = w; v[1] = h;
-            img->ProcessEvent(fn, buf.data());
+            safeProcessEvent(img, fn, buf.data());
         }
 
 
@@ -642,7 +642,7 @@
             if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
             if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = userWidgetClass;
             if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
-            wblCDO->ProcessEvent(createFn, cp.data());
+            safeProcessEvent(wblCDO, createFn, cp.data());
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) { showErrorBox(L"UMG: CreateWidget null!"); return; }
 
@@ -676,7 +676,7 @@
                     std::vector<uint8_t> cb(sz, 0);
                     auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
                     c[0] = 0.0f; c[1] = 0.0f; c[2] = 0.0f; c[3] = 0.0f;
-                    outerBorder->ProcessEvent(setBrushColorFn, cb.data());
+                    safeProcessEvent(outerBorder, setBrushColorFn, cb.data());
                 }
             }
 
@@ -690,7 +690,7 @@
                     std::vector<uint8_t> pp(sz, 0);
                     auto* m = reinterpret_cast<float*>(pp.data() + pPad->GetOffset_Internal());
                     m[0] = 0.0f; m[1] = 0.0f; m[2] = 0.0f; m[3] = 0.0f;
-                    outerBorder->ProcessEvent(setBorderPadFn, pp.data());
+                    safeProcessEvent(outerBorder, setBorderPadFn, pp.data());
                 }
             }
 
@@ -710,7 +710,7 @@
                     std::vector<uint8_t> cb(sz, 0);
                     auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
                     c[0] = 0.0f; c[1] = 0.0f; c[2] = 0.0f; c[3] = 0.0f;
-                    innerBorder->ProcessEvent(setBrushColorFn2, cb.data());
+                    safeProcessEvent(innerBorder, setBrushColorFn2, cb.data());
                 }
             }
 
@@ -722,7 +722,7 @@
                 int sz = setContentFn->GetParmsSize();
                 std::vector<uint8_t> sc(sz, 0);
                 if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = innerBorder;
-                outerBorder->ProcessEvent(setContentFn, sc.data());
+                safeProcessEvent(outerBorder, setContentFn, sc.data());
             }
 
 
@@ -737,7 +737,7 @@
                 int sz = setContentFn2->GetParmsSize();
                 std::vector<uint8_t> sc(sz, 0);
                 if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = hbox;
-                innerBorder->ProcessEvent(setContentFn2, sc.data());
+                safeProcessEvent(innerBorder, setContentFn2, sc.data());
             }
 
 
@@ -802,7 +802,7 @@
                         int sz = addToOverlayFn->GetParmsSize();
                         std::vector<uint8_t> ap(sz, 0);
                         if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = stateImg;
-                        overlay->ProcessEvent(addToOverlayFn, ap.data());
+                        safeProcessEvent(overlay, addToOverlayFn, ap.data());
                         UObject* stateOlSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
                         if (stateOlSlot)
                         {
@@ -813,7 +813,7 @@
                                 std::vector<uint8_t> hb(sz2, 0);
                                 auto* pHA = findParam(setHAFn, STR("InHorizontalAlignment"));
                                 if (pHA) *reinterpret_cast<uint8_t*>(hb.data() + pHA->GetOffset_Internal()) = 2;
-                                stateOlSlot->ProcessEvent(setHAFn, hb.data());
+                                safeProcessEvent(stateOlSlot, setHAFn, hb.data());
                             }
                             auto* setVAFn = stateOlSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
                             if (setVAFn)
@@ -822,7 +822,7 @@
                                 std::vector<uint8_t> vb(sz2, 0);
                                 auto* pVA = findParam(setVAFn, STR("InVerticalAlignment"));
                                 if (pVA) *reinterpret_cast<uint8_t*>(vb.data() + pVA->GetOffset_Internal()) = 2;
-                                stateOlSlot->ProcessEvent(setVAFn, vb.data());
+                                safeProcessEvent(stateOlSlot, setVAFn, vb.data());
                             }
                         }
                     }
@@ -831,7 +831,7 @@
                         int sz = addToOverlayFn->GetParmsSize();
                         std::vector<uint8_t> ap(sz, 0);
                         if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = iconImg;
-                        overlay->ProcessEvent(addToOverlayFn, ap.data());
+                        safeProcessEvent(overlay, addToOverlayFn, ap.data());
                         UObject* iconSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
                         if (iconSlot)
                         {
@@ -843,7 +843,7 @@
                                 std::vector<uint8_t> hb(sz2, 0);
                                 auto* pHA = findParam(setHAFn, STR("InHorizontalAlignment"));
                                 if (pHA) *reinterpret_cast<uint8_t*>(hb.data() + pHA->GetOffset_Internal()) = 2;
-                                iconSlot->ProcessEvent(setHAFn, hb.data());
+                                safeProcessEvent(iconSlot, setHAFn, hb.data());
                             }
                             auto* setVAFn = iconSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
                             if (setVAFn)
@@ -852,7 +852,7 @@
                                 std::vector<uint8_t> vb(sz2, 0);
                                 auto* pVA = findParam(setVAFn, STR("InVerticalAlignment"));
                                 if (pVA) *reinterpret_cast<uint8_t*>(vb.data() + pVA->GetOffset_Internal()) = 2;
-                                iconSlot->ProcessEvent(setVAFn, vb.data());
+                                safeProcessEvent(iconSlot, setVAFn, vb.data());
                             }
                         }
                     }
@@ -870,7 +870,7 @@
                         int sz = addToVBoxFn->GetParmsSize();
                         std::vector<uint8_t> ap(sz, 0);
                         if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = overlay;
-                        vbox->ProcessEvent(addToVBoxFn, ap.data());
+                        safeProcessEvent(vbox, addToVBoxFn, ap.data());
                         UObject* stateSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
                         if (stateSlot)
                         {
@@ -898,7 +898,7 @@
                                     int sz2 = addToFoFn->GetParmsSize();
                                     std::vector<uint8_t> ap2(sz2, 0);
                                     if (foC) *reinterpret_cast<UObject**>(ap2.data() + foC->GetOffset_Internal()) = frameImg;
-                                    frameOverlay->ProcessEvent(addToFoFn, ap2.data());
+                                    safeProcessEvent(frameOverlay, addToFoFn, ap2.data());
                                 }
 
 
@@ -914,14 +914,14 @@
                                         int sz2 = addToFoFn->GetParmsSize();
                                         std::vector<uint8_t> ap2(sz2, 0);
                                         if (foC) *reinterpret_cast<UObject**>(ap2.data() + foC->GetOffset_Internal()) = keyBgImg;
-                                        frameOverlay->ProcessEvent(addToFoFn, ap2.data());
+                                        safeProcessEvent(frameOverlay, addToFoFn, ap2.data());
                                         UObject* kbSlot = foR ? *reinterpret_cast<UObject**>(ap2.data() + foR->GetOffset_Internal()) : nullptr;
                                         if (kbSlot)
                                         {
                                             auto* setHA = kbSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                            if (setHA) { int s3 = setHA->GetParmsSize(); std::vector<uint8_t> h(s3, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; kbSlot->ProcessEvent(setHA, h.data()); }
+                                            if (setHA) { int s3 = setHA->GetParmsSize(); std::vector<uint8_t> h(s3, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; safeProcessEvent(kbSlot, setHA, h.data()); }
                                             auto* setVA = kbSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                            if (setVA) { int s3 = setVA->GetParmsSize(); std::vector<uint8_t> v(s3, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; kbSlot->ProcessEvent(setVA, v.data()); }
+                                            if (setVA) { int s3 = setVA->GetParmsSize(); std::vector<uint8_t> v(s3, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; safeProcessEvent(kbSlot, setVA, v.data()); }
                                         }
                                         m_umgKeyBgImages[i] = keyBgImg;
                                     }
@@ -941,14 +941,14 @@
                                         int sz2 = addToFoFn->GetParmsSize();
                                         std::vector<uint8_t> ap2(sz2, 0);
                                         if (foC) *reinterpret_cast<UObject**>(ap2.data() + foC->GetOffset_Internal()) = keyLabel;
-                                        frameOverlay->ProcessEvent(addToFoFn, ap2.data());
+                                        safeProcessEvent(frameOverlay, addToFoFn, ap2.data());
                                         UObject* tlSlot = foR ? *reinterpret_cast<UObject**>(ap2.data() + foR->GetOffset_Internal()) : nullptr;
                                         if (tlSlot)
                                         {
                                             auto* setHA = tlSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                            if (setHA) { int s3 = setHA->GetParmsSize(); std::vector<uint8_t> h(s3, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; tlSlot->ProcessEvent(setHA, h.data()); }
+                                            if (setHA) { int s3 = setHA->GetParmsSize(); std::vector<uint8_t> h(s3, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; safeProcessEvent(tlSlot, setHA, h.data()); }
                                             auto* setVA = tlSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                            if (setVA) { int s3 = setVA->GetParmsSize(); std::vector<uint8_t> v(s3, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; tlSlot->ProcessEvent(setVA, v.data()); }
+                                            if (setVA) { int s3 = setVA->GetParmsSize(); std::vector<uint8_t> v(s3, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; safeProcessEvent(tlSlot, setVA, v.data()); }
                                         }
                                         m_umgKeyLabels[i] = keyLabel;
                                     }
@@ -961,7 +961,7 @@
                         int sz = addToVBoxFn->GetParmsSize();
                         std::vector<uint8_t> ap(sz, 0);
                         if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = frameChild;
-                        vbox->ProcessEvent(addToVBoxFn, ap.data());
+                        safeProcessEvent(vbox, addToVBoxFn, ap.data());
                         UObject* frameSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
                         if (frameSlot)
                         {
@@ -983,7 +983,7 @@
                     int sz = addToHBoxFn->GetParmsSize();
                     std::vector<uint8_t> ap(sz, 0);
                     if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = vbox;
-                    hbox->ProcessEvent(addToHBoxFn, ap.data());
+                    safeProcessEvent(hbox, addToHBoxFn, ap.data());
                     UObject* hSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
                     if (hSlot)
                     {
@@ -1041,7 +1041,7 @@
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
                     v[0] = totalW; v[1] = totalH;
-                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
+                    safeProcessEvent(userWidget, setDesiredSizeFn, sb.data());
                 }
             }
 
@@ -1053,7 +1053,7 @@
                 int sz = addToViewportFn->GetParmsSize();
                 std::vector<uint8_t> vp(sz, 0);
                 if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 100;
-                userWidget->ProcessEvent(addToViewportFn, vp.data());
+                safeProcessEvent(userWidget, addToViewportFn, vp.data());
             }
 
 
@@ -1067,7 +1067,7 @@
                     std::vector<uint8_t> al(sz, 0);
                     auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
                     v[0] = 0.5f; v[1] = 0.5f;
-                    userWidget->ProcessEvent(setAlignFn, al.data());
+                    safeProcessEvent(userWidget, setAlignFn, al.data());
                 }
             }
 
@@ -1172,7 +1172,7 @@
             if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
             if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = userWidgetClass;
             if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
-            wblCDO->ProcessEvent(createFn, cp.data());
+            safeProcessEvent(wblCDO, createFn, cp.data());
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) { showErrorBox(L"AB: CreateWidget null!"); return; }
 
@@ -1204,7 +1204,7 @@
                     std::vector<uint8_t> cb(sz, 0);
                     auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
                     c[0] = 0.0f; c[1] = 0.0f; c[2] = 0.0f; c[3] = 0.0f;
-                    outerBorder->ProcessEvent(setBrushColorFn, cb.data());
+                    safeProcessEvent(outerBorder, setBrushColorFn, cb.data());
                 }
             }
             auto* setBorderPadFn = outerBorder->GetFunctionByNameInChain(STR("SetPadding"));
@@ -1215,7 +1215,7 @@
                 {
                     int sz = setBorderPadFn->GetParmsSize();
                     std::vector<uint8_t> pp(sz, 0);
-                    outerBorder->ProcessEvent(setBorderPadFn, pp.data());
+                    safeProcessEvent(outerBorder, setBorderPadFn, pp.data());
                 }
             }
 
@@ -1232,7 +1232,7 @@
                 int sz = setContentFn->GetParmsSize();
                 std::vector<uint8_t> sc(sz, 0);
                 if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = vbox;
-                outerBorder->ProcessEvent(setContentFn, sc.data());
+                safeProcessEvent(outerBorder, setContentFn, sc.data());
             }
 
 
@@ -1303,7 +1303,7 @@
                     int sz = addToOverlayFn->GetParmsSize();
                     std::vector<uint8_t> ap(sz, 0);
                     if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = stateImg;
-                    overlay->ProcessEvent(addToOverlayFn, ap.data());
+                    safeProcessEvent(overlay, addToOverlayFn, ap.data());
                     UObject* stateOlSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
                     if (stateOlSlot)
                     {
@@ -1314,7 +1314,7 @@
                             std::vector<uint8_t> hb(sz2, 0);
                             auto* pHA = findParam(setHAFn, STR("InHorizontalAlignment"));
                             if (pHA) *reinterpret_cast<uint8_t*>(hb.data() + pHA->GetOffset_Internal()) = 2;
-                            stateOlSlot->ProcessEvent(setHAFn, hb.data());
+                            safeProcessEvent(stateOlSlot, setHAFn, hb.data());
                         }
                         auto* setVAFn = stateOlSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
                         if (setVAFn)
@@ -1323,7 +1323,7 @@
                             std::vector<uint8_t> vb(sz2, 0);
                             auto* pVA = findParam(setVAFn, STR("InVerticalAlignment"));
                             if (pVA) *reinterpret_cast<uint8_t*>(vb.data() + pVA->GetOffset_Internal()) = 2;
-                            stateOlSlot->ProcessEvent(setVAFn, vb.data());
+                            safeProcessEvent(stateOlSlot, setVAFn, vb.data());
                         }
                     }
                 }
@@ -1332,7 +1332,7 @@
                     int sz = addToOverlayFn->GetParmsSize();
                     std::vector<uint8_t> ap(sz, 0);
                     if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = iconImg;
-                    overlay->ProcessEvent(addToOverlayFn, ap.data());
+                    safeProcessEvent(overlay, addToOverlayFn, ap.data());
                     UObject* iconSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
                     if (iconSlot)
                     {
@@ -1343,7 +1343,7 @@
                             std::vector<uint8_t> hb(sz2, 0);
                             auto* pHA = findParam(setHAFn, STR("InHorizontalAlignment"));
                             if (pHA) *reinterpret_cast<uint8_t*>(hb.data() + pHA->GetOffset_Internal()) = 2;
-                            iconSlot->ProcessEvent(setHAFn, hb.data());
+                            safeProcessEvent(iconSlot, setHAFn, hb.data());
                         }
                         auto* setVAFn = iconSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
                         if (setVAFn)
@@ -1352,7 +1352,7 @@
                             std::vector<uint8_t> vb(sz2, 0);
                             auto* pVA = findParam(setVAFn, STR("InVerticalAlignment"));
                             if (pVA) *reinterpret_cast<uint8_t*>(vb.data() + pVA->GetOffset_Internal()) = 2;
-                            iconSlot->ProcessEvent(setVAFn, vb.data());
+                            safeProcessEvent(iconSlot, setVAFn, vb.data());
                         }
                     }
                 }
@@ -1370,7 +1370,7 @@
                     int sz = addToVBoxFn->GetParmsSize();
                     std::vector<uint8_t> ap(sz, 0);
                     if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = overlay;
-                    vbox->ProcessEvent(addToVBoxFn, ap.data());
+                    safeProcessEvent(vbox, addToVBoxFn, ap.data());
                     UObject* olSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
                     if (olSlot)
                     {
@@ -1397,7 +1397,7 @@
                                 int sz2 = addToFoFn->GetParmsSize();
                                 std::vector<uint8_t> ap2(sz2, 0);
                                 if (foC) *reinterpret_cast<UObject**>(ap2.data() + foC->GetOffset_Internal()) = frameImg;
-                                frameOverlay->ProcessEvent(addToFoFn, ap2.data());
+                                safeProcessEvent(frameOverlay, addToFoFn, ap2.data());
                             }
 
 
@@ -1412,14 +1412,14 @@
                                     int sz2 = addToFoFn->GetParmsSize();
                                     std::vector<uint8_t> ap2(sz2, 0);
                                     if (foC) *reinterpret_cast<UObject**>(ap2.data() + foC->GetOffset_Internal()) = keyBgImg;
-                                    frameOverlay->ProcessEvent(addToFoFn, ap2.data());
+                                    safeProcessEvent(frameOverlay, addToFoFn, ap2.data());
                                     UObject* kbSlot = foR ? *reinterpret_cast<UObject**>(ap2.data() + foR->GetOffset_Internal()) : nullptr;
                                     if (kbSlot)
                                     {
                                         auto* setHA = kbSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                        if (setHA) { int s3 = setHA->GetParmsSize(); std::vector<uint8_t> h(s3, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; kbSlot->ProcessEvent(setHA, h.data()); }
+                                        if (setHA) { int s3 = setHA->GetParmsSize(); std::vector<uint8_t> h(s3, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; safeProcessEvent(kbSlot, setHA, h.data()); }
                                         auto* setVA = kbSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                        if (setVA) { int s3 = setVA->GetParmsSize(); std::vector<uint8_t> v(s3, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; kbSlot->ProcessEvent(setVA, v.data()); }
+                                        if (setVA) { int s3 = setVA->GetParmsSize(); std::vector<uint8_t> v(s3, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; safeProcessEvent(kbSlot, setVA, v.data()); }
                                     }
                                 }
                             }
@@ -1437,14 +1437,14 @@
                                     int sz2 = addToFoFn->GetParmsSize();
                                     std::vector<uint8_t> ap2(sz2, 0);
                                     if (foC) *reinterpret_cast<UObject**>(ap2.data() + foC->GetOffset_Internal()) = keyLabel;
-                                    frameOverlay->ProcessEvent(addToFoFn, ap2.data());
+                                    safeProcessEvent(frameOverlay, addToFoFn, ap2.data());
                                     UObject* tlSlot = foR ? *reinterpret_cast<UObject**>(ap2.data() + foR->GetOffset_Internal()) : nullptr;
                                     if (tlSlot)
                                     {
                                         auto* setHA = tlSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
-                                        if (setHA) { int s3 = setHA->GetParmsSize(); std::vector<uint8_t> h(s3, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; tlSlot->ProcessEvent(setHA, h.data()); }
+                                        if (setHA) { int s3 = setHA->GetParmsSize(); std::vector<uint8_t> h(s3, 0); auto* p = findParam(setHA, STR("InHorizontalAlignment")); if (p) *reinterpret_cast<uint8_t*>(h.data() + p->GetOffset_Internal()) = 2; safeProcessEvent(tlSlot, setHA, h.data()); }
                                         auto* setVA = tlSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
-                                        if (setVA) { int s3 = setVA->GetParmsSize(); std::vector<uint8_t> v(s3, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; tlSlot->ProcessEvent(setVA, v.data()); }
+                                        if (setVA) { int s3 = setVA->GetParmsSize(); std::vector<uint8_t> v(s3, 0); auto* p = findParam(setVA, STR("InVerticalAlignment")); if (p) *reinterpret_cast<uint8_t*>(v.data() + p->GetOffset_Internal()) = 2; safeProcessEvent(tlSlot, setVA, v.data()); }
                                     }
                                     m_abKeyLabel = keyLabel;
                                 }
@@ -1457,7 +1457,7 @@
                     int sz = addToVBoxFn->GetParmsSize();
                     std::vector<uint8_t> ap(sz, 0);
                     if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = frameChild;
-                    vbox->ProcessEvent(addToVBoxFn, ap.data());
+                    safeProcessEvent(vbox, addToVBoxFn, ap.data());
                     UObject* fSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
                     if (fSlot)
                     {
@@ -1495,7 +1495,7 @@
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
                     v[0] = abTotalW; v[1] = abTotalH;
-                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
+                    safeProcessEvent(userWidget, setDesiredSizeFn, sb.data());
                 }
             }
 
@@ -1507,7 +1507,7 @@
                 int sz = addToViewportFn->GetParmsSize();
                 std::vector<uint8_t> vp(sz, 0);
                 if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 100;
-                userWidget->ProcessEvent(addToViewportFn, vp.data());
+                safeProcessEvent(userWidget, addToViewportFn, vp.data());
             }
 
 
@@ -1521,7 +1521,7 @@
                     std::vector<uint8_t> al(sz, 0);
                     auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
                     v[0] = 0.5f; v[1] = 0.5f;
-                    userWidget->ProcessEvent(setAlignFn, al.data());
+                    safeProcessEvent(userWidget, setAlignFn, al.data());
                 }
             }
 
@@ -1589,7 +1589,7 @@
             if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
             if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = userWidgetClass;
             if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
-            wblCDO->ProcessEvent(createFn, cp.data());
+            safeProcessEvent(wblCDO, createFn, cp.data());
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) return;
 
@@ -1609,7 +1609,7 @@
                         setRootWidget(widgetTree, rootSizeBox);
 
                     auto* setWFn = rootSizeBox->GetFunctionByNameInChain(STR("SetWidthOverride"));
-                    if (setWFn) { int sz = setWFn->GetParmsSize(); std::vector<uint8_t> wp(sz, 0); auto* p = findParam(setWFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = 820.0f; rootSizeBox->ProcessEvent(setWFn, wp.data()); }
+                    if (setWFn) { int sz = setWFn->GetParmsSize(); std::vector<uint8_t> wp(sz, 0); auto* p = findParam(setWFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = 820.0f; safeProcessEvent(rootSizeBox, setWFn, wp.data()); }
 
                 }
             }
@@ -1628,7 +1628,7 @@
                     int sz = setContentFn2->GetParmsSize();
                     std::vector<uint8_t> sc(sz, 0);
                     if (pC) *reinterpret_cast<UObject**>(sc.data() + pC->GetOffset_Internal()) = rootBorder;
-                    rootSizeBox->ProcessEvent(setContentFn2, sc.data());
+                    safeProcessEvent(rootSizeBox, setContentFn2, sc.data());
                 }
             }
             else if (widgetTree)
@@ -1646,7 +1646,7 @@
                     std::vector<uint8_t> cb(sz, 0);
                     auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
                     c[0] = 0.0f; c[1] = 0.0f; c[2] = 0.0f; c[3] = 0.0f;
-                    rootBorder->ProcessEvent(setBrushColorFn, cb.data());
+                    safeProcessEvent(rootBorder, setBrushColorFn, cb.data());
                 }
             }
 
@@ -1660,7 +1660,7 @@
                     std::vector<uint8_t> pp(sz, 0);
                     auto* m = reinterpret_cast<float*>(pp.data() + pPad->GetOffset_Internal());
                     m[0] = 12.0f; m[1] = 8.0f; m[2] = 12.0f; m[3] = 8.0f;
-                    rootBorder->ProcessEvent(setBorderPadFn, pp.data());
+                    safeProcessEvent(rootBorder, setBorderPadFn, pp.data());
                 }
             }
 
@@ -1675,7 +1675,7 @@
                 int sz = setContentFn->GetParmsSize();
                 std::vector<uint8_t> sc(sz, 0);
                 if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = vbox;
-                rootBorder->ProcessEvent(setContentFn, sc.data());
+                safeProcessEvent(rootBorder, setContentFn, sc.data());
             }
 
 
@@ -1692,13 +1692,13 @@
                 umgSetTextColor(tb, r, g, b, a);
 
                 auto* wrapAtFn = tb->GetFunctionByNameInChain(STR("SetWrapTextAt"));
-                if (wrapAtFn) { int ws = wrapAtFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapAtFn, STR("InWrapTextAt")); if (pw) *reinterpret_cast<float*>(wp.data() + pw->GetOffset_Internal()) = 790.0f; tb->ProcessEvent(wrapAtFn, wp.data()); }
+                if (wrapAtFn) { int ws = wrapAtFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapAtFn, STR("InWrapTextAt")); if (pw) *reinterpret_cast<float*>(wp.data() + pw->GetOffset_Internal()) = 790.0f; safeProcessEvent(tb, wrapAtFn, wp.data()); }
                 auto* wrapFn = tb->GetFunctionByNameInChain(STR("SetAutoWrapText"));
-                if (wrapFn) { int ws = wrapFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapFn, STR("InAutoWrapText")); if (pw) *reinterpret_cast<bool*>(wp.data() + pw->GetOffset_Internal()) = true; tb->ProcessEvent(wrapFn, wp.data()); }
+                if (wrapFn) { int ws = wrapFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapFn, STR("InAutoWrapText")); if (pw) *reinterpret_cast<bool*>(wp.data() + pw->GetOffset_Internal()) = true; safeProcessEvent(tb, wrapFn, wp.data()); }
                 int sz = addToVBoxFn->GetParmsSize();
                 std::vector<uint8_t> ap(sz, 0);
                 if (vbC) *reinterpret_cast<UObject**>(ap.data() + vbC->GetOffset_Internal()) = tb;
-                vbox->ProcessEvent(addToVBoxFn, ap.data());
+                safeProcessEvent(vbox, addToVBoxFn, ap.data());
                 return tb;
             };
 
@@ -1722,7 +1722,7 @@
                 int sz = addToViewportFn->GetParmsSize();
                 std::vector<uint8_t> vp(sz, 0);
                 if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 101;
-                userWidget->ProcessEvent(addToViewportFn, vp.data());
+                safeProcessEvent(userWidget, addToViewportFn, vp.data());
             }
 
             m_screen.refresh(findPlayerController());
@@ -1739,7 +1739,7 @@
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
                     v[0] = 840.0f; v[1] = 480.0f;
-                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
+                    safeProcessEvent(userWidget, setDesiredSizeFn, sb.data());
                 }
             }
 
@@ -1754,7 +1754,7 @@
                     std::vector<uint8_t> al(sz, 0);
                     auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
                     v[0] = 0.5f; v[1] = 0.5f;
-                    userWidget->ProcessEvent(setAlignFn, al.data());
+                    safeProcessEvent(userWidget, setAlignFn, al.data());
                 }
             }
 
@@ -1768,7 +1768,7 @@
 
 
             auto* setVisFn = userWidget->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (setVisFn) { uint8_t p[8]{}; p[0] = 1; userWidget->ProcessEvent(setVisFn, p); }
+            if (setVisFn) { uint8_t p[8]{}; p[0] = 1; safeProcessEvent(userWidget, setVisFn, p); }
 
             m_targetInfoWidget = userWidget;
             VLOG(STR("[MoriaCppMod] [TI] Target Info UMG widget created\n"));
@@ -1778,7 +1778,7 @@
         {
             if (!m_targetInfoWidget) return;
             auto* fn = m_targetInfoWidget->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (fn) { uint8_t p[8]{}; p[0] = 1; m_targetInfoWidget->ProcessEvent(fn, p); }
+            if (fn) { uint8_t p[8]{}; p[0] = 1; safeProcessEvent(m_targetInfoWidget, fn, p); }
             m_tiShowTick = 0;
         }
 
@@ -1818,7 +1818,7 @@
 
 
             auto* fn = m_targetInfoWidget->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (fn) { uint8_t p[8]{}; p[0] = 0; m_targetInfoWidget->ProcessEvent(fn, p); }
+            if (fn) { uint8_t p[8]{}; p[0] = 0; safeProcessEvent(m_targetInfoWidget, fn, p); }
 
 
             std::wstring copyText = L"Class: " + cls + L"\r\n" + L"Name: " + name + L"\r\n" +
@@ -1884,7 +1884,7 @@
             if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
             if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = userWidgetClass;
             if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
-            wblCDO->ProcessEvent(createFn, cp.data());
+            safeProcessEvent(wblCDO, createFn, cp.data());
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) { Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CH] CreateWidget null\n")); return; }
             m_crosshairWidget = userWidget;
@@ -1909,7 +1909,7 @@
                     std::vector<uint8_t> cb(sz, 0);
                     auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
                     c[0] = 0.0f; c[1] = 0.0f; c[2] = 0.0f; c[3] = 0.0f; // fully transparent
-                    rootBorder->ProcessEvent(setBrushColorFn, cb.data());
+                    safeProcessEvent(rootBorder, setBrushColorFn, cb.data());
                 }
             }
 
@@ -1931,7 +1931,7 @@
                 int sz = setContentFn->GetParmsSize();
                 std::vector<uint8_t> sc(sz, 0);
                 if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = img;
-                rootBorder->ProcessEvent(setContentFn, sc.data());
+                safeProcessEvent(rootBorder, setContentFn, sc.data());
             }
 
             // Add to viewport
@@ -1941,7 +1941,7 @@
                 std::vector<uint8_t> ap(sz, 0);
                 auto* pZ = addFn->GetPropertyByNameInChain(STR("ZOrder"));
                 if (pZ) *reinterpret_cast<int32_t*>(ap.data() + pZ->GetOffset_Internal()) = 100;
-                userWidget->ProcessEvent(addFn, ap.data());
+                safeProcessEvent(userWidget, addFn, ap.data());
             }
 
             // Position at exact center — same as showInfoMessage
@@ -1953,7 +1953,7 @@
 
             // Start hidden
             auto* visFn = userWidget->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (visFn) { uint8_t vp[8]{}; vp[0] = 1; userWidget->ProcessEvent(visFn, vp); }
+            if (visFn) { uint8_t vp[8]{}; vp[0] = 1; safeProcessEvent(userWidget, visFn, vp); }
 
             Output::send<LogLevel::Normal>(STR("[MoriaCppMod] [CH] Crosshair OK at ({},{}) scale={}\n"), cx, cy, m_screen.viewportScale);
         }
@@ -1974,7 +1974,7 @@
             }
 
             auto* fn = m_crosshairWidget->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (fn) { uint8_t p[8]{}; p[0] = 0; m_crosshairWidget->ProcessEvent(fn, p); }
+            if (fn) { uint8_t p[8]{}; p[0] = 0; safeProcessEvent(m_crosshairWidget, fn, p); }
             m_crosshairShowTick = GetTickCount64();
         }
 
@@ -1982,7 +1982,7 @@
         {
             if (!m_crosshairWidget) return;
             auto* fn = m_crosshairWidget->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (fn) { uint8_t p[8]{}; p[0] = 1; m_crosshairWidget->ProcessEvent(fn, p); }
+            if (fn) { uint8_t p[8]{}; p[0] = 1; safeProcessEvent(m_crosshairWidget, fn, p); }
             m_crosshairShowTick = 0;
         }
 
@@ -2025,7 +2025,7 @@
             if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
             if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = userWidgetClass;
             if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
-            wblCDO->ProcessEvent(createFn, cp.data());
+            safeProcessEvent(wblCDO, createFn, cp.data());
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) return;
 
@@ -2050,7 +2050,7 @@
                     std::vector<uint8_t> cb(sz, 0);
                     auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
                     c[0] = 0.22f; c[1] = 0.06f; c[2] = 0.06f; c[3] = 0.88f;
-                    rootBorder->ProcessEvent(setBrushColorFn, cb.data());
+                    safeProcessEvent(rootBorder, setBrushColorFn, cb.data());
                 }
             }
             auto* setBorderPadFn = rootBorder->GetFunctionByNameInChain(STR("SetPadding"));
@@ -2063,7 +2063,7 @@
                     std::vector<uint8_t> pp(sz, 0);
                     auto* m = reinterpret_cast<float*>(pp.data() + pPad->GetOffset_Internal());
                     m[0] = 12.0f; m[1] = 8.0f; m[2] = 12.0f; m[3] = 8.0f;
-                    rootBorder->ProcessEvent(setBorderPadFn, pp.data());
+                    safeProcessEvent(rootBorder, setBorderPadFn, pp.data());
                 }
             }
 
@@ -2078,7 +2078,7 @@
                 int sz = setContentFn->GetParmsSize();
                 std::vector<uint8_t> sc(sz, 0);
                 if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = vbox;
-                rootBorder->ProcessEvent(setContentFn, sc.data());
+                safeProcessEvent(rootBorder, setContentFn, sc.data());
             }
 
             auto* addToVBoxFn = vbox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
@@ -2092,13 +2092,13 @@
             umgSetText(tb, L"");
             umgSetTextColor(tb, 1.0f, 0.85f, 0.6f, 1.0f);
             auto* wrapFn = tb->GetFunctionByNameInChain(STR("SetAutoWrapText"));
-            if (wrapFn) { int ws = wrapFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapFn, STR("InAutoWrapText")); if (pw) *reinterpret_cast<bool*>(wp.data() + pw->GetOffset_Internal()) = true; tb->ProcessEvent(wrapFn, wp.data()); }
+            if (wrapFn) { int ws = wrapFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapFn, STR("InAutoWrapText")); if (pw) *reinterpret_cast<bool*>(wp.data() + pw->GetOffset_Internal()) = true; safeProcessEvent(tb, wrapFn, wp.data()); }
             auto* wrapAtFn = tb->GetFunctionByNameInChain(STR("SetWrapTextAt"));
-            if (wrapAtFn) { int ws = wrapAtFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapAtFn, STR("InWrapTextAt")); if (pw) *reinterpret_cast<float*>(wp.data() + pw->GetOffset_Internal()) = 380.0f; tb->ProcessEvent(wrapAtFn, wp.data()); }
+            if (wrapAtFn) { int ws = wrapAtFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapAtFn, STR("InWrapTextAt")); if (pw) *reinterpret_cast<float*>(wp.data() + pw->GetOffset_Internal()) = 380.0f; safeProcessEvent(tb, wrapAtFn, wp.data()); }
             int sz = addToVBoxFn->GetParmsSize();
             std::vector<uint8_t> ap(sz, 0);
             if (vbC) *reinterpret_cast<UObject**>(ap.data() + vbC->GetOffset_Internal()) = tb;
-            vbox->ProcessEvent(addToVBoxFn, ap.data());
+            safeProcessEvent(vbox, addToVBoxFn, ap.data());
             m_ebMessageLabel = tb;
 
 
@@ -2109,7 +2109,7 @@
                 int vsz = addToViewportFn->GetParmsSize();
                 std::vector<uint8_t> vp(vsz, 0);
                 if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 110;
-                userWidget->ProcessEvent(addToViewportFn, vp.data());
+                safeProcessEvent(userWidget, addToViewportFn, vp.data());
             }
 
             m_screen.refresh(findPlayerController());
@@ -2125,7 +2125,7 @@
                     std::vector<uint8_t> sb(ssz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
                     v[0] = 420.0f * uiScale; v[1] = 60.0f * uiScale;
-                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
+                    safeProcessEvent(userWidget, setDesiredSizeFn, sb.data());
                 }
             }
 
@@ -2139,7 +2139,7 @@
                     std::vector<uint8_t> al(asz, 0);
                     auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
                     v[0] = 0.5f; v[1] = 0.0f;
-                    userWidget->ProcessEvent(setAlignFn, al.data());
+                    safeProcessEvent(userWidget, setAlignFn, al.data());
                 }
             }
 
@@ -2153,7 +2153,7 @@
 
 
             auto* setVisFn = userWidget->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (setVisFn) { uint8_t p[8]{}; p[0] = 1; userWidget->ProcessEvent(setVisFn, p); }
+            if (setVisFn) { uint8_t p[8]{}; p[0] = 1; safeProcessEvent(userWidget, setVisFn, p); }
 
             m_errorBoxWidget = userWidget;
             VLOG(STR("[MoriaCppMod] [EB] Error Box UMG widget created\n"));
@@ -2163,7 +2163,7 @@
         {
             if (!m_errorBoxWidget) return;
             auto* fn = m_errorBoxWidget->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (fn) { uint8_t p[8]{}; p[0] = 1; m_errorBoxWidget->ProcessEvent(fn, p); }
+            if (fn) { uint8_t p[8]{}; p[0] = 1; safeProcessEvent(m_errorBoxWidget, fn, p); }
             m_ebShowTick = 0;
         }
 
@@ -2184,7 +2184,7 @@
             }
 
             auto* fn = m_errorBoxWidget->GetFunctionByNameInChain(STR("SetVisibility"));
-            if (fn) { uint8_t p[8]{}; p[0] = 0; m_errorBoxWidget->ProcessEvent(fn, p); }
+            if (fn) { uint8_t p[8]{}; p[0] = 0; safeProcessEvent(m_errorBoxWidget, fn, p); }
 
             m_ebShowTick = GetTickCount64();
             VLOG(STR("[MoriaCppMod] [EB] showInfoMessage: '{}'\n"), message);
@@ -2332,7 +2332,7 @@
             if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
             if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = userWidgetClass;
             if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
-            wblCDO->ProcessEvent(createFn, cp.data());
+            safeProcessEvent(wblCDO, createFn, cp.data());
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) { showErrorBox(L"MC: CreateWidget null!"); return; }
 
@@ -2365,7 +2365,7 @@
                     std::vector<uint8_t> cb(sz, 0);
                     auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
                     c[0] = 0.0f; c[1] = 0.0f; c[2] = 0.0f; c[3] = 0.0f;
-                    outerBorder->ProcessEvent(setBrushColorFn, cb.data());
+                    safeProcessEvent(outerBorder, setBrushColorFn, cb.data());
                 }
             }
             auto* setBorderPadFn = outerBorder->GetFunctionByNameInChain(STR("SetPadding"));
@@ -2376,7 +2376,7 @@
                 {
                     int sz = setBorderPadFn->GetParmsSize();
                     std::vector<uint8_t> pp(sz, 0);
-                    outerBorder->ProcessEvent(setBorderPadFn, pp.data());
+                    safeProcessEvent(outerBorder, setBorderPadFn, pp.data());
                 }
             }
 
@@ -2392,7 +2392,7 @@
                 int sz = setContentFn->GetParmsSize();
                 std::vector<uint8_t> sc(sz, 0);
                 if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = rootVBox;
-                outerBorder->ProcessEvent(setContentFn, sc.data());
+                safeProcessEvent(outerBorder, setContentFn, sc.data());
             }
 
 
@@ -2708,7 +2708,7 @@
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
                     v[0] = mcTotalW; v[1] = mcTotalH;
-                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
+                    safeProcessEvent(userWidget, setDesiredSizeFn, sb.data());
                 }
             }
 
@@ -2720,7 +2720,7 @@
                 int sz = addToViewportFn->GetParmsSize();
                 std::vector<uint8_t> vp(sz, 0);
                 if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 100;
-                userWidget->ProcessEvent(addToViewportFn, vp.data());
+                safeProcessEvent(userWidget, addToViewportFn, vp.data());
             }
 
 
@@ -2734,7 +2734,7 @@
                     std::vector<uint8_t> al(sz, 0);
                     auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
                     v[0] = 0.5f; v[1] = 0.5f;
-                    userWidget->ProcessEvent(setAlignFn, al.data());
+                    safeProcessEvent(userWidget, setAlignFn, al.data());
                 }
             }
 
@@ -2844,7 +2844,7 @@
             if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
             if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = userWidgetClass;
             if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
-            wblCDO->ProcessEvent(createFn, cp.data());
+            safeProcessEvent(wblCDO, createFn, cp.data());
             UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
             if (!userWidget) { showErrorBox(L"FontTest: CreateWidget failed!"); return; }
 
@@ -2866,7 +2866,7 @@
 
             {
                 auto* setClipFn = rootOverlay->GetFunctionByNameInChain(STR("SetClipping"));
-                if (setClipFn) { int sz = setClipFn->GetParmsSize(); std::vector<uint8_t> cp(sz, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp.data() + p->GetOffset_Internal()) = 1; rootOverlay->ProcessEvent(setClipFn, cp.data()); }
+                if (setClipFn) { int sz = setClipFn->GetParmsSize(); std::vector<uint8_t> cp(sz, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp.data() + p->GetOffset_Internal()) = 1; safeProcessEvent(rootOverlay, setClipFn, cp.data()); }
             }
 
 
@@ -3054,7 +3054,7 @@
                                 std::vector<uint8_t> cb(sz, 0);
                                 auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
                                 c[0] = 0.05f; c[1] = 0.05f; c[2] = 0.08f; c[3] = 0.4f;
-                                frameBorder->ProcessEvent(setBrushColorFn, cb.data());
+                                safeProcessEvent(frameBorder, setBrushColorFn, cb.data());
                             }
                         }
                         addToOverlay(rightOverlay, frameBorder);
@@ -3070,11 +3070,11 @@
                         m_ftScrollBox = scrollBox;
 
                         auto* setHOvFn = rightSizeBox->GetFunctionByNameInChain(STR("SetHeightOverride"));
-                        if (setHOvFn) { int sz = setHOvFn->GetParmsSize(); std::vector<uint8_t> hp(sz, 0); auto* p = findParam(setHOvFn, STR("InHeightOverride")); if (p) *reinterpret_cast<float*>(hp.data() + p->GetOffset_Internal()) = 815.0f; rightSizeBox->ProcessEvent(setHOvFn, hp.data()); }
+                        if (setHOvFn) { int sz = setHOvFn->GetParmsSize(); std::vector<uint8_t> hp(sz, 0); auto* p = findParam(setHOvFn, STR("InHeightOverride")); if (p) *reinterpret_cast<float*>(hp.data() + p->GetOffset_Internal()) = 815.0f; safeProcessEvent(rightSizeBox, setHOvFn, hp.data()); }
 
                         // Set width to fill available space (fixes scrollbar not expanding)
                         auto* setWOvFn = rightSizeBox->GetFunctionByNameInChain(STR("SetWidthOverride"));
-                        if (setWOvFn) { int sz = setWOvFn->GetParmsSize(); std::vector<uint8_t> wp(sz, 0); auto* p = findParam(setWOvFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = 960.0f; rightSizeBox->ProcessEvent(setWOvFn, wp.data()); }
+                        if (setWOvFn) { int sz = setWOvFn->GetParmsSize(); std::vector<uint8_t> wp(sz, 0); auto* p = findParam(setWOvFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = 960.0f; safeProcessEvent(rightSizeBox, setWOvFn, wp.data()); }
 
                         auto* setChildFn = rightSizeBox->GetFunctionByNameInChain(STR("SetContent"));
                         if (!setChildFn) setChildFn = rightSizeBox->GetFunctionByNameInChain(STR("AddChild"));
@@ -3082,7 +3082,7 @@
                         {
                             auto* pChild = findParam(setChildFn, STR("Content"));
                             if (!pChild) pChild = findParam(setChildFn, STR("InContent"));
-                            if (pChild) { int sz = setChildFn->GetParmsSize(); std::vector<uint8_t> cp(sz, 0); *reinterpret_cast<UObject**>(cp.data() + pChild->GetOffset_Internal()) = scrollBox; rightSizeBox->ProcessEvent(setChildFn, cp.data()); }
+                            if (pChild) { int sz = setChildFn->GetParmsSize(); std::vector<uint8_t> cp(sz, 0); *reinterpret_cast<UObject**>(cp.data() + pChild->GetOffset_Internal()) = scrollBox; safeProcessEvent(rightSizeBox, setChildFn, cp.data()); }
                         }
                         UObject* sbSlot = addToOverlay(rightOverlay, rightSizeBox);
                         if (sbSlot)
@@ -3099,7 +3099,7 @@
                             int sz = alwaysShowFn->GetParmsSize();
                             std::vector<uint8_t> buf(sz, 0);
                             if (p) *reinterpret_cast<bool*>(buf.data() + p->GetOffset_Internal()) = true;
-                            scrollBox->ProcessEvent(alwaysShowFn, buf.data());
+                            safeProcessEvent(scrollBox, alwaysShowFn, buf.data());
                         }
 
                         // Add padding between content and scrollbar
@@ -3117,7 +3117,7 @@
                                 m[1] = 0.0f;
                                 m[2] = 0.0f;
                                 m[3] = 0.0f;
-                                scrollBox->ProcessEvent(setPaddingFn, buf.data());
+                                safeProcessEvent(scrollBox, setPaddingFn, buf.data());
                             }
                         }
                     }
@@ -3191,7 +3191,7 @@
                                                     addToOverlay(cbOl, chkImg);
                                                     m_ftNoCollisionCheckImg = chkImg;
                                                     auto* visFn = chkImg->GetFunctionByNameInChain(STR("SetVisibility"));
-                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = 1; chkImg->ProcessEvent(visFn, vp); }
+                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = 1; safeProcessEvent(chkImg, visFn, vp); }
                                                 }
                                             }
                                             UObject* cbSlot = addToHBox(ncRow, cbOl);
@@ -3325,7 +3325,7 @@
                                                     *gob.checkImgPtr = chkImg;
 
                                                     auto* visFn = chkImg->GetFunctionByNameInChain(STR("SetVisibility"));
-                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = 1; chkImg->ProcessEvent(visFn, vp); }
+                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = 1; safeProcessEvent(chkImg, visFn, vp); }
                                                 }
                                             }
                                             UObject* cbSlot = addToHBox(goRow, cbOl);
@@ -3497,7 +3497,7 @@
                                                     if (!gm.enabled)
                                                     {
                                                         auto* visFn = chkImg->GetFunctionByNameInChain(STR("SetVisibility"));
-                                                        if (visFn) { uint8_t vp[8]{}; vp[0] = 2; chkImg->ProcessEvent(visFn, vp); }
+                                                        if (visFn) { uint8_t vp[8]{}; vp[0] = 2; safeProcessEvent(chkImg, visFn, vp); }
                                                     }
                                                 }
                                             }
@@ -3648,7 +3648,7 @@
                                             if (!s_bindings[b].enabled)
                                             {
                                                 auto* visFn = chkImg->GetFunctionByNameInChain(STR("SetVisibility"));
-                                                if (visFn) { uint8_t vp[8]{}; vp[0] = 2; chkImg->ProcessEvent(visFn, vp); }
+                                                if (visFn) { uint8_t vp[8]{}; vp[0] = 2; safeProcessEvent(chkImg, visFn, vp); }
                                             }
                                         }
                                     }
@@ -3759,7 +3759,7 @@
                 int sz = addToViewportFn->GetParmsSize();
                 std::vector<uint8_t> vp(sz, 0);
                 if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 200;
-                userWidget->ProcessEvent(addToViewportFn, vp.data());
+                safeProcessEvent(userWidget, addToViewportFn, vp.data());
             }
 
 
@@ -3773,7 +3773,7 @@
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
                     v[0] = 1540.0f; v[1] = 880.0f;  // wider than original 1440 for scrollbar spacing
-                    userWidget->ProcessEvent(setDesiredSizeFn, sb.data());
+                    safeProcessEvent(userWidget, setDesiredSizeFn, sb.data());
                 }
             }
 
@@ -3788,7 +3788,7 @@
                     std::vector<uint8_t> al(sz, 0);
                     auto* v = reinterpret_cast<float*>(al.data() + pAlign->GetOffset_Internal());
                     v[0] = 0.5f; v[1] = 0.5f;
-                    userWidget->ProcessEvent(setAlignFn, al.data());
+                    safeProcessEvent(userWidget, setAlignFn, al.data());
                 }
             }
 
@@ -3838,7 +3838,7 @@
             if (m_ftScrollBox)
             {
                 auto* clearFn = m_ftScrollBox->GetFunctionByNameInChain(STR("ClearChildren"));
-                if (clearFn) m_ftScrollBox->ProcessEvent(clearFn, nullptr);
+                if (clearFn) safeProcessEvent(m_ftScrollBox, clearFn, nullptr);
                 if (m_ftTabContent[tab])
                     addChildToPanel(m_ftScrollBox, STR("AddChild"), m_ftTabContent[tab]);
 
@@ -3846,7 +3846,7 @@
                 if (setScrollFn)
                 {
                     auto* pOff = findParam(setScrollFn, STR("NewScrollOffset"));
-                    if (pOff) { int sz = setScrollFn->GetParmsSize(); std::vector<uint8_t> sp(sz, 0); *reinterpret_cast<float*>(sp.data() + pOff->GetOffset_Internal()) = 0.0f; m_ftScrollBox->ProcessEvent(setScrollFn, sp.data()); }
+                    if (pOff) { int sz = setScrollFn->GetParmsSize(); std::vector<uint8_t> sp(sz, 0); *reinterpret_cast<float*>(sp.data() + pOff->GetOffset_Internal()) = 0.0f; safeProcessEvent(m_ftScrollBox, setScrollFn, sp.data()); }
                 }
             }
 
@@ -3886,7 +3886,7 @@
             if (m_ftNoCollisionCheckImg)
             {
                 auto* visFn = m_ftNoCollisionCheckImg->GetFunctionByNameInChain(STR("SetVisibility"));
-                if (visFn) { uint8_t p[8]{}; p[0] = on ? 0 : 1; m_ftNoCollisionCheckImg->ProcessEvent(visFn, p); }
+                if (visFn) { uint8_t p[8]{}; p[0] = on ? 0 : 1; safeProcessEvent(m_ftNoCollisionCheckImg, visFn, p); }
             }
             if (m_ftNoCollisionKeyLabel)
             {
@@ -3908,7 +3908,7 @@
             {
                 if (!item.img) continue;
                 auto* visFn = item.img->GetFunctionByNameInChain(STR("SetVisibility"));
-                if (visFn) { uint8_t p[8]{}; p[0] = item.on ? 0 : 1; item.img->ProcessEvent(visFn, p); }
+                if (visFn) { uint8_t p[8]{}; p[0] = item.on ? 0 : 1; safeProcessEvent(item.img, visFn, p); }
             }
         }
 
@@ -3943,7 +3943,7 @@
             if (validFn && libCDO)
             {
                 struct { bool ReturnValue{false}; } vp{};
-                libCDO->ProcessEvent(validFn, &vp);
+                safeProcessEvent(libCDO, validFn, &vp);
                 if (!vp.ReturnValue)
                 {
                     showErrorBox(L"Save: system not ready");
@@ -3966,7 +3966,7 @@
                     auto* cm = pc->GetValuePtrByPropertyNameInChain<UObject*>(STR("CheatManager"));
                     if (cmFn && cm && *cm)
                     {
-                        (*cm)->ProcessEvent(cmFn, nullptr);
+                        safeProcessEvent((*cm), cmFn, nullptr);
                         m_lastSaveTime = now;
                         showInfoMessage(L"Game Saved");
                         VLOG(STR("[MoriaCppMod] [Save] Triggered via CheatManager::SaveSystemAutoSave\n"));
@@ -3984,7 +3984,7 @@
                 return;
             }
 
-            cheatsComp->ProcessEvent(saveFn, nullptr);
+            safeProcessEvent(cheatsComp, saveFn, nullptr);
             m_lastSaveTime = now;
             showInfoMessage(L"Game Saved");
             VLOG(STR("[MoriaCppMod] [Save] Triggered via MorCheatsComponent::ServerAutoSave\n"));
@@ -4026,7 +4026,7 @@
             *reinterpret_cast<UObject**>(cp.data() + pOwner->GetOffset_Internal()) = pc;
             *reinterpret_cast<UObject**>(cp.data() + pClass->GetOffset_Internal()) = userWidgetClass;
             if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
-            wblCDO->ProcessEvent(createFn, cp.data());
+            safeProcessEvent(wblCDO, createFn, cp.data());
             UObject* userWidget = pRet ? *reinterpret_cast<UObject**>(cp.data() + pRet->GetOffset_Internal()) : nullptr;
             if (!userWidget) { VLOG(STR("[MoriaCppMod] [Rename] FAIL: userWidget is null\n")); return; }
             VLOG(STR("[MoriaCppMod] [Rename] CP1: userWidget created\n"));
@@ -4051,7 +4051,7 @@
 
             {
                 auto* setClipFn = rootOl->GetFunctionByNameInChain(STR("SetClipping"));
-                if (setClipFn) { int sz2 = setClipFn->GetParmsSize(); std::vector<uint8_t> cp2(sz2, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp2.data() + p->GetOffset_Internal()) = 1; rootOl->ProcessEvent(setClipFn, cp2.data()); }
+                if (setClipFn) { int sz2 = setClipFn->GetParmsSize(); std::vector<uint8_t> cp2(sz2, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp2.data() + p->GetOffset_Internal()) = 1; safeProcessEvent(rootOl, setClipFn, cp2.data()); }
             }
 
             VLOG(STR("[MoriaCppMod] [Rename] CP3: rootOl + clipping done\n"));
@@ -4123,7 +4123,7 @@
 
                             int gsz = getFn->GetParmsSize();
                             std::vector<uint8_t> gbuf(gsz, 0);
-                            target->ProcessEvent(getFn, gbuf.data());
+                            safeProcessEvent(target, getFn, gbuf.data());
                             auto* retProp = findParam(getFn, STR("ReturnValue"));
                             if (retProp)
                             {
@@ -4182,13 +4182,13 @@
                         }
 
                         auto* setWOvFn = editSizeBox->GetFunctionByNameInChain(STR("SetWidthOverride"));
-                        if (setWOvFn) { int wsz = setWOvFn->GetParmsSize(); std::vector<uint8_t> wp(wsz, 0); auto* p = findParam(setWOvFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = dlgW - 40.0f; editSizeBox->ProcessEvent(setWOvFn, wp.data()); }
+                        if (setWOvFn) { int wsz = setWOvFn->GetParmsSize(); std::vector<uint8_t> wp(wsz, 0); auto* p = findParam(setWOvFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = dlgW - 40.0f; safeProcessEvent(editSizeBox, setWOvFn, wp.data()); }
                         auto* setHOvFn = editSizeBox->GetFunctionByNameInChain(STR("SetHeightOverride"));
-                        if (setHOvFn) { int hsz = setHOvFn->GetParmsSize(); std::vector<uint8_t> hp(hsz, 0); auto* p = findParam(setHOvFn, STR("InHeightOverride")); if (p) *reinterpret_cast<float*>(hp.data() + p->GetOffset_Internal()) = 50.0f; editSizeBox->ProcessEvent(setHOvFn, hp.data()); }
+                        if (setHOvFn) { int hsz = setHOvFn->GetParmsSize(); std::vector<uint8_t> hp(hsz, 0); auto* p = findParam(setHOvFn, STR("InHeightOverride")); if (p) *reinterpret_cast<float*>(hp.data() + p->GetOffset_Internal()) = 50.0f; safeProcessEvent(editSizeBox, setHOvFn, hp.data()); }
 
                         auto* setChildFn = editSizeBox->GetFunctionByNameInChain(STR("SetContent"));
                         if (!setChildFn) setChildFn = editSizeBox->GetFunctionByNameInChain(STR("AddChild"));
-                        if (setChildFn) { auto* pChild = findParam(setChildFn, STR("Content")); if (!pChild) pChild = findParam(setChildFn, STR("InContent")); if (pChild) { int csz = setChildFn->GetParmsSize(); std::vector<uint8_t> cbuf(csz, 0); *reinterpret_cast<UObject**>(cbuf.data() + pChild->GetOffset_Internal()) = editBox; editSizeBox->ProcessEvent(setChildFn, cbuf.data()); } }
+                        if (setChildFn) { auto* pChild = findParam(setChildFn, STR("Content")); if (!pChild) pChild = findParam(setChildFn, STR("InContent")); if (pChild) { int csz = setChildFn->GetParmsSize(); std::vector<uint8_t> cbuf(csz, 0); *reinterpret_cast<UObject**>(cbuf.data() + pChild->GetOffset_Internal()) = editBox; safeProcessEvent(editSizeBox, setChildFn, cbuf.data()); } }
                         VLOG(STR("[MoriaCppMod] [Rename] CP5c: SizeBox configured, about to SetHintText...\n"));
 
                         auto* setHintFn = editBox->GetFunctionByNameInChain(STR("SetHintText"));
@@ -4202,7 +4202,7 @@
                                 std::vector<uint8_t> hbuf(hsz, 0);
                                 FText hintText(STR("Enter new name..."));
                                 std::memcpy(hbuf.data() + pHint->GetOffset_Internal(), &hintText, sizeof(FText));
-                                editBox->ProcessEvent(setHintFn, hbuf.data());
+                                safeProcessEvent(editBox, setHintFn, hbuf.data());
                             }
                         }
                         UObject* editSlot = addToVBox(contentVBox, editSizeBox);
@@ -4262,7 +4262,7 @@
                 int avSz = addToViewportFn->GetParmsSize();
                 std::vector<uint8_t> vp(avSz, 0);
                 if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 300;
-                userWidget->ProcessEvent(addToViewportFn, vp.data());
+                safeProcessEvent(userWidget, addToViewportFn, vp.data());
             }
 
 
@@ -4270,12 +4270,12 @@
             if (setDesiredSizeFn)
             {
                 auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
-                if (pSize) { int ssz = setDesiredSizeFn->GetParmsSize(); std::vector<uint8_t> sb(ssz, 0); auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal()); v[0] = dlgW; v[1] = dlgH; userWidget->ProcessEvent(setDesiredSizeFn, sb.data()); }
+                if (pSize) { int ssz = setDesiredSizeFn->GetParmsSize(); std::vector<uint8_t> sb(ssz, 0); auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal()); v[0] = dlgW; v[1] = dlgH; safeProcessEvent(userWidget, setDesiredSizeFn, sb.data()); }
             }
 
 
             auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
-            if (setAlignFn) { auto* pAlign = findParam(setAlignFn, STR("Alignment")); if (pAlign) { int asz = setAlignFn->GetParmsSize(); std::vector<uint8_t> ab(asz, 0); auto* a = reinterpret_cast<float*>(ab.data() + pAlign->GetOffset_Internal()); a[0] = 0.5f; a[1] = 0.5f; userWidget->ProcessEvent(setAlignFn, ab.data()); } }
+            if (setAlignFn) { auto* pAlign = findParam(setAlignFn, STR("Alignment")); if (pAlign) { int asz = setAlignFn->GetParmsSize(); std::vector<uint8_t> ab(asz, 0); auto* a = reinterpret_cast<float*>(ab.data() + pAlign->GetOffset_Internal()); a[0] = 0.5f; a[1] = 0.5f; safeProcessEvent(userWidget, setAlignFn, ab.data()); } }
 
 
             setWidgetPosition(userWidget, m_screen.fracToPixelX(0.5f), m_screen.fracToPixelY(0.5f), true);
@@ -4316,7 +4316,7 @@
 
             int gsz = getFn->GetParmsSize();
             std::vector<uint8_t> gbuf(gsz, 0);
-            m_ftRenameInput->ProcessEvent(getFn, gbuf.data());
+            safeProcessEvent(m_ftRenameInput, getFn, gbuf.data());
 
             auto* retProp = findParam(getFn, STR("ReturnValue"));
             if (!retProp) { hideRenameDialog(); return; }
@@ -4355,7 +4355,7 @@
             if (!outer) outer = m_ftRemovalVBox;
 
             auto* clearFn = m_ftRemovalVBox->GetFunctionByNameInChain(STR("ClearChildren"));
-            if (clearFn) m_ftRemovalVBox->ProcessEvent(clearFn, nullptr);
+            if (clearFn) safeProcessEvent(m_ftRemovalVBox, clearFn, nullptr);
 
             int count = s_config.removalCount.load();
             if (m_ftRemovalHeader)

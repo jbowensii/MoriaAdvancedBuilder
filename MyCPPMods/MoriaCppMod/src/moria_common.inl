@@ -22,7 +22,7 @@ struct ScreenCoords
                       STR("/Script/UMG.Default__WidgetLayoutLibrary"));
         if (!fn || !cdo) return 1.0f;
         struct { UObject* WCO{nullptr}; float RV{1.0f}; } p{worldContext};
-        cdo->ProcessEvent(fn, &p);
+        safeProcessEvent(cdo, fn, &p);
         return (p.RV > 0.1f) ? p.RV : 1.0f;
     }
 
@@ -33,7 +33,7 @@ struct ScreenCoords
         auto* fn = playerController->GetFunctionByNameInChain(STR("GetViewportSize"));
         if (!fn) return false;
         struct { int32_t SizeX{0}, SizeY{0}; } params{};
-        playerController->ProcessEvent(fn, &params);
+        safeProcessEvent(playerController, fn, &params);
         if (params.SizeX > 0) viewW = params.SizeX;
         if (params.SizeY > 0) viewH = params.SizeY;
 
@@ -120,7 +120,7 @@ UObject* getPawn()
     {
         UObject* Ret{nullptr};
     } p{};
-    pc->ProcessEvent(fn, &p);
+    safeProcessEvent(pc, fn, &p);
     return p.Ret;
 }
 
@@ -131,7 +131,7 @@ FVec3f getPawnLocation()
     if (!pawn) return loc;
     auto* fn = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation"));
     if (!fn) return loc;
-    pawn->ProcessEvent(fn, &loc);
+    safeProcessEvent(pawn, fn, &loc);
     return loc;
 }
 
@@ -143,7 +143,7 @@ void setWidgetVisibility(UObject* widget, uint8_t vis)
     if (!fn) return;
     uint8_t parms[8]{};
     parms[0] = vis;
-    widget->ProcessEvent(fn, parms);
+    safeProcessEvent(widget, fn, parms);
 }
 
 
@@ -158,7 +158,7 @@ UObject* addChildToPanel(UObject* parent, const wchar_t* fnName, UObject* child)
     std::vector<uint8_t> ap(sz, 0);
     if (pC && pC->GetOffset_Internal() >= 0 && pC->GetOffset_Internal() + (int)sizeof(UObject*) <= sz)
         *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = child;
-    parent->ProcessEvent(fn, ap.data());
+    safeProcessEvent(parent, fn, ap.data());
     if (pR && pR->GetOffset_Internal() >= 0 && pR->GetOffset_Internal() + (int)sizeof(UObject*) <= sz)
         return *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal());
     return nullptr;
@@ -201,7 +201,7 @@ UObject* findWidgetByClass(const wchar_t* className, bool requireVisible = false
                 {
                     bool Ret{false};
                 } vp{};
-                w->ProcessEvent(visFunc, &vp);
+                safeProcessEvent(w, visFunc, &vp);
                 if (vp.Ret) return w;
             }
         }

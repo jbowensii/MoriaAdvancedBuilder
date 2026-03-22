@@ -17,7 +17,7 @@
             std::vector<uint8_t> buf(s_dsp.parmsSize, 0);
             std::memcpy(buf.data() + s_dsp.ScreenX, &centerX, 4);
             std::memcpy(buf.data() + s_dsp.ScreenY, &centerY, 4);
-            pc->ProcessEvent(deprojFunc, buf.data());
+            safeProcessEvent(pc, deprojFunc, buf.data());
 
             FVec3f cameraLoc{}, worldDir{};
             std::memcpy(&cameraLoc, buf.data() + s_dsp.WorldLocation, 12);
@@ -89,7 +89,7 @@
             GetInstanceTransform_Params gtp{};
             gtp.InstanceIndex = instanceIndex;
             gtp.bWorldSpace = 1;
-            comp->ProcessEvent(transFunc, &gtp);
+            safeProcessEvent(comp, transFunc, &gtp);
             if (!gtp.ReturnValue) return false;
 
             FTransformRaw hidden = gtp.OutTransform;
@@ -102,7 +102,7 @@
             params[s_uit.bWorldSpace] = 1;
             params[s_uit.bMarkRenderStateDirty] = 1;
             params[s_uit.bTeleport] = 1;
-            comp->ProcessEvent(updateFunc, params.data());
+            safeProcessEvent(comp, updateFunc, params.data());
             return params[s_uit.ReturnValue] != 0;
         }
 
@@ -121,7 +121,7 @@
             params[s_uit.bWorldSpace] = 1;
             params[s_uit.bMarkRenderStateDirty] = 1;
             params[s_uit.bTeleport] = 1;
-            comp->ProcessEvent(updateFunc, params.data());
+            safeProcessEvent(comp, updateFunc, params.data());
             return params[s_uit.ReturnValue] != 0;
         }
 
@@ -169,7 +169,7 @@
                 params[s_lt.DrawDebugType] = 0;
             }
 
-            kslCDO->ProcessEvent(ltFunc, params.data());
+            safeProcessEvent(kslCDO, ltFunc, params.data());
 
             bool bHit = params[s_lt.ReturnValue] != 0;
             if (bHit)
@@ -196,9 +196,9 @@
         {
             if (!m_characterLoaded) return false;
 
-            // Re-find WorldLayout each time — it may be destroyed on world transition
-            m_worldLayout = nullptr;
-            findWorldLayout();
+            // Validate cached WorldLayout — re-find only if stale
+            if (m_worldLayout && !isObjectAlive(m_worldLayout)) m_worldLayout = nullptr;
+            if (!m_worldLayout) findWorldLayout();
             if (!m_worldLayout) return false;
 
             auto* pawn = getPawn();
@@ -207,8 +207,9 @@
             auto* getLocFn = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation"));
             if (!getLocFn) return false;
             struct { FVec3f ReturnValue; } locP{};
-            pawn->ProcessEvent(getLocFn, &locP);
+            if (!safeProcessEvent(pawn, getLocFn, &locP)) return false;
 
+            if (!isObjectAlive(m_worldLayout)) { m_worldLayout = nullptr; return false; }
             auto* getBubbleFn = m_worldLayout->GetFunctionByNameInChain(STR("GetBubbleAt"));
             if (!getBubbleFn) getBubbleFn = m_worldLayout->GetFunctionByNameInChain(STR("TryGetBubbleAt"));
             if (!getBubbleFn) return false;
@@ -216,7 +217,7 @@
             struct { FVec3f pos; UObject* ReturnValue; } bubbleP{};
             bubbleP.pos = locP.ReturnValue;
             bubbleP.ReturnValue = nullptr;
-            m_worldLayout->ProcessEvent(getBubbleFn, &bubbleP);
+            if (!safeProcessEvent(m_worldLayout, getBubbleFn, &bubbleP)) return false;
 
             UObject* bubble = bubbleP.ReturnValue;
             if (!bubble) return false;
@@ -247,6 +248,36 @@
             return false;
         }
 
+        // Called from ProcessEvent hook when OnPlayerEnteredBubble delegate fires
+        void onBubbleEnteredEvent(UObject* bubble)
+        {
+            if (!bubble) return;
+
+            // Resolve DisplayName via reflection
+            auto* prop = bubble->GetPropertyByNameInChain(STR("DisplayName"));
+            if (!prop) return;
+            auto* textData = reinterpret_cast<FText*>(reinterpret_cast<uint8_t*>(bubble) + prop->GetOffset_Internal());
+            std::wstring newName = textData->ToString();
+
+            std::string newId;
+            for (wchar_t c : newName)
+            {
+                if (c == L' ') newId += '_';
+                else if (c < 128 && (std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
+                    newId += static_cast<char>(c);
+            }
+            if (newId.empty()) newId = "unknown";
+
+            if (newId != m_currentBubbleId)
+            {
+                m_currentBubbleName = newName;
+                m_currentBubbleId = newId;
+                VLOG(STR("[MoriaCppMod] [Bubble] Event: entered '{}' (id={})\n"),
+                     newName, std::wstring(newId.begin(), newId.end()));
+                m_processedComps.clear();
+            }
+        }
+
         void migrateRemovalsToBubbles()
         {
             m_worldLayout = nullptr;  // Clear before re-find to avoid stale early-return
@@ -265,7 +296,7 @@
                 struct { FVec3f pos; UObject* ReturnValue; } p{};
                 p.pos = {sr.posX, sr.posY, sr.posZ};
                 p.ReturnValue = nullptr;
-                m_worldLayout->ProcessEvent(getBubbleFn, &p);
+                safeProcessEvent(m_worldLayout, getBubbleFn, &p);
 
                 if (!p.ReturnValue) continue;
 
@@ -366,7 +397,7 @@
                 auto* transFunc = comp->GetFunctionByNameInChain(STR("GetInstanceTransform"));
 
                 GetInstanceCount_Params cp{};
-                comp->ProcessEvent(countFunc, &cp);
+                safeProcessEvent(comp, countFunc, &cp);
                 int count = cp.ReturnValue;
 
                 if (count == 0 || m_replay.instanceIdx >= count)
@@ -394,7 +425,7 @@
                             GetInstanceTransform_Params tp{};
                             tp.InstanceIndex = i;
                             tp.bWorldSpace = 1;
-                            comp->ProcessEvent(transFunc, &tp);
+                            safeProcessEvent(comp, transFunc, &tp);
                             if (tp.ReturnValue && tp.OutTransform.Translation.Z < -40000.0f) continue;
                         }
                         if (hideInstance(comp, i))
@@ -408,7 +439,7 @@
                         GetInstanceTransform_Params tp{};
                         tp.InstanceIndex = i;
                         tp.bWorldSpace = 1;
-                        comp->ProcessEvent(transFunc, &tp);
+                        safeProcessEvent(comp, transFunc, &tp);
                         if (!tp.ReturnValue) continue;
 
                         float px = tp.OutTransform.Translation.X;
@@ -515,7 +546,7 @@
             GetInstanceTransform_Params tp{};
             tp.InstanceIndex = item;
             tp.bWorldSpace = 1;
-            hitComp->ProcessEvent(transFunc, &tp);
+            safeProcessEvent(hitComp, transFunc, &tp);
             if (!tp.ReturnValue) return;
 
             float targetX = tp.OutTransform.Translation.X;
@@ -526,7 +557,7 @@
 
 
             GetInstanceCount_Params cp{};
-            hitComp->ProcessEvent(countFunc, &cp);
+            safeProcessEvent(hitComp, countFunc, &cp);
             int count = cp.ReturnValue;
 
             int hiddenCount = 0;
@@ -535,7 +566,7 @@
                 GetInstanceTransform_Params itp{};
                 itp.InstanceIndex = i;
                 itp.bWorldSpace = 1;
-                hitComp->ProcessEvent(transFunc, &itp);
+                safeProcessEvent(hitComp, transFunc, &itp);
                 if (!itp.ReturnValue) continue;
 
                 float px = itp.OutTransform.Translation.X;
@@ -632,7 +663,7 @@
             }
 
             GetInstanceCount_Params cp{};
-            hitComp->ProcessEvent(countFunc, &cp);
+            safeProcessEvent(hitComp, countFunc, &cp);
             int count = cp.ReturnValue;
 
             int hidden = 0;
@@ -643,7 +674,7 @@
                     GetInstanceTransform_Params tp{};
                     tp.InstanceIndex = i;
                     tp.bWorldSpace = 1;
-                    hitComp->ProcessEvent(transFunc, &tp);
+                    safeProcessEvent(hitComp, transFunc, &tp);
                     if (tp.ReturnValue)
                     {
 
@@ -672,7 +703,7 @@
                 {
                     std::vector<uint8_t> params(fn->GetParmsSize(), 0);
                     params[0] = m_characterHidden ? 1 : 0;
-                    dwarf->ProcessEvent(fn, params.data());
+                    safeProcessEvent(dwarf, fn, params.data());
                 }
             }
             if (m_characterHidden)
@@ -713,7 +744,7 @@
                 {
                     std::vector<uint8_t> params(fn->GetParmsSize(), 0);
                     params[0] = m_flyMode ? MOVE_Flying : MOVE_Falling;
-                    movComp->ProcessEvent(fn, params.data());
+                    safeProcessEvent(movComp, fn, params.data());
                     VLOG(STR("[MoriaCppMod] SetMovementMode({}) called\n"),
                                                     m_flyMode ? 5 : 3);
                 }
@@ -733,7 +764,7 @@
                     {
                         std::vector<uint8_t> colParams(colFn->GetParmsSize(), 0);
                         colParams[0] = shouldDisableCollision ? 0 : 1;
-                        dwarf->ProcessEvent(colFn, colParams.data());
+                        safeProcessEvent(dwarf, colFn, colParams.data());
                         VLOG(STR("[MoriaCppMod] SetActorEnableCollision({}) Ã¢â‚¬â€ noclip {}\n"),
                                                         shouldDisableCollision ? 0 : 1, shouldDisableCollision ? STR("ON") : STR("OFF"));
                     }
@@ -792,7 +823,7 @@
                 std::memcpy(params.data() + s_lt.ActorsToIgnore + 12, &one, 4);
             }
 
-            kslCDO->ProcessEvent(ltFunc, params.data());
+            safeProcessEvent(kslCDO, ltFunc, params.data());
 
             bool bHit = params[s_lt.ReturnValue] != 0;
             if (!bHit)
@@ -824,7 +855,7 @@
                 {
                     UObject* Ret{nullptr};
                 } op{};
-                hitComp->ProcessEvent(ownerFunc, &op);
+                safeProcessEvent(hitComp, ownerFunc, &op);
                 actor = op.Ret;
             }
 
@@ -849,7 +880,7 @@
                 if (getDispFn->GetParmsSize() == sizeof(FText))
                 {
                     FText txt{};
-                    actor->ProcessEvent(getDispFn, &txt);
+                    safeProcessEvent(actor, getDispFn, &txt);
                     if (txt.Data) displayName = txt.ToString();
                 }
             }
@@ -1065,7 +1096,7 @@
                                 GetInstanceTransform_Params tp{};
                                 tp.InstanceIndex = instItem;
                                 tp.bWorldSpace = 1;
-                                inspComp->ProcessEvent(transFunc, &tp);
+                                safeProcessEvent(inspComp, transFunc, &tp);
                                 if (tp.ReturnValue)
                                 {
                                     posInfo = std::format(L"Pos: ({:.0f}, {:.0f}, {:.0f}) Item #{}",

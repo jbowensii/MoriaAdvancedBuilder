@@ -469,7 +469,7 @@
                     if (pW) *reinterpret_cast<int32_t*>(params.data() + pW->GetOffset_Internal()) = 128;
                     if (pH) *reinterpret_cast<int32_t*>(params.data() + pH->GetOffset_Internal()) = 128;
                     if (pF) params[pF->GetOffset_Internal()] = 2;
-                    krlCDO->ProcessEvent(createRTFn, params.data());
+                    safeProcessEvent(krlCDO, createRTFn, params.data());
                     renderTarget = pRV ? *reinterpret_cast<UObject**>(params.data() + pRV->GetOffset_Internal()) : nullptr;
                 }
                 if (!renderTarget)
@@ -491,7 +491,7 @@
                     if (!bWC || !bRT) { VLOG(STR("[MoriaCppMod] [Icon] BeginDraw: critical params missing\n")); return false; }
                     *reinterpret_cast<UObject**>(beginParams.data() + bWC->GetOffset_Internal()) = worldCtx;
                     *reinterpret_cast<UObject**>(beginParams.data() + bRT->GetOffset_Internal()) = renderTarget;
-                    krlCDO->ProcessEvent(beginDrawFn, beginParams.data());
+                    safeProcessEvent(krlCDO, beginDrawFn, beginParams.data());
                     canvas = bCanvas ? *reinterpret_cast<UObject**>(beginParams.data() + bCanvas->GetOffset_Internal()) : nullptr;
                 }
                 if (!canvas)
@@ -510,7 +510,7 @@
                             if (bCtx && bCtx->GetSize() <= eCtx->GetSize())
                                 memcpy(eParams.data() + eCtx->GetOffset_Internal(), beginParams.data() + bCtx->GetOffset_Internal(), bCtx->GetSize());
                         }
-                        krlCDO->ProcessEvent(endDrawFn, eParams.data());
+                        safeProcessEvent(krlCDO, endDrawFn, eParams.data());
                     }
                     return false;
                 }
@@ -574,7 +574,7 @@
                         v[1] = 0.5f;
                     }
 
-                    canvas->ProcessEvent(drawTexFn, dtParams.data());
+                    safeProcessEvent(canvas, drawTexFn, dtParams.data());
                     VLOG(STR("[MoriaCppMod] [Icon] Drew texture to canvas\n"));
                     }
                 }
@@ -595,7 +595,7 @@
                             memcpy(eParams.data() + eCtx->GetOffset_Internal(), beginParams.data() + bCtx->GetOffset_Internal(), bCtx->GetSize());
                         }
                     }
-                    krlCDO->ProcessEvent(endDrawFn, eParams.data());
+                    safeProcessEvent(krlCDO, endDrawFn, eParams.data());
                     VLOG(STR("[MoriaCppMod] [Icon] EndDrawCanvasToRenderTarget OK\n"));
                 }
 
@@ -635,7 +635,7 @@
                         auto* fstr = reinterpret_cast<FString*>(eParams.data() + eFN->GetOffset_Internal());
                         *fstr = FString(fileName.c_str());
                     }
-                    krlCDO->ProcessEvent(exportRTFn, eParams.data());
+                    safeProcessEvent(krlCDO, exportRTFn, eParams.data());
                     VLOG(STR("[MoriaCppMod] [Icon] ExportRenderTarget called\n"));
                     }
                 }
@@ -655,7 +655,7 @@
                         else
                         {
                             *reinterpret_cast<UObject**>(rParams.data() + rRT->GetOffset_Internal()) = renderTarget;
-                            krlCDO->ProcessEvent(releaseRTFn, rParams.data());
+                            safeProcessEvent(krlCDO, releaseRTFn, rParams.data());
                         }
                         VLOG(STR("[MoriaCppMod] [Icon] ReleaseRenderTarget2D OK\n"));
                     }
@@ -1025,7 +1025,7 @@
             if (!getTextFunc || getTextFunc->GetParmsSize() != sizeof(FText)) return L"";
 
             FText textResult{};
-            blockNameWidget->ProcessEvent(getTextFunc, &textResult);
+            safeProcessEvent(blockNameWidget, getTextFunc, &textResult);
             if (!textResult.Data) return L"";
             return textResult.ToString();
         }
