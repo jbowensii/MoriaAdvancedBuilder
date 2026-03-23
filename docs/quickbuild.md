@@ -7,36 +7,37 @@ post-hooks, icon extraction via Canvas render targets, and overlay sync.
 ## Slot File I/O
 
 ### saveQuickBuildSlots()
-Writes `Mods/MoriaCppMod/quickbuild_slots.txt`. Format:
+Writes `Mods/MoriaCppMod/quickbuild_slots.txt` via `modPath()`. Format:
 
 ```
 # slot|displayName|textureName|rowName
 0|Stone Wall|T_StoneWall_Icon|BP_Stone_Wall_4x2m
 ```
 
-Only writes slots where `m_recipeSlots[i].used == true`. Rotation step is
-persisted separately in `MoriaCppMod.ini [Preferences]`.
+Only writes slots where `m_recipeSlots[i].used == true` (up to OVERLAY_BUILD_SLOTS=8).
+Rotation step is persisted separately in `MoriaCppMod.ini [Preferences]`.
 
 ### loadQuickBuildSlots()
 Parses the slot file via `parseSlotLine()` (returns `ParsedSlot` or
 `ParsedRotation` variant). Populates `m_recipeSlots[]` display name, texture
 name, and row name. Legacy `rotation=N` lines are still accepted for backward
-compatibility. Calls `updateOverlayText()` and `updateBuildersBar()` after load.
+compatibility. Calls `updateOverlaySlots()` and `updateBuildersBar()` after load.
 
 ### saveConfig() / loadConfig()
-INI-based config for keybindings, preferences, and toolbar positions. Supports
-migration from old `keybindings.txt` format (renames to `.bak` after migration).
+INI-based config for keybindings, preferences (including pitch/roll/trash/replenish
+toggles), and toolbar positions. Supports migration from old `keybindings.txt`
+format (renames to `.bak` after migration).
 
 ## F-key Dispatch: quickBuildSlot(slot)
 
 Guards (checked in order):
-1. **Slot range** -- F1-F8 only (0-7).
+1. **Slot range** -- F1-F8 only (0-7, checked against OVERLAY_BUILD_SLOTS).
 2. **Slot empty** -- shows assignment instructions if `!m_recipeSlots[slot].used`.
 3. **Handle resolution in progress** -- blocks during `HandleResolvePhase::Priming`
    or `Resolving`.
 4. **Debounce** -- if SM is already running (`m_qbPhase != Idle`), updates
    `m_pendingQuickBuildSlot` so the last F-key wins. The in-flight cycle picks up
-   the final slot at SelectRecipe, avoiding multiple `blockSelectedEvent` calls
+   the final slot at SelectRecipeWalk, avoiding multiple `blockSelectedEvent` calls
    that would each trigger game UI transitions and corrupt MovieScene state.
 5. **Post-completion cooldown** -- 500ms via `m_lastQBSelectTime`. Allows game UI
    cascade (HideAllScreens, StopAnimation) to settle after the previous recipe
@@ -55,6 +56,16 @@ Guards (checked in order):
 4. **Post-completion cooldown** -- same 500ms as F-keys.
 
 On pass, delegates to `startBuildFromTarget()` in `moria_placement.inl`.
+
+## HandleResolve Cooldown (v5.5.0)
+
+The handle resolution state machine processes one slot per frame with a **200ms
+per-slot cooldown** (`m_lastHandleResolveSlotTime`). This prevents rapid-fire
+`SelectRecipe` calls that caused animation state corruption. The cooldown is
+enforced after each slot resolution before moving to the next.
+
+During HandleResolve, F-key presses and toolbar clicks are blocked to prevent
+interference with the resolution process.
 
 ## Recipe Capture (Post-Hook)
 
@@ -98,8 +109,8 @@ Full Canvas render target pipeline:
 6. Converts to PNG using GDI+ (one-time init, never shutdown).
 7. Releases the render target via `ReleaseRenderTarget2D`.
 
-Icons are cached to `Mods/MoriaCppMod/icons/*.png`. Skips extraction if the PNG
-already exists on disk.
+Icons are cached to `Mods/MoriaCppMod/icons/*.png` (via `modPath()`). Skips
+extraction if the PNG already exists on disk.
 
 ### findBuildItemWidget(recipeName)
 Scans all `UI_WBP_Build_Item_Medium_C` widgets and matches by display name via

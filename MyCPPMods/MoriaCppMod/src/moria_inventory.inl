@@ -1,5 +1,6 @@
-
-
+// moria_inventory.inl — Inventory helpers: component lookup, tint/effects, trash/replenish/remove-attrs (v5.5.0)
+// SEH wrapper via safeProcessEvent from moria_common.h (shadowed local copy removed — was infinite recursion bug)
+// callServerTintItem centralizes 5 formerly copy-pasted tint blocks
 
         UObject* findActorComponentByClass(UObject* owner, const wchar_t* className)
         {

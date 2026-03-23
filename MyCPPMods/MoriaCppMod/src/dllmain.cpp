@@ -1,5 +1,7 @@
-
-
+// MoriaCppMod v5.5.0 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
+// Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
+// definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
+// Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
 
 #include "moria_common.h"
 #include "moria_reflection.h"

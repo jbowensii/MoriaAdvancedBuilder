@@ -17,6 +17,20 @@ Every widget follows the same flow:
 All function parameters are resolved via `ForEachProperty()` at runtime -- no hardcoded
 offsets. The `findParam()` helper locates parameters by name and returns their offset.
 
+All ProcessEvent calls use `safeProcessEvent()` with SEH protection and `isObjectAlive`
+validation.
+
+## Deferred Widget Removal (v5.3.0+)
+
+**`deferRemoveWidget(widget)`** -- hides a widget immediately (SetVisibility=Hidden),
+then schedules `RemoveFromParent` for the next frame. This two-phase approach prevents
+Slate `PaintFastPath` crashes that occur when removing a widget synchronously during
+the paint pass.
+
+Used at all 7+ UMG widget removal sites: config panel close, target info hide,
+crosshair hide, error box hide, trash dialog close, reposition message destroy, and
+placeholder info box destroy.
+
 ## Toolbar Types
 
 ### Builders Bar (BB, index 0)
@@ -30,10 +44,10 @@ offsets. The `findParam()` helper locates parameters by name and returns their o
 - Uniform render scale 0.81x via `SetRenderScale`
 
 ### Mod Controller (MC, index 2)
-- 4x3 grid (4 columns, 3 rows) of action buttons created via `createModControllerBar()`
-- 12 slots total (`MC_SLOTS`), each with state image, icon, and key label
-- Slots dispatch to `dispatchMcSlot()`: rotation, target, stability, super dwarf,
-  toolbar swap, snap toggle, remove target, undo, remove all, configuration
+- 3x3 grid (3 columns, 3 rows) of action buttons created via `createModControllerBar()`
+- 9 slots total (`MC_SLOTS`), each with state image, icon, and key label
+- Slots dispatch to `dispatchMcSlot()`: rotation, snap toggle, target, stability,
+  hide character / fly mode, toolbar swap, remove target, undo, remove all
 
 ### Advanced Builder (AB, index 1)
 - Single toggle button, positioned lower-right
@@ -46,17 +60,38 @@ offsets. The `findParam()` helper locates parameters by name and returns their o
 - Built from `UBorder` > `UVerticalBox` > multiple `UTextBlock` rows
 - Shown by `dumpAimedActor()` via `showTargetInfoUMG()`
 
-### Config Menu
-- 3-tab modal created by `createConfigWidget()` (line 2192)
-- Tab 0: Optional Mods (toggle checkboxes for mod features)
+### Crosshair Reticle (v5.3.6+)
+- Centered `T_UI_Bow_Reticle` texture shown when pressing ] (inspect key)
+- Resolution-scaled via `uiScale`, positioned at viewport center
+- Auto-hides after 40s (`CROSSHAIR_FADE_MS`)
+- Created lazily by `createCrosshair()`, shown/hidden via `showCrosshair()`/`hideCrosshair()`
+
+### Error/Info Box
+- Always-visible UMG box at screen bottom for status messages
+- `showInfoMessage()` for user-facing info (not debug-only like showOnScreen)
+- `showErrorBox()` for error conditions
+- Auto-hides after 5s (`ERROR_BOX_DURATION_MS`)
+
+### Trash Confirmation Dialog
+- Modal dialog shown when DEL key pressed to trash an item
+- Displays item icon, name, and stack count
+- Confirm/cancel buttons with keyboard support
+
+### Config Menu (F12 Panel)
+- 4-tab modal created by `createConfigWidget()`
+- Tab 0: Game Options (toggle checkboxes for mod features: NoCollision, Trash, Replenish, RemoveAttrs, Pitch, Roll, Save Game button)
 - Tab 1: Key Mapping (rebindable keybinds)
-- Tab 2: Hide Environment (HISM removal type rules)
+- Tab 2: Hide Environment (HISM removal entries, grouped by bubble with current bubble starred at top)
+- Tab 3: Game Mods (definition pack checkboxes, saves to GameMods.ini)
 - Switches input mode to UI-only (`setInputModeUI`) when visible
+- F12 panel alignment: `wLeft` corrected for 1540px panel width
+- Environment tab button hit detection: kbX1 = kbX0 + inner button width (300px), excludes gold frame and scrollbar zone
+- Scrollbar: Panel 1540px, rightSizeBox SetWidthOverride(960), ScrollbarPadding 60px
 
 ## DPI Scaling and Coordinate Conversion
 
 ### getViewportDpiScale(worldContext)
-- Calls `WidgetLayoutLibrary::GetViewportScale` via ProcessEvent
+- Calls `WidgetLayoutLibrary::GetViewportScale` via `safeProcessEvent`
 - Returns the engine DPI scale factor (e.g., 1.0 at 100% DPI, 1.5 at 150%)
 - Guarded: returns 1.0 if result is below 0.1
 
@@ -72,7 +107,7 @@ offsets. The `findParam()` helper locates parameters by name and returns their o
 - Widget positions stored as fractions for resolution independence
 
 ### setWidgetPosition(widget, x, y, bRemoveDPIScale)
-- Calls `SetPositionInViewport(FVector2D, bRemoveDPIScale)` via ProcessEvent
+- Calls `SetPositionInViewport(FVector2D, bRemoveDPIScale)` via `safeProcessEvent`
 - `bRemoveDPIScale=false`: position in slate units (engine won't divide by DPI again)
 - `bRemoveDPIScale=true`: position in raw pixels (engine divides by DPI scale)
 
@@ -112,3 +147,5 @@ offsets. The `findParam()` helper locates parameters by name and returns their o
 | `umgSetVAlign` | Set vertical alignment on a slot |
 | `hitTestToolbarSlot` | Hit-test cursor against all visible toolbars (BB/AB/MC) |
 | `getMousePositionSlate` | Get cursor in DPI-adjusted viewport coordinates |
+| `deferRemoveWidget` | Two-phase widget removal (hide + next-frame destroy) |
+| `setWidgetVisibility` | Set ESlateVisibility on a widget |

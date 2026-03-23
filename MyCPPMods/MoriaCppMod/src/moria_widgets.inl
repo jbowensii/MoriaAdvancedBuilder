@@ -1,5 +1,8 @@
 
-
+// moria_widgets.inl — UMG widget management, F12 config panel, crosshair reticle (v5.5.0)
+// deferRemoveWidget: hide immediately + remove next frame (prevents Slate PaintFastPath crash)
+// Crosshair reticle: T_UI_Bow_Reticle centered on screen, 40s auto-hide, resolution-scaled via uiScale
+// F12 panel: 1540px width, wLeft corrected for alignment, Environment tab grouped by bubble with icon click narrowed to 64px
 
         // ---- Deferred Widget Removal (prevents Slate PaintFastPath crash) ----
         // Widgets are hidden immediately but removed from viewport on next frame tick.

@@ -10,6 +10,66 @@ Critical structures get red PointLights, marginal ones get amber lights,
 and both receive a one-shot Niagara particle burst. Lights auto-clear
 after 10 seconds. Triggered from MC toolbar slot 2.
 
+## Code Stability Audit (v5.5.0)
+
+A separate audit of the mod's own code quality was performed. This is
+distinct from the in-game stability scan above.
+
+### Audit Results Summary
+
+**Critical (C)** -- crash risks:
+| ID | Issue | Fix |
+|----|-------|-----|
+| C1 | 350ms settle delay missing after OnAfterShow | Added `m_showSettleTime` + delay before `blockSelectedEvent` dispatch |
+| C2 | FBoolProperty `bShowMouseCursor` resolved once, cached in static | Re-resolved each call to avoid stale pointer after world reload |
+| C6 | Bubble DisplayName read via raw cast | Changed to reflection (`GetPropertyByNameInChain`) |
+| C7 | GATA trace result offsets hardcoded from CXX dump | Added runtime validation on first use, logged warning if mismatch |
+
+**High (H)** -- functional bugs:
+| ID | Issue | Fix |
+|----|-------|-----|
+| H3 | `FindAllOf("UserWidget")` searched ALL user widgets for build items | Changed to `FindAllOf("UI_WBP_Build_Item_Medium_C")` -- targets specific class |
+| H4 | RAII AutoSelectGuard missing in DIRECT path | Added guard so `m_isAutoSelecting` is always reset |
+
+**Medium (M)** -- reliability improvements:
+| ID | Issue | Fix |
+|----|-------|-----|
+| M5 | Ghost cancellation via `keybd_event(VK_ESCAPE)` | Replaced with `CancelTargeting()` ProcessEvent on GATA |
+| M6 | HandleResolve processes all slots without cooldown | Added 200ms per-slot cooldown (`m_lastHandleResolveSlotTime`) |
+| M7 | `tickPitchRoll()` runs every frame even when disabled | Added guard: early-return when both pitch/roll disabled |
+| M8 | Cached UObjects stored as raw `UObject*` | Changed to `FWeakObjectPtr` for `m_cachedBuildComp`, `m_cachedBuildHUD`, `m_cachedBuildTab`, `m_lastItemInvComp`, `m_auditSpawnedActors` |
+
+**Warning (W)** -- code quality:
+| ID | Issue | Fix |
+|----|-------|-----|
+| W8 | KeyBind strings allocated as raw `const wchar_t*` | Changed to `std::wstring` for proper lifetime management |
+
+**Info (I)** -- minor improvements:
+| ID | Issue | Fix |
+|----|-------|-----|
+| I3 | Version log message inconsistent | Fixed version string in startup log |
+
+### safeProcessEvent Wrapper
+
+All 242+ ProcessEvent calls across 12 source files are wrapped with
+`safeProcessEvent()` which provides:
+- `isObjectAlive()` pre-check (RF_BeginDestroyed, RF_FinishDestroyed, IsUnreachable)
+- SEH (Structured Exception Handling) wrapper to catch access violations
+- Returns false on failure with error logging
+- Prevents cascading crashes from stale UObject pointers
+
+**S1 Bug Fix**: `moria_inventory.inl` originally had a shadowed local
+`safeProcessEvent` function that created infinite recursion. Removed the
+shadow -- all calls now use the shared implementation from `moria_common.h`.
+
+### Additional Stability Fixes
+- **StopAllAnimations on OnAfterHide**: Cleans up lingering hide animations
+  that could cause MovieScene crash on ESC
+- **deferRemoveWidget**: Two-phase widget removal (hide immediately, remove
+  next frame) prevents Slate PaintFastPath crash -- used at all 7+ widget
+  removal sites
+- **F-key/click guard**: Blocked until HandleResolve complete
+
 ## EStabilityState Enum
 
 Values from `Moria_enums.hpp`:
@@ -36,7 +96,7 @@ Both read via `GetValuePtrByPropertyNameInChain`.
 
 ### spawnVfxAtLocation(worldContext, niagaraSystem, x, y, z)
 Fires a one-shot Niagara particle burst at the given world location using
-`NiagaraFunctionLibrary::SpawnSystemAtLocation` via ProcessEvent on the CDO.
+`NiagaraFunctionLibrary::SpawnSystemAtLocation` via `safeProcessEvent` on the CDO.
 Uses the game's own `StabilityLossVFX` Niagara system template.
 
 Parameter offsets resolved once from the UFunction and cached in statics:
@@ -59,11 +119,13 @@ Then configures the light via the root PointLightComponent (obtained via
 - **SetAttenuationRadius**: 10.0 (tight focused highlight)
 
 All function lookups and param offset resolutions are cached in statics.
-The spawned actor is tracked in `m_auditSpawnedActors` for later cleanup.
+The spawned actor is tracked in `m_auditSpawnedActors` (FWeakObjectPtr) for
+later cleanup.
 
 ### destroyAuditActors()
-Iterates `m_auditSpawnedActors` and calls `K2_DestroyActor` on each via
-ProcessEvent. Clears the vector afterward. Logs the count of destroyed actors.
+Iterates `m_auditSpawnedActors`, validates each via `FWeakObjectPtr::Get()`,
+and calls `K2_DestroyActor` on each via `safeProcessEvent`. Clears the vector
+afterward.
 
 ### clearStabilityHighlights()
 Calls `destroyAuditActors()`, clears `m_auditLocations` (position + critical
@@ -87,29 +149,6 @@ Full audit pipeline:
 7. **Highlight**: for each problem, spawns VFX (if StabilityLossVFX available)
    and PointLight. Logs distance from player for each piece.
 8. **Auto-clear timer**: sets `m_auditClearTime = GetTickCount64() + 10000`.
-
-## Data Flow
-
-```
-MC slot 2 keypress
-  -> runStabilityAudit()
-     -> clearStabilityHighlights()  [remove previous]
-     -> find MorConstructionManager (skip CDOs)
-     -> read StabilityLossVFX property
-     -> read AllStabilityComponents TArray (pointer + count)
-     -> for each component:
-        -> read State + Stability
-        -> classify: Critical / Marginal / Stable / Skip
-     -> for each problem:
-        -> GetOwner -> K2_GetActorLocation
-        -> spawnVfxAtLocation()         [Niagara particle burst]
-        -> spawnPointLightAtLocation()  [colored PointLight actor]
-     -> set auto-clear timer (10s)
-
-on_update tick:
-  -> if m_auditClearTime > 0 && GetTickCount64() > m_auditClearTime:
-     -> clearStabilityHighlights()
-```
 
 ## Tuning Constants
 

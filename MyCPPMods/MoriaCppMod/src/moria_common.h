@@ -1,5 +1,6 @@
-
-
+// moria_common.h — Shared declarations for MoriaCppMod (v5.5.0)
+// Key exports: safeProcessEvent (SEH-wrapped), modPath (s_ue4ssWorkDir prefix for all file I/O),
+// s_verbose/s_language globals, FWeakObjectPtr via UE4SS header, geometry/hit-result structs
 
 #pragma once
 

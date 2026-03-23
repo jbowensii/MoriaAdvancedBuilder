@@ -31,11 +31,14 @@ texture name changed, discards old GDI+ icon. If slot is used with a texture nam
 but no loaded icon, attempts to load `{iconFolder}\{textureName}.png` via
 `Gdiplus::Image::FromFile`. Sets `s_overlay.needsUpdate = true`.
 
+Icon folder path resolved via `modPath()` (required since process CWD differs
+from UE4SS working directory in the ue4ss/ subfolder layout).
+
 ### startOverlay()
 Initializes and launches the overlay thread:
 1. Guards against double-start (`if (s_overlay.thread) return`).
 2. Initializes critical section (`slotCS`) if not already done.
-3. Sets icon folder to `{gameDir}\Mods\MoriaCppMod\icons\`.
+3. Sets icon folder to `{ue4ssWorkDir}\Mods\MoriaCppMod\icons\`.
 4. **Initializes GDI+ early** (before thread creation) so updateOverlaySlots
    can load cached PNG icons immediately. This ordering is critical.
 5. Sets initial state: running=true, visible=m_showHotbar, activeToolbar.
@@ -59,7 +62,8 @@ GDI+ is stuck.
 ### setInputModeUI(focusWidget)
 Switches to UI-only input via `WidgetBlueprintLibrary::SetInputMode_UIOnlyEx`.
 Param offsets resolved via `resolveSIMUIOffsets`. Sets `bShowMouseCursor = true`
-on the player controller via `setBoolProp`. Mouse lock mode: DoNotLock.
+on the player controller via `setBoolProp` (C2 fix: FBoolProperty re-resolved
+each call, no stale static pointer). Mouse lock mode: DoNotLock.
 
 ### setInputModeGame()
 Restores game-only input via `WidgetBlueprintLibrary::SetInputMode_GameOnly`.
@@ -78,6 +82,19 @@ updates key labels, FreeBuild state, collision state, removal count, then calls
   VBox > TextBlocks) at Z-order 249 for drag-positioning.
 - **showTargetInfo(...)**: delegates to `showTargetInfoUMG`.
 - **undoLast()**: pops undo stack (see hism.md for details).
+
+## Crosshair Reticle (v5.3.6+)
+
+The overlay management layer also coordinates the crosshair reticle:
+- Created by `createCrosshair()` in `moria_widgets.inl` as a UMG widget
+  with `T_UI_Bow_Reticle` texture centered on screen
+- Shown via `showCrosshair()` when pressing ] (inspect key), resolution-scaled
+  via `uiScale`
+- Auto-hidden after 40s (`CROSSHAIR_FADE_MS`) in the `on_update` tick
+- Hidden via `hideCrosshair()` using `deferRemoveWidget` pattern (hide + next-frame remove)
+
+This is a UMG widget, not part of the GDI+ overlay, but its show/hide lifecycle
+is managed alongside the overlay state.
 
 ## Rendering (moria_overlay.cpp)
 
@@ -124,7 +141,7 @@ window, GdiplusShutdown, unregister class.
 Recipe assignment / icon extraction (game thread):
   -> updateOverlaySlots() [under slotCS]
      -> copies m_recipeSlots[] to s_overlay.slots[]
-     -> loads PNG icons from disk via GDI+
+     -> loads PNG icons from disk via GDI+ (using modPath for correct dir)
 
 Overlay thread (5 Hz):
   -> WM_TIMER -> renderOverlay()

@@ -1,5 +1,7 @@
-
-
+// moria_hism.inl — HISM instance removal with bubble-aware save/replay (v5.5.0)
+// Bubble tracking: updateCurrentBubble() via GetBubbleAt with 30s fallback poll
+// Save format: meshName|posX|posY|posZ|bubbleId (auto-tagged on save, bubble-filtered on replay)
+// Helpers: readBubbleDisplayName (reflection-based), bubbleNameToId (ASCII-safe), duplicate detection on load
 
         // Convert a bubble DisplayName wstring to a safe ASCII ID (spaces→underscores, alphanumeric only)
         static std::string bubbleNameToId(const std::wstring& name)

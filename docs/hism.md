@@ -10,6 +10,42 @@ Removals persist across sessions via a save file and are replayed on world load.
 Also contains fly mode, character visibility toggle, and the "dump aimed actor"
 target-info feature.
 
+Since v5.5.0, removals are tagged with bubble IDs and replayed only within the
+current bubble. Existing save files are auto-migrated on first load.
+
+## Bubble Tracking
+
+### Overview
+Return to Moria's world is divided into "bubbles" (named zones like "Great Hall",
+"Lower Deeps"). The mod tracks which bubble the player is in and associates removal
+entries with their bubble.
+
+### Detection
+Two mechanisms work together:
+1. **OnPlayerEnteredBubble delegate** (primary): ProcessEvent post-hook intercepts
+   the `AWorldLayout::OnPlayerEnteredBubble` delegate. Extracts the
+   `UWorldLayoutBubble*` from params (offset 8) and calls `onBubbleEnteredEvent()`.
+2. **30s fallback poll** (secondary): `updateCurrentBubble()` calls `GetBubbleAt()`
+   on the cached `AWorldLayout` using the pawn's location. Catches cases where the
+   delegate fires before the mod is ready.
+
+### Helper Functions
+- **`readBubbleDisplayName(bubble, outName, outId)`**: Reads the `DisplayName`
+  FText property via reflection. Returns `(wstring name, string id)`.
+- **`bubbleNameToId(name)`**: Converts a display name to an ASCII-safe ID
+  (spaces to underscores, alphanumeric only). Returns `"unknown"` if empty.
+
+### Save File Migration
+`migrateRemovalsToBubbles()` runs once at initial replay (15s after char load).
+For each removal entry without a bubbleId, calls `TryGetBubbleAt()` / `GetBubbleAt()`
+with the entry's position to resolve its bubble. Rewrites the save file with
+updated IDs.
+
+### Bubble-Filtered Replay
+`processReplayBatch()` filters position-based removals by `m_currentBubbleId`.
+Type rules apply globally (all bubbles). On bubble change, `m_processedComps` is
+cleared so the next stream check re-scans HISM components in the new bubble.
+
 ## Key Functions
 
 ### getCameraRay(outStart, outEnd)
@@ -25,7 +61,8 @@ offsets (WorldContextObject, Start, End, TraceChannel, ActorsToIgnore, OutHit, e
 resolved once via `resolveLTOffsets`. Uses Visibility channel, bTraceComplex=true,
 bIgnoreSelf=true. Player pawn added to ActorsToIgnore. Returns true on hit; copies
 the 136-byte FHitResultLocal into hitBuf. When debugDraw is true, draws red/green
-trace lines in-game for 5 seconds (ForDuration mode).
+trace lines in-game for 5 seconds (ForDuration mode). All ProcessEvent calls use
+`safeProcessEvent`.
 
 ### resolveHitComponent(hitBuf)
 Extracts the hit `UObject*` directly from `FHitResult::Component` via
@@ -48,13 +85,12 @@ Reverses a hide by writing the saved original transform back via
 ### removeAimed()
 Full pipeline: getCameraRay -> doLineTrace -> resolveHitComponent -> verify HISM
 -> find ALL stacked instances at the same position (within POS_TOLERANCE) -> hide
-each one -> push onto undo stack (with FWeakObjectPtr) -> append to save file ->
-rebuild overlay removal count. Handles stacked instances so a single keypress
-removes duplicates at the same location.
+each one -> push onto undo stack (with FWeakObjectPtr) -> append to save file
+(with bubbleId) -> rebuild overlay removal count. Handles stacked instances so a
+single keypress removes duplicates at the same location.
 
-LINT NOTE (#18): No throttle on this function by design. It fires only on keypress
-(not per-frame), and adding a throttle risks partial stack removal that would
-corrupt the undo stack.
+Duplicate detection: skips entries that match an existing `m_savedRemovals` entry
+by meshName + position within POS_TOLERANCE.
 
 ### removeAllOfType()
 Traces to identify the aimed HISM component, then records a "type rule"
@@ -69,21 +105,42 @@ the `@meshId` rule, and rewrites the save file. For single instances, restores t
 transform and removes the matching entry from `m_savedRemovals`. Uses
 `FWeakObjectPtr::Get()` to validate component pointers against GC slab reuse.
 
+### updateCurrentBubble()
+Fallback poll path. Gets pawn location via `K2_GetActorLocation`, calls
+`GetBubbleAt()` (or `TryGetBubbleAt()`) on cached WorldLayout. Reads bubble
+DisplayName via `readBubbleDisplayName()`. Returns true if bubble changed.
+
+### onBubbleEnteredEvent(bubble)
+Event-driven path. Called from the `OnPlayerEnteredBubble` ProcessEvent hook.
+Reads bubble identity, clears `m_processedComps` on change.
+
+### migrateRemovalsToBubbles()
+One-shot migration at initial replay. Iterates all `m_savedRemovals` entries with
+empty bubbleId, resolves each via `TryGetBubbleAt()`, rewrites save file.
+
 ## Data Flow
 
 ```
 Remove (keypress):
   getCameraRay -> doLineTrace -> hideInstance
     -> push m_undoStack (FWeakObjectPtr + transform)
-    -> append m_savedRemovals + save file
-    -> buildRemovalEntries (overlay count)
+    -> append m_savedRemovals + save file (with bubbleId)
+    -> duplicate detection (skip if already in m_savedRemovals)
+    -> buildRemovalEntries (overlay count, grouped by bubble)
 
 Replay (world load):
+  migrateRemovalsToBubbles() [one-shot: tag entries with bubble IDs]
   startReplay() -> queue all HISM components as FWeakObjectPtr
   processReplayBatch() [on_update, MAX_HIDES_PER_FRAME per tick]
     -> position-based: match meshId + position within POS_TOLERANCE
-    -> type rules: hide every instance of matching mesh
+       + filter by m_currentBubbleId
+    -> type rules: hide every instance of matching mesh (all bubbles)
   checkForNewComponents() -> detect streamed-in HISM -> queue new replay
+
+Bubble tracking:
+  OnPlayerEnteredBubble hook -> onBubbleEnteredEvent() [instant]
+  updateCurrentBubble() poll [30s fallback]
+    -> on change: clear m_processedComps for re-scan
 
 Undo (keypress):
   undoLast() -> restoreInstance -> remove from save -> rewrite file
@@ -92,8 +149,15 @@ Undo (keypress):
 ## Persistence Format (removed_instances.txt)
 
 ```
-# Position-based removal:
-SM_Rock_Large_01 12345.0 -6789.0 500.0
+# MoriaCppMod removed instances
+# meshName|posX|posY|posZ[|bubbleId] = single instance
+# @meshName = remove ALL of this type
+
+# Position-based removal with bubble ID:
+SM_Rock_Large_01|12345.0|-6789.0|500.0|Great_Hall
+
+# Position-based removal (legacy, no bubble):
+SM_Rock_Large_01|12345.0|-6789.0|500.0
 
 # Type rule (all instances of this mesh):
 @SM_Mushroom_Cluster_02
@@ -107,10 +171,18 @@ Spreads UpdateInstanceTransform calls across frames to avoid render thread crash
   FWeakObjectPtr queue. Sets `m_replay.active = true`.
 - `processReplayBatch()`: called from on_update. Processes up to
   MAX_HIDES_PER_FRAME (3) per tick. For type rules, hides all instances
-  (skips Z < -40000). For position-based, matches meshId + position.
-  Returns true if budget exhausted, false when complete.
+  (skips Z < -40000). For position-based, matches meshId + position +
+  bubbleId filter. Returns true if budget exhausted, false when complete.
 - `checkForNewComponents()`: detects newly streamed-in HISM components
   not in `m_processedComps` set and queues them for replay.
+
+## F12 Environment Tab (Tab 2)
+
+Removal entries are displayed grouped by bubble:
+- Current bubble marked with a star icon at top
+- Other bubbles listed alphabetically below
+- Each entry shows friendly name, coordinates, and delete button
+- Deferred rebuild: close/reopen cycle on entry deletion
 
 ## Additional Features
 
@@ -142,5 +214,8 @@ Calls `SetActorHiddenInGame` on all `BP_FGKDwarf_C` instances. Tracked via
   drift but tight enough to avoid hiding neighbor instances.
 - removeAllOfType hides all instances immediately (no per-frame throttle)
   because it runs on keypress. Very large meshes could cause a frame hitch.
-- The inspectAimed function draws debug trace lines (5s duration) that are
-  visible in-game and cannot be cleared early.
+- Bubble migration depends on WorldLayout being available at 15s post-load.
+  If WorldLayout is not yet streamed in, entries remain untagged until next
+  session.
+- The 30s fallback poll is intentionally slow. The OnPlayerEnteredBubble
+  delegate handles the fast path.

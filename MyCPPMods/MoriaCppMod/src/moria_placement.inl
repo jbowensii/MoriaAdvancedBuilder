@@ -1,5 +1,8 @@
-
-
+// moria_placement.inl — Build placement, quick-build caches, pitch/roll rotation (v5.5.0)
+// CancelTargeting: ProcessEvent on CancelPlacement (replaces keybd_event VK_ESCAPE)
+// 350ms settle delay after OnAfterShow before blockSelectedEvent dispatches
+// Pitch/roll: BuildNewConstruction ProcessEvent intercept patches FTransform quaternion
+// Caches: FWeakObjectPtr for m_cachedBuildComp, m_cachedBuildHUD, m_cachedBuildTab
 
         UObject* getCachedBuildComp()
         {

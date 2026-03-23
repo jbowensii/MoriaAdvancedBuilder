@@ -10,12 +10,32 @@ Toolbar 2. The system discovers the player's inventory component at runtime,
 creates stash containers if needed, and runs a multi-frame state machine to
 move items between the hotbar and stash containers.
 
+Also provides Trash Item (DEL), Replenish Item (INS), and Remove Attributes (END)
+features for inventory management.
+
+## safeProcessEvent and S1 Bug Fix (v5.5.0)
+
+All ProcessEvent calls in this file use `safeProcessEvent()` from `moria_common.h`.
+
+**S1 Bug Fix**: An earlier version of `moria_inventory.inl` contained a shadowed
+local `safeProcessEvent` function that created infinite recursion -- calling itself
+instead of the shared implementation. The shadow was removed; all 18+ ProcessEvent
+calls in this file now correctly use the global SEH-protected wrapper.
+
 ## Key Functions
 
+### findActorComponentByClass(owner, className)
+Generic component lookup. Searches all `ActorComponent` instances via `FindAllOf`,
+calls `GetOwner` via `safeProcessEvent` to match the specified owner, then
+compares class name. Returns the first match or nullptr.
+
 ### findPlayerInventoryComponent(playerChar)
-Searches all ActorComponents via `FindAllOf("ActorComponent")`. For each, calls
-`GetOwner` via ProcessEvent and checks if it matches the player character. Returns
-the component whose class name is exactly `MorInventoryComponent`, or nullptr.
+Convenience wrapper: `findActorComponentByClass(playerChar, "MorInventoryComponent")`.
+
+### callServerTintItem(craftComp, itemHandle, effect, interactor)
+Centralized helper for `ServerTintItem` calls. Resolves param offsets
+(`ItemHandle`, `TintEffect`, `Interactor`) via `findParam()` and calls
+`safeProcessEvent`. Replaces 5 formerly copy-pasted tint blocks (v4.0.0 cleanup).
 
 ### discoverBagHandle(invComp)
 Central discovery function that maps the player's inventory containers:
@@ -44,6 +64,32 @@ prior sessions). Iterates backward from the last handle:
 - Drops the container itself via `DropItem`
 - Resizes `m_bodyInvHandles` to 1, sets `m_repairDone = true`
 Fresh stash containers are then created by the normal creation path.
+
+## Inventory Item Management
+
+### m_lastItemInvComp (FWeakObjectPtr)
+Tracks the inventory component associated with the last picked-up/moved item.
+Changed from raw `UObject*` to `FWeakObjectPtr` in v5.5.0 (M8 fix) to guard
+against GC invalidation.
+
+### trashItem()
+Deletes the last-moved item via `DropItem` + `DestroyActor`. Shows confirmation
+dialog with icon, name, and stack count. Guarded by `m_trashItemEnabled` checkbox.
+
+### replenishItem()
+Refills the last-moved item to max stack size. Reads `MaxStackSize` from the
+item's DataTable row. Uses `ServerDebugSetItem` to set the count. Guarded by
+`m_replenishItemEnabled` checkbox.
+
+### removeItemAttributes()
+Strips tint and rune effects from the last-moved item. Calls `callServerTintItem`
+with null effect to clear tint, and `removeItemEffectFromList` for effect removal.
+Guarded by `m_removeAttrsEnabled` checkbox.
+
+### removeItemEffectFromList(invComp, itemID, effectClassName)
+Direct TArray memory manipulation to remove item effects. No UFUNCTION alternative
+exists. Bounds-checked, single-player context only.
+**WARNING [W4]**: Bypasses replication/internal bookkeeping.
 
 ## Container Layout
 
@@ -107,6 +153,12 @@ calls `EmptyContainer` on the restore source for cleanup.
 On completion: updates `m_activeToolbar`, syncs `s_overlay.activeToolbar`, sets
 `s_overlay.needsUpdate`, shows confirmation message, calls `refreshActionBar()`.
 
+## Inventory Audit (v5.0.0+)
+
+`auditInventory()` runs once, 20 seconds after character load. Scans all inventory
+slots for orphaned items (items at invalid slot indices) and removes them.
+One-shot per session, tracked by `m_inventoryAuditDone`.
+
 ## Item Handle Functions (IHF)
 
 CDO found at `/Script/FGK.Default__ItemHandleFunctions`. Used for:
@@ -140,3 +192,5 @@ PageDown keypress
   triggers when both stash containers have items (error state from prior crash).
 - FItemHandle struct internals are probed dynamically via probeItemInstanceStruct.
   Hardcoded fallback offsets exist but may break on game updates.
+- `m_lastItemInvComp` uses FWeakObjectPtr -- trash/replenish/remove-attrs
+  operations validate the pointer before use and show an error if invalidated.
