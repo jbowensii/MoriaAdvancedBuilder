@@ -1,18 +1,6 @@
 
 
 
-        static bool safeProcessEvent(UObject* obj, RC::Unreal::UFunction* fn, void* params)
-        {
-            __try {
-                safeProcessEvent(obj, fn, params);
-                return true;
-            }
-            __except (EXCEPTION_EXECUTE_HANDLER) {
-                return false;
-            }
-        }
-
-
         UObject* findActorComponentByClass(UObject* owner, const wchar_t* className)
         {
             if (!owner) return nullptr;

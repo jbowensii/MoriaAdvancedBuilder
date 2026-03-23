@@ -12,7 +12,7 @@ namespace MoriaMods
     static constexpr int MC_BIND_BASE = 8;
     static constexpr int BIND_ROTATION  = 8;
     static constexpr int BIND_SNAP      = 9;
-    static constexpr int BIND_STABILITY = 10;
+    // BIND_STABILITY (10) removed — unused
     static constexpr int BIND_TARGET    = 12;
     static constexpr int BIND_CONFIG    = 13;
     static constexpr int BIND_AB_OPEN   = 17;

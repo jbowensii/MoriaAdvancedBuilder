@@ -1,6 +1,31 @@
 
 
 
+        // Convert a bubble DisplayName wstring to a safe ASCII ID (spaces→underscores, alphanumeric only)
+        static std::string bubbleNameToId(const std::wstring& name)
+        {
+            std::string id;
+            for (wchar_t c : name)
+            {
+                if (c == L' ') id += '_';
+                else if (c < 128 && (std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
+                    id += static_cast<char>(c);
+            }
+            return id.empty() ? "unknown" : id;
+        }
+
+        // Read a bubble's DisplayName and return (name, id) pair. Returns false if unreadable.
+        static bool readBubbleDisplayName(UObject* bubble, std::wstring& outName, std::string& outId)
+        {
+            if (!bubble) return false;
+            auto* prop = bubble->GetPropertyByNameInChain(STR("DisplayName"));
+            if (!prop) return false;
+            auto* text = reinterpret_cast<FText*>(reinterpret_cast<uint8_t*>(bubble) + prop->GetOffset_Internal());
+            outName = text->ToString();
+            outId = bubbleNameToId(outName);
+            return !outId.empty();
+        }
+
         bool getCameraRay(FVec3f& outStart, FVec3f& outEnd)
         {
             auto* pc = findPlayerController();
@@ -222,20 +247,9 @@
             UObject* bubble = bubbleP.ReturnValue;
             if (!bubble) return false;
 
-            // Resolve DisplayName via reflection (safe across game updates)
-            auto* displayProp = bubble->GetPropertyByNameInChain(STR("DisplayName"));
-            if (!displayProp) return false;
-            auto* displayText = reinterpret_cast<FText*>(reinterpret_cast<uint8_t*>(bubble) + displayProp->GetOffset_Internal());
-            std::wstring newName = displayText->ToString();
-
+            std::wstring newName;
             std::string newId;
-            for (wchar_t c : newName)
-            {
-                if (c == L' ') newId += '_';
-                else if (c < 128 && (std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
-                    newId += static_cast<char>(c);
-            }
-            if (newId.empty()) newId = "unknown";
+            if (!readBubbleDisplayName(bubble, newName, newId)) return false;
 
             if (newId != m_currentBubbleId)
             {
@@ -253,20 +267,9 @@
         {
             if (!bubble) return;
 
-            // Resolve DisplayName via reflection
-            auto* prop = bubble->GetPropertyByNameInChain(STR("DisplayName"));
-            if (!prop) return;
-            auto* textData = reinterpret_cast<FText*>(reinterpret_cast<uint8_t*>(bubble) + prop->GetOffset_Internal());
-            std::wstring newName = textData->ToString();
-
+            std::wstring newName;
             std::string newId;
-            for (wchar_t c : newName)
-            {
-                if (c == L' ') newId += '_';
-                else if (c < 128 && (std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
-                    newId += static_cast<char>(c);
-            }
-            if (newId.empty()) newId = "unknown";
+            if (!readBubbleDisplayName(bubble, newName, newId)) return;
 
             if (newId != m_currentBubbleId)
             {
@@ -300,19 +303,10 @@
 
                 if (!p.ReturnValue) continue;
 
-                auto* dnProp = p.ReturnValue->GetPropertyByNameInChain(STR("DisplayName"));
-                if (!dnProp) continue;
-                auto* dt = reinterpret_cast<FText*>(reinterpret_cast<uint8_t*>(p.ReturnValue) + dnProp->GetOffset_Internal());
-                std::wstring bName = dt->ToString();
-
+                std::wstring bName;
                 std::string bId;
-                for (wchar_t c : bName)
-                {
-                    if (c == L' ') bId += '_';
-                    else if (c < 128 && (std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
-                        bId += static_cast<char>(c);
-                }
-                if (!bId.empty()) { sr.bubbleId = bId; migrated++; }
+                if (readBubbleDisplayName(p.ReturnValue, bName, bId))
+                    { sr.bubbleId = bId; migrated++; }
             }
 
             if (migrated > 0)
