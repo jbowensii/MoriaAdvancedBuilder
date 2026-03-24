@@ -318,13 +318,70 @@
 
 
         // ---- Pitch/Roll Building Placement ----
-        // GATA offsets from CXX dump — validated at runtime on first use
-        // WARNING [C7]: Hardcoded offsets — will break if game updates GATA class layout
-        static constexpr int GATA_TRACE_RESULTS     = 0x0418;  // FMorPerformTraceResults
-        static constexpr int GATA_LAST_TRACE_RESULTS = 0x04F0;
-        static constexpr int TRACE_TARGET_ROTATION   = 0x00AC;  // FRotator within TraceResults
-        static constexpr int GATA_YAW_ACCUMULATOR    = 0x0658;  // hidden float
-        bool m_gataOffsetsValidated{false};
+        // Offsets resolved at runtime via reflection (safe across game updates)
+        int m_offTraceResults{-1};       // GATA → FMorPerformTraceResults TraceResults
+        int m_offLastTraceResults{-1};   // GATA → FMorPerformTraceResults LastTraceResults
+        int m_offTargetRotation{-1};     // FMorPerformTraceResults → FRotator TargetRotation
+        int m_offCopiedComponents{-1};   // Reticle → TArray<UPrimitiveComponent*>
+        int m_offRelativeRotation{-1};   // USceneComponent → FRotator RelativeRotation
+        static constexpr int GATA_YAW_ACCUMULATOR = 0x0658;  // NOT reflected — must stay hardcoded
+
+        bool resolveGATAOffsets(UObject* gata)
+        {
+            if (m_offTraceResults >= 0) return true;  // already resolved
+            auto* p1 = gata->GetPropertyByNameInChain(STR("TraceResults"));
+            auto* p2 = gata->GetPropertyByNameInChain(STR("LastTraceResults"));
+            if (!p1 || !p2) { VLOG(STR("[MoriaCppMod] [PitchRoll] Failed to resolve TraceResults offsets\n")); return false; }
+            m_offTraceResults = p1->GetOffset_Internal();
+            m_offLastTraceResults = p2->GetOffset_Internal();
+
+            // Resolve TargetRotation within the TraceResults struct
+            auto* structProp = static_cast<RC::Unreal::FStructProperty*>(p1);
+            UScriptStruct* innerStruct = structProp->GetStruct();
+            if (innerStruct)
+            {
+                for (FProperty* sp : innerStruct->ForEachProperty())
+                {
+                    if (sp->GetName() == STR("TargetRotation")) { m_offTargetRotation = sp->GetOffset_Internal(); break; }
+                }
+            }
+            if (m_offTargetRotation < 0) { VLOG(STR("[MoriaCppMod] [PitchRoll] Failed to resolve TargetRotation offset\n")); return false; }
+
+            VLOG(STR("[MoriaCppMod] [PitchRoll] Resolved: TraceResults=+0x{:04X} LastTrace=+0x{:04X} TargetRot=+0x{:04X}\n"),
+                 m_offTraceResults, m_offLastTraceResults, m_offTargetRotation);
+            return true;
+        }
+
+        bool resolveReticleOffsets(UObject* reticle)
+        {
+            if (m_offCopiedComponents >= 0 && m_offRelativeRotation >= 0) return true;
+            if (m_offCopiedComponents < 0)
+            {
+                auto* p = reticle->GetPropertyByNameInChain(STR("CopiedComponents"));
+                if (p) m_offCopiedComponents = p->GetOffset_Internal();
+            }
+            // RelativeRotation — resolve from any USceneComponent
+            if (m_offRelativeRotation < 0)
+            {
+                auto* sceneClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Engine.SceneComponent"));
+                if (sceneClass)
+                {
+                    for (auto* sp : sceneClass->ForEachProperty())
+                    {
+                        if (sp->GetName() == STR("RelativeRotation")) { m_offRelativeRotation = sp->GetOffset_Internal(); break; }
+                    }
+                }
+            }
+            if (m_offCopiedComponents < 0 || m_offRelativeRotation < 0)
+            {
+                VLOG(STR("[MoriaCppMod] [PitchRoll] Failed to resolve reticle offsets (CC={} RR={})\n"),
+                     m_offCopiedComponents, m_offRelativeRotation);
+                return false;
+            }
+            VLOG(STR("[MoriaCppMod] [PitchRoll] Resolved: CopiedComponents=+0x{:04X} RelativeRotation=+0x{:04X}\n"),
+                 m_offCopiedComponents, m_offRelativeRotation);
+            return true;
+        }
 
         float m_experimentPitch{0.0f};
         float m_experimentRoll{0.0f};
@@ -335,15 +392,17 @@
 
         PRot readGATARotation(UObject* gata, int traceOffset)
         {
+            if (traceOffset < 0 || m_offTargetRotation < 0) return {0, 0, 0};
             auto* base = reinterpret_cast<uint8_t*>(gata);
-            auto* rot = reinterpret_cast<float*>(base + traceOffset + TRACE_TARGET_ROTATION);
+            auto* rot = reinterpret_cast<float*>(base + traceOffset + m_offTargetRotation);
             return { rot[0], rot[1], rot[2] };
         }
 
         void writeGATARotation(UObject* gata, int traceOffset, float pitch, float yaw, float roll)
         {
+            if (traceOffset < 0 || m_offTargetRotation < 0) return;
             auto* base = reinterpret_cast<uint8_t*>(gata);
-            auto* rot = reinterpret_cast<float*>(base + traceOffset + TRACE_TARGET_ROTATION);
+            auto* rot = reinterpret_cast<float*>(base + traceOffset + m_offTargetRotation);
             rot[0] = pitch;
             rot[1] = yaw;
             rot[2] = roll;
@@ -359,12 +418,14 @@
                 return;
             }
 
+            if (!resolveGATAOffsets(gata)) return;
+
             // Read current yaw from TraceResults
-            auto tr = readGATARotation(gata, GATA_TRACE_RESULTS);
+            auto tr = readGATARotation(gata, m_offTraceResults);
 
             // Write pitch/roll to both TraceResults and LastTraceResults, preserve yaw
-            writeGATARotation(gata, GATA_TRACE_RESULTS, pitch, tr.yaw, roll);
-            writeGATARotation(gata, GATA_LAST_TRACE_RESULTS, pitch, tr.yaw, roll);
+            writeGATARotation(gata, m_offTraceResults, pitch, tr.yaw, roll);
+            writeGATARotation(gata, m_offLastTraceResults, pitch, tr.yaw, roll);
 
             m_experimentPitch = pitch;
             m_experimentRoll = roll;
@@ -376,12 +437,6 @@
                          3.0f, 1.0f, 0.8f, 0.0f);
         }
 
-        // WARNING [C8]: Hardcoded reticle offsets — will break if game updates class layout
-        // CopiedComponents is Instanced UPROPERTY but not resolvable via GetPropertyByNameInChain
-        // RelativeRotation is on USceneComponent base (engine-level, stable)
-        static constexpr int RETICLE_COPIED_COMPONENTS = 0x0260;  // TArray<UPrimitiveComponent*>
-        static constexpr int COMPONENT_RELATIVE_ROTATION = 0x0128; // FRotator on USceneComponent
-
         void rotateReticleVisual(UObject* gata, float pitch, float roll)
         {
             // Get reticle actor via UFUNCTION
@@ -392,11 +447,12 @@
             safeProcessEvent(gata, getReticleFn, &retParams);
             UObject* reticle = retParams.ReturnValue;
             if (!reticle) return;
+            if (!resolveReticleOffsets(reticle)) return;
 
-            // Access CopiedComponents TArray at reticle+0x0260
+            // Access CopiedComponents TArray (offset resolved via reflection)
             auto* base = reinterpret_cast<uint8_t*>(reticle);
             struct TArrayRaw { void** data; int32_t count; int32_t max; };
-            auto* arr = reinterpret_cast<TArrayRaw*>(base + RETICLE_COPIED_COMPONENTS);
+            auto* arr = reinterpret_cast<TArrayRaw*>(base + m_offCopiedComponents);
             if (!arr->data || arr->count <= 0) return;
 
             for (int i = 0; i < arr->count; i++)
@@ -405,7 +461,7 @@
                 if (!comp) continue;
 
                 // Write RelativeRotation (FRotator: Pitch, Yaw, Roll) at +0x0128
-                auto* rot = reinterpret_cast<float*>(comp + COMPONENT_RELATIVE_ROTATION);
+                auto* rot = reinterpret_cast<float*>(comp + m_offRelativeRotation);
                 rot[0] = pitch;  // Pitch
                 // rot[1] = yaw;  // leave yaw alone — game handles it
                 rot[2] = roll;   // Roll
@@ -419,32 +475,12 @@
             UObject* gata = resolveGATA();
             if (!gata) { m_pitchRollActive = false; return; }
 
-            // Validate hardcoded offsets on first use [C7]
-            if (!m_gataOffsetsValidated)
-            {
-                m_gataOffsetsValidated = true;
-                auto* trProp = gata->GetPropertyByNameInChain(STR("TraceResults"));
-                auto* ltrProp = gata->GetPropertyByNameInChain(STR("LastTraceResults"));
-                if (trProp && trProp->GetOffset_Internal() != GATA_TRACE_RESULTS)
-                {
-                    VLOG(STR("[MoriaCppMod] [PitchRoll] WARNING: TraceResults offset mismatch! Expected 0x{:X}, got 0x{:X} — disabling pitch/roll\n"),
-                         GATA_TRACE_RESULTS, trProp->GetOffset_Internal());
-                    m_pitchRollActive = false;
-                    return;
-                }
-                if (ltrProp && ltrProp->GetOffset_Internal() != GATA_LAST_TRACE_RESULTS)
-                {
-                    VLOG(STR("[MoriaCppMod] [PitchRoll] WARNING: LastTraceResults offset mismatch! Expected 0x{:X}, got 0x{:X} — disabling pitch/roll\n"),
-                         GATA_LAST_TRACE_RESULTS, ltrProp->GetOffset_Internal());
-                    m_pitchRollActive = false;
-                    return;
-                }
-            }
+            if (!resolveGATAOffsets(gata)) { m_pitchRollActive = false; return; }
 
             // Re-inject every frame because GATA::Tick overwrites TraceResults
-            auto tr = readGATARotation(gata, GATA_TRACE_RESULTS);
-            writeGATARotation(gata, GATA_TRACE_RESULTS, m_experimentPitch, tr.yaw, m_experimentRoll);
-            writeGATARotation(gata, GATA_LAST_TRACE_RESULTS, m_experimentPitch, tr.yaw, m_experimentRoll);
+            auto tr = readGATARotation(gata, m_offTraceResults);
+            writeGATARotation(gata, m_offTraceResults, m_experimentPitch, tr.yaw, m_experimentRoll);
+            writeGATARotation(gata, m_offLastTraceResults, m_experimentPitch, tr.yaw, m_experimentRoll);
 
             // Rotate the preview ghost visually
             rotateReticleVisual(gata, m_experimentPitch, m_experimentRoll);

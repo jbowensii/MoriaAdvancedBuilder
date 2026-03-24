@@ -2012,6 +2012,11 @@ namespace MoriaMods
                     m_lastItemInvComp = RC::Unreal::FWeakObjectPtr{};
                     m_qbPhase = PlacePhase::Idle;
                     m_showSettleTime = 0;
+                    m_offTraceResults = -1;
+                    m_offLastTraceResults = -1;
+                    m_offTargetRotation = -1;
+                    m_offCopiedComponents = -1;
+                    m_offRelativeRotation = -1;
                     m_isTargetBuild = false;
                     m_lastTargetBuildable = false;
                     m_targetBuildName.clear();
