@@ -591,6 +591,20 @@ namespace MoriaMods
 
                 const auto fnName = func->GetName();
                 const wchar_t* fnStr = fnName.c_str();
+
+                // Suppress server movement corrections when fly mode is active
+                // This prevents the server from forcing us back to walking/falling
+                if (s_instance->m_flyMode &&
+                    (wcscmp(fnStr, STR("ClientAdjustPosition")) == 0 ||
+                     wcscmp(fnStr, STR("ClientAdjustPosition_Implementation")) == 0 ||
+                     wcscmp(fnStr, STR("ClientVeryShortAdjustPosition")) == 0))
+                {
+                    // Zero out the parms to prevent the correction from applying
+                    if (parms && func->GetParmsSize() > 0)
+                        std::memset(parms, 0, func->GetParmsSize());
+                    return;
+                }
+
                 if (wcscmp(fnStr, STR("RotatePressed")) == 0 || wcscmp(fnStr, STR("RotateCcwPressed")) == 0)
                 {
                     std::wstring cls = safeClassName(context);

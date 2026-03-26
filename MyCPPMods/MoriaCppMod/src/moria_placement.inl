@@ -1,6 +1,6 @@
 // moria_placement.inl — Build placement, quick-build caches, pitch/roll rotation (v5.5.0)
 // CancelTargeting: ProcessEvent on CancelPlacement (replaces keybd_event VK_ESCAPE)
-// 350ms settle delay after OnAfterShow before blockSelectedEvent dispatches
+// 500ms settle delay after OnAfterShow before blockSelectedEvent dispatches
 // Pitch/roll: BuildNewConstruction ProcessEvent intercept patches FTransform quaternion
 // Caches: FWeakObjectPtr for m_cachedBuildComp, m_cachedBuildHUD, m_cachedBuildTab
 
@@ -99,7 +99,7 @@
         void showBuildTab()
         {
             ULONGLONG now = GetTickCount64();
-            if (now - m_lastShowHideTime < 350)
+            if (now - m_lastShowHideTime < 500)
             {
                 QBLOG(STR("[MoriaCppMod] [QB] showBuildTab: SKIPPED ({}ms since last Show/Hide)\n"),
                       now - m_lastShowHideTime);
@@ -117,7 +117,7 @@
         void hideBuildTab()
         {
             ULONGLONG now = GetTickCount64();
-            if (now - m_lastShowHideTime < 350)
+            if (now - m_lastShowHideTime < 500)
             {
                 QBLOG(STR("[MoriaCppMod] [QB] hideBuildTab: SKIPPED ({}ms since last Show/Hide)\n"),
                       now - m_lastShowHideTime);
@@ -161,22 +161,14 @@
         }
 
 
-        // Cancel the active placement ghost via CancelTargeting() on the GATA
-        // Returns true if cancel was issued, false if no GATA found
+        // Cancel the active placement ghost via synthetic ESC key
+        // ESC cancels the ghost when build menu is open (game's own input handler)
+        // NOTE: CancelTargeting() ProcessEvent was too aggressive — destroyed GATA mid-tick
         bool cancelPlacementViaAPI()
         {
-            UObject* gata = resolveGATA();
-            if (!gata) return false;
-            auto* cancelFn = gata->GetFunctionByNameInChain(STR("CancelTargeting"));
-            if (!cancelFn)
-            {
-                QBLOG(STR("[MoriaCppMod] [QB] CancelTargeting not found on GATA, falling back to keybd_event\n"));
-                keybd_event(VK_ESCAPE, 0, 0, 0);
-                keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
-                return true;
-            }
-            if (!safeProcessEvent(gata, cancelFn, nullptr)) { QBLOG(STR("[MoriaCppMod] [QB] CancelTargeting safeProcessEvent FAILED\n")); return false; }
-            QBLOG(STR("[MoriaCppMod] [QB] CancelTargeting() called on GATA\n"));
+            QBLOG(STR("[MoriaCppMod] [QB] Cancelling ghost via keybd_event(VK_ESCAPE)\n"));
+            keybd_event(VK_ESCAPE, 0, 0, 0);
+            keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
             return true;
         }
 
@@ -1199,7 +1191,7 @@
                 {
                     // OnAfterShow fired — wait 350ms for animations to settle
                     ULONGLONG settleElapsed = now - m_showSettleTime;
-                    if (settleElapsed >= 350)
+                    if (settleElapsed >= 500)
                     {
                         QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: animation settled ({}ms), transitioning to SelectRecipeWalk\n"), settleElapsed);
                         m_showSettleTime = 0;

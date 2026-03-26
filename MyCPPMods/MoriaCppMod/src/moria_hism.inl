@@ -719,7 +719,62 @@
             constexpr uint8_t MOVE_Falling = 3;
             constexpr uint8_t MOVE_Flying  = 5;
 
+            // Send server-authoritative fly via CheatsComponent ServerCmd on PlayerController
+            // Required for dedicated servers where local SetMovementMode is overridden
+            {
+                auto* pc = findPlayerController();
+                VLOG(STR("[MoriaCppMod] [Fly] PlayerController: {}\n"), (void*)pc);
+                if (pc)
+                {
+                    // Try CheatManager on PlayerController - has Fly()/Walk() UFUNCTIONs
+                    auto* cmProp = pc->GetPropertyByNameInChain(STR("CheatManager"));
+                    UObject* cheatMgr = cmProp ? *reinterpret_cast<UObject**>(
+                        reinterpret_cast<uint8_t*>(pc) + cmProp->GetOffset_Internal()) : nullptr;
+                    VLOG(STR("[MoriaCppMod] [Fly] CheatManager: {}\n"), (void*)cheatMgr);
+                    if (!cheatMgr)
+                    {
+                        // No CheatManager — try ServerExecRPC to send "fly" to server
+                        auto* execFn = pc->GetFunctionByNameInChain(STR("ServerExecRPC"));
+                        VLOG(STR("[MoriaCppMod] [Fly] ServerExecRPC function: {}\n"), (void*)execFn);
+                        if (execFn)
+                        {
+                            int sz = execFn->GetParmsSize();
+                            std::vector<uint8_t> ep(sz, 0);
+                            FProperty* pMsg = nullptr;
+                            for (auto* prop : execFn->ForEachProperty())
+                            {
+                                if (prop->GetName() == STR("Msg")) { pMsg = prop; break; }
+                            }
+                            if (pMsg)
+                            {
+                                FString cmd(STR("fly"));
+                                std::memcpy(ep.data() + pMsg->GetOffset_Internal(), &cmd, sizeof(FString));
+                                safeProcessEvent(pc, execFn, ep.data());
+                                VLOG(STR("[MoriaCppMod] [Fly] ServerExecRPC('fly') called on PC\n"));
+                            }
+                            else
+                                VLOG(STR("[MoriaCppMod] [Fly] ServerExecRPC Msg param not found\n"));
+                        }
+                        else
+                            VLOG(STR("[MoriaCppMod] [Fly] ServerExecRPC not found on PC\n"));
+                    }
+                    if (cheatMgr)
+                    {
+                        auto* flyFn = cheatMgr->GetFunctionByNameInChain(
+                            m_flyMode ? STR("Fly") : STR("Walk"));
+                        if (flyFn)
+                        {
+                            safeProcessEvent(cheatMgr, flyFn, nullptr);
+                            VLOG(STR("[MoriaCppMod] [Fly] CheatManager::{}() called OK\n"),
+                                 m_flyMode ? STR("Fly") : STR("Walk"));
+                        }
+                        else
+                            VLOG(STR("[MoriaCppMod] [Fly] Fly/Walk UFUNCTION not found on CheatManager\n"));
+                    }
+                }
+            }
 
+            // Also set locally for immediate visual feedback
             for (auto* dwarf : dwarves)
             {
                 auto** movCompPtr = dwarf->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));

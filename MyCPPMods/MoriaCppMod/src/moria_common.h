@@ -94,8 +94,8 @@ namespace MoriaMods
             return false;
         }
         __try {
-            if (obj->HasAnyFlags(static_cast<EObjectFlags>(0x00200000 | 0x00400000))) {
-                VLOG(STR("[MoriaCppMod] [SAFE] ProcessEvent BLOCKED: obj {} is BeginDestroyed/FinishDestroyed\n"), (void*)obj);
+            if (obj->HasAnyFlags(static_cast<EObjectFlags>(0x00400000))) { // RF_FinishDestroyed only
+                VLOG(STR("[MoriaCppMod] [SAFE] ProcessEvent BLOCKED: obj {} is FinishDestroyed\n"), (void*)obj);
                 return false;
             }
             if (obj->IsUnreachable()) {

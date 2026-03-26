@@ -1923,9 +1923,11 @@
 
             auto* setBrushFn = img->GetFunctionByNameInChain(STR("SetBrushFromTexture"));
             if (setBrushFn) umgSetBrushNoMatch(img, texReticle, setBrushFn);
-            // Scale icon based on resolution — 64px at 1080p, scales up with uiScale
-            float iconSize = 64.0f * m_screen.uiScale;
+            // Scale icon based on resolution — 128px at 1080p, scales up with uiScale
+            float iconSize = 128.0f * m_screen.uiScale;
             umgSetBrushSize(img, iconSize, iconSize);
+            // Bright saturated red so it's visible on any background
+            umgSetImageColor(img, 1.0f, 0.0f, 0.0f, 1.0f);
 
             // Add image as content of the border
             auto* setContentFn = rootBorder->GetFunctionByNameInChain(STR("SetContent"));
