@@ -465,6 +465,7 @@
             if (!arr->data || arr->count <= 0) return;
 
             // Precompute trig for the rotation matrix
+            // UE4 FRotationMatrix: SP/CP for Pitch(Y-axis), SR/CR for Roll(X-axis)
             const float p = pitchDeg * 3.14159265f / 180.0f;
             const float r = rollDeg * 3.14159265f / 180.0f;
             const float cp = cosf(p), sp = sinf(p);
@@ -475,12 +476,30 @@
             if (!m_origRelLocsCached)
             {
                 m_origRelLocs.resize(arr->count);
+                VLOG(STR("[MoriaCppMod] [PitchRoll] Caching {} components:\n"), arr->count);
                 for (int ci = 0; ci < arr->count; ci++)
                 {
                     auto* c = reinterpret_cast<uint8_t*>(arr->data[ci]);
                     if (!c) { m_origRelLocs[ci] = {0,0,0}; continue; }
                     float* rl = reinterpret_cast<float*>(c + m_offRelativeLocation);
                     m_origRelLocs[ci] = {rl[0], rl[1], rl[2]};
+
+                    // Debug: dump bounds and class for each component
+                    auto* cObj = reinterpret_cast<UObject*>(c);
+                    std::wstring cls = safeClassName(cObj);
+                    auto* bFn = cObj->GetFunctionByNameInChain(STR("GetLocalBounds"));
+                    if (bFn)
+                    {
+                        struct { float mnX,mnY,mnZ,mxX,mxY,mxZ; } bp{};
+                        safeProcessEvent(cObj, bFn, &bp);
+                        VLOG(STR("[MoriaCppMod] [PitchRoll]   [{}] {} RelLoc=({:.1f},{:.1f},{:.1f}) Bounds=({:.1f},{:.1f},{:.1f})-({:.1f},{:.1f},{:.1f})\n"),
+                             ci, cls, rl[0], rl[1], rl[2], bp.mnX, bp.mnY, bp.mnZ, bp.mxX, bp.mxY, bp.mxZ);
+                    }
+                    else
+                    {
+                        VLOG(STR("[MoriaCppMod] [PitchRoll]   [{}] {} RelLoc=({:.1f},{:.1f},{:.1f}) NO MESH\n"),
+                             ci, cls, rl[0], rl[1], rl[2]);
+                    }
                 }
                 m_origRelLocsCached = true;
             }
@@ -578,97 +597,57 @@
         }
 
         // Hook: intercept BuildNewConstruction to inject pitch/roll into the FTransform
+        // Approach: build a pitch/roll quaternion and multiply it onto the existing quat.
+        // The existing quat already has yaw — we compose our rotation on top.
         void onBuildNewConstruction(UObject* context, UFunction* func, void* parms)
         {
             if (!m_pitchRollActive) return;
             if (!parms) return;
 
-            // BuildNewConstruction params layout (from UHT):
-            // FMorConstructionRecipeRowHandle RecipeHandle
-            // AMorCharacter* Player
-            // FTransform Transform       <-- we want to modify this
-            // EBuildProcess ChosenProcess
-            // bool bBuildAsFoundation
-            // AActor* ConnectedTo
-            // float StabilityEstimate
-
-            // Walk the function's properties to find Transform offset
             for (auto* prop : func->ForEachProperty())
             {
-                auto name = prop->GetName();
-                if (name == STR("Transform"))
-                {
-                    int offset = prop->GetOffset_Internal();
-                    auto* base = reinterpret_cast<uint8_t*>(parms);
-                    float* quat = reinterpret_cast<float*>(base + offset);
+                if (prop->GetName() != STR("Transform")) continue;
 
-                    VLOG(STR("[MoriaCppMod] [PitchRoll] BuildNewConstruction INTERCEPTED!\n"));
-                    VLOG(STR("[MoriaCppMod] [PitchRoll]   BEFORE: Quat({:.4f}, {:.4f}, {:.4f}, {:.4f})\n"),
-                         quat[0], quat[1], quat[2], quat[3]);
+                int offset = prop->GetOffset_Internal();
+                float* quat = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(parms) + offset);
 
-                    // Convert our pitch/roll/yaw (degrees) to quaternion
-                    // FTransform stores rotation as FQuat (X, Y, Z, W)
-                    // We need to construct a quaternion from Euler angles
-                    constexpr float DEG2RAD = 3.14159265f / 180.0f;
-                    float p = m_experimentPitch * DEG2RAD * 0.5f;
-                    float y = 0.0f; // keep existing yaw from the quaternion
-                    float r = m_experimentRoll * DEG2RAD * 0.5f;
+                VLOG(STR("[MoriaCppMod] [PitchRoll] BuildNewConstruction INTERCEPTED!\n"));
+                VLOG(STR("[MoriaCppMod] [PitchRoll]   BEFORE: Quat({:.4f}, {:.4f}, {:.4f}, {:.4f})\n"),
+                     quat[0], quat[1], quat[2], quat[3]);
 
-                    // Extract existing yaw from current quaternion
-                    // Current quat is yaw-only: (0, 0, sin(yaw/2), cos(yaw/2))
-                    float existingYawSin = quat[2];
-                    float existingYawCos = quat[3];
+                // Build a pitch/roll-only quaternion (no yaw — existing quat has yaw)
+                // UE4: Pitch=Y axis, Roll=X axis
+                // Qpitch = (0, sin(p/2), 0, cos(p/2))
+                // Qroll  = (sin(r/2), 0, 0, cos(r/2))
+                constexpr float DEG2RAD = 3.14159265f / 180.0f;
+                // Negate pitch to match ghost preview direction
+                float hp = -m_experimentPitch * DEG2RAD * 0.5f;
+                float hr = m_experimentRoll * DEG2RAD * 0.5f;
+                float sp = sinf(hp), cp = cosf(hp);
+                float sr = sinf(hr), cr = cosf(hr);
 
-                    // Build pitch quaternion: (sin(p/2), 0, 0, cos(p/2)) around Y axis for UE4
-                    // UE4 uses: Pitch=Y, Yaw=Z, Roll=X
-                    float sp = sinf(p), cp = cosf(p);
-                    float sr = sinf(r), cr = cosf(r);
+                // Compose Qpitch * Qroll (pitch first, then roll)
+                // Using quaternion multiplication: Q1*Q2 = (w1*x2+x1*w2+y1*z2-z1*y2, ...)
+                float prX = cp * sr + sp * 0;   // = cp*sr
+                float prY = sp * cr;              // = sp*cr
+                float prZ = cp * 0 - sp * sr;    // = -sp*sr
+                float prW = cp * cr - sp * 0;    // = cp*cr
 
-                    // Compose: Qyaw * Qpitch * Qroll
-                    // Qyaw   = (0, 0, existingYawSin, existingYawCos)
-                    // Qpitch = (0, sp, 0, cp)  — rotation around Y
-                    // Qroll  = (sr, 0, 0, cr)  — rotation around X
+                // Now multiply: existingQuat * pitchRollQuat
+                // This applies pitch/roll in the LOCAL frame of the existing rotation
+                float ax = quat[0], ay = quat[1], az = quat[2], aw = quat[3];
+                float bx = prX, by = prY, bz = prZ, bw = prW;
 
-                    // First: Qpitch * Qroll
-                    float prX = cp * sr;
-                    float prY = sp * cr;
-                    float prZ = -sp * sr;
-                    float prW = cp * cr;
+                quat[0] = aw*bx + ax*bw + ay*bz - az*by;
+                quat[1] = aw*by - ax*bz + ay*bw + az*bx;
+                quat[2] = aw*bz + ax*by - ay*bx + az*bw;
+                quat[3] = aw*bw - ax*bx - ay*by - az*bz;
 
-                    // Then: Qyaw * (Qpitch * Qroll)
-                    float ys = existingYawSin;
-                    float yc = existingYawCos;
-                    float finalX = yc * prX + ys * prZ;  // actually: - ys * prY
-                    float finalY = yc * prY - ys * prZ;
-                    float finalZ = yc * prZ + ys * prW;
-                    float finalW = yc * prW - ys * prZ;
-
-                    // Simplified: use direct Euler-to-quat for UE4 convention
-                    // UE4 FRotator order: Pitch(Y), Yaw(Z), Roll(X)
-                    // Reconstruct yaw from existing quat
-                    float existingYaw = atan2f(2.0f * existingYawSin * existingYawCos,
-                                               1.0f - 2.0f * existingYawSin * existingYawSin);
-                    float hy = existingYaw * 0.5f;
-                    float hp = m_experimentPitch * DEG2RAD * 0.5f;
-                    float hr = m_experimentRoll * DEG2RAD * 0.5f;
-
-                    float cy2 = cosf(hy), sy2 = sinf(hy);
-                    float cp2 = cosf(hp), sp2 = sinf(hp);
-                    float cr2 = cosf(hr), sr2 = sinf(hr);
-
-                    // UE4 quaternion from Euler (ZYX convention):
-                    quat[0] = cr2 * sp2 * sy2 - sr2 * cp2 * cy2;  // X
-                    quat[1] = -cr2 * sp2 * cy2 - sr2 * cp2 * sy2; // Y
-                    quat[2] = cr2 * cp2 * sy2 - sr2 * sp2 * cy2;  // Z
-                    quat[3] = cr2 * cp2 * cy2 + sr2 * sp2 * sy2;  // W
-
-                    VLOG(STR("[MoriaCppMod] [PitchRoll]   AFTER:  Quat({:.4f}, {:.4f}, {:.4f}, {:.4f})\n"),
-                         quat[0], quat[1], quat[2], quat[3]);
-                    VLOG(STR("[MoriaCppMod] [PitchRoll]   Applied Pitch={:.1f} Roll={:.1f}\n"),
-                         m_experimentPitch, m_experimentRoll);
-
-                    break;
-                }
+                VLOG(STR("[MoriaCppMod] [PitchRoll]   AFTER:  Quat({:.4f}, {:.4f}, {:.4f}, {:.4f})\n"),
+                     quat[0], quat[1], quat[2], quat[3]);
+                VLOG(STR("[MoriaCppMod] [PitchRoll]   Applied Pitch={:.1f} Roll={:.1f}\n"),
+                     m_experimentPitch, m_experimentRoll);
+                break;
             }
         }
         // ---- End Pitch/Roll Experiment ----

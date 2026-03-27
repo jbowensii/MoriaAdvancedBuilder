@@ -1255,6 +1255,7 @@ namespace MoriaMods
                 }
             }
             // Pitch rotation (,  / SHIFT+,)
+            // Pitch rotation (. / SHIFT+.) — BIND_PITCH_ROTATE defaults to '.'
             {
                 static bool s_lastPitchKey = false;
                 uint8_t vk = s_bindings[BIND_PITCH_ROTATE].key;
@@ -1276,7 +1277,7 @@ namespace MoriaMods
                     s_lastPitchKey = nowDown;
                 }
             }
-            // Roll rotation (.  / SHIFT+.)
+            // Roll rotation (, / SHIFT+,) — BIND_ROLL_ROTATE defaults to ','
             {
                 static bool s_lastRollKey = false;
                 uint8_t vk = s_bindings[BIND_ROLL_ROTATE].key;

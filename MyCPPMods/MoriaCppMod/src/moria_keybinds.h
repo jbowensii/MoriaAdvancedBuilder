@@ -53,8 +53,8 @@ namespace MoriaMods
             {L"Trash Item", L"Game Options", VK_DELETE},
             {L"Replenish Item", L"Game Options", VK_INSERT},
             {L"Remove Attributes", L"Game Options", VK_END},
-            {L"Pitch Rotate", L"Game Options", Input::Key::OEM_COMMA},
-            {L"Roll Rotate", L"Game Options", Input::Key::OEM_PERIOD},
+            {L"Pitch Rotate", L"Game Options", Input::Key::OEM_PERIOD},
+            {L"Roll Rotate", L"Game Options", Input::Key::OEM_COMMA},
     };
 
     inline std::atomic<int> s_capturingBind{-1};
