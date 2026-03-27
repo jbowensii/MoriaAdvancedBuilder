@@ -2031,6 +2031,7 @@ namespace MoriaMods
                     m_offTargetRotation = -1;
                     m_offCopiedComponents = -1;
                     m_offRelativeRotation = -1;
+                    m_offRelativeLocation = -1;
                     m_isTargetBuild = false;
                     m_lastTargetBuildable = false;
                     m_targetBuildName.clear();

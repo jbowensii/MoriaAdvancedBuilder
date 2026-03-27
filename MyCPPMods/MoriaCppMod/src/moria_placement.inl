@@ -316,6 +316,12 @@
         int m_offTargetRotation{-1};     // FMorPerformTraceResults → FRotator TargetRotation
         int m_offCopiedComponents{-1};   // Reticle → TArray<UPrimitiveComponent*>
         int m_offRelativeRotation{-1};   // USceneComponent → FRotator RelativeRotation
+        int m_offRelativeLocation{-1};   // USceneComponent → FVector RelativeLocation
+
+        // Cache original RelativeLocations so we always compute from originals (not accumulated)
+        struct OriginalRelLoc { float x, y, z; };
+        std::vector<OriginalRelLoc> m_origRelLocs;
+        bool m_origRelLocsCached{false};
         static constexpr int GATA_YAW_ACCUMULATOR = 0x0658;  // NOT reflected — must stay hardcoded
 
         bool resolveGATAOffsets(UObject* gata)
@@ -346,32 +352,33 @@
 
         bool resolveReticleOffsets(UObject* reticle)
         {
-            if (m_offCopiedComponents >= 0 && m_offRelativeRotation >= 0) return true;
+            if (m_offCopiedComponents >= 0 && m_offRelativeRotation >= 0 && m_offRelativeLocation >= 0) return true;
             if (m_offCopiedComponents < 0)
             {
                 auto* p = reticle->GetPropertyByNameInChain(STR("CopiedComponents"));
                 if (p) m_offCopiedComponents = p->GetOffset_Internal();
             }
-            // RelativeRotation — resolve from any USceneComponent
-            if (m_offRelativeRotation < 0)
+            // RelativeRotation + RelativeLocation — resolve from USceneComponent class
+            if (m_offRelativeRotation < 0 || m_offRelativeLocation < 0)
             {
                 auto* sceneClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Engine.SceneComponent"));
                 if (sceneClass)
                 {
                     for (auto* sp : sceneClass->ForEachProperty())
                     {
-                        if (sp->GetName() == STR("RelativeRotation")) { m_offRelativeRotation = sp->GetOffset_Internal(); break; }
+                        if (sp->GetName() == STR("RelativeRotation")) m_offRelativeRotation = sp->GetOffset_Internal();
+                        if (sp->GetName() == STR("RelativeLocation")) m_offRelativeLocation = sp->GetOffset_Internal();
                     }
                 }
             }
-            if (m_offCopiedComponents < 0 || m_offRelativeRotation < 0)
+            if (m_offCopiedComponents < 0 || m_offRelativeRotation < 0 || m_offRelativeLocation < 0)
             {
-                VLOG(STR("[MoriaCppMod] [PitchRoll] Failed to resolve reticle offsets (CC={} RR={})\n"),
-                     m_offCopiedComponents, m_offRelativeRotation);
+                VLOG(STR("[MoriaCppMod] [PitchRoll] Failed to resolve reticle offsets (CC={} RR={} RL={})\n"),
+                     m_offCopiedComponents, m_offRelativeRotation, m_offRelativeLocation);
                 return false;
             }
-            VLOG(STR("[MoriaCppMod] [PitchRoll] Resolved: CopiedComponents=+0x{:04X} RelativeRotation=+0x{:04X}\n"),
-                 m_offCopiedComponents, m_offRelativeRotation);
+            VLOG(STR("[MoriaCppMod] [PitchRoll] Resolved: CopiedComponents=+0x{:04X} RelativeRotation=+0x{:04X} RelativeLocation=+0x{:04X}\n"),
+                 m_offCopiedComponents, m_offRelativeRotation, m_offRelativeLocation);
             return true;
         }
 
@@ -429,9 +436,20 @@
                          3.0f, 1.0f, 0.8f, 0.0f);
         }
 
-        void rotateReticleVisual(UObject* gata, float pitch, float roll)
+        // Rotate the multipart ghost preview to match pitch/roll.
+        // Uses K2_SetRelativeLocationAndRotation (UFUNCTION) on each MorBreakableMeshPiece.
+        // This properly updates ComponentToWorld AND marks the render transform dirty.
+        // Key insight: work in RELATIVE space — the parent actor's yaw is applied automatically.
+        // Original RelativeLocations are cached on first use to avoid accumulation drift.
+        // Non-mesh components (MorConstructionSnapComponent) are skipped.
+        //
+        // Rotation math: UE4 FRotationTranslationMatrix (row-vector convention V_out = V * M)
+        //   Pitch = Y-axis rotation, Roll = X-axis rotation
+        //   Matrix with Yaw=0: M = | CP      0      SP    |
+        //                          | SR*SP   CR    -SR*CP  |
+        //                          | -CR*SP  SR     CR*CP  |
+        void rotateReticleVisual(UObject* gata, float pitchDeg, float rollDeg)
         {
-            // Get reticle actor via UFUNCTION
             auto* getReticleFn = gata->GetFunctionByNameInChain(STR("GetReticleActor"));
             if (!getReticleFn) return;
 
@@ -441,22 +459,93 @@
             if (!reticle) return;
             if (!resolveReticleOffsets(reticle)) return;
 
-            // Access CopiedComponents TArray (offset resolved via reflection)
-            auto* base = reinterpret_cast<uint8_t*>(reticle);
+            auto* reticleBase = reinterpret_cast<uint8_t*>(reticle);
             struct TArrayRaw { void** data; int32_t count; int32_t max; };
-            auto* arr = reinterpret_cast<TArrayRaw*>(base + m_offCopiedComponents);
+            auto* arr = reinterpret_cast<TArrayRaw*>(reticleBase + m_offCopiedComponents);
             if (!arr->data || arr->count <= 0) return;
+
+            // Precompute trig for the rotation matrix
+            const float p = pitchDeg * 3.14159265f / 180.0f;
+            const float r = rollDeg * 3.14159265f / 180.0f;
+            const float cp = cosf(p), sp = sinf(p);
+            const float cr = cosf(r), sr = sinf(r);
+
+            // Cache original RelativeLocations on first pitch/roll press
+            // (K2_SetRelativeLocationAndRotation modifies RelLoc, so we must use originals)
+            if (!m_origRelLocsCached)
+            {
+                m_origRelLocs.resize(arr->count);
+                for (int ci = 0; ci < arr->count; ci++)
+                {
+                    auto* c = reinterpret_cast<uint8_t*>(arr->data[ci]);
+                    if (!c) { m_origRelLocs[ci] = {0,0,0}; continue; }
+                    float* rl = reinterpret_cast<float*>(c + m_offRelativeLocation);
+                    m_origRelLocs[ci] = {rl[0], rl[1], rl[2]};
+                }
+                m_origRelLocsCached = true;
+            }
+
+            // Base component (Comp[0]) — rotation pivot at assembly bottom
+            int baseIdx = 0;
+            float baseRX = m_origRelLocs[baseIdx].x;
+            float baseRY = m_origRelLocs[baseIdx].y;
+            float baseRZ = m_origRelLocs[baseIdx].z;
 
             for (int i = 0; i < arr->count; i++)
             {
                 auto* comp = reinterpret_cast<uint8_t*>(arr->data[i]);
                 if (!comp) continue;
 
-                // Write RelativeRotation (FRotator: Pitch, Yaw, Roll) at +0x0128
-                auto* rot = reinterpret_cast<float*>(comp + m_offRelativeRotation);
-                rot[0] = pitch;  // Pitch
-                // rot[1] = yaw;  // leave yaw alone — game handles it
-                rot[2] = roll;   // Roll
+                // Skip non-mesh components (MorConstructionSnapComponent has no GetLocalBounds)
+                auto* compObj = reinterpret_cast<UObject*>(comp);
+                if (!compObj->GetFunctionByNameInChain(STR("GetLocalBounds")))
+                    continue;
+
+                // Compute offset from base using CACHED originals
+                float x = m_origRelLocs[i].x - baseRX;
+                float y = m_origRelLocs[i].y - baseRY;
+                float z = m_origRelLocs[i].z - baseRZ;
+
+                // UE4 FRotationTranslationMatrix: V_out = V * M (row-vector, Yaw=0)
+                float xf = x * cp     + y * (sr*sp)  + z * (-cr*sp);
+                float yf =               y * cr       + z * sr;
+                float zf = x * sp     + y * (-sr*cp) + z * (cr*cp);
+
+                // New RelativeLocation = base + rotated offset (local space, parent yaw applied automatically)
+                float newRelX = baseRX + xf;
+                float newRelY = baseRY + yf;
+                float newRelZ = baseRZ + zf;
+
+                // K2_SetRelativeLocationAndRotation: sets position + rotation + marks render dirty
+                auto* setFn = compObj->GetFunctionByNameInChain(STR("K2_SetRelativeLocationAndRotation"));
+                if (setFn)
+                {
+                    int sz = setFn->GetParmsSize();
+                    std::vector<uint8_t> params(sz, 0);
+
+                    int offLoc = -1, offRot = -1, offTeleport = -1;
+                    for (auto* prop : setFn->ForEachProperty())
+                    {
+                        auto pname = prop->GetName();
+                        if (pname == STR("NewLocation")) offLoc = prop->GetOffset_Internal();
+                        else if (pname == STR("NewRotation")) offRot = prop->GetOffset_Internal();
+                        else if (pname == STR("bTeleport")) offTeleport = prop->GetOffset_Internal();
+                    }
+
+                    if (offLoc >= 0 && offRot >= 0)
+                    {
+                        auto* loc = reinterpret_cast<float*>(params.data() + offLoc);
+                        loc[0] = newRelX; loc[1] = newRelY; loc[2] = newRelZ;
+
+                        auto* rot2 = reinterpret_cast<float*>(params.data() + offRot);
+                        rot2[0] = pitchDeg; rot2[1] = 0.0f; rot2[2] = rollDeg;
+
+                        if (offTeleport >= 0)
+                            *reinterpret_cast<bool*>(params.data() + offTeleport) = true;
+
+                        safeProcessEvent(compObj, setFn, params.data());
+                    }
+                }
             }
         }
 
@@ -483,6 +572,8 @@
             m_pitchRollActive = false;
             m_experimentPitch = 0.0f;
             m_experimentRoll = 0.0f;
+            m_origRelLocsCached = false;
+            m_origRelLocs.clear();
             VLOG(STR("[MoriaCppMod] [PitchRoll] Cleared\n"));
         }
 
