@@ -523,32 +523,58 @@
             float baseRY = m_origRelLocs[baseIdx].y;
             float baseRZ = m_origRelLocs[baseIdx].z;
 
+            // Use K2_SetRelativeLocationAndRotation (doesn't flash — game doesn't fight relative writes)
+            // Build pitch/roll quaternion for position computation only
+            constexpr float DEG2RAD_HALF = 3.14159265f / 360.0f;
+            float hp = -pitchDeg * DEG2RAD_HALF;  // negate pitch to match placement
+            float hr = rollDeg * DEG2RAD_HALF;
+            float qsp = sinf(hp), qcp = cosf(hp);
+            float qsr = sinf(hr), qcr = cosf(hr);
+
+            // Qpitch * Qroll
+            float prX = qcp * qsr, prY = qsp * qcr, prZ = -qsp * qsr, prW = qcp * qcr;
+
+            // For position: rotate offsets by pitch/roll ONLY (no yaw — relative space handles yaw)
+            // Use quaternion vector rotation: v' = q * v * q_conjugate
+            auto qRotVec = [&](float vx, float vy, float vz, float& ox, float& oy, float& oz) {
+                float qx = prX, qy = prY, qz = prZ, qw = prW;
+                float tx = 2.0f * (qy*vz - qz*vy);
+                float ty = 2.0f * (qz*vx - qx*vz);
+                float tz = 2.0f * (qx*vy - qy*vx);
+                ox = vx + qw*tx + (qy*tz - qz*ty);
+                oy = vy + qw*ty + (qz*tx - qx*tz);
+                oz = vz + qw*tz + (qx*ty - qy*tx);
+            };
+
+            // Convert pitch/roll quaternion to FRotator for the relative rotation
+            constexpr float RAD2DEG = 180.0f / 3.14159265f;
+            float sinp2 = 2.0f * (prW * prY - prZ * prX);
+            float relPitch = (fabsf(sinp2) >= 1.0f) ? copysignf(90.0f, sinp2) : asinf(sinp2) * RAD2DEG;
+            float relYaw = atan2f(2.0f * (prW * prZ + prX * prY), 1.0f - 2.0f * (prY * prY + prZ * prZ)) * RAD2DEG;
+            float relRoll = atan2f(2.0f * (prW * prX + prY * prZ), 1.0f - 2.0f * (prX * prX + prY * prY)) * RAD2DEG;
+
             for (int i = 0; i < arr->count; i++)
             {
                 auto* comp = reinterpret_cast<uint8_t*>(arr->data[i]);
                 if (!comp) continue;
 
-                // Skip non-mesh components (MorConstructionSnapComponent has no GetLocalBounds)
                 auto* compObj = reinterpret_cast<UObject*>(comp);
                 if (!compObj->GetFunctionByNameInChain(STR("GetLocalBounds")))
                     continue;
 
                 // Compute offset from base using CACHED originals
-                float x = m_origRelLocs[i].x - baseRX;
-                float y = m_origRelLocs[i].y - baseRY;
-                float z = m_origRelLocs[i].z - baseRZ;
+                float dx = m_origRelLocs[i].x - baseRX;
+                float dy = m_origRelLocs[i].y - baseRY;
+                float dz = m_origRelLocs[i].z - baseRZ;
 
-                // UE4 FRotationTranslationMatrix: V_out = V * M (row-vector, Yaw=0)
-                float xf = x * cp     + y * (sr*sp)  + z * (-cr*sp);
-                float yf =               y * cr       + z * sr;
-                float zf = x * sp     + y * (-sr*cp) + z * (cr*cp);
+                // Rotate offset by pitch/roll quaternion (local space — no yaw)
+                float rx, ry, rz;
+                qRotVec(dx, dy, dz, rx, ry, rz);
 
-                // New RelativeLocation = base + rotated offset (local space, parent yaw applied automatically)
-                float newRelX = baseRX + xf;
-                float newRelY = baseRY + yf;
-                float newRelZ = baseRZ + zf;
+                float newRelX = baseRX + rx;
+                float newRelY = baseRY + ry;
+                float newRelZ = baseRZ + rz;
 
-                // K2_SetRelativeLocationAndRotation: sets position + rotation + marks render dirty
                 auto* setFn = compObj->GetFunctionByNameInChain(STR("K2_SetRelativeLocationAndRotation"));
                 if (setFn)
                 {
@@ -570,7 +596,7 @@
                         loc[0] = newRelX; loc[1] = newRelY; loc[2] = newRelZ;
 
                         auto* rot2 = reinterpret_cast<float*>(params.data() + offRot);
-                        rot2[0] = pitchDeg; rot2[1] = 0.0f; rot2[2] = rollDeg;
+                        rot2[0] = relPitch; rot2[1] = relYaw; rot2[2] = relRoll;
 
                         if (offTeleport >= 0)
                             *reinterpret_cast<bool*>(params.data() + offTeleport) = true;
