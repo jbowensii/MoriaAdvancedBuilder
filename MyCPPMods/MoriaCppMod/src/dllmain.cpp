@@ -867,22 +867,9 @@ namespace MoriaMods
 
 
         // Game thread tick — called once per frame ON the game thread via EngineTick hook.
-        // ALL UE4 API calls (ProcessEvent, FindAllOf, reflection, property access) go here.
-        // Step 1: verify it fires, then incrementally move code from on_update().
+        // ALL mod logic runs here: UE4 API calls, key handling, state machine, widget ops.
+        // GetAsyncKeyState is safe here too (Win32 API, reads global state).
         void gameThreadTick(float deltaSeconds)
-        {
-            static bool s_loggedOnce = false;
-            if (!s_loggedOnce)
-            {
-                RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] gameThreadTick() firing on game thread (dt={:.4f})\n"), deltaSeconds);
-                s_loggedOnce = true;
-            }
-            // TODO: Move UE4 API calls here incrementally (Steps 2-7)
-        }
-
-        // Update thread tick — called ~5ms on UE4SS's dedicated update thread (NOT game thread).
-        // Only non-UE4 work here: GetAsyncKeyState, timekeeping, overlay state, file I/O.
-        auto on_update() -> void override
         {
 
             {
@@ -2271,6 +2258,13 @@ namespace MoriaMods
                     }
                 }
             }
+        }
+
+        // Update thread tick — called ~5ms on UE4SS's dedicated update thread.
+        // Intentionally empty: all logic moved to gameThreadTick() which runs on the game thread.
+        // on_update() is kept as a required override but does no work.
+        auto on_update() -> void override
+        {
         }
     };
 }
