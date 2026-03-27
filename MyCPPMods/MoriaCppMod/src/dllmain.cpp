@@ -843,6 +843,15 @@ namespace MoriaMods
                     STR("[MoriaCppMod] v5.5.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
+            // Register game thread tick — fires once per frame ON the game thread
+            // All UE4 API calls (ProcessEvent, FindAllOf, reflection) belong here
+            Unreal::Hook::RegisterEngineTickPreCallback(
+                [](RC::Unreal::Hook::TCallbackIterationData<void>&, UEngine*, float deltaSeconds, bool bIdleMode)
+                {
+                    if (s_instance) s_instance->gameThreadTick(deltaSeconds);
+                }, {});
+            VLOG(STR("[MoriaCppMod] Registered EngineTick game thread callback\n"));
+
             Unreal::Hook::RegisterLoadMapPreCallback(
                 [this](UEngine*, FWorldContext&, FURL, UPendingNetGame*, FString&) -> std::pair<bool, bool>
                 {
@@ -857,6 +866,22 @@ namespace MoriaMods
         }
 
 
+        // Game thread tick — called once per frame ON the game thread via EngineTick hook.
+        // ALL UE4 API calls (ProcessEvent, FindAllOf, reflection, property access) go here.
+        // Step 1: verify it fires, then incrementally move code from on_update().
+        void gameThreadTick(float deltaSeconds)
+        {
+            static bool s_loggedOnce = false;
+            if (!s_loggedOnce)
+            {
+                RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] gameThreadTick() firing on game thread (dt={:.4f})\n"), deltaSeconds);
+                s_loggedOnce = true;
+            }
+            // TODO: Move UE4 API calls here incrementally (Steps 2-7)
+        }
+
+        // Update thread tick — called ~5ms on UE4SS's dedicated update thread (NOT game thread).
+        // Only non-UE4 work here: GetAsyncKeyState, timekeeping, overlay state, file I/O.
         auto on_update() -> void override
         {
 
