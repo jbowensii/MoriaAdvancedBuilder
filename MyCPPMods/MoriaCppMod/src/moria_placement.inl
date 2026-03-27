@@ -504,8 +504,21 @@
                 m_origRelLocsCached = true;
             }
 
-            // Base component (Comp[0]) — rotation pivot at assembly bottom
+            // Find the base component — the mesh piece with the lowest Z RelativeLocation
             int baseIdx = 0;
+            float lowestZ = 999999.0f;
+            for (int fi = 0; fi < arr->count; fi++)
+            {
+                if (fi >= static_cast<int>(m_origRelLocs.size())) break;
+                auto* fComp = reinterpret_cast<UObject*>(arr->data[fi]);
+                if (!fComp || !fComp->GetFunctionByNameInChain(STR("GetLocalBounds"))) continue;
+                if (m_origRelLocs[fi].z < lowestZ)
+                {
+                    lowestZ = m_origRelLocs[fi].z;
+                    baseIdx = fi;
+                }
+            }
+            VLOG(STR("[MoriaCppMod] [PitchRoll] Base component: [{}] at Z={:.1f}\n"), baseIdx, lowestZ);
             float baseRX = m_origRelLocs[baseIdx].x;
             float baseRY = m_origRelLocs[baseIdx].y;
             float baseRZ = m_origRelLocs[baseIdx].z;
@@ -620,7 +633,7 @@
                 // Qpitch = (0, sin(p/2), 0, cos(p/2))
                 // Qroll  = (sin(r/2), 0, 0, cos(r/2))
                 constexpr float DEG2RAD = 3.14159265f / 180.0f;
-                // Negate pitch to match ghost preview direction
+                // Negate pitch to match ghost visual direction
                 float hp = -m_experimentPitch * DEG2RAD * 0.5f;
                 float hr = m_experimentRoll * DEG2RAD * 0.5f;
                 float sp = sinf(hp), cp = cosf(hp);
@@ -633,10 +646,10 @@
                 float prZ = cp * 0 - sp * sr;    // = -sp*sr
                 float prW = cp * cr - sp * 0;    // = cp*cr
 
-                // Now multiply: existingQuat * pitchRollQuat
-                // This applies pitch/roll in the LOCAL frame of the existing rotation
-                float ax = quat[0], ay = quat[1], az = quat[2], aw = quat[3];
-                float bx = prX, by = prY, bz = prZ, bw = prW;
+                // Multiply: pitchRollQuat * existingQuat
+                // This applies pitch/roll in WORLD frame, then existing yaw
+                float ax = prX, ay = prY, az = prZ, aw = prW;
+                float bx = quat[0], by = quat[1], bz = quat[2], bw = quat[3];
 
                 quat[0] = aw*bx + ax*bw + ay*bz - az*by;
                 quat[1] = aw*by - ax*bz + ay*bw + az*bx;
