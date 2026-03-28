@@ -3882,7 +3882,7 @@
             int capturing = s_capturingBind.load();
             for (int i = 0; i < BIND_COUNT; i++)
             {
-                if (!m_ftKeyBoxLabels[i]) continue;
+                if (!m_ftKeyBoxLabels[i] || !isObjectAlive(m_ftKeyBoxLabels[i])) { m_ftKeyBoxLabels[i] = nullptr; continue; }
                 if (capturing == i)
                 {
                     umgSetText(m_ftKeyBoxLabels[i], Loc::get("ui.press_key"));

@@ -97,9 +97,19 @@ static std::wstring safeClassName(UObject* obj)
 static bool isObjectAlive(UObject* obj)
 {
     if (!obj) return false;
-    if (obj->HasAnyFlags(static_cast<EObjectFlags>(RF_BeginDestroyed | RF_FinishDestroyed))) return false;
-    if (obj->IsUnreachable()) return false;
-    return true;
+    // SEH guard: pointer may be fully freed (not just GC-flagged), so reading
+    // object flags can access-violate. This happens when UMG widgets are destroyed
+    // during world transitions or menu rebuilds and our cached raw pointer dangles.
+    __try
+    {
+        if (obj->HasAnyFlags(static_cast<EObjectFlags>(RF_BeginDestroyed | RF_FinishDestroyed))) return false;
+        if (obj->IsUnreachable()) return false;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
 }
 
 
