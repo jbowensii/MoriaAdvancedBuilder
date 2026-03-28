@@ -177,7 +177,7 @@
 
         void setWidgetPosition(UObject* widget, float x, float y, bool bRemoveDPIScale = false)
         {
-            if (!widget) return;
+            if (!widget || !isObjectAlive(widget)) return;
             auto* fn = widget->GetFunctionByNameInChain(STR("SetPositionInViewport"));
             if (!fn) return;
             auto* pPos = findParam(fn, STR("Position"));
@@ -2166,7 +2166,7 @@
 
         void hideErrorBox()
         {
-            if (!m_errorBoxWidget) return;
+            if (!m_errorBoxWidget || !isObjectAlive(m_errorBoxWidget)) { m_errorBoxWidget = nullptr; return; }
             auto* fn = m_errorBoxWidget->GetFunctionByNameInChain(STR("SetVisibility"));
             if (fn) { uint8_t p[8]{}; p[0] = 1; safeProcessEvent(m_errorBoxWidget, fn, p); }
             m_ebShowTick = 0;
@@ -2175,7 +2175,11 @@
         // Show a message in the info box widget (always visible, auto-hides)
         void showInfoMessage(const std::wstring& message)
         {
-            if (!m_errorBoxWidget) createErrorBox();
+            if (!m_errorBoxWidget || !isObjectAlive(m_errorBoxWidget))
+            {
+                m_errorBoxWidget = nullptr;
+                createErrorBox();
+            }
             if (!m_errorBoxWidget) return;
 
             umgSetText(m_ebMessageLabel, message);
@@ -2188,6 +2192,7 @@
                                                     m_screen.fracToPixelY(fracY), true);
             }
 
+            if (!isObjectAlive(m_errorBoxWidget)) { m_errorBoxWidget = nullptr; return; }
             auto* fn = m_errorBoxWidget->GetFunctionByNameInChain(STR("SetVisibility"));
             if (fn) { uint8_t p[8]{}; p[0] = 0; safeProcessEvent(m_errorBoxWidget, fn, p); }
 
