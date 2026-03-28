@@ -3856,10 +3856,15 @@
 
             if (m_ftScrollBox)
             {
+                // Hide before ClearChildren to prevent Slate PaintFastPath crash —
+                // Slate caches SWidget pointers; clearing children while visible can
+                // leave dangling references that crash in SImage::OnPaint.
+                setWidgetVisibility(m_ftScrollBox, 1); // ESlateVisibility::Collapsed
                 auto* clearFn = m_ftScrollBox->GetFunctionByNameInChain(STR("ClearChildren"));
                 if (clearFn) safeProcessEvent(m_ftScrollBox, clearFn, nullptr);
                 if (m_ftTabContent[tab])
                     addChildToPanel(m_ftScrollBox, STR("AddChild"), m_ftTabContent[tab]);
+                setWidgetVisibility(m_ftScrollBox, 0); // ESlateVisibility::Visible
 
                 auto* setScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("SetScrollOffset"));
                 if (setScrollFn)
@@ -4373,6 +4378,8 @@
             UObject* outer = m_ftRemovalVBox->GetOuterPrivate();
             if (!outer) outer = m_ftRemovalVBox;
 
+            // Hide before ClearChildren to prevent Slate PaintFastPath crash
+            setWidgetVisibility(m_ftRemovalVBox, 1); // Collapsed
             auto* clearFn = m_ftRemovalVBox->GetFunctionByNameInChain(STR("ClearChildren"));
             if (clearFn) safeProcessEvent(m_ftRemovalVBox, clearFn, nullptr);
 
@@ -4497,6 +4504,7 @@
                         addEntryRow(i);
                 }
             }
+            setWidgetVisibility(m_ftRemovalVBox, 0); // Visible — children rebuilt
             m_ftLastRemovalCount = count;
         }
 
