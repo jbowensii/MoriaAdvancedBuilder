@@ -251,6 +251,8 @@
 
             UObject* stateImg = m_mcStateImages[slot];
             UObject* iconImg = m_mcIconImages[slot];
+            if (stateImg && !isObjectAlive(stateImg)) { m_mcStateImages[slot] = nullptr; stateImg = nullptr; }
+            if (iconImg && !isObjectAlive(iconImg)) { m_mcIconImages[slot] = nullptr; iconImg = nullptr; }
 
             if (state == UmgSlotState::Disabled)
             {
@@ -337,7 +339,9 @@
             m_offLastTraceResults = p2->GetOffset_Internal();
 
             // Resolve TargetRotation within the TraceResults struct
+            // p1 is known to be FStructProperty because TraceResults is a struct field
             auto* structProp = static_cast<RC::Unreal::FStructProperty*>(p1);
+            if (!structProp) { VLOG(STR("[MoriaCppMod] [PitchRoll] TraceResults is not FStructProperty\n")); return false; }
             UScriptStruct* innerStruct = structProp->GetStruct();
             if (innerStruct)
             {
@@ -557,7 +561,7 @@
             if (!rootProp) return;
             UObject* rootComp = *reinterpret_cast<UObject**>(
                 reinterpret_cast<uint8_t*>(reticle) + rootProp->GetOffset_Internal());
-            if (!rootComp) return;
+            if (!rootComp || !isObjectAlive(rootComp)) return;
 
             auto* reticleBase = reinterpret_cast<uint8_t*>(reticle);
             struct TArrayRaw { void** data; int32_t count; int32_t max; };
@@ -582,7 +586,8 @@
                 for (int ci = 0; ci < arr->count; ci++)
                 {
                     auto* c = reinterpret_cast<uint8_t*>(arr->data[ci]);
-                    if (!c) { m_origRelLocs[ci] = {0,0,0}; m_origRelRots[ci] = {0,0,0}; continue; }
+                    if (!c || !isObjectAlive(reinterpret_cast<UObject*>(c)))
+                    { m_origRelLocs[ci] = {0,0,0}; m_origRelRots[ci] = {0,0,0}; continue; }
                     float* rl = reinterpret_cast<float*>(c + m_offRelativeLocation);
                     float* rr = reinterpret_cast<float*>(c + m_offRelativeRotation);
                     m_origRelLocs[ci] = {rl[0], rl[1], rl[2]};
@@ -627,6 +632,7 @@
                 if (i >= static_cast<int>(m_origRelLocs.size())) break;
 
                 auto* compObj = reinterpret_cast<UObject*>(comp);
+                if (!isObjectAlive(compObj)) continue;
                 if (!compObj->GetFunctionByNameInChain(STR("GetLocalBounds")))
                     continue;
 

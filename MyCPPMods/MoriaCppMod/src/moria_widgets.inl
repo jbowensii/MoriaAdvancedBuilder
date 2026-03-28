@@ -33,6 +33,7 @@
 
         void umgSetBrush(UObject* img, UObject* texture, UFunction* setBrushFn)
         {
+            if (!img || !isObjectAlive(img) || !setBrushFn) return;
             ensureBrushOffset(img);
             auto* pTex = findParam(setBrushFn, STR("Texture"));
             auto* pMatch = findParam(setBrushFn, STR("bMatchSize"));
@@ -46,6 +47,7 @@
 
         void umgSetOpacity(UObject* img, float opacity)
         {
+            if (!img || !isObjectAlive(img)) return;
             auto* fn = img->GetFunctionByNameInChain(STR("SetOpacity"));
             if (!fn) return;
             auto* p = findParam(fn, STR("InOpacity"));
@@ -59,6 +61,7 @@
 
         void umgSetSlotSize(UObject* slot, float value, uint8_t sizeRule)
         {
+            if (!slot || !isObjectAlive(slot)) return;
             auto* fn = slot->GetFunctionByNameInChain(STR("SetSize"));
             if (!fn) return;
             auto* p = findParam(fn, STR("InSize"));
@@ -74,6 +77,7 @@
 
         void umgSetSlotPadding(UObject* slot, float left, float top, float right, float bottom)
         {
+            if (!slot || !isObjectAlive(slot)) return;
             auto* fn = slot->GetFunctionByNameInChain(STR("SetPadding"));
             if (!fn) return;
             auto* p = findParam(fn, STR("InPadding"));
@@ -88,6 +92,7 @@
 
         void umgSetHAlign(UObject* slot, uint8_t align)
         {
+            if (!slot || !isObjectAlive(slot)) return;
             auto* fn = slot->GetFunctionByNameInChain(STR("SetHorizontalAlignment"));
             if (!fn) return;
             auto* p = findParam(fn, STR("InHorizontalAlignment"));
@@ -101,6 +106,7 @@
 
         void umgSetVAlign(UObject* slot, uint8_t align)
         {
+            if (!slot || !isObjectAlive(slot)) return;
             auto* fn = slot->GetFunctionByNameInChain(STR("SetVerticalAlignment"));
             if (!fn) return;
             auto* p = findParam(fn, STR("InVerticalAlignment"));
@@ -114,6 +120,7 @@
 
         void umgSetRenderScale(UObject* widget, float sx, float sy)
         {
+            if (!widget || !isObjectAlive(widget)) return;
             auto* fn = widget->GetFunctionByNameInChain(STR("SetRenderScale"));
             if (!fn) return;
             auto* p = findParam(fn, STR("Scale"));
@@ -194,7 +201,7 @@
 
         void umgSetImageColor(UObject* img, float r, float g, float b, float a)
         {
-            if (!img) return;
+            if (!img || !isObjectAlive(img)) return;
             auto* fn = img->GetFunctionByNameInChain(STR("SetColorAndOpacity"));
             if (!fn) return;
             auto* p = findParam(fn, STR("InColorAndOpacity"));
@@ -256,7 +263,7 @@
 
         void umgSetText(UObject* textBlock, const std::wstring& text)
         {
-            if (!textBlock) return;
+            if (!textBlock || !isObjectAlive(textBlock)) return;
             auto* fn = textBlock->GetFunctionByNameInChain(STR("SetText"));
             if (!fn) return;
             auto* pInText = findParam(fn, STR("InText"));
@@ -271,7 +278,7 @@
 
         void umgSetTextColor(UObject* textBlock, float r, float g, float b, float a)
         {
-            if (!textBlock) return;
+            if (!textBlock || !isObjectAlive(textBlock)) return;
             auto* fn = textBlock->GetFunctionByNameInChain(STR("SetColorAndOpacity"));
             if (!fn) return;
             auto* p = findParam(fn, STR("InColorAndOpacity"));
@@ -287,7 +294,7 @@
 
         void umgSetBold(UObject* textBlock)
         {
-            if (!textBlock) return;
+            if (!textBlock || !isObjectAlive(textBlock)) return;
             auto* setFontFn = textBlock->GetFunctionByNameInChain(STR("SetFont"));
             if (!setFontFn) return;
             int fontOff = resolveOffset(textBlock, L"Font", s_off_font);
@@ -314,7 +321,7 @@
 
         void umgSetFontSize(UObject* textBlock, int32_t fontSize)
         {
-            if (!textBlock) return;
+            if (!textBlock || !isObjectAlive(textBlock)) return;
             auto* setFontFn = textBlock->GetFunctionByNameInChain(STR("SetFont"));
             if (!setFontFn) return;
             int fontOff = resolveOffset(textBlock, L"Font", s_off_font);
@@ -336,7 +343,7 @@
 
         void umgSetFontAndSize(UObject* textBlock, UObject* fontObj, int32_t fontSize)
         {
-            if (!textBlock) return;
+            if (!textBlock || !isObjectAlive(textBlock)) return;
             auto* setFontFn = textBlock->GetFunctionByNameInChain(STR("SetFont"));
             if (!setFontFn) return;
             int fontOff = resolveOffset(textBlock, L"Font", s_off_font);
@@ -412,6 +419,7 @@
 
         void umgSetBrushNoMatch(UObject* img, UObject* texture, UFunction* setBrushFn)
         {
+            if (!img || !isObjectAlive(img) || !setBrushFn) return;
             ensureBrushOffset(img);
             auto* pTex = findParam(setBrushFn, STR("Texture"));
             auto* pMatch = findParam(setBrushFn, STR("bMatchSize"));
@@ -425,6 +433,7 @@
 
         void umgSetBrushSize(UObject* img, float w, float h)
         {
+            if (!img || !isObjectAlive(img)) return;
             auto* fn = img->GetFunctionByNameInChain(STR("SetBrushSize"));
             if (!fn) return;
             auto* p = findParam(fn, STR("DesiredSize"));
@@ -4352,7 +4361,7 @@
 
         void rebuildFtRemovalList()
         {
-            if (!m_ftRemovalVBox) return;
+            if (!m_ftRemovalVBox || !isObjectAlive(m_ftRemovalVBox)) { m_ftRemovalVBox = nullptr; return; }
 
             auto* imageClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Image"));
             auto* hboxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.HorizontalBox"));
