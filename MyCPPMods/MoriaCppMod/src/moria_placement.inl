@@ -318,9 +318,12 @@
         int m_offRelativeRotation{-1};   // USceneComponent → FRotator RelativeRotation
         int m_offRelativeLocation{-1};   // USceneComponent → FVector RelativeLocation
 
-        // Cache original RelativeLocations so we always compute from originals (not accumulated)
+        // Cache original RelativeLocations AND RelativeRotations so we always compute from originals
         struct OriginalRelLoc { float x, y, z; };
+        struct OriginalRelRot { float pitch, yaw, roll; };
         std::vector<OriginalRelLoc> m_origRelLocs;
+        std::vector<OriginalRelRot> m_origRelRots;
+        OriginalRelLoc m_pivotPoint{0, 0, 0};  // snap component = center of assembly
         bool m_origRelLocsCached{false};
         static constexpr int GATA_YAW_ACCUMULATOR = 0x0658;  // NOT reflected — must stay hardcoded
 
@@ -445,9 +448,97 @@
         //
         // Rotation math: UE4 FRotationTranslationMatrix (row-vector convention V_out = V * M)
         //   Pitch = Y-axis rotation, Roll = X-axis rotation
-        //   Matrix with Yaw=0: M = | CP      0      SP    |
-        //                          | SR*SP   CR    -SR*CP  |
-        //                          | -CR*SP  SR     CR*CP  |
+        // ============================================================================
+        // Quaternion helpers for multipart ghost rotation
+        //
+        // CRITICAL: All quaternion functions MUST match UE4's conventions exactly.
+        // UE4 uses a NEGATED X,Y convention compared to standard math quaternions:
+        //   UE4 pure pitch P: (0, -sin(P/2), 0, cos(P/2))   [standard: (0, +sin, 0, cos)]
+        //   UE4 pure roll  R: (-sin(R/2), 0, 0, cos(R/2))   [standard: (+sin, 0, 0, cos)]
+        //   UE4 pure yaw   Y: (0, 0, sin(Y/2), cos(Y/2))    [same as standard]
+        //
+        // Getting this wrong causes quaternion compositions (quatMul) to produce
+        // INCONSISTENT position vs rotation transforms, making multipart ghost pieces
+        // separate even though the math looks correct in isolation.
+        //
+        // Reference: UE4 FRotator::Quaternion() and FQuat::Rotator() in RotationMatrix.h
+        // ============================================================================
+        struct Quat4 { float x, y, z, w; };
+
+        // Construct a quaternion for combined pitch (Y-axis) + roll (X-axis) rotation.
+        // Matches UE4: FRotator(pitchDeg, 0, rollDeg).Quaternion()
+        // Result = Qpitch * Qroll with UE4's negated X,Y convention.
+        static Quat4 pitchRollToQuat(float pitchDeg, float rollDeg)
+        {
+            constexpr float D2R_HALF = 3.14159265f / 360.0f;
+            float hp = pitchDeg * D2R_HALF;
+            float hr = rollDeg * D2R_HALF;
+            float sp = sinf(hp), cp = cosf(hp);
+            float sr = sinf(hr), cr = cosf(hr);
+            // UE4 convention: Qpitch(Y) = (0, -sp, 0, cp), Qroll(X) = (-sr, 0, 0, cr)
+            // Qpitch * Qroll via Hamilton product:
+            return { -cp*sr, -sp*cr, -sp*sr, cp*cr };
+        }
+
+        // Hamilton product: composes two rotations (standard formula, works with any convention)
+        static Quat4 quatMul(const Quat4& a, const Quat4& b)
+        {
+            return {
+                a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
+                a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
+                a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w,
+                a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z
+            };
+        }
+
+        // Rotate vector v by quaternion q: v' = q * v * q_conjugate
+        // Uses the optimized cross-product form (avoids full quat multiply)
+        static void quatRotVec(const Quat4& q, float vx, float vy, float vz,
+                                float& ox, float& oy, float& oz)
+        {
+            float tx = 2.0f * (q.y*vz - q.z*vy);
+            float ty = 2.0f * (q.z*vx - q.x*vz);
+            float tz = 2.0f * (q.x*vy - q.y*vx);
+            ox = vx + q.w*tx + (q.y*tz - q.z*ty);
+            oy = vy + q.w*ty + (q.z*tx - q.x*tz);
+            oz = vz + q.w*tz + (q.x*ty - q.y*tx);
+        }
+
+        struct EulerAngles { float pitch, yaw, roll; };
+        static EulerAngles quatToEuler(const Quat4& q)
+        {
+            // Matches UE4 FQuat::Rotator() exactly
+            constexpr float R2D = 180.0f / 3.14159265f;
+            float singularityTest = q.z * q.x - q.w * q.y;
+            float pitch = (fabsf(singularityTest) >= 0.4999995f)
+                ? copysignf(90.0f, singularityTest)
+                : asinf(2.0f * singularityTest) * R2D;
+            float yaw  = atan2f(2.0f * (q.w * q.z + q.x * q.y), 1.0f - 2.0f * (q.y*q.y + q.z*q.z)) * R2D;
+            float roll = atan2f(-2.0f * (q.w * q.x + q.y * q.z), 1.0f - 2.0f * (q.x*q.x + q.y*q.y)) * R2D;
+            return {pitch, yaw, roll};
+        }
+
+        // Convert UE4 FRotator (Pitch,Yaw,Roll) → FQuat.
+        // Matches UE4 FRotator::Quaternion() exactly.
+        // Decomposition order: Q = Qyaw(Z) * Qpitch(Y) * Qroll(X) with UE4's sign convention.
+        static Quat4 rotatorToQuat(float pitchDeg, float yawDeg, float rollDeg)
+        {
+            constexpr float D2R_HALF = 3.14159265f / 360.0f;
+            float hp = pitchDeg * D2R_HALF;
+            float hy = yawDeg * D2R_HALF;
+            float hr = rollDeg * D2R_HALF;
+            float sp = sinf(hp), cp = cosf(hp);
+            float sy = sinf(hy), cy = cosf(hy);
+            float sr = sinf(hr), cr = cosf(hr);
+            // UE4 FRotator::Quaternion() exact formula
+            return {
+                 cr*sp*sy - sr*cp*cy,   // X
+                -cr*sp*cy - sr*cp*sy,   // Y
+                 cr*cp*sy - sr*sp*cy,   // Z
+                 cr*cp*cy + sr*sp*sy    // W
+            };
+        }
+
         void rotateReticleVisual(UObject* gata, float pitchDeg, float rollDeg)
         {
             auto* getReticleFn = gata->GetFunctionByNameInChain(STR("GetReticleActor"));
@@ -459,121 +550,108 @@
             if (!reticle) return;
             if (!resolveReticleOffsets(reticle)) return;
 
+            // Get root component — needed to verify reticle actor structure
+            // All CopiedComponents are siblings under this root SceneComponent.
+            // Root has world position + yaw set by GATA; children's RelLoc/RelRot are in root space.
+            auto* rootProp = reticle->GetPropertyByNameInChain(STR("RootComponent"));
+            if (!rootProp) return;
+            UObject* rootComp = *reinterpret_cast<UObject**>(
+                reinterpret_cast<uint8_t*>(reticle) + rootProp->GetOffset_Internal());
+            if (!rootComp) return;
+
             auto* reticleBase = reinterpret_cast<uint8_t*>(reticle);
             struct TArrayRaw { void** data; int32_t count; int32_t max; };
             auto* arr = reinterpret_cast<TArrayRaw*>(reticleBase + m_offCopiedComponents);
             if (!arr->data || arr->count <= 0) return;
 
-            // Precompute trig for the rotation matrix
-            // UE4 FRotationMatrix: SP/CP for Pitch(Y-axis), SR/CR for Roll(X-axis)
-            const float p = pitchDeg * 3.14159265f / 180.0f;
-            const float r = rollDeg * 3.14159265f / 180.0f;
-            const float cp = cosf(p), sp = sinf(p);
-            const float cr = cosf(r), sr = sinf(r);
-
-            // Cache original RelativeLocations on first pitch/roll press
-            // (K2_SetRelativeLocationAndRotation modifies RelLoc, so we must use originals)
+            // Cache original RelLocs and RelRots on first press
             if (!m_origRelLocsCached)
             {
                 m_origRelLocs.resize(arr->count);
+                m_origRelRots.resize(arr->count);
+                m_pivotPoint = {0, 0, 0};
+                bool foundSnap = false;
+
+                // Log root info
+                auto* rootBase = reinterpret_cast<uint8_t*>(rootComp);
+                float* rootRR = reinterpret_cast<float*>(rootBase + m_offRelativeRotation);
+                VLOG(STR("[MoriaCppMod] [PitchRoll] Root {} RelRot=({:.1f},{:.1f},{:.1f})\n"),
+                     safeClassName(rootComp), rootRR[0], rootRR[1], rootRR[2]);
+
                 VLOG(STR("[MoriaCppMod] [PitchRoll] Caching {} components:\n"), arr->count);
                 for (int ci = 0; ci < arr->count; ci++)
                 {
                     auto* c = reinterpret_cast<uint8_t*>(arr->data[ci]);
-                    if (!c) { m_origRelLocs[ci] = {0,0,0}; continue; }
+                    if (!c) { m_origRelLocs[ci] = {0,0,0}; m_origRelRots[ci] = {0,0,0}; continue; }
                     float* rl = reinterpret_cast<float*>(c + m_offRelativeLocation);
+                    float* rr = reinterpret_cast<float*>(c + m_offRelativeRotation);
                     m_origRelLocs[ci] = {rl[0], rl[1], rl[2]};
+                    m_origRelRots[ci] = {rr[0], rr[1], rr[2]};
 
-                    // Debug: dump bounds and class for each component
                     auto* cObj = reinterpret_cast<UObject*>(c);
                     std::wstring cls = safeClassName(cObj);
-                    auto* bFn = cObj->GetFunctionByNameInChain(STR("GetLocalBounds"));
-                    if (bFn)
+
+                    if (!foundSnap && cls.find(L"SnapComponent") != std::wstring::npos)
                     {
-                        struct { float mnX,mnY,mnZ,mxX,mxY,mxZ; } bp{};
-                        safeProcessEvent(cObj, bFn, &bp);
-                        VLOG(STR("[MoriaCppMod] [PitchRoll]   [{}] {} RelLoc=({:.1f},{:.1f},{:.1f}) Bounds=({:.1f},{:.1f},{:.1f})-({:.1f},{:.1f},{:.1f})\n"),
-                             ci, cls, rl[0], rl[1], rl[2], bp.mnX, bp.mnY, bp.mnZ, bp.mxX, bp.mxY, bp.mxZ);
-                    }
-                    else
-                    {
-                        VLOG(STR("[MoriaCppMod] [PitchRoll]   [{}] {} RelLoc=({:.1f},{:.1f},{:.1f}) NO MESH\n"),
+                        m_pivotPoint = {rl[0], rl[1], rl[2]};
+                        foundSnap = true;
+                        VLOG(STR("[MoriaCppMod] [PitchRoll]   [{}] {} RelLoc=({:.1f},{:.1f},{:.1f}) ** PIVOT **\n"),
                              ci, cls, rl[0], rl[1], rl[2]);
+                        continue;
                     }
+
+                    VLOG(STR("[MoriaCppMod] [PitchRoll]   [{}] {} RelLoc=({:.1f},{:.1f},{:.1f}) RelRot=({:.1f},{:.1f},{:.1f})\n"),
+                         ci, cls, rl[0], rl[1], rl[2], rr[0], rr[1], rr[2]);
                 }
+                if (foundSnap)
+                    VLOG(STR("[MoriaCppMod] [PitchRoll] Pivot: ({:.1f},{:.1f},{:.1f})\n"),
+                         m_pivotPoint.x, m_pivotPoint.y, m_pivotPoint.z);
                 m_origRelLocsCached = true;
             }
 
-            // Find the base component — the mesh piece with the lowest Z RelativeLocation
-            int baseIdx = 0;
-            float lowestZ = 999999.0f;
-            for (int fi = 0; fi < arr->count; fi++)
-            {
-                if (fi >= static_cast<int>(m_origRelLocs.size())) break;
-                auto* fComp = reinterpret_cast<UObject*>(arr->data[fi]);
-                if (!fComp || !fComp->GetFunctionByNameInChain(STR("GetLocalBounds"))) continue;
-                if (m_origRelLocs[fi].z < lowestZ)
-                {
-                    lowestZ = m_origRelLocs[fi].z;
-                    baseIdx = fi;
-                }
-            }
-            VLOG(STR("[MoriaCppMod] [PitchRoll] Base component: [{}] at Z={:.1f}\n"), baseIdx, lowestZ);
-            float baseRX = m_origRelLocs[baseIdx].x;
-            float baseRY = m_origRelLocs[baseIdx].y;
-            float baseRZ = m_origRelLocs[baseIdx].z;
-
-            // Use K2_SetRelativeLocationAndRotation (doesn't flash — game doesn't fight relative writes)
-            // Build pitch/roll quaternion for position computation only
-            constexpr float DEG2RAD_HALF = 3.14159265f / 360.0f;
-            float hp = -pitchDeg * DEG2RAD_HALF;  // negate pitch to match placement
-            float hr = rollDeg * DEG2RAD_HALF;
-            float qsp = sinf(hp), qcp = cosf(hp);
-            float qsr = sinf(hr), qcr = cosf(hr);
-
-            // Qpitch * Qroll
-            float prX = qcp * qsr, prY = qsp * qcr, prZ = -qsp * qsr, prW = qcp * qcr;
-
-            // For position: rotate offsets by pitch/roll ONLY (no yaw — relative space handles yaw)
-            // Use quaternion vector rotation: v' = q * v * q_conjugate
-            auto qRotVec = [&](float vx, float vy, float vz, float& ox, float& oy, float& oz) {
-                float qx = prX, qy = prY, qz = prZ, qw = prW;
-                float tx = 2.0f * (qy*vz - qz*vy);
-                float ty = 2.0f * (qz*vx - qx*vz);
-                float tz = 2.0f * (qx*vy - qy*vx);
-                ox = vx + qw*tx + (qy*tz - qz*ty);
-                oy = vy + qw*ty + (qz*tx - qx*tz);
-                oz = vz + qw*tz + (qx*ty - qy*tx);
-            };
-
-            // Convert pitch/roll quaternion to FRotator for the relative rotation
-            constexpr float RAD2DEG = 180.0f / 3.14159265f;
-            float sinp2 = 2.0f * (prW * prY - prZ * prX);
-            float relPitch = (fabsf(sinp2) >= 1.0f) ? copysignf(90.0f, sinp2) : asinf(sinp2) * RAD2DEG;
-            float relYaw = atan2f(2.0f * (prW * prZ + prX * prY), 1.0f - 2.0f * (prY * prY + prZ * prZ)) * RAD2DEG;
-            float relRoll = atan2f(2.0f * (prW * prX + prY * prZ), 1.0f - 2.0f * (prX * prX + prY * prY)) * RAD2DEG;
+            // Build pitch/roll quaternion directly in ROOT SPACE.
+            // Children's RelLoc/RelRot are defined in root space. Root already has yaw from GATA.
+            // Applying pitch/roll in root space = piece-local pitch/roll (follows facing direction).
+            //
+            // IMPORTANT: No world-to-root conjugation needed because pitchRollToQuat uses
+            // UE4-correct conventions. With wrong conventions (X,Y negated), the position
+            // rotation and rotation composition would be INCONSISTENT — positions move one way
+            // while mesh orientations rotate another — causing multipart pieces to separate.
+            // The fix was matching UE4's FRotator::Quaternion() / FQuat::Rotator() exactly.
+            Quat4 localPR = pitchRollToQuat(pitchDeg, rollDeg);
 
             for (int i = 0; i < arr->count; i++)
             {
                 auto* comp = reinterpret_cast<uint8_t*>(arr->data[i]);
                 if (!comp) continue;
+                if (i >= static_cast<int>(m_origRelLocs.size())) break;
 
                 auto* compObj = reinterpret_cast<UObject*>(comp);
                 if (!compObj->GetFunctionByNameInChain(STR("GetLocalBounds")))
                     continue;
 
-                // Compute offset from base using CACHED originals
-                float dx = m_origRelLocs[i].x - baseRX;
-                float dy = m_origRelLocs[i].y - baseRY;
-                float dz = m_origRelLocs[i].z - baseRZ;
+                // POSITION: rigid-body rotation around the snap/pivot point.
+                // Offset from pivot → rotate by localPR → add pivot back.
+                // This keeps the assembly together because ALL pieces use the SAME
+                // quaternion for both position and rotation (rigid-body invariant).
+                float dx = m_origRelLocs[i].x - m_pivotPoint.x;
+                float dy = m_origRelLocs[i].y - m_pivotPoint.y;
+                float dz = m_origRelLocs[i].z - m_pivotPoint.z;
 
-                // Rotate offset by pitch/roll quaternion (local space — no yaw)
                 float rx, ry, rz;
-                qRotVec(dx, dy, dz, rx, ry, rz);
+                quatRotVec(localPR, dx, dy, dz, rx, ry, rz);
 
-                float newRelX = baseRX + rx;
-                float newRelY = baseRY + ry;
-                float newRelZ = baseRZ + rz;
+                float newRelX = m_pivotPoint.x + rx;
+                float newRelY = m_pivotPoint.y + ry;
+                float newRelZ = m_pivotPoint.z + rz;
+
+                // ROTATION: compose localPR * originalRelRot.
+                // Each mesh piece has its own original RelRot (e.g., yaw ±90°) that orients
+                // the mesh within the assembly. We COMPOSE (not replace) with our rotation
+                // to preserve the original orientation while adding pitch/roll on top.
+                Quat4 origQuat = rotatorToQuat(m_origRelRots[i].pitch, m_origRelRots[i].yaw, m_origRelRots[i].roll);
+                Quat4 finalQuat = quatMul(localPR, origQuat);
+                EulerAngles finalRot = quatToEuler(finalQuat);
 
                 auto* setFn = compObj->GetFunctionByNameInChain(STR("K2_SetRelativeLocationAndRotation"));
                 if (setFn)
@@ -595,8 +673,8 @@
                         auto* loc = reinterpret_cast<float*>(params.data() + offLoc);
                         loc[0] = newRelX; loc[1] = newRelY; loc[2] = newRelZ;
 
-                        auto* rot2 = reinterpret_cast<float*>(params.data() + offRot);
-                        rot2[0] = relPitch; rot2[1] = relYaw; rot2[2] = relRoll;
+                        auto* rot = reinterpret_cast<float*>(params.data() + offRot);
+                        rot[0] = finalRot.pitch; rot[1] = finalRot.yaw; rot[2] = finalRot.roll;
 
                         if (offTeleport >= 0)
                             *reinterpret_cast<bool*>(params.data() + offTeleport) = true;
@@ -621,7 +699,7 @@
             writeGATARotation(gata, m_offTraceResults, m_experimentPitch, tr.yaw, m_experimentRoll);
             writeGATARotation(gata, m_offLastTraceResults, m_experimentPitch, tr.yaw, m_experimentRoll);
 
-            // Rotate the preview ghost visually
+            // Rotate the preview ghost visually (per-component — GATA doesn't cascade to multipart children)
             rotateReticleVisual(gata, m_experimentPitch, m_experimentRoll);
         }
 
@@ -632,6 +710,8 @@
             m_experimentRoll = 0.0f;
             m_origRelLocsCached = false;
             m_origRelLocs.clear();
+            m_origRelRots.clear();
+            m_pivotPoint = {0, 0, 0};
             VLOG(STR("[MoriaCppMod] [PitchRoll] Cleared\n"));
         }
 
@@ -654,28 +734,30 @@
                 VLOG(STR("[MoriaCppMod] [PitchRoll]   BEFORE: Quat({:.4f}, {:.4f}, {:.4f}, {:.4f})\n"),
                      quat[0], quat[1], quat[2], quat[3]);
 
-                // Build a pitch/roll-only quaternion (no yaw — existing quat has yaw)
-                // UE4: Pitch=Y axis, Roll=X axis
-                // Qpitch = (0, sin(p/2), 0, cos(p/2))
-                // Qroll  = (sin(r/2), 0, 0, cos(r/2))
+                // Build pitch/roll quaternion matching UE4 FRotator::Quaternion() exactly.
+                // CRITICAL: X and Y components are NEGATED vs standard math convention.
+                // Getting this wrong produces roll instead of pitch in the placed result.
                 constexpr float DEG2RAD = 3.14159265f / 180.0f;
-                // Negate pitch to match ghost visual direction
-                float hp = -m_experimentPitch * DEG2RAD * 0.5f;
+                float hp = m_experimentPitch * DEG2RAD * 0.5f;
                 float hr = m_experimentRoll * DEG2RAD * 0.5f;
                 float sp = sinf(hp), cp = cosf(hp);
                 float sr = sinf(hr), cr = cosf(hr);
 
-                // Compose Qpitch * Qroll (pitch first, then roll)
-                // Using quaternion multiplication: Q1*Q2 = (w1*x2+x1*w2+y1*z2-z1*y2, ...)
-                float prX = cp * sr + sp * 0;   // = cp*sr
-                float prY = sp * cr;              // = sp*cr
-                float prZ = cp * 0 - sp * sr;    // = -sp*sr
-                float prW = cp * cr - sp * 0;    // = cp*cr
+                // UE4 convention: Qpitch(Y) = (0,-sp,0,cp), Qroll(X) = (-sr,0,0,cr)
+                // Qpitch * Qroll via Hamilton product:
+                float prX = -cp * sr;
+                float prY = -sp * cr;
+                float prZ = -sp * sr;
+                float prW = cp * cr;
 
-                // Multiply: pitchRollQuat * existingQuat
-                // This applies pitch/roll in WORLD frame, then existing yaw
-                float ax = prX, ay = prY, az = prZ, aw = prW;
-                float bx = quat[0], by = quat[1], bz = quat[2], bw = quat[3];
+                // Multiply: existingQuat * pitchRollQuat  (order matters!)
+                // existingQ has yaw from GATA. Multiplying on the RIGHT applies pitch/roll
+                // in the PIECE-LOCAL frame (after yaw). This produces correct euler:
+                //   yaw270 * pitch45 → euler(pitch=45, yaw=270, roll=0)
+                // The WRONG order (pitchRollQ * existingQ) applies in WORLD frame and
+                // produces euler(pitch=0, yaw=270, roll=45) — pitch becomes roll!
+                float ax = quat[0], ay = quat[1], az = quat[2], aw = quat[3];
+                float bx = prX, by = prY, bz = prZ, bw = prW;
 
                 quat[0] = aw*bx + ax*bw + ay*bz - az*by;
                 quat[1] = aw*by - ax*bz + ay*bw + az*bx;
