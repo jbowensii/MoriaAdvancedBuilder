@@ -138,7 +138,7 @@ FVec3f getPawnLocation()
 
 void setWidgetVisibility(UObject* widget, uint8_t vis)
 {
-    if (!widget) return;
+    if (!widget || !isObjectAlive(widget)) return;
     auto* fn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
     if (!fn) return;
     uint8_t parms[8]{};
