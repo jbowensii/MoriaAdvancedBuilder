@@ -803,6 +803,16 @@
                 if (m_flyMode)
                     setBoolProp(movComp, L"bCheatFlying", true);
 
+                // Server-authoritative fly: tell the server to trust client movement.
+                // Without these, dedicated servers override client fly with position corrections.
+                // bIgnoreClientMovementErrorChecksAndCorrection: server skips error detection
+                // bServerAcceptClientAuthoritativePosition: server copies client position after sim
+                // Both are UPROPERTY(BlueprintReadWrite) on UCharacterMovementComponent.
+                setBoolProp(movComp, L"bIgnoreClientMovementErrorChecksAndCorrection", m_flyMode);
+                setBoolProp(movComp, L"bServerAcceptClientAuthoritativePosition", m_flyMode);
+                VLOG(STR("[MoriaCppMod] Server fly auth: bIgnoreClientMovement={} bServerAcceptClient={}\n"),
+                     m_flyMode ? 1 : 0, m_flyMode ? 1 : 0);
+
                 VLOG(STR("[MoriaCppMod] bCheatFlying = {}\n"), m_flyMode ? 1 : 0);
 
 
