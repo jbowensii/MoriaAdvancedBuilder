@@ -727,6 +727,36 @@ namespace MoriaMods
                 }
 
 
+                // Server-side fly support: when a player connects/respawns, set their
+                // CharacterMovementComponent to trust client movement. This allows the
+                // client's SetMovementMode(MOVE_Flying) to stick without server corrections.
+                // On dedicated servers, ClientRestart fires when a player gets a new pawn.
+                if (wcscmp(fnStr2, STR("ClientRestart")) == 0 ||
+                    wcscmp(fnStr2, STR("OnPossess")) == 0 ||
+                    wcscmp(fnStr2, STR("AcknowledgePossession")) == 0)
+                {
+                    // context is the PlayerController — find its Pawn's CharacterMovement
+                    if (context)
+                    {
+                        auto* pawnProp = context->GetPropertyByNameInChain(STR("Pawn"));
+                        UObject* pawn = pawnProp ? *reinterpret_cast<UObject**>(
+                            reinterpret_cast<uint8_t*>(context) + pawnProp->GetOffset_Internal()) : nullptr;
+                        if (pawn && isObjectAlive(pawn))
+                        {
+                            auto** cmcPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
+                            UObject* cmc = (cmcPtr && *cmcPtr) ? *cmcPtr : nullptr;
+                            if (cmc && isObjectAlive(cmc))
+                            {
+                                s_instance->setBoolProp(cmc, L"bIgnoreClientMovementErrorChecksAndCorrection", true);
+                                s_instance->setBoolProp(cmc, L"bServerAcceptClientAuthoritativePosition", true);
+                                VLOG(STR("[MoriaCppMod] [ServerFly] Set client-authoritative movement on {} (pawn {:p} cmc {:p})\n"),
+                                     fnStr2, static_cast<void*>(pawn), static_cast<void*>(cmc));
+                            }
+                        }
+                    }
+                    // Don't return — let other handlers see this event too
+                }
+
                 // Bubble change — fired by AWorldLayout's OnPlayerEnteredBubble delegate
                 if (wcscmp(fnStr2, STR("OnPlayerEnteredBubble")) == 0)
                 {
