@@ -1,0 +1,2613 @@
+================================================================================
+KHAZAD-DUM ADVANCED BUILDER PACK
+COMPREHENSIVE MODDING KNOWLEDGE BASE
+
+Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
+Version 6.0.0
+March 2026
+================================================================================
+
+
+TABLE OF CONTENTS
+=================
+
+INTRODUCTION
+
+PART 1: BUILDING SYSTEM
+    1.1  Quick-Build System
+         1.1.1  Overview
+         1.1.2  How Recipes Are Captured
+         1.1.3  Two Paths: Direct and State Machine
+         1.1.4  Why the B Key Instead of Show()
+         1.1.5  Recipe Selection: blockSelectedEvent vs SelectRecipe
+         1.1.6  Debounce and Cooldown
+         1.1.7  What Broke and Why (v2.6 Regression)
+         1.1.8  Hard Rules (Proven by Crashes)
+    1.2  Building Placement and Yaw Rotation
+         1.2.1  How Yaw Rotation Works
+         1.2.2  Snap On/Off
+         1.2.3  Rotation Step System
+    1.3  Pitch and Roll: Three-Dimensional Rotation
+         1.3.1  Overview
+         1.3.2  Placement: Intercepting BuildNewConstruction
+         1.3.3  Quaternion Multiplication Order Matters
+         1.3.4  The UE4 Quaternion Convention (Critical)
+         1.3.5  GATA Trace Results Injection
+    1.4  Ghost Preview System
+         1.4.1  What the Ghost Preview Is
+         1.4.2  The Pivot Point
+         1.4.3  Single-Part Ghost Preview
+         1.4.4  Multipart Ghost Preview
+         1.4.5  Why K2_SetRelativeLocationAndRotation
+         1.4.6  No Flashing
+    1.5  Build from Target
+    1.6  Toolbar Swap
+    1.7  Building System: What Did Not Work
+
+PART 2: ENVIRONMENT AND INVENTORY
+    2.1  HISM Environment Removal System
+         2.1.1  What Are HISMs?
+         2.1.2  The Working Approach: UpdateInstanceTransform
+         2.1.3  ProcessEvent Parameter Layouts
+         2.1.4  Line Tracing for Target Selection
+         2.1.5  Persistence and Save System
+         2.1.6  Display Methods
+         2.1.7  What Crashes (HISM)
+    2.2  Permanent HISM Removal Research
+         2.2.1  The Game's Own System
+         2.2.2  Access Chain
+         2.2.3  Theoretical Permanent Removal
+         2.2.4  Actor-Level Permanent Removal
+         2.2.5  Current Status
+    2.3  Inventory System
+         2.3.1  Architecture: Three-Layer Item System
+         2.3.2  Key Classes and Structures
+         2.3.3  Inventory Component Layout
+         2.3.4  Modifying Inventory Items via ProcessEvent
+         2.3.5  Handle-Specific Item Removal
+         2.3.6  Per-Instance Item Effects
+         2.3.7  Display Names
+         2.3.8  Hotbar Layout
+         2.3.9  Lessons Learned (Inventory)
+    2.4  Inventory Features
+         2.4.1  Item Capture System
+         2.4.2  Trash Item (DEL Key)
+         2.4.3  Replenish Item (INS Key)
+         2.4.4  Remove Attributes (END Key)
+    2.5  Toolbar Swap System
+         2.5.1  Overview and Swap Flow
+         2.5.2  Multi-Frame State Machine
+         2.5.3  Class Resolution Strategies
+         2.5.4  Tint Preservation
+         2.5.5  Container Support
+         2.5.6  Animation Crash Prevention
+    2.6  Stability Audit (Building Integrity Check)
+         2.6.1  How It Works
+         2.6.2  PointLight Spawning
+         2.6.3  VFX and Light Lifecycle
+    2.7  Code Stability Audit
+         2.7.1  v2.7.7 Original Audit
+         2.7.2  v5.5.0 Quickbuild/Placement Review
+         2.7.3  Key Architecture Findings
+         2.7.4  Remaining Game-Side Crashes
+    2.8  Save Game Feature
+
+PART 3: USER INTERFACE AND DATA SYSTEMS
+    3.1  Win32 Overlay System
+    3.2  UMG Widget System
+         3.2.1  Resolution-Independent UI Scaling
+         3.2.2  Widget Repositioning System
+         3.2.3  Mod Controller (MC) Toolbar
+         3.2.4  Deferred Widget Removal
+    3.3  Keybind System
+         3.3.1  Architecture
+         3.3.2  Bind Index Map
+         3.3.3  INI Persistence and Migration
+    3.4  DataTable Modification System
+         3.4.1  DataTableUtil Overview
+         3.4.2  Row Schemas and Inheritance
+         3.4.3  Runtime Reflection (Zero Hardcoded Offsets)
+         3.4.4  Read and Write Operations
+         3.4.5  Row Add/Remove/Duplicate
+    3.5  Definition Processing System (Game Mods)
+         3.5.1  Overview and Data Flow
+         3.5.2  Manifest and XML Format
+         3.5.3  Runtime Reflection for Field Writes
+         3.5.4  F12 Game Mods Tab
+         3.5.5  Add Row System
+    3.6  Icon Extraction from UE4 Textures
+         3.6.1  Working Pipeline: Canvas Render Target
+         3.6.2  Icon Caching
+         3.6.3  Failed Approaches (Icon Extraction)
+    3.7  Server and Multiplayer Research
+         3.7.1  What Works on Dedicated Servers
+         3.7.2  What Does Not Work (Client-Side)
+         3.7.3  What Would Work (Server-Side Mod)
+         3.7.4  CheatManager Enabler Attempt
+    3.8  Failed Approaches: Build Menu Injection
+         3.8.1  Approach 1: IoStore Pak Mounting
+         3.8.2  Approach 2: JSON AddRow + FGK Cache Refresh
+         3.8.3  Root Cause: FGK Wrapper Cache
+         3.8.4  Pak Mounting Research
+         3.8.5  Lessons for Future Modders
+
+FOOTER AND CREDITS
+
+
+================================================================================
+INTRODUCTION
+================================================================================
+
+This document is the complete knowledge base for the Khazad-dum Advanced Builder
+Pack, a comprehensive C++ mod for The Lord of the Rings: Return to Moria. The
+mod is built using the UE4SS (Unreal Engine 4 Scripting System) framework and
+runs as a native DLL injected into the game process at runtime.
+
+Return to Moria is a survival crafting game built on Unreal Engine 4.27 by Free
+Range Games. It uses the FGK (Free-range Games Kit) framework as a wrapper layer
+over standard UE4 systems, which adds complexity to modding because many game
+systems have an additional caching and abstraction layer between the mod and the
+engine.
+
+The mod provides the following major features:
+
+    - Quick-Build Hotbar: Assign building recipes to F1-F8 for instant placement
+      without navigating the build menu. Supports 8 simultaneous recipe slots with
+      visual icon display on the overlay bar.
+    - Three-Dimensional Building: Full pitch, roll, and yaw rotation control for
+      placing building pieces at any angle, including upside-down or tilted. Works
+      with both single-piece and multipart assemblies.
+    - Precision Rotation: Configurable rotation steps from 5 to 90 degrees,
+      allowing fine-grained control over building piece orientation that the base
+      game does not provide.
+    - Snap Toggle: Enable or disable building snap-to-grid, allowing free
+      placement anywhere in the world without constraint.
+    - HISM Environment Removal: Remove rocks, pillars, debris, walls, and other
+      environmental obstructions from the game world. Supports single removal,
+      undo, and "remove all of type" operations with automatic persistence across
+      game sessions and level streaming reloads.
+    - Toolbar Swap: Maintain two complete hotbar loadouts (T1 and T2) and switch
+      between them with a single keypress. Preserves item tints, durability,
+      container contents, and all cosmetic effects.
+    - Inventory Management: Trash specific items (with confirmation dialog),
+      replenish stacks to maximum size via DataTable lookup, and remove cosmetic
+      effects (tints and runes) from items.
+    - Stability Audit: Highlight structurally weak building pieces with colored
+      PointLight actors and Niagara particle effects. Red for critical, amber for
+      marginal stability.
+    - Definition Packs: Runtime DataTable modification via XML .def files for game
+      balance changes. Supports modifying item stats, stack sizes, trade values,
+      durability, and more without editing game files.
+    - Save Game on Demand: Trigger a manual save at any time through the F12 menu,
+      with validation and cooldown protection.
+    - Fly Mode and Invisibility: Super Dwarf mode for exploration and building
+      (single player and listen server only; dedicated server requires server-side
+      mod).
+    - Build from Target: Copy whatever building piece you are looking at and start
+      placing a new instance of it, using three-tier recipe matching.
+    - Full UI: Win32 GDI+ overlay bar with recipe icons, UMG widget toolbars with
+      drag-and-drop repositioning, and a comprehensive F12 configuration menu with
+      keybind editing, game options, and environment management.
+
+The mod source is approximately 11,000 lines of C++ across six files, with 286
+automated tests covering keybinds, file I/O, localization, memory safety, and
+string helpers. All property offsets except one are resolved at runtime through
+UE4's reflection system, making the mod resilient to minor game updates.
+
+This knowledge base is organized into three parts: the Building System (the most
+complex subsystem), Environment and Inventory (world manipulation and item
+management), and User Interface and Data Systems (widgets, DataTables, and the
+definition processing pipeline). Each section documents what works, what does not
+work, and why, so that future modders can learn from the extensive research and
+debugging that went into this project.
+
+Technical Environment:
+    - Game: Return to Moria by Free Range Games
+    - Engine: Unreal Engine 4.27
+    - UE4SS Version: Custom-built v4.0.0-rc1 (commit 0bfec09e)
+    - Build Tools: Visual Studio 2026, MSVC v14.50, CMake 4.1.2
+    - Build Config: Game__Shipping__Win64
+    - Game Path: C:\Program Files\Epic Games\ReturnToMoria\Moria\Binaries\Win64
+    - Mod Path: <game>/ue4ss/Mods/MoriaCppMod/dlls/main.dll
+    - GitHub: https://github.com/jbowensii/MoriaAdvancedBuilder
+
+
+================================================================================
+PART 1: BUILDING SYSTEM
+================================================================================
+
+This section covers everything related to building in the mod: the quick-build
+hotbar, the building placement pipeline, yaw rotation and snap control, pitch
+and roll rotation for three-dimensional building, the ghost preview system, and
+the many failed approaches that were explored along the way. Building is by far
+the most complex subsystem in the mod, accounting for thousands of lines of code
+and months of debugging. The lessons here are hard-won.
+
+
+--------------------------------------------------------------------------------
+1.1  QUICK-BUILD SYSTEM
+--------------------------------------------------------------------------------
+
+1.1.1  OVERVIEW
+
+The quick-build system lets the player assign building recipes to F-keys (F1
+through F8) so they can place structures with a single keypress instead of
+opening the build menu, navigating categories, and clicking a recipe each time.
+This sounds simple but turned out to be one of the most technically challenging
+features in the entire mod, because the game's build UI was never designed to be
+driven programmatically and fights back at every step.
+
+The core idea: press F3, and the mod opens the build menu, finds the recipe you
+saved to that slot, clicks it for you, and gives you the ghost piece to place.
+The player sees a brief flash of the build menu and then they are holding their
+building piece, ready to place it. The entire process takes between zero
+milliseconds and about one second depending on the current state of the game.
+
+
+1.1.2  HOW RECIPES ARE CAPTURED
+
+Before you can quick-build, you need to assign recipes to slots. The player opens
+the build menu normally (B key), clicks a recipe, and then presses their modifier
+key plus an F-key (for example, CTRL+F3). The mod captures the recipe that was
+just clicked and saves it to slot 3.
+
+The capture happens through a post-hook on the game's "blockSelectedEvent"
+function, which fires every time the player clicks a recipe in the build menu
+grid. When this event fires, the mod grabs two things: the human-readable display
+name of the recipe (like "Timber Wall" or "Standing Torch") and 120 bytes of
+internal recipe data called "bLock" data. The display name is used for matching
+recipes later; the bLock data is the actual recipe identifier that the game's
+build system understands.
+
+The mod also extracts the recipe's icon texture by walking a chain of UE4
+objects: from the build item widget, to its Image component, to the material
+brush, to the MaterialInstanceDynamic, to its texture parameter values, and
+finally to the actual UTexture2D. This texture is rendered to a 128x128 canvas,
+exported as an HDR file, converted to PNG via GDI+, and cached to disk. These
+cached icons are displayed on the Win32 overlay bar so the player can see what is
+assigned to each F-key.
+
+Slots are persisted to quickbuild_slots.txt in a simple pipe-delimited format:
+slot number, display name, texture name, and row name. The bLock data is NOT
+persisted because it contains session-specific memory addresses. Each time the
+game loads, bLock data is re-resolved from the widgets through eager handle
+resolution, which opens the build menu programmatically and matches slot names
+to live widgets.
+
+
+1.1.3  TWO PATHS: DIRECT AND STATE MACHINE
+
+When the player presses an F-key, the mod evaluates the current game state and
+chooses one of two paths.
+
+[WORKS] The DIRECT path is the fast path. It fires when the build system is
+already active, meaning the player already has a ghost piece they are placing. In
+this case, the mod calls the "SelectRecipe" API directly on the active BuildHUD
+widget. This is nearly instantaneous, swapping the current ghost piece for the
+new one without any menu interaction. The critical pre-guard for this path is
+GetActiveBuildingWidget() on the MorBuildingComponent. This function returns a
+valid pointer ONLY when the build system is genuinely active. If it returns null,
+the direct path falls through to the state machine.
+
+    WARNING: An earlier version used getCachedBuildHUD() (which internally uses
+    FindAllOf to locate BuildHUD widgets) as the pre-guard for the direct path.
+    This was catastrophically wrong. FindAllOf finds ALL instances of a widget
+    class, including dormant ones that exist in memory but are not actively
+    managing placement. SelectRecipe on a dormant BuildHUD is a silent no-op:
+    ProcessEvent returns successfully, no error is thrown, but nothing happens.
+    This made it look like the quick-build fired when it actually did nothing.
+    Always use GetActiveBuildingWidget() to guard SelectRecipe calls.
+
+[WORKS] The STATE MACHINE path is the reliable fallback. It is used for cold
+starts (first build after loading), or any time the build system is not currently
+active. This path physically opens the build menu, waits for it to be ready,
+finds the correct recipe widget, and clicks it programmatically. It takes between
+250 and 1100 milliseconds depending on the starting state.
+
+The state machine has these phases:
+
+    Idle: The resting state. quickBuildSlot() evaluates the game state and jumps
+    to the appropriate starting phase.
+
+    CancelPlacement: If the player already has a ghost piece, the mod calls
+    CancelTargeting via ProcessEvent (v5.5.0+, replacing the earlier
+    keybd_event(VK_ESCAPE) approach) to dismiss it. After cancellation, if the
+    build tab is still showing, the machine jumps directly to SelectRecipe,
+    skipping the expensive close-and-reopen cycle.
+
+    CloseMenu: Waits for the build tab to close after cancellation.
+
+    WaitReopen: A mandatory settling period. Waits five frames PLUS enforces a
+    350-millisecond minimum gap since the last Show or Hide operation. This
+    cooldown is absolutely critical and cannot be reduced. UE4's MovieScene
+    animation system (which drives UMG widget animations) cannot handle
+    re-entrant visibility changes. Violating this cooldown causes crashes in
+    UUMGSequenceTickManager::TickWidgetAnimations() when SavePreAnimatedState()
+    encounters null UObject pointers.
+
+    PrimeOpen: Used only on the very first build menu open of the session. Sends
+    the B key to create the build menu widget tree for the first time. Waits for
+    the OnAfterShow hook to fire, confirming the menu is ready.
+
+    OpenMenu: Sends the B key to open the build menu. Waits for OnAfterShow
+    signal or times out after two seconds.
+
+    SelectRecipe: The final phase. Calls selectRecipeOnBuildTab() which searches
+    all visible build item widgets for one matching the saved display name and
+    texture name. When found, it reads fresh bLock data from the matched widget
+    and fires blockSelectedEvent via ProcessEvent. This gives the player their
+    ghost piece.
+
+The state machine has a 5-second timeout for first-time priming and a 2.5-second
+timeout for subsequent builds. If it times out, the player sees an error message
+and the machine returns to Idle.
+
+
+1.1.4  WHY THE B KEY INSTEAD OF SHOW()
+
+[WORKS] All menu-opening operations use the B key (keybd_event 0x42) rather than
+calling the FGK Show() API directly on the Build Tab widget. This was discovered
+through painful debugging when F2 and F3 stopped working while F1 continued to
+work.
+
+The root cause: after ESC dismisses a ghost piece, the parent BuildHUD widget
+becomes invisible. Show() on the Build Tab fires OnAfterShow at the FGK level,
+but IsVisible() (which checks the entire UMG parent chain) returns false because
+the parent HUD is gone. The B key, by contrast, opens the entire HUD chain from
+the top down through the game's own input handling. F1 happened to work because
+it used the direct path after a successful first build, while F2 and F3 (loaded
+from disk with no cached handle) fell back to the state machine and hit the
+broken Show() path.
+
+
+1.1.5  RECIPE SELECTION: blockSelectedEvent vs SelectRecipe
+
+There are two completely different APIs for selecting a recipe, and using the
+wrong one in the wrong context is a guaranteed failure.
+
+SelectRecipe lives on the BuildHUD widget (UI_WBP_BuildHUDv2_C). It works ONLY
+when the build system is actively running, meaning the player already has a ghost
+piece or the build HUD is genuinely managing placement. On a dormant BuildHUD, it
+silently does nothing.
+
+blockSelectedEvent lives on the Build Tab widget (UI_WBP_Build_Tab_C). It
+simulates clicking a recipe in the build menu grid, which triggers the game's own
+build system initialization pipeline. It works any time the Build Tab widget
+exists and is visible.
+
+The mod uses SelectRecipe exclusively in the direct path (fast mid-placement
+switching) and blockSelectedEvent exclusively in the state machine path (reliable
+cold start).
+
+
+1.1.6  DEBOUNCE AND COOLDOWN
+
+When the player presses F-keys rapidly (cycling through F1 to F8), two
+protections prevent crashes.
+
+Debounce: If the state machine is already running when a new F-key is pressed,
+the mod updates m_pendingQuickBuildSlot instead of starting a new cycle. Only the
+final recipe triggers blockSelectedEvent. This dramatically reduces the number of
+game UI cascades, which is important because each blockSelectedEvent triggers a
+chain of internal game events (SetBuildMode, TryActivateAbility, Show/Hide
+screens) that accumulate stale MovieScene entity references.
+
+Post-completion cooldown: After a successful blockSelectedEvent, the mod blocks
+new quick-build requests for 500 milliseconds. This gives the game's internal UI
+transitions time to settle before the next cascade.
+
+
+1.1.7  WHAT BROKE AND WHY (v2.6 REGRESSION)
+
+Version 2.6 introduced three changes that together broke quick-build entirely:
+
+    WARNING: Adding a SelectRecipe "fast path" inside selectRecipeOnBuildTab()
+    intercepted all recipe selection calls and silently no-oped because the
+    BuildHUD was always found (via FindAllOf) but was dormant.
+
+    WARNING: Calling hideBuildTab() after blockSelectedEvent prevented the game
+    from finalizing placement mode. The game needs the build tab to remain
+    visible briefly to complete its initialization.
+
+    WARNING: Calling SetVisibility(SelfHitTestInvisible) after Show() corrupted
+    Slate's internal FHittestGrid. Show() already sets visibility internally. The
+    second call modified the widget tree while it was still being rebuilt from
+    the first call, causing a null pointer dereference in
+    FHittestGrid::RemoveWidget().
+
+It took ten debugging attempts over two days to identify and fix all three
+issues. The full chronicle is preserved in the project documentation as a
+cautionary record.
+
+
+1.1.8  HARD RULES (PROVEN BY CRASHES)
+
+These rules were each discovered through crashes in production. Violating any of
+them will cause instability or outright crashes:
+
+    - The 350-millisecond Show/Hide cooldown is sacred. It applies to
+      showBuildTab(), hideBuildTab(), AND B-key sends. Never bypass it.
+    - Never call SetVisibility() after Show(). Show() handles visibility
+      internally.
+    - Never call hideBuildTab() after blockSelectedEvent. The game needs the tab
+      open.
+    - Never use getCachedBuildHUD() as a pre-guard for SelectRecipe. Use
+      GetActiveBuildingWidget().
+    - Never use IsAnyAnimationPlaying() to guard Show/Hide calls. Show() starts
+      an animation that the check detects, creating a deadlock.
+    - Never call StopAllAnimations() from within the on_update tick. UE4's
+      UUMGSequenceTickManager is already evaluating, and re-entering the
+      MovieScene system is explicitly forbidden.
+
+
+--------------------------------------------------------------------------------
+1.2  BUILDING PLACEMENT AND YAW ROTATION
+--------------------------------------------------------------------------------
+
+1.2.1  HOW YAW ROTATION WORKS
+
+The game's building placement system is managed by a component called GATA (a
+gameplay ability targeting actor). When the player holds a ghost piece, GATA runs
+a trace from the camera into the world, determines where the piece should go, and
+handles snapping to other structures. The ghost piece follows the player's
+crosshair.
+
+GATA maintains an internal yaw accumulator at a hardcoded offset (0x0658). This
+is the one offset in the entire mod that could not be resolved through runtime
+reflection because the property is not exposed to the Unreal reflection system.
+Every other property offset in the mod is resolved dynamically.
+
+The mod's rotation system works by reading and writing this yaw accumulator. When
+the player presses the Rotation key (default F9), the mod adds or subtracts a
+rotation step to the accumulator. The rotation step is configurable, defaulting
+to 5 degrees. Pressing the key without a modifier increases rotation; pressing
+with the modifier key decreases it. The overlay bar shows both the current step
+size and the total accumulated rotation.
+
+The yaw accumulator is a float representing degrees. The game reads this value
+each frame to determine the ghost piece's orientation. By writing to it directly,
+the mod achieves precise rotation control that the base game does not offer (the
+base game only allows 90-degree snap rotations).
+
+
+1.2.2  SNAP ON/OFF
+
+Snapping is controlled by the MaxSnapDistance property on GATA, resolved at
+runtime through reflection. When snap is on, this is set to the game's default
+value (allowing pieces to snap to nearby structures). When snap is off, the mod
+sets MaxSnapDistance to zero, which effectively disables the snapping system and
+allows free placement anywhere.
+
+The Snap Toggle key (default [ bracket) toggles between these two states. The
+current snap state is persisted in the INI file so it survives game restarts.
+
+
+1.2.3  ROTATION STEP SYSTEM
+
+The rotation step determines how many degrees each press of the Rotation key
+adds. It cycles through values: 5, 10, 15, 30, 45, 90 degrees. The player can
+also decrease the step with the modifier key. The step size is displayed
+prominently on the Win32 overlay bar in the F9 slot position, shown in bold with
+the total accumulated rotation beneath it.
+
+When a new recipe is selected (either manually or via quick-build), the rotation
+accumulator is reset to zero. This ensures each new building piece starts at its
+default orientation.
+
+
+--------------------------------------------------------------------------------
+1.3  PITCH AND ROLL: THREE-DIMENSIONAL ROTATION
+--------------------------------------------------------------------------------
+
+1.3.1  OVERVIEW
+
+By default, the game only allows yaw rotation (spinning a piece left and right
+around the vertical axis). The mod adds pitch rotation (tilting forward and
+backward) and roll rotation (tilting side to side), allowing players to place
+building pieces at any three-dimensional angle. This feature required solving two
+distinct problems: making the ghost preview show the correct orientation, and
+making the final placed piece actually use that orientation.
+
+Pitch and roll are controlled by the comma (,) and period (.) keys respectively,
+and can be enabled or disabled independently through checkboxes in the F12 Game
+Options panel.
+
+
+1.3.2  PLACEMENT: INTERCEPTING BuildNewConstruction
+
+[WORKS] The placement side was solved first and is relatively straightforward.
+The mod registers a ProcessEvent pre-callback that watches for calls to
+"BuildNewConstruction" on the building component. When this function is about to
+fire (meaning the player just clicked to place their piece), the mod intercepts
+the call, walks the function's parameter list via ForEachProperty to find the
+Transform parameter, and modifies the FQuat (quaternion) rotation in-place before
+the game processes it.
+
+The modification is a quaternion multiplication: existingQuat times pitchRollQuat.
+The existing quaternion already contains the yaw rotation from GATA. The
+pitchRollQuat encodes whatever pitch and roll the player has dialed in. The
+result is a combined quaternion that represents all three axes of rotation.
+
+The server accepts the modified rotation without complaint. This is important
+because many server-side validation systems reject client modifications, but the
+building placement system trusts the Transform parameter.
+
+
+1.3.3  QUATERNION MULTIPLICATION ORDER MATTERS
+
+[WORKS] The multiplication order is existingQ * pitchRollQ (right-multiply). This
+applies the pitch and roll in the piece's LOCAL frame. If you pitch a wall that
+is already rotated 270 degrees in yaw, the pitch tilts the wall forward relative
+to where the wall is facing.
+
+    WARNING: The opposite order, pitchRollQ * existingQ (left-multiply), applies
+    pitch and roll in the WORLD frame. This causes pitch to turn into roll (and
+    vice versa) when the piece has yaw rotation. With a 270-degree yaw, a
+    45-degree pitch in world frame becomes a 45-degree roll in piece-local
+    frame, which is not what the player expects. This bug manifested as "pitch
+    works when facing north but becomes roll when facing east."
+
+
+1.3.4  THE UE4 QUATERNION CONVENTION (CRITICAL)
+
+This was the single hardest bug in the entire mod. It took eight iterations of
+increasingly frustrated debugging to identify.
+
+UE4's quaternion convention has the X and Y components NEGATED compared to
+standard mathematics textbooks. Specifically:
+
+    A pure pitch rotation P produces the quaternion (0, -sin(P/2), 0, cos(P/2)).
+    Note the negative sign on Y. Standard math would give positive.
+
+    A pure roll rotation R produces (-sin(R/2), 0, 0, cos(R/2)). Note the
+    negative sign on X. Standard math would give positive.
+
+    A pure yaw rotation Y produces (0, 0, sin(Y/2), cos(Y/2)). Z is standard,
+    no negation.
+
+If you write your own rotatorToQuat, quatToEuler, or pitchRollToQuat helper
+functions and use textbook formulas without these negations, single-piece
+rotations will APPEAR to work correctly. A single wall will pitch and roll just
+fine. The bug only manifests with multipart assemblies (buildings made of multiple
+mesh pieces assembled together), because the position transform and the rotation
+transform become inconsistent.
+
+With wrong signs, when you rotate a position vector using the quaternion, it
+moves one direction. But when you set the mesh orientation using the same
+quaternion, the mesh rotates a slightly different direction. For a single piece,
+the mesh just rotates around its own center so you do not notice. For multiple
+pieces that need to stay assembled, each piece's position drifts away from where
+its mesh is pointing, and the assembly falls apart visually.
+
+The exact UE4 formulas that must be matched are:
+
+    FRotator to FQuat:
+        X = CR*SP*SY - SR*CP*CY
+        Y = -(CR*SP*CY + SR*CP*SY)   (the entire Y term is negated)
+        Z = CR*CP*SY - SR*SP*CY
+        W = CR*CP*CY + SR*SP*SY
+
+    FQuat to FRotator:
+        singularityTest = Z*X - W*Y   (not W*Y - Z*X as textbooks show)
+        pitch = asin(2 * singularityTest)
+        yaw = atan2(2*(W*Z + X*Y), 1 - 2*(Y*Y + Z*Z))
+        roll = atan2(-2*(W*X + Y*Z), 1 - 2*(X*X + Y*Y))   (negative numerator)
+
+    WARNING: If you are implementing quaternion math for UE4 modding, do NOT use
+    standard math textbook formulas. Copy UE4's exact formulas from the engine
+    source. Even a single sign difference will silently produce wrong results
+    that only appear under specific rotation combinations with multipart
+    assemblies.
+
+
+1.3.5  GATA TRACE RESULTS INJECTION
+
+In addition to the BuildNewConstruction intercept, the mod also writes pitch and
+roll values into GATA's TraceResults and LastTraceResults structures every frame.
+These are the structures that GATA uses to determine where and how to orient the
+ghost piece. The TargetRotation field within these structures receives the
+pitch/roll rotation so that the placement system has consistent data throughout
+its pipeline.
+
+All of these offsets (TraceResults, LastTraceResults, TargetRotation) are resolved
+at runtime through reflection using GetPropertyByNameInChain. Only the yaw
+accumulator at 0x0658 remains hardcoded.
+
+
+--------------------------------------------------------------------------------
+1.4  GHOST PREVIEW SYSTEM
+--------------------------------------------------------------------------------
+
+1.4.1  WHAT THE GHOST PREVIEW IS
+
+When a player holds a building piece before placing it, they see a translucent
+"ghost" version of the piece following their crosshair. For simple pieces (a
+single mesh, like a torch or a simple wall), the ghost is a single translucent
+mesh. For complex pieces (like a doorway frame, which is made of multiple mesh
+segments assembled together), the ghost is a collection of mesh pieces that must
+stay assembled and move as a unit.
+
+The ghost preview is managed through a TArray called CopiedComponents on the
+targeting actor. Each element in this array is a USceneComponent (typically a
+UStaticMeshComponent) representing one piece of the ghost assembly. All of these
+components are siblings, meaning they are all attached to the same root
+SceneComponent. They are NOT in a parent-child hierarchy with each other.
+
+Each component has a RelativeLocation and a RelativeRotation that define its
+position and orientation relative to the root. The root component's world
+transform comes from GATA (the trace results determine where the ghost appears).
+The children's relative transforms define the assembly shape.
+
+
+1.4.2  THE PIVOT POINT
+
+The pivot point for rotation is the MorConstructionSnapComponent's
+RelativeLocation. This is typically the geometric center of the assembly. For
+example, a 400-unit tall wall has its snap component at (0, 0, 200), which is the
+vertical center. All pitch and roll rotations are performed around this pivot
+point so the assembly rotates in place rather than swinging around one corner.
+
+
+1.4.3  SINGLE-PART GHOST PREVIEW
+
+[WORKS] For single-mesh pieces, the ghost preview rotation is handled entirely
+through the GATA trace results injection. Writing the pitch/roll rotation into
+TargetRotation causes the game's own ghost positioning code to orient the single
+mesh correctly. No additional work is needed because there are no child
+components that need to stay in formation.
+
+
+1.4.4  MULTIPART GHOST PREVIEW
+
+[WORKS] For multi-mesh pieces, a more sophisticated approach is needed. GATA's
+root rotation does NOT cascade to child components in a way that keeps the
+assembly intact. Setting the root rotation only affects where the root is, not
+how the children are arranged relative to it.
+
+The solution is to modify each child component individually using
+K2_SetRelativeLocationAndRotation. For each CopiedComponent in the array, the mod
+computes a new relative position and a new relative rotation that together produce
+a rigid-body rotation of the entire assembly around the pivot point.
+
+The position calculation for each piece is:
+
+    newPosition = pivot + quaternionRotateVector(pitchRollQuat,
+                                                 originalRelativeLocation - pivot)
+
+This takes the piece's original position, subtracts the pivot to get a vector
+from pivot to piece, rotates that vector by the pitch/roll quaternion, and adds
+the pivot back. The result is the piece's new position after rotating the
+assembly around the pivot.
+
+The rotation calculation for each piece is:
+
+    newRotation = quaternionMultiply(pitchRollQuat, originalChildRelativeRotation)
+
+This composes the pitch/roll rotation with the child's original relative
+rotation. Note that this is LEFT-multiply (pitchRollQuat * childRelRot), which is
+correct here because we are transforming the child's orientation in root space.
+This is different from the placement multiplication order (existingQ *
+pitchRollQ) because the frames of reference are different.
+
+The key insight is that the SAME quaternion must be used for BOTH the position
+rotation and the mesh orientation rotation. If there is any inconsistency (for
+example, due to wrong quaternion sign conventions), positions will drift one way
+while meshes rotate another way, and the assembly will visually separate.
+
+K2_SetRelativeLocationAndRotation is called via ProcessEvent on each component.
+This updates the component's relative transform in a way that UE4's rendering
+system respects. The ghost updates every frame (in the on_update tick),
+continuously applying the pitch/roll rotation to maintain the correct preview
+orientation.
+
+
+1.4.5  WHY K2_SetRelativeLocationAndRotation
+
+[WORKS] This API was chosen because it is a proper UE4 function that goes through
+the engine's transform update pipeline. It marks the component as dirty and
+ensures the renderer picks up the change.
+
+    WARNING: Direct memory writes to the RelativeLocation and RelativeRotation
+    fields do not work for ghost preview. The game recalculates component
+    transforms before rendering, overwriting any direct memory modifications.
+
+    WARNING: Modifying the root SceneComponent's transform does not work for
+    multipart ghosts. The game overwrites the root transform every frame based on
+    GATA's trace results, and the overwrite does not cascade to children's
+    relative transforms in a way that preserves the assembly.
+
+    WARNING: Writing to ComponentToWorld directly does not work. The game
+    recalculates this derived transform from the relative transforms before each
+    render pass.
+
+
+1.4.6  NO FLASHING
+
+An important property of the K2_SetRelativeLocationAndRotation approach is that
+it does not fight with the game's own ghost positioning code. The game sets the
+root component's world position (from GATA traces) and then the children maintain
+their relative transforms. The mod sets the children's relative transforms
+(incorporating pitch/roll), and the game's root positioning works independently.
+There is no frame where one system overwrites the other, so the ghost does not
+flash or jitter.
+
+
+--------------------------------------------------------------------------------
+1.5  BUILD FROM TARGET
+--------------------------------------------------------------------------------
+
+Build from Target (Modifier+F11) is a variant of quick-build that copies whatever
+the player is looking at. Instead of using a saved recipe, it reads the targeted
+building piece's recipe reference and searches the build menu for a matching
+entry.
+
+The matching uses three strategies in order: first, it compares the bLock RowName
+(the internal recipe identifier) using case-insensitive FName comparison. If that
+fails, it tries an exact display name match. As a last resort, it normalizes both
+names to lowercase alphanumeric and does a fuzzy comparison.
+
+The state machine for Build from Target is identical to the regular quick-build
+state machine. The only difference is the recipe matching function called in the
+SelectRecipe phase.
+
+
+--------------------------------------------------------------------------------
+1.6  TOOLBAR SWAP
+--------------------------------------------------------------------------------
+
+The toolbar swap system (PageDown key) allows the player to maintain two complete
+sets of hotbar items (T1 and T2) and switch between them. This is relevant to the
+building system because builders often want one toolbar with building tools and
+another with combat equipment.
+
+The swap works by serializing all eight hotbar items (class, count, durability,
+tint color, container contents), destroying them, waiting five frames for
+MovieScene animations to drain, recreating them from the saved data, waiting five
+more frames, then finalizing. The five-frame wait between destruction and
+recreation is critical: without it, the MovieScene entity system crashes from
+stale latent action references (FEntityManager::FreeEntities encounters dangling
+pointers).
+
+The swap uses a multi-frame state machine: Remove, WaitAfterRemove (5 frames),
+Add, WaitAfterAdd (5 frames), Finish. A two-second cooldown between swaps
+prevents rapid cycling. All ProcessEvent calls are wrapped in SEH (structured
+exception handling) to catch and recover from crashes without taking down the
+game.
+
+Item tints are preserved through a three-tier resolution system: first checking a
+persistent cache populated before items are destroyed, then searching the
+inventory component's effects array, and finally doing a global search for
+MorItemTintEffect objects in the world (which finds effects on tint stations).
+
+
+--------------------------------------------------------------------------------
+1.7  BUILDING SYSTEM: WHAT DID NOT WORK
+--------------------------------------------------------------------------------
+
+This section catalogs approaches that were tried and failed, to prevent future
+developers from going down the same dead ends.
+
+FAILED: ROTATING THE ROOT SCENECOMPONENT FOR MULTIPART GHOST
+The game overwrites the root component's transform every frame from GATA trace
+data. Any rotation applied to the root is immediately undone on the next frame.
+This creates visible flashing as the mod's rotation and the game's reset
+alternate each frame.
+
+FAILED: GATA TRACE RESULTS ALONE FOR MULTIPART GHOST
+Writing pitch/roll into GATA's TargetRotation affects the overall placement
+orientation but does not cascade to the visual positions of child components. The
+placed piece ends up correct (because BuildNewConstruction uses the patched
+transform), but the ghost preview during placement shows the children in their
+original unrotated positions, which is confusing for the player.
+
+FAILED: DIRECT MEMORY WRITES TO COMPONENT TRANSFORMS
+Writing directly to RelativeLocation, RelativeRotation, or ComponentToWorld
+fields in memory does not survive to the render pass. The engine recalculates
+these values through its own transform propagation pipeline. Only going through
+proper UE4 APIs (like K2_SetRelativeLocationAndRotation) produces persistent
+visual changes.
+
+FAILED: STANDARD MATH TEXTBOOK QUATERNIONS
+As described in detail above, using standard mathematical formulas for quaternion
+conversion produces correct results for single pieces but silently breaks
+multipart assemblies. UE4's sign convention on X and Y components must be matched
+exactly.
+
+FAILED: LEFT-MULTIPLY FOR PLACEMENT QUATERNION
+pitchRollQ * existingQ applies rotation in world frame. When the piece has yaw
+rotation, pitch becomes roll and vice versa. Only right-multiply (existingQ *
+pitchRollQ) gives piece-local rotation that matches player expectations.
+
+FAILED: SELECTRECIPE ON DORMANT BUILDHUD
+SelectRecipe silently no-ops when the BuildHUD exists in memory but is not
+actively managing placement. FindAllOf finds these dormant widgets, making it look
+like the build system is ready when it is not.
+
+FAILED: SETVISIBILITY AFTER SHOW()
+Double visibility changes corrupt Slate's FHittestGrid. Show() already handles
+visibility internally. Any additional SetVisibility call while the widget tree is
+still being rebuilt causes null pointer crashes.
+
+FAILED: IsAnyAnimationPlaying() AS SHOW/HIDE GUARD
+Creates a circular dependency. Show() starts an animation. The guard sees the
+animation playing and blocks Hide(). But the animation is the Show animation,
+which will not end on its own. The system deadlocks.
+
+FAILED: StopAllAnimations() FROM WITHIN on_update TICK
+The on_update callback runs during the game tick where UUMGSequenceTickManager is
+already evaluating MovieScene entities. StopAllAnimations() triggers a MovieScene
+flush, which re-enters the evaluator. UE4 explicitly forbids this re-entrancy and
+prints an error: "An evaluation is already running on this linker, and
+re-entrancy is not allowed at this point."
+
+FAILED: BYPASSING THE 350MS SHOW/HIDE COOLDOWN
+The cooldown is a hard constraint of UE4's MovieScene entity system, not a
+tunable parameter. Violations cause crashes in SavePreAnimatedState() when
+MovieScene entities hold raw UObject pointers to widgets that became pending-kill
+during rapid Show/Hide cycling. The entities accumulate stale references that are
+only cleaned up during garbage collection (every 30 to 60 seconds).
+
+FAILED: DEFERRED HIDE WITH 300MS DELAY
+Counterintuitively, adding a delay to hideBuildTab() made things worse. The
+immediate hideBuildTab() call in the original broken code was accidentally being
+blocked by the 250ms cooldown (it fired about 30ms after Show). The 300ms
+deferred hide fired OUTSIDE the cooldown window, actually executing the Hide and
+breaking the build pipeline.
+
+FAILED: RAPID F-KEY WITHOUT DEBOUNCE
+Each blockSelectedEvent triggers a cascade of internal game events: SetBuildMode,
+TryActivateAbility, Show/Hide of various screens. Rapid cycling without debounce
+accumulates stale MovieScene entity references faster than garbage collection can
+clean them up, leading to crashes when StopAnimation tries to flush
+pre-animated state.
+
+
+================================================================================
+PART 2: ENVIRONMENT AND INVENTORY
+================================================================================
+
+This section covers the HISM environment removal system that lets players clear
+obstructions from the game world, the full inventory manipulation pipeline, the
+toolbar swap system, and the stability audit feature. It also covers the code
+stability audit that hardened the entire mod against crashes.
+
+
+--------------------------------------------------------------------------------
+2.1  HISM ENVIRONMENT REMOVAL SYSTEM
+--------------------------------------------------------------------------------
+
+2.1.1  WHAT ARE HISMs?
+
+HISM stands for HierarchicalInstancedStaticMeshComponent. This is UE4's batched
+rendering system for repeated meshes such as rocks, pillars, debris, walls, and
+other environmental objects. Each HISM component contains hundreds or thousands of
+instances that all share one mesh. The game uses a subclass called
+GlobalHierarchicalInstancedStaticMeshComponent.
+
+The component name (minus a trailing numeric suffix like _0, _1, etc.) serves as
+the mesh ID and uniquely identifies each mesh type. For example, all instances of
+a particular rock formation will share the same HISM component name.
+
+The HISM removal system allows players to aim at environmental objects (rocks,
+rubble, pillars) and remove them from the world. This is primarily used by
+builders who want to clear space for their constructions. Without this feature,
+many promising building locations are obstructed by immovable environmental
+geometry that the game provides no built-in way to remove.
+
+The mod finds HISM components using FindAllOf("GlobalHierarchicalInstancedStatic
+MeshComponent") and maintains an internal registry of all known components. Each
+component is identified by its name (minus the trailing _N suffix), which serves
+as a stable mesh ID across game sessions.
+
+
+2.1.2  THE WORKING APPROACH: UpdateInstanceTransform
+
+[WORKS] The winning approach is deceptively simple: move the instance underground
+and shrink it to near-zero scale. Specifically, the mod subtracts 50,000 from the
+instance's Z coordinate and sets its scale to 0.001 on all axes. This makes the
+instance effectively invisible and non-interactable without actually removing it
+from the HISM's internal data structures.
+
+This approach is safe, does not crash, and is reversible (the undo system simply
+restores the original transform). Detection of already-hidden instances checks
+whether Z is less than -40,000.
+
+    CRITICAL RULE: Maximum 3 UpdateInstanceTransform calls per frame. More than
+    three causes a crash in FStaticMeshInstanceBuffer::UpdateFromCommandBuffer_
+    Concurrent due to a render thread use-after-free. The mod uses throttled
+    replay, spreading instance hides across multiple frames (maximum 3 per frame)
+    when batch operations need to hide many instances at once.
+
+The three MC toolbar slots for HISM removal are:
+    - Remove Target (Num1): Remove the single HISM instance the player is
+      looking at
+    - Undo Last (Num2): Restore the most recently removed instance
+    - Remove All of Type (Num3): Remove ALL instances of the same mesh type
+      across the entire world
+
+
+2.1.3  PROCESSVENT PARAMETER LAYOUTS
+
+These parameter layouts were discovered through manual probing and are confirmed
+correct for UE4.27. They are essential for calling the HISM functions via
+ProcessEvent.
+
+GetInstanceTransform (66 bytes, packed):
+    Offset 0:  InstanceIndex (int32, 4 bytes)
+    Offset 4:  padding (12 bytes)
+    Offset 16: OutTransform (FTransformRaw, 48 bytes)
+    Offset 64: bWorldSpace (bool, 1 byte)
+    Offset 65: ReturnValue (bool, 1 byte)
+
+UpdateInstanceTransform (68 bytes):
+    Same layout as GetInstanceTransform, plus:
+    Offset 65: bMarkRenderStateDirty (bool, 1 byte)
+    Offset 66: bTeleport (bool, 1 byte)
+    Offset 67: ReturnValue (bool, 1 byte)
+
+GetInstanceCount (4 bytes):
+    Offset 0: ReturnValue (int32, 4 bytes)
+
+FTransformRaw (48 bytes) -- NOTE: UE4.27 uses FLOATS, not doubles:
+    FQuat4f   Rotation:    16 bytes (X, Y, Z, W as floats)
+    FVec3f    Translation: 12 bytes + 4 bytes padding
+    FVec3f    Scale3D:     12 bytes + 4 bytes padding
+
+
+2.1.4  LINE TRACING FOR TARGET SELECTION
+
+The mod uses LineTraceSingle via ProcessEvent on KismetSystemLibrary to determine
+what the player is aiming at. The parameter layout is 237 bytes:
+
+    Offset 0:   WorldContextObject (pointer, 8 bytes)
+    Offset 8:   Start (FVector, 12 bytes)
+    Offset 20:  End (FVector, 12 bytes)
+    Offset 32:  TraceChannel (uint8, 0 = Visibility)
+    Offset 33:  bTraceComplex (bool)
+    Offset 40:  ActorsToIgnore (TArray, 16 bytes)
+    Offset 56:  DrawDebugType (uint8, 0 = None)
+    Offset 60:  OutHit (FHitResult, 136 bytes)
+    Offset 196: bIgnoreSelf (bool)
+    Offset 200: TraceColor (FLinearColor, 16 bytes)
+    Offset 216: TraceHitColor (FLinearColor, 16 bytes)
+    Offset 232: DrawTime (float, 4 bytes)
+    Offset 236: ReturnValue (bool)
+
+The FHitResult structure (136 bytes) contains:
+    Offset 24:  ImpactPoint (FVector, 12 bytes)
+    Offset 88:  Item (int32 -- this is the instance index!)
+    Offset 93:  bBlockingHit (bool)
+    Offset 112: Component (FWeakObjectPtr, 8 bytes)
+
+Important: The game uses a third-person camera positioned behind the character.
+A naive trace from the camera position would hit objects between the camera and
+the player character. The fix is to calculate the camera-to-character distance and
+start the trace 50 units past the character, so it only hits objects the player
+is actually looking at.
+
+
+2.1.5  PERSISTENCE AND SAVE SYSTEM
+
+HISM instance indices change between game loads, so the mod cannot simply save
+index numbers. Instead, it matches instances by mesh ID (the component name) and
+position, with a tolerance of 100 units (approximately 1 meter in game scale).
+
+Key persistence details:
+
+    - Object positions are IDENTICAL across all procedural worlds. This means
+      the same save file works regardless of which world seed the player has.
+
+    - Stacked instances: The game often places 3 to 7+ copies of the same mesh
+      at the exact same position. Each needs a separate save entry.
+
+    - Type rules: A line starting with "@meshName" in the save file means
+      "remove ALL instances of that mesh everywhere" rather than individual
+      position entries.
+
+    - Game streaming resets transforms: The game's level streaming system reloads
+      HISM data periodically. The mod runs a periodic rescan (every 3 seconds for
+      new components, every 60 seconds for a full rescan) to re-hide instances
+      that the streaming system has restored.
+
+    - World-switch detection: If the player character (BP_FGKDwarf_C) disappears
+      from the world, the mod resets its state and performs a full replay when
+      the character reappears in the new world.
+
+    - Bubble tracking: In v5.5.0+, each save entry is tagged with a bubbleId
+      (the procedurally generated area of the map). The F12 Environment tab
+      groups removals by bubble, with the current bubble starred at the top.
+      The current bubble is detected via OnPlayerEnteredBubble delegate hook
+      for instant detection, with a 30-second polling fallback via GetBubbleAt.
+      Bubble display names are resolved via reflection and cached in a
+      bubbleNameToId helper.
+
+    - Save file format: Each line in removed_instances.txt contains the mesh ID,
+      position coordinates, and bubble ID. Lines starting with "@" indicate type
+      rules (remove all instances of that mesh type). The file is read on game
+      load and replayed to re-hide all previously removed instances.
+
+    - Migration: When upgrading from versions before bubble tracking, existing
+      save entries without bubbleId are automatically tagged during the next
+      replay cycle.
+
+
+2.1.6  DISPLAY METHODS
+
+Three methods are used for displaying information to the player:
+
+    PrintString via ProcessEvent on KismetSystemLibrary CDO: On-screen text with
+    configurable color and duration.
+
+    AddToShortChat on WBP_UI_ChatWidget_C: Floating chat message that appears
+    in the game's chat area.
+
+    UE4SS Output::send: Log file only, not visible in-game.
+
+
+2.1.7  WHAT CRASHES (HISM)
+
+    WARNING: RemoveInstance -- DO NOT USE. This function crashes in both Lua and
+    C++. It corrupts the GlobalInstancedMeshBucket internal data structures. The
+    crash is either immediate or delayed to the next frame. There is no safe way
+    to call RemoveInstance on a GlobalHierarchicalInstancedStaticMeshComponent.
+
+    WARNING: Too many UpdateInstanceTransform calls per frame. More than
+    approximately 3 per frame crashes the render thread with a use-after-free in
+    FStaticMeshInstanceBuffer::UpdateFromCommandBuffer_Concurrent. The fix is
+    throttled replay: maximum 3 hides per frame, spread across multiple frames.
+
+
+--------------------------------------------------------------------------------
+2.2  PERMANENT HISM REMOVAL RESEARCH
+--------------------------------------------------------------------------------
+
+This section documents research into making HISM removals persist through the
+game's own save system, rather than relying on the mod's replay-based approach.
+This research was conducted but the approach was not implemented.
+
+2.2.1  THE GAME'S OWN SYSTEM
+
+Each procedural bubble in the game world has a UMorBubbleBreakableInstanceHandler
+component that tracks per-instance states via a replicated Fast Array. When a
+player breaks a rock or destroys an environmental object through normal gameplay,
+the game records this through the breakable instance handler, and it persists
+across save/load cycles.
+
+2.2.2  ACCESS CHAIN
+
+The chain to reach the breakable instance handler is:
+
+    1. GetBubbleAt(playerPosition) returns UWorldLayoutBubble*
+    2. UWorldLayoutBubble at offset 0x0548 contains AMorBubbleInstance*
+    3. AMorBubbleInstance at offset 0x0230 contains
+       UMorBubbleBreakableInstanceHandler*
+    4. Handler at offset 0x0220 contains FMorBreakableInstanceStateArray
+       (a Fast Array)
+    5. Fast Array at offset 0x0108 contains TArray<FMorBreakableInstanceState>
+       Items
+
+Each FMorBreakableInstanceState is 0x40 (64) bytes and contains:
+    - InstanceIndex at offset 0x000C (which HISM instance)
+    - bIsBroken at offset 0x0010 (boolean flag)
+    - DamageLocation at offset 0x0014 (FVector_NetQuantize10)
+    - DamageDirection at offset 0x0020 (FVector_NetQuantizeNormal)
+    - NormalizedHealth at offset 0x0030 (float, 0.0 = fully broken)
+
+2.2.3  THEORETICAL PERMANENT REMOVAL
+
+In theory, setting bIsBroken = true and NormalizedHealth = 0.0 in the Fast Array
+would cause the save system to persist the broken state. On reload, the game
+would read the broken state and not render the instance.
+
+However, the handler only exposes one UFUNCTION:
+HandleOnInstanceStatesReplicated(). There is no public add/remove API. To add
+entries, the mod would need to directly manipulate the InstanceStates.Items TArray
+and call MarkItemDirty() or MarkArrayDirty() on the Fast Array after
+modification. This is risky because Fast Arrays use replication and incorrect
+manipulation could corrupt network state.
+
+2.2.4  ACTOR-LEVEL PERMANENT REMOVAL
+
+For full actors (AMorBreakable, as opposed to HISM instances), a cleaner path
+exists:
+
+    1. Get the actor's save handle via SaveGameObjectGetId() which returns a
+       32-byte FMorSaveDataRuntimeActorRecordHandle
+    2. Call UnregisterRuntimeActorFromHandle(handle, true, true) on the save
+       system
+    3. Call K2_DestroyActor() on the actor
+
+This properly deregisters the actor from the save system before destroying it.
+
+2.2.5  CURRENT STATUS
+
+    WARNING: Permanent HISM removal is NOT IMPLEMENTED. The research shows it is
+    theoretically possible but needs more investigation into Fast Array
+    manipulation safety. The current approach (UpdateInstanceTransform to move
+    instances underground + periodic replay) is the working solution. Per-instance
+    permanent removal remains a future goal.
+
+
+--------------------------------------------------------------------------------
+2.3  INVENTORY SYSTEM
+--------------------------------------------------------------------------------
+
+2.3.1  ARCHITECTURE: THREE-LAYER ITEM SYSTEM
+
+The game uses a three-layer architecture for items:
+
+    Layer 1 -- AInventoryItem (AActor): This is the item CLASS definition, stored
+    as a Blueprint template (like BP_Granite_C). These are NOT stored in
+    inventory. Only the UClass* reference is stored. Think of this as the
+    "template" for what kind of item it is.
+
+    Layer 2 -- FItemInstance (USTRUCT, 48 bytes): This is the actual inventory
+    slot record. It stores a UClass* reference to the item type, plus count,
+    durability, slot index, unique ID, repair count, and container start slot. It
+    lives in the FItemInstanceArray::List TArray. Critically, FItemInstance is a
+    USTRUCT, NOT a UObject -- you cannot use FindObject() on it.
+
+    Layer 3 -- FItemHandle (20 bytes): This is a lightweight reference containing
+    {ID, Payload, TWeakObjectPtr<Owner>} that lets you find a specific
+    FItemInstance by its unique ID. It is the primary way to refer to a specific
+    item instance in API calls.
+
+
+2.3.2  KEY CLASSES AND STRUCTURES
+
+FItemHandle (20 bytes):
+    Offset 0x00: ID (int32) -- matches FItemInstance.ID
+    Offset 0x04: Payload (int32)
+    Offset 0x08: Owner (TWeakObjectPtr<UInventoryComponent>, 8 bytes)
+
+FItemInstance (48 bytes, extends FFastArraySerializerItem):
+    Offset 0x10: Item (UClass*, 8 bytes) -- THE ITEM TYPE
+    Offset 0x18: Count (int32)
+    Offset 0x1C: Slot (int32)
+    Offset 0x20: ID (int32) -- matches FItemHandle.ID
+    Offset 0x24: Durability (float)
+    Offset 0x28: RepairCount (int32)
+    Offset 0x2C: ContainerStartSlot (int32)
+
+FItemInstanceArray (0x120 bytes):
+    Offset 0x0108: Inventory (UInventoryComponent*)
+    Offset 0x0110: List (TArray<FItemInstance>, 16 bytes = Data* + Num + Max)
+
+
+2.3.3  INVENTORY COMPONENT LAYOUT
+
+UInventoryComponent (base class from FGK):
+    Offset 0x00B8: ClientItems (TArray<FItemInstance>) -- CLIENT-SIDE only
+    Offset 0x0208: Hotbar (TArray<int32>)
+    Offset 0x0220: Items (FItemInstanceArray, 0x120 bytes)
+    Offset 0x0330: Items.List (TArray<FItemInstance>) -- THE AUTHORITATIVE SOURCE
+    Offset 0x0340: Effects (FActiveItemEffectArray)
+    Offset 0x0470: OverrideStartingLoadout (UInventoryLoadout*)
+    Offset 0x0478: Equip (UEquipComponent*)
+
+UMorInventoryComponent (game subclass):
+    Offset 0x04B8: StorageHandle (FMorStorageRowHandle)
+    Offset 0x0530: HotbarSize (int32, returns 8)
+    Offset 0x0534: HotbarEpicItemIndex (int32, returns 9)
+
+    IMPORTANT: ClientItems at offset 0x00B8 is EMPTY when the player is host or
+    on a listen server. Only Items.List at offset 0x0330 is the authoritative
+    source. Always read from Items.List.
+
+
+2.3.4  MODIFYING INVENTORY ITEMS VIA PROCESSVENT
+
+    CRITICAL RULE: NEVER write directly to FItemInstance memory. It bypasses
+    replication, UI updates, and game events. Always use ProcessEvent with proper
+    UFUNCTIONs.
+
+Adding items (RequestAddItem -- Server, Reliable RPC):
+    Parameters: Class (UClass*), Count (int32), Method (EAddItem enum)
+    EAddItem values: 0=Normal, 1=Create, 2=Silent, 4=Equip, 8=ReplaceContainer
+
+Getting current count (GetItemCount):
+    Parameters: Item (UClass*), From (uint8), ReturnValue (int32)
+
+Setting count (ServerDebugSetItem):
+    Parameters: Item (UClass*), Count (int32)
+    Sets the TOTAL count for an item type across the entire inventory.
+
+All Server Reliable RPCs available on UInventoryComponent:
+    RequestAddItem(Class, Count, Method) -- Add items
+    ServerRemoveItem(Item, Count, From) -- Remove by class
+    ServerDebugSetItem(Item, Count) -- Set total count
+    ServerDropItem(Item, Count, Direction) -- Drop from inventory
+    ServerSplitStack(Source, Destination, MoveCount) -- Split stack
+    ServerMoveItem(Item, Destination, AddType) -- Move between slots
+    ServerChangeDurability(Item, RatioChange) -- Change durability
+    ServerDebugDamageItems(Percentage) -- Damage all items
+    ServerDebugBreakItems() -- Break all items
+
+
+2.3.5  HANDLE-SPECIFIC ITEM REMOVAL
+
+There is NO reflected RemoveItem that takes an FItemHandle. The RemoveItem and
+ServerRemoveItem functions only take TSubclassOf<AInventoryItem> (class + count).
+They remove from ANY matching stack, not a specific item instance.
+
+[WORKS] To remove a specific item by handle, use the DropItem + DestroyActor
+pattern:
+
+    1. Get item count via UItemHandleFunctions::GetCount(handle) on the CDO
+       at /Script/FGK.ItemHandleFunctions
+    2. Snapshot all existing MorDroppedItem actors via FindAllOf
+    3. Call DropItem(handle, count) on the inventory component -- this removes
+       the exact item instance and spawns a world drop actor
+    4. Find the NEW MorDroppedItem actor by diffing pre/post snapshots
+    5. Call K2_DestroyActor() on the new drop actor to prevent pickup
+
+    IMPORTANT: The dropped item actor class is MorDroppedItem (NOT FGKDropItem,
+    which does not exist). It extends AMorPickup and has an Inventory component
+    and a DroppedItem struct.
+
+
+2.3.6  PER-INSTANCE ITEM EFFECTS
+
+Item effects (tints, runes) are stored in the FActiveItemEffectArray at offset
+0x0340 on UInventoryComponent. The List TArray is at offset 0x0110 within the
+array structure.
+
+Each FActiveItemEffect entry has a stride of 0x30 (48 bytes):
+    Offset 0x0C: OnItem (int32) -- matches FItemHandle.ID
+    Offset 0x10: Effect (UItemEffect*) -- pointer to the effect object
+
+Tints are stored as MorItemTintEffect, runes as MorRuneEffect. Effects are
+matched to items by comparing OnItem to the FItemHandle.ID.
+
+[WORKS] Clearing a tint: Call ServerTintItem(handle, nullptr, pawn) on the
+CraftingComponent. This properly removes the tint through the game's API.
+
+    WARNING: Clearing a rune via ServerInscribeRune(handle, nullptr, pawn) does
+    NOT work. The game's validation rejects null Rune parameters. Instead, rune
+    removal requires directly manipulating the Effects.List TArray using a
+    swap-remove operation (see removeItemEffectFromList() in moria_inventory.inl).
+
+
+2.3.7  DISPLAY NAMES
+
+Item display names are retrieved from the CDO (Class Default Object):
+    1. Get the UClass* for the item
+    2. Call GetClassDefaultObject() to get the CDO
+    3. Call GetDisplayName() via ProcessEvent to get the FText
+    4. Convert FText to string
+
+GetIcon() on the CDO returns the UTexture2D* for the item's icon.
+
+    IMPORTANT: The class name (like "EQ_Pick_Iron_C") is NOT the display name.
+    Always use GetDisplayName() for human-readable names.
+
+
+2.3.8  HOTBAR LAYOUT
+
+The player's hotbar has:
+    - 8 normal slots: keyboard keys 1-8 (HotbarIndex 0-7)
+    - 1 epic slot: keyboard key 0 (HotbarIndex 9)
+    - Key 9 is skipped
+    - Associated with DT_Storage.uasset -> Dwarf.BodyInventory (8x1 grid)
+
+
+2.3.9  LESSONS LEARNED (INVENTORY)
+
+    - FItemHandle is {ID, Payload, TWeakObjectPtr} -- NOT two FNames. The FName
+      constructor does not produce valid FItemHandles.
+    - FItemInstance is a USTRUCT, NOT a UObject -- cannot use FindObject() on it.
+    - AInventoryItem is the class definition, NOT an instance in inventory.
+      Inventory only stores UClass* references.
+    - Always use ProcessEvent with proper UFUNCTIONs instead of raw memory writes
+      for inventory modification.
+    - DataTables must be lazily bound before first use -- they are not auto-bound.
+    - RemoveItem/ServerRemoveItem are CLASS-based, not handle-based. Use
+      DropItem + DestroyActor for handle-specific removal.
+    - UItemHandleFunctions::GetCount(handle) returns 1 for stacks -- unreliable
+      during or after moves. Read FItemInstance.Count at offset 0x18 directly
+      from Items.List at capture time instead.
+    - ServerInscribeRune(nullptr) fails silently. Must manipulate Effects.List
+      directly for rune removal.
+    - Only 3 functions confirmed firing via ProcessEvent on MorInventoryComponent:
+      BroadcastToContainers_OnChanged, OnItemEquipped, ServerMoveItem.
+    - Client Reliable RPCs (like ClientAddItemFX) bypass ProcessEvent on listen
+      servers.
+    - BlueprintCallable non-RPCs (like AddItem) are called directly by game code,
+      NOT through ProcessEvent.
+
+
+--------------------------------------------------------------------------------
+2.4  INVENTORY FEATURES
+--------------------------------------------------------------------------------
+
+Three inventory management features are provided, all triggered by dedicated keys
+after the player moves an item in their inventory.
+
+2.4.1  ITEM CAPTURE SYSTEM
+
+Before any inventory feature can act on an item, the mod needs to know which item
+the player last interacted with. This is handled by hooking three ProcessEvent
+functions:
+
+    - ServerMoveItem: Fires when the player moves an item in their inventory
+    - MoveSwapItem: Fires when items are swapped between slots
+    - BroadcastToContainers_OnChanged: Fires when container contents change
+
+When any of these hooks fire, the mod captures:
+    - m_lastPickedUpItemClass (UClass*) -- the item's type
+    - m_lastPickedUpItemName (wstring) -- the internal class name
+    - m_lastPickedUpDisplayName (wstring) -- human-readable name from CDO
+    - m_lastItemHandle (20 bytes) -- the FItemHandle for the specific instance
+    - m_lastItemInvComp (UObject*) -- the inventory component it belongs to
+
+The display name is resolved from the CDO at capture time using GetDisplayName().
+
+
+2.4.2  TRASH ITEM (DEL KEY)
+
+[WORKS] The Trash Item feature presents a modal confirmation dialog before
+deleting the last-moved item from the player's inventory.
+
+The dialog is a UMG UserWidget (500x180 pixels, ZOrder 300) containing a header
+("Trash Item"), a row showing the item's icon and name with stack count, and a
+button row (CANCEL in red, DELETE in green). Input is handled through
+coordinate-based hit-testing for the buttons, with Enter as a shortcut for delete
+and Escape for cancel. A 500-millisecond grace period prevents accidental
+immediate-close from stale key state.
+
+The deletion flow:
+    1. Get item stack count via UItemHandleFunctions::GetCount(handle)
+    2. DropItem(handle, count) on the inventory component (removes the exact item)
+    3. Snapshot/diff MorDroppedItem actors before and after the drop
+    4. K2_DestroyActor on the new drop actor (prevents pickup)
+    5. callServerTintItem to clear any tint effect
+    6. removeItemEffectFromList to clear any rune effect
+    7. Clear all captured state
+
+
+2.4.3  REPLENISH ITEM (INS KEY)
+
+[WORKS] The Replenish Item feature fills the last-moved item's stack to its
+maximum size using the DataTable-defined MaxStackSize.
+
+The flow:
+    1. Look up the item's CDO and resolve its RowHandle property to get the
+       DataTable row name
+    2. Lazy-bind the relevant DataTable (one of 7 item tables: DT_Items,
+       DT_Weapons, DT_Tools, DT_Armor, DT_Consumables, DT_Ores,
+       DT_ContainerItems)
+    3. Read MaxStackSize from the DataTable row via findRowData() + readInt32()
+    4. Get the current item count via ProcessEvent on GetItemCount
+    5. Call RequestAddItem with the deficit (maxStack - currentCount)
+
+
+2.4.4  REMOVE ATTRIBUTES (END KEY)
+
+[WORKS] The Remove Attributes feature strips both tint and rune effects from the
+last-moved item.
+
+    - Tint removal: callServerTintItem(craftComp, handle, nullptr, pawn) using
+      the centralized helper function
+    - Rune removal: removeItemEffectFromList(invComp, itemID, "MorRuneEffect")
+      which walks the Effects.List TArray and swap-removes matching entries
+
+The CraftingComponent is found via findActorComponentByClass(pawn,
+"MorCraftingComponent"), a centralized helper that replaced three copy-pasted
+lookup blocks across the codebase.
+
+All three inventory features can be individually enabled or disabled through
+checkboxes in the F12 Game Options panel, with state persisted to the INI file.
+
+
+--------------------------------------------------------------------------------
+2.5  TOOLBAR SWAP SYSTEM
+--------------------------------------------------------------------------------
+
+2.5.1  OVERVIEW AND SWAP FLOW
+
+The toolbar swap (PageDown key) lets the player maintain two complete sets of
+eight hotbar items (T1 and T2) and switch between them instantly. Items are
+serialized to JSON, destroyed, and recreated from the stash data. The entire
+process is split across multiple frames to prevent MovieScene animation crashes.
+
+2.5.2  MULTI-FRAME STATE MACHINE
+
+The swap uses a five-phase state machine ticked every frame from on_update().
+The SWAP_SETTLE_FRAMES constant (currently 5) controls the wait periods and was
+tuned through experimentation -- fewer frames caused crashes, more frames caused
+unnecessary delay:
+
+    Phase 1 -- Remove (Frame 0, swapPhaseRemove()):
+    Stop all action bar animations to prevent animation callbacks from firing
+    during inventory mutation. Read all 8 hotbar items by calling
+    GetItemForHotbarSlot for each slot and extracting class, count, durability,
+    tint effect, and container contents. Save the stash to a JSON file on disk
+    (toolbar_<guid>.json). Pre-resolve all item UClass* pointers for the incoming
+    stash. Remove all items via ProcessEvent on ServerRemoveItem. Purge any
+    orphaned effects that might reference destroyed items.
+
+    Phase 2 -- WaitAfterRemove (Frames 1-5):
+    Wait 5 frames for MovieScene to process remove animations and drain latent
+    actions. This is the critical delay that prevents the most common swap crash.
+    Without it, FEntityManager::FreeEntities encounters dangling pointers from
+    stale latent action references in FMovieSceneLatentActionManager. The remove
+    animation for each hotbar item triggers MovieScene entities that hold raw
+    pointers to the item widgets. These entities are cleaned up during the
+    animation tick, but only if given enough frames to process.
+
+    Phase 3 -- Add (Frame 6, swapPhaseAdd()):
+    Resolve AddItem and MoveItem UFunction pointers if not already cached.
+    Recreate all items from the saved stash data using RequestAddItem with the
+    appropriate EAddItem method (Create for first attempt, Silent as fallback if
+    the item ID comes back as 0). Patch durability via ServerChangeDurability.
+    Restore tint effects using the three-tier resolution system. Recreate
+    container contents by adding each item and then calling MoveItem to place it
+    inside the container. Failed items are retried up to 3 times with a 1-second
+    delay between attempts.
+
+    Phase 4 -- WaitAfterAdd (Frames 7-11):
+    Wait 5 more frames for add animations to settle. The item-added animations
+    (EquipIntro, QuickBounce) create new MovieScene entities that need processing
+    time before the next batch of operations.
+
+    Phase 5 -- Finish (Frame 12, swapPhaseFinish()):
+    Stop all animations again (critical -- without this second stop, ItemChanged
+    delegates start new animations that crash on the next tick). Toggle the T1/T2
+    indicator on the overlay. Update the overlay display to show the new toolbar
+    contents. Set the 2-second cooldown via m_lastSwapTime.
+
+A re-entrancy guard (m_swapInProgress flag) prevents concurrent swaps, and a
+two-second cooldown prevents rapid cycling.
+
+
+2.5.3  CLASS RESOLUTION STRATEGIES
+
+When recreating items from the stash, the mod needs to find the UClass* for each
+item type. Four strategies are tried in order:
+
+    1. Cache: Check m_classCache, an in-memory map from prior resolutions
+    2. StaticFindObject: Full path lookup (e.g., /Script/Moria.Adamant_Hammer_C)
+    3. Class enumeration: Walk all UClass objects and match by name
+    4. DataTable lookup: Search all 7 item DataTables for the Actor
+       TSoftClassPtr path, extract the class name from the asset path FName at
+       internal offset 0x10 (a UE4.27 engine invariant), and use the full path
+       with StaticFindObject
+
+Strategy 4 solves the case where items have zero live instances (for example,
+after a game reload where no instance of that item type exists in the world).
+
+
+2.5.4  TINT PRESERVATION
+
+Item tints are visual effects applied at tint stations. The three-tier resolution
+system ensures tints survive the swap:
+
+    1. Persistent cache: m_tintEffectCache, populated from readHotbarItems()
+       BEFORE items are destroyed
+    2. Effects.List: Search the inventory component's Effects array for a
+       matching RowName
+    3. Global search: FindAllOf("MorItemTintEffect") finds tint effects on tint
+       stations in the world
+
+Tint is applied via ServerTintItem(FItemHandle, UMorItemTintEffect*, ACharacter*)
+on the CraftingComponent.
+
+
+2.5.5  CONTAINER SUPPORT
+
+Containers (bags) are detected via GetStorageMaxSlots(FItemHandle). Their contents
+are serialized recursively. During recreation:
+
+    1. AddItem creates the empty bag
+    2. For each content item: AddItem(Create/Silent), patch durability, find the
+       new handle, then MoveItem(contentHandle, containerHandle, Normal) to place
+       it inside the bag
+    3. If MoveItem crashes (caught by SEH), the content stays loose in inventory
+       rather than being lost
+
+
+2.5.6  ANIMATION CRASH PREVENTION
+
+The stopActionBarAnimations() helper is called TWICE per swap: once before
+inventory mutations (Phase 1) and once after all items are recreated (Phase 5).
+
+It calls StopAllAnimations on:
+    - Parent WBP_UI_ActionBar_C (16 animations)
+    - All 12 AllActionBarItems children (3 animations each: EquipIntro,
+      EquipOutro, QuickBounce)
+    - UI_WBP_ActionBar_Focus (2 animations: HideFocus, ShowFocus)
+
+Without the post-swap call, ItemChanged delegates start new animations that crash
+on the next TickWidgetAnimations tick. The refreshActionBar() approach was tried
+and removed entirely -- game delegates handle UI updates correctly on their own
+once animations are stopped.
+
+All ProcessEvent calls in the swap system are wrapped in safeProcessEvent() which
+uses SEH (__try/__except in a separate function) to catch and recover from
+crashes without taking down the game process.
+
+
+--------------------------------------------------------------------------------
+2.6  STABILITY AUDIT (BUILDING INTEGRITY CHECK)
+--------------------------------------------------------------------------------
+
+The stability audit feature scans all player-placed structures and highlights
+structurally weak pieces with colored lights and particle effects.
+
+2.6.1  HOW IT WORKS
+
+The scan process (runStabilityAudit()):
+    1. Gets the construction manager via resolveConstructionManager()
+    2. Iterates the AllStabilityComponents TArray on the construction manager
+    3. For each stability component, reads the State (EStabilityState enum:
+       Stable, Marginal, Critical, Destroyed) and the Stability float (0.0-1.0)
+    4. Classifies problem pieces (Marginal or Critical state)
+    5. For each problem piece, spawns a PointLight actor and a one-shot Niagara
+       StabilityLossVFX burst
+
+2.6.2  POINTLIGHT SPAWNING
+
+PointLight actors are spawned via GameplayStatics::BeginDeferredActorSpawnFromClass
+followed by FinishSpawningActor. The light class is /Script/Engine.PointLight.
+
+Configuration via the root PointLightComponent:
+    Critical (red):  Intensity 20,000, Color {1, 0, 0, 1}, Attenuation Radius 5
+    Marginal (amber): Intensity 15,000, Color {1, 0.8, 0, 1}, Attenuation Radius 5
+
+These parameters were tuned through several iterations (from 50k/500 down to
+20k/5) to produce tight, focused highlights that clearly mark problem pieces
+without flooding the screen with light.
+
+2.6.3  VFX AND LIGHT LIFECYCLE
+
+Spawned lights are tracked in m_auditSpawnedActors (a vector of FWeakObjectPtr in
+v5.5.0+). Lights auto-clear after 10 seconds via m_auditClearTime. Pressing the
+stability check key again clears existing highlights before running a fresh scan.
+All highlights are cleared on world destroy.
+
+The Niagara VFX uses the game's built-in StabilityLossVFX system, spawned via
+UNiagaraFunctionLibrary::SpawnSystemAtLocation.
+
+
+--------------------------------------------------------------------------------
+2.7  CODE STABILITY AUDIT
+--------------------------------------------------------------------------------
+
+Two rounds of comprehensive code audits identified and fixed stability issues
+across the entire codebase.
+
+2.7.1  v2.7.7 ORIGINAL AUDIT
+
+The first audit identified 11 issues:
+
+    C1: safeProcessEvent wrapper added with offset validation in CDO helpers
+    C2: Bounds-checked offset dereferences in addChildToPanel()
+    C3: Bounds-checked selfRef and handle extraction in post-hook
+    C4: Null guard after weak pointer .Get() in HISM replay
+    C5: Null guard on GATA parameter in setGATARotation()
+    C6: Removed cached m_fnIsVisible UFunction pointer; re-resolve per call
+    W1: FNAME_Add flag on 7 FName constructors (prevents FName table bloat)
+    W2: m_pendingCharName mutex protection for cross-thread access
+    W4: Bounds-checked float extraction in scroll offset
+    I3: VLOG for unreadable DataTable row elements
+    I4: CloseHandle for dialog thread handle leak
+
+
+2.7.2  v5.5.0 QUICKBUILD/PLACEMENT REVIEW
+
+The second audit focused on the quickbuild and placement systems, finding 11
+additional issues:
+
+    C1 (CRITICAL, FIXED): Zero delay between OnAfterShow and blockSelectedEvent.
+    Fixed with a 350ms settle delay.
+
+    C2 (CRITICAL, FIXED): Static FBoolProperty* pointer became stale across world
+    transitions. Fixed by re-resolving each call.
+
+    H3 (HIGH, FIXED): FindAllOf("UserWidget") was running every frame in the
+    state machine. Fixed to target the specific build item class.
+
+    H4 (HIGH, FIXED): m_isAutoSelecting was not RAII-guarded in the DIRECT path.
+    Fixed with AutoSelectGuardDirect.
+
+    M5 (MEDIUM, FIXED): keybd_event(VK_ESCAPE) was fragile and could be
+    intercepted by other software. Fixed by using CancelTargeting() via
+    ProcessEvent instead.
+
+    M6 (MEDIUM, FIXED): HandleResolve was firing SelectRecipe every frame when
+    the build menu was open. Fixed with a 200ms per-slot cooldown.
+
+    M7 (MEDIUM, FIXED): Hardcoded GATA offsets were still being accessed when
+    pitch/roll was disabled. Fixed with enabled flag guards.
+
+    M8 (MEDIUM, FIXED): Raw UObject* caching was vulnerable to ABA (pointer
+    reuse after garbage collection). Fixed by using FWeakObjectPtr for
+    m_cachedBuildComp, HUD, Tab, m_lastItemInvComp, and m_auditSpawnedActors.
+
+    #9 (LOW, MITIGATED): Triple phase transition in one frame. Mitigated by the
+    C1 settle delay.
+
+    #10 (LOW, CONFIRMED SAFE): Thread safety concern -- on_update runs on a
+    separate UE4SS thread. Confirmed that HookEngineTick + HookGameViewportClient
+    Tick both enabled does NOT cause double on_update.
+
+    #11 (INFO, FUTURE): FGKUIManager integration opportunity identified but would
+    require major refactor.
+
+
+2.7.3  KEY ARCHITECTURE FINDINGS
+
+    - on_update() runs on a dedicated UE4SS thread at approximately 5ms intervals,
+      NOT on the game thread
+    - HookEngineTick and HookGameViewportClientTick both enabled does NOT cause
+      double on_update firing
+    - FWeakObjectPtr is proven safe and was already used in 4 places before the
+      audit expanded its use
+    - CancelTargeting() is a proper UFUNCTION on GATA that replaces the fragile
+      synthetic escape key approach
+    - All 242 ProcessEvent calls in the codebase were migrated to
+      safeProcessEvent() with SEH protection and isObjectAlive validation
+
+
+2.7.4  REMAINING GAME-SIDE CRASHES (NOT FIXABLE)
+
+Two crash patterns originate in the game's own code and cannot be fixed by the
+mod:
+
+    - MovieScene UUMGSequenceTickManager crash: The game's own animation tick
+      system occasionally crashes when processing widget animations, particularly
+      during rapid UI state changes.
+
+    - UGameInstance::CreateGameModeForURL at offset 0x268: This is a known UE4SS
+      bug (#1214) related to HookedLoadMap that occurs during world transitions.
+
+
+--------------------------------------------------------------------------------
+2.8  SAVE GAME FEATURE
+--------------------------------------------------------------------------------
+
+[WORKS] The F12 Game Options panel includes a "SAVE NOW" button that triggers a
+manual save at any time.
+
+Implementation:
+    - Primary: MorCheatsComponent::ServerAutoSave() -- a Server Reliable RPC
+      called via ProcessEvent
+    - Fallback: MorCheatManager::SaveSystemAutoSave() via the CheatManager on the
+      PlayerController
+    - Pre-check: IsSaveSystemWorldStateValid() via the blueprint library ensures
+      the save system is in a valid state before attempting to save
+    - 10-second cooldown (m_lastSaveTime) prevents double-trigger and avoids
+      conflicts with the game's auto-save system
+    - Feedback: Shows "Game Saved" using showInfoMessage(), a non-debug version
+      of showErrorBox() that always displays to the player
+
+The showInfoMessage() function was created specifically for this feature as a
+pattern for user-facing messages that must always be visible, unlike
+showErrorBox() which is gated behind the s_verbose debug flag.
+
+
+================================================================================
+PART 3: USER INTERFACE AND DATA SYSTEMS
+================================================================================
+
+This section covers the mod's user interface systems (Win32 overlay and UMG
+widgets), the keybinding architecture, the DataTable modification pipeline, the
+definition processing system for game balance mods, icon extraction, server and
+multiplayer research, and the failed approaches to build menu injection.
+
+
+--------------------------------------------------------------------------------
+3.1  WIN32 OVERLAY SYSTEM
+--------------------------------------------------------------------------------
+
+The Win32 overlay is a transparent, always-on-top bar displayed at the top center
+of the screen. It provides at-a-glance information about quick-build slots,
+rotation state, and utility functions.
+
+Technical details:
+    - Window style: WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TRANSPARENT (clicks
+      pass through to the game)
+    - Rendering: GDI+ with per-pixel alpha via UpdateLayeredWindow
+    - Thread: Dedicated thread running at 5Hz (200ms refresh)
+    - GDI+ must be initialized in startOverlay() BEFORE updateOverlaySlots() is
+      called -- this ordering is critical
+
+Layout (12 slots):
+    [F1][F2][F3][F4][F5][F6][F7][F8] | [F9][F10][F11][F12]
+     <--- build recipe icons ------>  sep  <--- utility --->
+
+    F1-F8: Building recipe icons extracted from the game's textures at runtime
+    F9: Rotation step size (bold) + total accumulated rotation
+    F10: Toolbar number (T1 or T2)
+    F11: Target indicator (archery icon)
+    F12: Configuration (gear icon)
+
+Icons are extracted from the game at runtime using the Canvas render target
+pipeline described in Section 3.6 and cached as PNG files on disk. On subsequent
+game launches, the cached PNGs are loaded directly without re-extraction.
+
+
+--------------------------------------------------------------------------------
+3.2  UMG WIDGET SYSTEM
+--------------------------------------------------------------------------------
+
+3.2.1  RESOLUTION-INDEPENDENT UI SCALING
+
+All mod UI elements use a resolution-independent scaling formula based on viewport
+height:
+
+    float uiScale = static_cast<float>(viewH) / 2160.0f;
+
+The baseline is 4K (3840x2160) where uiScale = 1.0. At 1440p, uiScale = 0.667.
+At 1080p, uiScale = 0.5. Ultrawide monitors (e.g., 5120x1440) use height-based
+scaling, so uiScale = 0.667.
+
+Scaling is applied to:
+    - Render scales (multiply existing values by uiScale)
+    - Position offsets (multiply hardcoded pixel offsets by uiScale)
+    - DesiredSizeInViewport (multiply by uiScale)
+    - SizeBox overrides (Config Menu 1400x900, Target Info 550px, etc.)
+    - Config menu hit-test coordinates (ALL pixel constants)
+
+Six widget creation functions and one hit-test function apply this scaling:
+    Builders Bar, Advanced Builder, Mod Controller, Target Info, Info Box,
+    Config Menu, and the Config hit-test in on_update.
+
+
+3.2.2  WIDGET REPOSITIONING SYSTEM
+
+[WORKS] Players can drag and reposition all four mod toolbars to custom positions
+on screen.
+
+Entry: Modifier + Advanced Builder Open key (default: SHIFT + Num+)
+Exit: ESC key
+
+Four draggable widgets (TB_COUNT = 4):
+    0: Builders Bar (m_umgBarWidget)
+    1: Advanced Builder (m_abBarWidget)
+    2: Mod Controller (m_mcBarWidget)
+    3: Info Box (m_repositionInfoBoxWidget -- a placeholder during reposition)
+
+All widgets use center alignment (0.5, 0.5), meaning the stored coordinate IS the
+widget center. Default positions are stored as viewport fractions:
+    Builders Bar: (0.4992, 0.0287) -- top-center
+    Advanced Builder: (0.7505, 0.9111) -- lower-right
+    Mod Controller: (0.8492, 0.6148) -- right-mid
+    Info Box: (0.9414, 0.5463) -- right-center
+
+Positions are stored in the INI file under a [Positions] section, but only if the
+user has customized at least one position. Dragging is clamped to [0.01, 0.99]
+viewport fractions.
+
+During reposition mode, a placeholder Info Box widget is created (same size and
+style as the real info box, labeled "Info Box") for drag hit-testing. The real
+info box reads the stored position when it is created or shown.
+
+
+3.2.3  MOD CONTROLLER (MC) TOOLBAR
+
+The MC toolbar is a 3x3 UMG widget grid (9 active slots out of 12 total)
+displayed in the lower-right corner of the screen. It provides quick access to mod
+functions with keybind labels on each slot.
+
+Layout (4 columns x 3 rows):
+    Row 0: [Rotation]     [Snap Toggle]   [Stability]    [Super Dwarf]
+    Row 1: [Toolbar Swap] [Empty]         [Empty]        [Empty]
+    Row 2: [Remove Single][Undo Last]     [Remove All]   [Configuration]
+
+Each slot is an Overlay widget containing a frame UImage, a state UImage (showing
+empty/active/inactive), and an icon UImage with a game texture. Text overlays
+provide additional context:
+    - Slot 0: Rotation label showing current step and total rotation
+    - Slot 6 (Remove Single): "Single" in red
+    - Slot 8 (Remove All): "All" in red
+
+Key label and background per slot show the assigned keybind name. The MC toolbar
+is created via createModControllerBar() which builds the entire widget tree
+programmatically using StaticConstructObject and UE4 widget APIs.
+
+
+3.2.4  DEFERRED WIDGET REMOVAL
+
+[WORKS] All 7 UMG widget removal sites in the codebase use deferRemoveWidget().
+This helper hides the widget immediately (SetVisibility to Collapsed) and then
+removes it on the next frame. This two-step approach prevents a crash in Slate's
+PaintFastPath where removing a widget during the current paint pass causes a null
+pointer dereference.
+
+The F12 config menu uses a 1540px panel with a scrollbar. The scrollbar padding
+(60px) and button slot padding (50px right) were carefully tuned to prevent
+button hit detection from overlapping with the scrollbar zone. Button hit
+detection uses kbX1 = kbX0 + inner button width (300px), explicitly excluding the
+gold frame and scrollbar zone.
+
+A crosshair reticle (T_UI_Bow_Reticle) can be centered on screen when pressing ]
+to inspect a target, with a 40-second auto-hide and resolution-scaled positioning.
+
+
+--------------------------------------------------------------------------------
+3.3  KEYBIND SYSTEM
+--------------------------------------------------------------------------------
+
+3.3.1  ARCHITECTURE
+
+The keybind system manages 22 rebindable keys organized into sections:
+
+    - Quick Building (indices 0-7): F1-F8 quick-build slots
+    - Mod Controller (indices 8-16): MC toolbar slots 0-8
+    - Advanced Builder (index 17): Opens the Advanced Builder panel
+    - Diagnostics (index 18): Reserved slot
+    - Game Options (indices 19-21): Trash Item, Replenish Item, Remove Attributes
+
+Plus pitch rotate (comma) and roll rotate (period) added in v5.2.0, bringing the
+functional total to 24 keybinds.
+
+The s_bindings array stores label, section, and VK code for each bind. A
+configurable modifier key (SHIFT, CTRL, ALT, or Right ALT) is stored in
+s_modifierVK and used for secondary actions on keys that have both a primary and
+modified behavior.
+
+
+3.3.2  BIND INDEX MAP
+
+Index  INI Key              Default Key    Section
+ 0     QuickBuild1          F1             Quick Building
+ 1     QuickBuild2          F2             Quick Building
+ 2     QuickBuild3          F3             Quick Building
+ 3     QuickBuild4          F4             Quick Building
+ 4     QuickBuild5          F5             Quick Building
+ 5     QuickBuild6          F6             Quick Building
+ 6     QuickBuild7          F7             Quick Building
+ 7     QuickBuild8          F8             Quick Building
+ 8     Rotation             F9             Mod Controller
+ 9     SnapToggle           [ (OEM_FOUR)   Mod Controller
+10     StabilityCheck       Num/           Mod Controller
+11     SuperDwarf           \ (OEM_FIVE)   Mod Controller
+12     Target               ] (OEM_SIX)    Mod Controller
+13     Configuration        F12            Mod Controller
+14     RemoveTarget         Num1           Mod Controller
+15     UndoLast             Num2           Mod Controller
+16     RemoveAll            Num3           Mod Controller
+17     AdvancedBuilderOpen  Num+           Advanced Builder
+18     Reserved1            (none)         Diagnostics
+19     TrashItem            DEL            Game Options
+20     ReplenishItem        INS            Game Options
+21     RemoveAttributes     END            Game Options
+
+
+3.3.3  INI PERSISTENCE AND MIGRATION
+
+Keybinds are persisted by name in MoriaCppMod.ini via bindIndexToIniKey() and
+iniKeyToBindIndex(). This name-based lookup means that when bind indices are
+rearranged between versions (as happened in the v3.1 MC grid reorganization), the
+user's custom bindings migrate automatically. New keys (like TrashItem,
+ReplenishItem, RemoveAttributes) that do not exist in old INI files simply use
+their default VK codes.
+
+The F12 Config menu Tab 1 provides live key capture, grouped by section, allowing
+players to rebind any key without editing the INI file directly.
+
+Localization patching occurs after initDefaults, where s_bindings[].label and
+.section are patched from Loc::get() to support translated key names.
+
+
+--------------------------------------------------------------------------------
+3.4  DATATABLE MODIFICATION SYSTEM
+--------------------------------------------------------------------------------
+
+3.4.1  DATATABLE UTIL OVERVIEW
+
+The DataTableUtil struct (moria_datatable.inl) provides runtime DataTable
+read/write/add capabilities. All changes are in-memory only and reset on game
+restart. Operations use raw memory access with isReadableMemory() guards for
+safety.
+
+The utility supports:
+    - Binding: Find a UDataTable by name via FindAllOf, resolve its RowStruct and
+      row size
+    - Row enumeration: getRowCount(), getRowNames(), findRowData()
+    - Property resolution: resolvePropertyOffset() with caching (sentinel values:
+      -2 = unresolved, -1 = not found)
+    - Typed reads: readInt32, readFloat, readBool, readUInt8, readFName, readFText,
+      readObjectPtr, readRaw
+    - Typed writes: writeInt32, writeFloat, writeBool, writeUInt8, writeFName,
+      writeRaw
+    - TArray operations: readTArrayCount, readTArrayRaw, writeTArrayRaw,
+      clearTArray
+    - Row management: addRow, duplicateRow, removeRow
+    - Diagnostics: dumpRowNames, dumpRowStructFields
+
+Technical details:
+    - RowMap is at offset 0x30 (DT_ROWMAP_OFFSET) with a TSet using 24-byte
+      element stride (FName 8 bytes + pointer 8 bytes + hash 8 bytes)
+    - AddRowInternal is an ENGINE_API virtual function (NOT a UFUNCTION), so it
+      cannot be called via ProcessEvent. It is called through vtable dispatch at
+      offset 0x278 using std::bit_cast<MFP>(rawFunc)
+    - FText is reference-counted: reads are safe, writes are NOT supported
+    - TArray layout: { T* Data; int32 Num; int32 Max; } = 16 bytes
+
+Eight pre-defined DataTableUtil instances are maintained:
+    m_dtConstructions (DT_Constructions)
+    m_dtConstructionRecipes (DT_ConstructionRecipes)
+    m_dtItems (DT_Items)
+    m_dtItemRecipes (DT_ItemRecipes)
+    m_dtWeapons (DT_Weapons)
+    m_dtTools (DT_Tools)
+    m_dtArmor (DT_Armor)
+    m_dtConsumables (DT_Consumables)
+    m_dtOres (DT_Ores)
+    m_dtContainerItems (DT_ContainerItems)
+
+
+3.4.2  ROW SCHEMAS AND INHERITANCE
+
+All 7 item DataTables share a common inheritance hierarchy:
+
+    FTableRowBase (UE4 engine)
+      FGKTableRowBase (+EnabledState: ERowEnabledState)
+        FMorItemDefinition (base for all 7 item tables)
+          FMorWeaponDefinition      -> DT_Weapons
+          FMorToolDefinition        -> DT_Tools
+          FMorArmorDefinition       -> DT_Armor
+          FMorConsumableDefinition  -> DT_Consumables
+          FMorOreDefinition         -> DT_Ores
+          FMorContainerItemDefinition -> DT_ContainerItems
+        (FMorItemDefinition itself) -> DT_Items
+
+FMorItemDefinition (base, 20 properties shared by all):
+    DisplayName (FText), Description (FText), Icon (TSoftObjectPtr<UTexture2D>),
+    Actor (TSoftClassPtr), DroppedItemMeshOverride (UStaticMesh*),
+    Tags (FGameplayTagContainer), SkillsRequired (FGameplayTagContainer),
+    SkillsGranted (FGameplayTagContainer), VisibleEffects (TArray),
+    VisibleEffectTagMagnitudes (TMap), EquipEffects (TArray),
+    EquipEffectTagMagnitudes (TMap), HolsterEffects (TArray),
+    HolsterEffectTagMagnitudes (TMap), CosmeticConvertCost (RowHandle),
+    ItemSetRowHandle (RowHandle), Portability (EItemPortability uint8),
+    MaxStackSize (int32), SlotSize (int32), BaseTradeValue (float)
+
+FMorWeaponDefinition adds 13 properties: DamageType, Durability, Tier, Damage,
+Speed, ArmorPenetration, StaminaCost, EnergyCost, BlockDamageReduction,
+UseEffects, UseEffectTagMagnitudes, InitialRepairCost, RepairCostCurve.
+
+FMorToolDefinition adds 11 properties: Durability, DurabilityDecayWhileEquipped,
+StaminaCost, EnergyCost, CompatibleToolTags, UseEffects,
+UseEffectTagMagnitudes, InitialRepairCost, RepairCostCurve, CarveHits,
+NpcMiningRate.
+
+FMorArmorDefinition adds 7 properties: Durability, DamageReduction,
+DamageProtection, DamageModifiers, InitialRepairCost, RepairCostCurve,
+CosmeticOwner, CosmeticAchievement.
+
+FMorConsumableDefinition adds 9 properties: SpoilageSeconds, HungerRestore,
+HealthRestore, EnergyRestore, UseEffects, MealTime, MealTimeUseEffects,
+UseEffectTagMagnitudes, ItemHotbarBehavior.
+
+FMorOreDefinition adds 1 property: Mineral (TSoftObjectPtr).
+FMorContainerItemDefinition adds 1 property: StorageRowHandle (FMorStorageRowHandle).
+
+Row handle types all extend FFGKDataTableRowHandle which stores a single FName
+RowName. Moria variants include: FMorAnyItemRowHandle, FMorItemRowHandle,
+FMorItemSetRowHandle, FMorContainerItemRowHandle, FMorCosmeticConvertRowHandle,
+FMorStorageRowHandle, FMorArmorRowHandle, FMorAchievementRowHandle,
+FMorDamageModifierRowHandle.
+
+
+3.4.3  RUNTIME REFLECTION (ZERO HARDCODED OFFSETS)
+
+All DataTable field locations are resolved at runtime through UE4's reflection
+system:
+
+    1. UStruct::ForEachProperty() iterates struct properties by name
+    2. FProperty::GetOffset_Internal() gets the byte offset within the row
+    3. FProperty::GetClass().GetName() detects the type (IntProperty,
+       FloatProperty, StructProperty, etc.)
+    4. std::memcpy(rowData + offset, &value, size) writes at the computed offset
+
+Nested properties (like StageDataList[3].MonumentProgressionPointsNeeded) are
+resolved segment by segment:
+    - Split the path on "." into segments
+    - Array segments (with [N]) use FArrayProperty::GetInner() + element stride
+    - Struct segments use FStructProperty::GetStruct() for sub-struct traversal
+
+
+3.4.4  READ AND WRITE OPERATIONS
+
+Read operations return default values (0, 0.0f, false, empty string, nullptr) on
+failure, with isReadableMemory() checks at every dereference point. Write
+operations return bool indicating success or failure.
+
+Cross-table lookups are provided for construction/recipe relationships:
+    - resolveConstructionRowName(L"RecipeRow") reads
+      ResultConstructionHandle.RowName from DT_ConstructionRecipes to find the
+      corresponding DT_Constructions row
+    - lookupRecipeIcon(L"RecipeRow") performs the cross-reference and returns the
+      construction's UTexture2D* icon
+
+
+3.4.5  ROW ADD/REMOVE/DUPLICATE
+
+    [WORKS] addRow(L"NewRow") allocates memory via FMemory::Malloc, zero-fills it,
+    calls InitializeStruct, and uses callAddRowInternal() via vtable dispatch at
+    offset 0x278. This properly maintains the DataTable's internal TMap hash
+    buckets.
+
+    [WORKS] duplicateRow(L"srcRow", L"newRow") shallow-copies an existing row
+    under a new name.
+
+    [WORKS] removeRow(L"rowName") removes via swap-and-pop. Note: this orphans
+    the memory (does NOT free it).
+
+    WARNING: Adding rows to the raw UDataTable does NOT update FGK wrapper caches.
+    See Section 3.8 for the full explanation of why this blocks build menu
+    injection.
+
+
+--------------------------------------------------------------------------------
+3.5  DEFINITION PROCESSING SYSTEM (GAME MODS)
+--------------------------------------------------------------------------------
+
+3.5.1  OVERVIEW AND DATA FLOW
+
+The definition processing system converts what was originally a Python-based .def
+file processor (MoriaModCreator v1.1) into pure C++ running at game load time.
+It parses INI manifests and XML .def files at runtime and applies changes to live
+DataTables using UE4 reflection. Zero Python dependencies, zero hardcoded offsets.
+
+The data flow:
+    GameMods.ini -> enabled mod names
+      -> find definitions/{name}.ini manifests
+        -> parse [Paths] section -> .def file paths
+          -> parse XML .def files -> change/delete/add_row operations
+            -> apply to live DataTables via runtime reflection
+
+The hook point is RegisterLoadMapPreCallback, at which time DataTables are fully
+populated with rows and safe to modify. This is important because hooking too
+early (before DataTable population) would find empty tables, and hooking too late
+(after FGK wrapper initialization) would miss the window for certain table types.
+
+The system currently ships with 8 definition packs (with 129+ .def files total)
+covering buffs, building modifications, item stack sizes, loot tables, ore yields,
+gameplay effects, storage capacity, trade values, NPC behavior, and settlement
+configurations.
+
+
+3.5.2  MANIFEST AND XML FORMAT
+
+Manifest INI format (definitions/*.ini):
+    [ModInfo]
+    Title=Clean Fat Stacks
+    Description=Increases stack sizes for all items
+
+    [Paths]
+    defs|FatStacks_Items.def=
+    defs|FatStacks_Consumables.def=
+
+Keys ending in .def are loaded; others are ignored. The pipe character (|) is
+converted to the path separator (/).
+
+XML .def format:
+    <?xml version="1.0" encoding="utf-8"?>
+    <Definitions>
+      <DataTable name="DT_Items">
+        <change item="Coal" property="MaxStackSize" value="200"/>
+        <change item="Coal" property="BaseTradeValue" value="5.0"/>
+        <delete item="Goblin" property="Tags" value="Enemy.Melee"/>
+      </DataTable>
+    </Definitions>
+
+Supported operations:
+    - change: Write a new value to a specific property of a DataTable row. The
+      property type is detected automatically via reflection (IntProperty,
+      FloatProperty, BoolProperty, ByteProperty, NameProperty, TextProperty).
+      Nested properties like "StageDataList[3].MonumentProgressionPointsNeeded"
+      are supported through segment-by-segment resolution.
+    - delete: Remove a GameplayTag from a TArray (swap-and-pop). After removal,
+      the TArray.Num is decremented but Data and Max are left intact to avoid
+      memory reallocation issues.
+    - add_row: Create a new DataTable row with a JSON property list. Uses the
+      DataTableUtil::addRow() engine vtable dispatch to properly insert the row
+      into the DataTable's RowMap. After row creation, fixRowHandlePointers()
+      copies DataTable* pointers from existing rows to ensure RowHandle
+      properties can resolve correctly.
+
+
+3.5.3  RUNTIME REFLECTION FOR FIELD WRITES
+
+The writeValueToField() function handles type-aware writes based on the property
+class: IntProperty, FloatProperty, BoolProperty, ByteProperty, NameProperty, and
+TextProperty. The readFieldAsString() function provides type-aware reads for debug
+verification.
+
+When s_verbose is true, applyChange() reads back the written value via
+readFieldAsString() and logs both the intended value and the readback for
+verification.
+
+
+3.5.4  F12 GAME MODS TAB
+
+The F12 configuration menu has a fourth tab (currently hidden, CONFIG_TAB_COUNT=3)
+for enabling/disabling definition packs. When enabled (set CONFIG_TAB_COUNT=4),
+it shows:
+
+    - Checkbox rows per GameModEntry with overlay, image, info VBox containing
+      title and description
+    - Footer: "Changes take effect on next game launch" in 20pt bold red
+    - Maximum 16 mods (MAX_GAME_MODS constant)
+    - Checkbox toggle saves GameMods.ini on each click
+
+The GameMods.ini file lives at Mods/GameMods.ini (root Mods directory, NOT inside
+MoriaCppMod) and contains an [EnabledMods] section with Name = true/false entries.
+
+
+3.5.5  ADD ROW SYSTEM
+
+The add_row directive in XML .def files creates new DataTable rows:
+
+    <add_row name="MyNewItem">
+    {"Value":[
+      {"Name":"MaxStackSize","Type":"IntProperty","Value":"100"},
+      {"Name":"BaseTradeValue","Type":"FloatProperty","Value":"5.0"}
+    ]}
+    </add_row>
+
+The JSON property list is parsed by jsonArrayObjects() and each property is
+written by writeJsonPropertyToField(). After writing, fixRowHandlePointers()
+copies DataTable* pointers from an existing reference row to ensure RowHandle
+properties are valid. An FName is written at the unreflected offset 0x08
+(FFGKTableRowBase hidden field).
+
+    IMPORTANT: add_row works for non-FGK DataTables (items, weapons, ores, etc.)
+    where the game reads directly from the DataTable. For construction/recipe
+    tables, the FGK wrapper cache prevents new rows from appearing in the build
+    menu.
+
+
+--------------------------------------------------------------------------------
+3.6  ICON EXTRACTION FROM UE4 TEXTURES
+--------------------------------------------------------------------------------
+
+3.6.1  WORKING PIPELINE: CANVAS RENDER TARGET
+
+[WORKS] The mod extracts building recipe icons at runtime using a multi-step
+pipeline:
+
+    1. Get UTexture2D* from the widget chain:
+       widget -> Image component -> FSlateBrush -> MaterialInstanceDynamic ->
+       TextureParameterValues[0] -> UTexture2D*
+
+    2. CreateRenderTarget2D (128x128, Format=2 which is RTF_RGBA8)
+
+    3. BeginDrawCanvasToRenderTarget returns a Canvas object and a Context struct
+
+    4. K2_DrawTexture on the Canvas with the UTexture2D (BlendMode=0 for Opaque,
+       Color=white, full size)
+
+    5. EndDrawCanvasToRenderTarget (pass the Context from step 3)
+
+    6. ExportRenderTarget creates an extensionless HDR file on disk
+
+    7. Convert HDR to PNG using GDI+ (Image::FromFile -> Save with PNG encoder)
+
+    8. Delete the intermediate HDR file
+
+Key UFunctions used (all found via StaticFindObject):
+    /Script/Engine.KismetRenderingLibrary:CreateRenderTarget2D
+    /Script/Engine.KismetRenderingLibrary:BeginDrawCanvasToRenderTarget
+    /Script/Engine.KismetRenderingLibrary:EndDrawCanvasToRenderTarget
+    /Script/Engine.KismetRenderingLibrary:ExportRenderTarget
+    /Script/Engine.Canvas:K2_DrawTexture
+
+Critical details:
+    - Format enum: 0=RTF_R8, 1=RTF_RG8, 2=RTF_RGBA8, 5=RTF_RGBA16f. Use 2.
+    - ExportRenderTarget param name: "Filename" (capital F, lowercase n). Use
+      case-insensitive findParam to be safe.
+    - FDrawToRenderTargetContext: Opaque struct. Copy raw bytes from Begin output
+      to End input.
+    - GDI+ must be initialized BEFORE loading PNGs in updateOverlaySlots.
+      Initialize in startOverlay(), not in the thread function.
+    - BlendMode 0 (BLEND_Opaque) for K2_DrawTexture to avoid transparency issues.
+
+
+3.6.2  ICON CACHING
+
+Extracted PNGs are saved to <game>/Mods/MoriaCppMod/icons/<textureName>.png. The
+quickbuild_slots.txt file stores the texture name for each slot. On subsequent
+game loads, the mod checks if the PNG already exists on disk (via
+GetFileAttributesW) and only extracts when it does not. This means icons are
+extracted once and reused indefinitely.
+
+
+3.6.3  FAILED APPROACHES (ICON EXTRACTION)
+
+    FAILED: Raw Memory Bulk Data Reading. FByteBulkData for Mip0 and Mip1 has
+    the BULKDATA_PayloadInSeperateFile flag, meaning the texture data is NOT in
+    CPU memory -- it lives in .ubulk files on disk for GPU access only. Mip2+
+    (64x64 and smaller) has BULKDATA_ForceInlinePayload but the internal
+    FByteBulkData offsets are unreliable for direct reading. Raw offset scanning
+    found pointer/bookkeeping data, not pixel data.
+
+    FAILED: DrawMaterialToRenderTarget + MID. The MaterialInstanceDynamic from
+    UI widgets is a Slate material that renders as solid white when drawn to a
+    render target. The file was created (10KB HDR -> 7KB PNG) but contained all
+    white pixels.
+
+
+--------------------------------------------------------------------------------
+3.7  SERVER AND MULTIPLAYER RESEARCH
+--------------------------------------------------------------------------------
+
+This section documents extensive research into making mod features work on
+dedicated servers, with clear distinctions between what works and what does not.
+
+3.7.1  WHAT WORKS ON DEDICATED SERVERS
+
+    - Invisible mode: SetActorHiddenInGame works on the server for visual-only
+      changes that do not require server authority
+    - Definition loading: All DataTable modifications work correctly on the server
+    - HISM replay: Environment removal (UpdateInstanceTransform) works on the
+      server
+
+3.7.2  WHAT DOES NOT WORK (CLIENT-SIDE)
+
+The following approaches were all tried from the client side when connected to a
+dedicated server. All failed:
+
+    - SetMovementMode locally: The server immediately overrides the movement mode
+      with a correction packet
+    - CheatManager::Fly(): CheatManager is null because it is stripped in
+      shipping builds (#if !UE_BUILD_SHIPPING)
+    - EnableCheats(): Also stripped in shipping builds
+    - ServerExecRPC("fly"): The function exists (found at 0x1ff4dc1e780) but the
+      server has no CheatManager to process the command
+    - CheatsComponent ServerCmd: CheatsComponent is null on the client's
+      PlayerController (it only exists server-side)
+    - ClientAdjustPosition suppression: The correction packet does not go through
+      ProcessEvent -- it uses native replication, which bypasses the mod's hooks
+    - INI settings: AllowCheats() is hardcoded to return false on dedicated
+      servers and is not configurable
+
+The fundamental reasons:
+    1. Movement is server-authoritative in UE4 multiplayer
+    2. All cheat functions are compiled out with #if !UE_BUILD_SHIPPING
+    3. ClientAdjustPosition uses native replication, not ProcessEvent
+    4. CheatsComponent and CheatManager only exist on the server-side
+       PlayerController
+
+
+3.7.3  WHAT WOULD WORK (SERVER-SIDE MOD)
+
+A server-side mod could enable fly mode by:
+    1. Hooking ServerCheckClientError to skip the movement mode mismatch check
+       when fly is active
+    2. Watching for a client signal and calling SetMovementMode on the server's
+       character
+    3. Setting bIgnoreClientMovementErrorChecksAndCorrection = true on the
+       server's CharacterMovementComponent
+
+All of these require the SERVER mod to actively participate. Purely client-side
+approaches have been exhausted after extensive testing across multiple sessions.
+This is a fundamental architectural limitation of UE4's client-server model for
+multiplayer games -- movement authority resides exclusively on the server, and
+there is no mechanism for a client-only mod to override this without server
+cooperation.
+
+Key engine code locations (from UE4.27 source):
+    - CharacterMovementComponent.cpp:9407-9414 -- movement mode mismatch check
+    - CharacterMovementComponent.h:932 -- bIgnoreClientMovementErrorChecksAndCorrection
+    - CharacterMovementComponent.h:942 -- bServerAcceptClientAuthoritativePosition
+    - GameModeBase.cpp:1353-1356 -- AllowCheats() returns false on dedicated server
+    - CheatManager.h:23 -- UE_WITH_CHEAT_MANAGER = (1 && !UE_BUILD_SHIPPING)
+
+
+3.7.4  CHEATMANAGER ENABLER ATTEMPT
+
+A CheatManagerEnablerMod (bundled UE4SS Lua mod) was deployed on both client and
+server:
+
+    Client results:
+    - CheatManager was created successfully (non-null at 0x28614b33c40)
+    - Fly() and Walk() ProcessEvent calls succeeded (function found and called)
+    - BUT the Fly() function body is empty -- #if !UE_BUILD_SHIPPING strips the
+      implementation, leaving only an empty function shell
+
+    Server results:
+    - Lua mod loaded but the ClientRestart hook never fired
+    - CheatManager was not created server-side
+    - Server console commands (fly, god, ghost, EnableCheats) produced zero
+      response -- the console is log-only, not a UE4 exec console
+
+    WARNING: CheatManager objects CAN be created on the client, but all method
+    implementations are compiled out of shipping builds. This approach is NOT
+    viable.
+
+
+--------------------------------------------------------------------------------
+3.8  FAILED APPROACHES: BUILD MENU INJECTION
+--------------------------------------------------------------------------------
+
+This section documents two major approaches that were explored for adding new
+building constructions to the game's build menu at runtime. Both were ultimately
+blocked by the same root cause.
+
+3.8.1  APPROACH 1: IoStore PAK MOUNTING (ABANDONED)
+
+The first approach attempted to mount custom .pak/.ucas/.utoc files containing
+new DataTable rows at runtime. IoStore containers cannot be mounted from UE4SS
+because the required APIs (FPlatformFileManager, FPakPlatformFile::Mount,
+FPackageName::RegisterMountPoint) are C++ class methods, not UFUNCTIONs callable
+via ProcessEvent.
+
+Research found that UAssetRegistryHelpers::GetAssetRegistry() IS callable via
+ProcessEvent and returns an IAssetRegistry interface pointer. However, the
+interface methods like ScanPathsSynchronous are virtual C++ methods, not
+UFUNCTIONs, so they cannot be called through ProcessEvent either.
+
+The game does have an auto-mount system for paks placed in Content/Paks/, but
+even if a pak were mounted, the fundamental FGK cache problem (described below)
+would still block new constructions from appearing in the build menu.
+
+
+3.8.2  APPROACH 2: JSON ADDROW + FGK CACHE REFRESH (ABANDONED)
+
+The second approach used the existing DataTableUtil::addRow() system to inject
+rows into DT_Constructions and DT_ConstructionRecipes at runtime from JSON files.
+
+What WORKED:
+    - JSON file reading from Mods/MoriaCppMod/json/ directory
+    - Row injection via the applyAddRow() pipeline -- rows added successfully
+      (854 -> 855, 814 -> 815)
+    - findRowData() confirmed rows exist after injection
+    - DoesDataTableRowExist (hash-based) confirmed YES
+    - TextPropertyData handled via UKismetTextLibrary::TextFromStringTable
+    - All field types written correctly: FText, SoftObjectPath,
+      GameplayTagContainer, enums, nested structs, arrays
+
+What DID NOT WORK -- Build menu visibility:
+    The FGK wrapper layer (MorConstructionsTable, MorConstructionRecipesTable)
+    caches DataTable rows internally at initialization. Adding rows to the raw
+    UDataTable after FGK initialization means the wrapper never sees them.
+
+
+3.8.3  ROOT CAUSE: FGK WRAPPER CACHE
+
+The FGK framework wraps every DataTable in a UFGKDataTableBase subclass. These
+wrapper objects build internal TMap/TArray caches (at offset 0x110 for
+ConstructionRecipeLookup and ActorRowNameLookup) during initialization and never
+rebuild them.
+
+Approaches tried to refresh the cache (all failed):
+    - PostLoad() on the FGK wrapper: Returned OK but DynamicTable remained NULL,
+      no cache refresh occurred
+    - AMorDiscoveryManager::DiscoverRecipe(FName): Returned OK but the recipe was
+      not in the FGK cache so the discovery system could not match it
+    - UFGKRecipeRepository::LearnRecipe(FName): Zero instances of the repository
+      found in the game world
+    - HandleDataTableChanged(): This is an ENGINE_API function (not a UFUNCTION,
+      not virtual) -- cannot call via ProcessEvent or vtable
+
+The FGK wrapper has:
+    - No public refresh, rebuild, or invalidate methods
+    - No delegate listeners on the wrappers to notify of DataTable changes
+    - Internal TMap caches populated once at load time with no mechanism for
+      runtime updates
+
+
+3.8.4  PAK MOUNTING RESEARCH
+
+Additional research into UE4's pak mounting system for future reference:
+
+The Pak Loader Plugin (calben/UnrealPakLoaderPlugin on GitHub) uses:
+    1. FPlatformFileManager::Get().GetPlatformFile(TEXT("PakFile"))
+    2. FPakPlatformFile::Mount(*path, order, *mountDir)
+    3. FPackageName::RegisterMountPoint("/ModName/", "/ModName/Content/")
+    4. IAssetRegistry::Serialize(data) to register assets from a .bin file
+
+From the game's headers (CXXHeaderDump/AssetRegistry.hpp):
+    - UAssetRegistryHelpers has BlueprintCallable UFUNCTIONs: GetAssetRegistry(),
+      GetAsset(), CreateAssetData(), IsAssetLoaded()
+    - IAssetRegistry has virtual interface methods (NOT UFUNCTIONs):
+      ScanPathsSynchronous, SearchAllAssets, GetAssetsByPath/Class/PackageName
+    - K2_GetReferencers and K2_GetDependencies ARE UFUNCTIONs
+
+Even if pak mounting were achievable, the FGK wrapper cache would still block
+new constructions. Pak mounting would be useful for loading Blueprint widget
+classes, custom textures, or other assets that do not go through the FGK wrapper
+layer.
+
+
+3.8.5  LESSONS FOR FUTURE MODDERS
+
+    WARNING: Do not attempt build menu injection for new constructions. The FGK
+    framework has no cache invalidation mechanism and no way to add new
+    constructions at runtime that will appear in the build menu.
+
+    [WORKS] The definition system (.def files) CAN modify EXISTING
+    construction/recipe rows (change properties, enable/disable) but CANNOT add
+    NEW ones that appear in the build menu.
+
+    [WORKS] JSON AddRow IS valid for non-FGK DataTables (items, weapons, ores,
+    armor, consumables, tools, container items) where the game reads directly
+    from the DataTable without an FGK wrapper cache.
+
+
+================================================================================
+FOOTER AND CREDITS
+================================================================================
+
+Khazad-dum Advanced Builder Pack
+Version 6.0.0
+
+Author: jbowensii
+GitHub: https://github.com/jbowensii/MoriaAdvancedBuilder
+
+Built with:
+    - UE4SS v4.0.0-rc1 (C++ modding framework for Unreal Engine)
+    - Visual Studio 2026, MSVC v14.50
+    - CMake 4.1.2
+    - Rust 1.93.1 (for UE4SS build toolchain)
+
+Game:
+    - The Lord of the Rings: Return to Moria
+    - Developer: Free Range Games
+    - Engine: Unreal Engine 4.27
+
+This document was compiled from extensive development notes, debugging chronicles,
+and research logs accumulated over months of active development. Every "what did
+not work" entry represents real debugging time and real crashes. The goal of this
+knowledge base is to ensure that future modders for Return to Moria, or for any
+UE4 game using the FGK framework, do not have to rediscover these lessons the
+hard way.
+
+Key UE4SS APIs used throughout:
+    - UObjectGlobals::FindAllOf(className, vectorOut)
+    - UObjectGlobals::StaticFindObject<T>(package, outer, name)
+    - object->GetFunctionByNameInChain(functionName)
+    - object->ProcessEvent(function, paramBuffer)
+    - function->ForEachProperty() for runtime parameter discovery
+    - RegisterProcessEventPostCallback for hooking game functions
+    - RegisterLoadMapPreCallback for load-time DataTable modification
+
+All file I/O uses modPath("Mods/...") to handle the UE4SS subfolder layout where
+the process CWD is Win64/ but mod files live in Win64/ue4ss/.
+
+Save files:
+    - Mods/MoriaCppMod/MoriaCppMod.ini -- keybinds, config, positions
+    - Mods/MoriaCppMod/quickbuild_slots.txt -- quick-build slot assignments
+    - Mods/MoriaCppMod/removed_instances.txt -- HISM removal data
+    - Mods/MoriaCppMod/icons/*.png -- cached icon PNGs
+    - Mods/MoriaCppMod/definitions/*.ini -- definition pack manifests
+    - Mods/MoriaCppMod/definitions/defs/*.def -- XML definition files
+    - Mods/GameMods.ini -- enabled/disabled definition packs
+
+Test coverage: 286 tests across 5 test files (file_io, key_helpers, loc, memory,
+string_helpers).
+
+--------------------------------------------------------------------------------
+APPENDIX A: KEY UE4SS APIs REFERENCE
+--------------------------------------------------------------------------------
+
+For modders new to UE4SS, here are the core APIs used throughout this mod:
+
+Finding objects:
+    UObjectGlobals::FindAllOf(STR("ClassName"), vectorOut)
+        Finds all instances of a UObject class by name. Returns results in a
+        std::vector<UObject*>. This is the primary way to find game objects at
+        runtime. Be aware that it finds ALL instances, including dormant ones.
+
+    UObjectGlobals::StaticFindObject<T>(package, outer, fullPath)
+        Finds a specific object by its full engine path. Used for UFunctions,
+        UClasses, and other singleton-like objects. Returns nullptr if not found.
+
+Calling functions:
+    object->GetFunctionByNameInChain(STR("FunctionName"))
+        Resolves a UFunction by name, searching up the class hierarchy. Returns
+        nullptr if the function does not exist on the object's class or any of
+        its parent classes.
+
+    object->ProcessEvent(function, paramBuffer)
+        Calls a UFunction with the provided parameter buffer. The buffer layout
+        must exactly match the function's parameter list. Use ForEachProperty()
+        on the UFunction to discover parameter offsets and sizes.
+
+Discovering parameters:
+    for (auto* prop : func->ForEachProperty()) {
+        prop->GetName();              // Parameter name
+        prop->GetOffset_Internal();    // Byte offset in param buffer
+        prop->GetSize();              // Size in bytes
+        prop->GetClass().GetName();   // Type (IntProperty, FloatProperty, etc.)
+    }
+        This is the standard approach for probing unknown function signatures.
+        The mod uses this extensively to build parameter buffers dynamically
+        rather than hardcoding offsets.
+
+Registering hooks:
+    RegisterProcessEventPostCallback(callback)
+        Registers a callback that fires AFTER every ProcessEvent call in the
+        game. The callback receives the object, function, and param buffer.
+        Used to intercept game events like blockSelectedEvent, OnAfterShow,
+        ServerMoveItem, and BuildNewConstruction.
+
+    RegisterLoadMapPreCallback(callback)
+        Fires before a map load. Used by the definition processing system to
+        modify DataTables at the right point in the load sequence.
+
+Memory safety:
+    isReadableMemory(ptr) via VirtualQuery
+        Checks if a memory address is readable without causing an access
+        violation. Used throughout the DataTable and HISM systems to guard
+        against stale or invalid pointers.
+
+    safeProcessEvent(object, function, params)
+        Wrapper around ProcessEvent that uses SEH (__try/__except) and
+        isObjectAlive() validation. If the object has been garbage collected
+        or the ProcessEvent call crashes, the exception is caught and logged
+        rather than terminating the game process. All 242+ ProcessEvent calls
+        in the mod use this wrapper.
+
+
+--------------------------------------------------------------------------------
+APPENDIX B: COMMON PITFALLS FOR UE4SS MODDERS
+--------------------------------------------------------------------------------
+
+Based on the extensive debugging that went into this mod, here are the most
+common pitfalls that UE4SS modders should be aware of:
+
+1. MovieScene Animation System Crashes
+   UE4's UMG animation system (MovieScene/Sequencer) is extremely sensitive to
+   rapid widget visibility changes. Always enforce a minimum cooldown (350ms in
+   our case) between Show() and Hide() calls. Never call StopAllAnimations()
+   from within a game tick callback. Never call SetVisibility() after Show().
+
+2. FindAllOf Returns Dormant Objects
+   FindAllOf finds every instance of a class, including widgets that are allocated
+   but not actively visible or functional. Always validate that an object is in
+   the expected state before operating on it. Use specific pre-guard functions
+   like GetActiveBuildingWidget() instead of relying on the presence of an object.
+
+3. ProcessEvent Has No Return Status
+   ProcessEvent always "succeeds" even if the function call did nothing. A
+   dormant widget will accept a ProcessEvent call to SelectRecipe without error,
+   but the call has no effect. Always validate preconditions before calling.
+
+4. UObject Pointer Staleness
+   UE4's garbage collector can destroy objects at any time. Pointers cached across
+   frames may become dangling. Use FWeakObjectPtr for any cached UObject* that
+   persists across frames. Always check isObjectAlive() before using a cached
+   pointer.
+
+5. FItemHandle Is Not Two FNames
+   The FItemHandle struct contains {ID, Payload, TWeakObjectPtr}, not FNames.
+   Constructing an FItemHandle by writing FNames to the buffer produces invalid
+   handles that silently fail.
+
+6. DataTable Lazy Binding
+   DataTables are not automatically available at mod load time. They must be
+   explicitly bound via FindAllOf("DataTable") + name matching. Attempting to
+   read from an unbound DataTable returns zero/nullptr with no error.
+
+7. Process CWD vs. UE4SS Working Directory
+   On UE4SS v4.0.0-rc1 with the subfolder layout, the process's current working
+   directory is Win64/ but mod files live in Win64/ue4ss/. Always use modPath()
+   to construct file paths, which prepends the correct UE4SS working directory.
+
+8. FText Writes Are Unsafe
+   FText is a reference-counted type with internal bookkeeping. Reading FText
+   via ToString() is safe, but writing FText by copying raw bytes into a
+   DataTable row can corrupt the reference counting system. Use only for reads.
+
+9. TArray Manipulation
+   When modifying TArray contents (like Effects.List for rune removal), always
+   use swap-and-pop (move last element to removed position, decrement Num) rather
+   than shifting elements. Do not modify Max or Data pointer. Do not free memory.
+
+10. Server Authority for Inventory
+    All inventory modifications must go through Server Reliable RPCs
+    (RequestAddItem, ServerRemoveItem, etc.). Direct memory writes to
+    FItemInstance fields bypass replication and will not be visible to other
+    players, will not trigger UI updates, and will desync the client from the
+    server.
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
