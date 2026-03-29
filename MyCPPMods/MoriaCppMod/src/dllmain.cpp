@@ -40,7 +40,6 @@ namespace MoriaMods
 
         ULONGLONG m_lastWorldCheck{0};
         ULONGLONG m_lastCharPoll{0};
-        ULONGLONG m_lastServerFlyCheck{0};
         ULONGLONG m_lastStreamCheck{0};
         ULONGLONG m_lastRescanTime{0};
         ULONGLONG m_lastBubbleCheck{0};
@@ -727,36 +726,6 @@ namespace MoriaMods
                     return;
                 }
 
-
-                // Server-side fly support: when a player connects/respawns, set their
-                // CharacterMovementComponent to trust client movement. This allows the
-                // client's SetMovementMode(MOVE_Flying) to stick without server corrections.
-                // On dedicated servers, ClientRestart fires when a player gets a new pawn.
-                if (wcscmp(fnStr2, STR("ClientRestart")) == 0 ||
-                    wcscmp(fnStr2, STR("OnPossess")) == 0 ||
-                    wcscmp(fnStr2, STR("AcknowledgePossession")) == 0)
-                {
-                    // context is the PlayerController — find its Pawn's CharacterMovement
-                    if (context)
-                    {
-                        auto* pawnProp = context->GetPropertyByNameInChain(STR("Pawn"));
-                        UObject* pawn = pawnProp ? *reinterpret_cast<UObject**>(
-                            reinterpret_cast<uint8_t*>(context) + pawnProp->GetOffset_Internal()) : nullptr;
-                        if (pawn && isObjectAlive(pawn))
-                        {
-                            auto** cmcPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
-                            UObject* cmc = (cmcPtr && *cmcPtr) ? *cmcPtr : nullptr;
-                            if (cmc && isObjectAlive(cmc))
-                            {
-                                s_instance->setBoolProp(cmc, L"bIgnoreClientMovementErrorChecksAndCorrection", true);
-                                s_instance->setBoolProp(cmc, L"bServerAcceptClientAuthoritativePosition", true);
-                                VLOG(STR("[MoriaCppMod] [ServerFly] Set client-authoritative movement on {} (pawn {:p} cmc {:p})\n"),
-                                     fnStr2, static_cast<void*>(pawn), static_cast<void*>(cmc));
-                            }
-                        }
-                    }
-                    // Don't return — let other handlers see this event too
-                }
 
                 // Bubble change — fired by AWorldLayout's OnPlayerEnteredBubble delegate
                 if (wcscmp(fnStr2, STR("OnPlayerEnteredBubble")) == 0)
@@ -2217,35 +2186,28 @@ namespace MoriaMods
                     {
                         m_characterLoaded = true;
                         m_charLoadTime = GetTickCount64();
-                        VLOG(STR("[MoriaCppMod] Character loaded Ã¢â‚¬â€ waiting 15s before replay\n"));
+                        VLOG(STR("[MoriaCppMod] Character loaded - waiting 15s before replay\n"));
+
+                        // Server fly: set client-authoritative movement on all characters at login.
+                        // Tells the server to trust client positions (allows client fly to work).
+                        for (auto* dwarf : dwarves)
+                        {
+                            if (!dwarf || !isObjectAlive(dwarf)) continue;
+                            auto** cmcPtr = dwarf->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
+                            if (!cmcPtr || !*cmcPtr) continue;
+                            auto* cmc = *cmcPtr;
+                            if (!isObjectAlive(cmc)) continue;
+                            setBoolProp(cmc, L"bIgnoreClientMovementErrorChecksAndCorrection", true);
+                            setBoolProp(cmc, L"bServerAcceptClientAuthoritativePosition", true);
+                            VLOG(STR("[MoriaCppMod] [ServerFly] Set client-auth movement on {:p}\n"),
+                                 static_cast<void*>(dwarf));
+                        }
                     }
                 }
                 return;
             }
 
             ULONGLONG msSinceChar = GetTickCount64() - m_charLoadTime;
-
-            // Server fly: periodically set client-authoritative movement on ALL player characters.
-            // ProcessEvent hooks for ClientRestart/OnPossess don't fire on dedicated servers
-            // (native C++ calls bypass ProcessEvent). Instead, scan every 5s and set the flags
-            // on any CharacterMovementComponent found. This allows client fly to work.
-            if (intervalElapsed(m_lastServerFlyCheck, 5000))
-            {
-                std::vector<UObject*> allDwarves;
-                UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), allDwarves);
-                for (auto* dwarf : allDwarves)
-                {
-                    if (!dwarf || !isObjectAlive(dwarf)) continue;
-                    auto** cmcPtr = dwarf->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
-                    if (!cmcPtr || !*cmcPtr) continue;
-                    auto* cmc = *cmcPtr;
-                    if (!isObjectAlive(cmc)) continue;
-                    setBoolProp(cmc, L"bIgnoreClientMovementErrorChecksAndCorrection", true);
-                    setBoolProp(cmc, L"bServerAcceptClientAuthoritativePosition", true);
-                }
-                if (!allDwarves.empty())
-                    VLOG(STR("[MoriaCppMod] [ServerFly] Set client-auth movement on {} characters\n"), allDwarves.size());
-            }
 
 
             if (!m_initialReplayDone && msSinceChar >= 15000)
