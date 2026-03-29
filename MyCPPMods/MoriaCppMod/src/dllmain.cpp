@@ -40,6 +40,7 @@ namespace MoriaMods
 
         ULONGLONG m_lastWorldCheck{0};
         ULONGLONG m_lastCharPoll{0};
+        ULONGLONG m_lastServerFlyCheck{0};
         ULONGLONG m_lastStreamCheck{0};
         ULONGLONG m_lastRescanTime{0};
         ULONGLONG m_lastBubbleCheck{0};
@@ -2223,6 +2224,28 @@ namespace MoriaMods
             }
 
             ULONGLONG msSinceChar = GetTickCount64() - m_charLoadTime;
+
+            // Server fly: periodically set client-authoritative movement on ALL player characters.
+            // ProcessEvent hooks for ClientRestart/OnPossess don't fire on dedicated servers
+            // (native C++ calls bypass ProcessEvent). Instead, scan every 5s and set the flags
+            // on any CharacterMovementComponent found. This allows client fly to work.
+            if (intervalElapsed(m_lastServerFlyCheck, 5000))
+            {
+                std::vector<UObject*> allDwarves;
+                UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), allDwarves);
+                for (auto* dwarf : allDwarves)
+                {
+                    if (!dwarf || !isObjectAlive(dwarf)) continue;
+                    auto** cmcPtr = dwarf->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
+                    if (!cmcPtr || !*cmcPtr) continue;
+                    auto* cmc = *cmcPtr;
+                    if (!isObjectAlive(cmc)) continue;
+                    setBoolProp(cmc, L"bIgnoreClientMovementErrorChecksAndCorrection", true);
+                    setBoolProp(cmc, L"bServerAcceptClientAuthoritativePosition", true);
+                }
+                if (!allDwarves.empty())
+                    VLOG(STR("[MoriaCppMod] [ServerFly] Set client-auth movement on {} characters\n"), allDwarves.size());
+            }
 
 
             if (!m_initialReplayDone && msSinceChar >= 15000)
