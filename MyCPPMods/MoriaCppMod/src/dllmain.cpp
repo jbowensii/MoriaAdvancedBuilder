@@ -26,6 +26,8 @@ namespace MoriaMods
         int m_frameCounter{0};
         bool m_replayActive{false};
         bool m_characterLoaded{false};
+        bool m_isDedicatedServer{false};  // true = headless server (no viewport, skip UI)
+        bool m_serverDetected{false};     // flag: detection has run
         bool m_initialReplayDone{false};
         bool m_inventoryAuditDone{false};
         bool m_definitionsApplied{false};
@@ -599,9 +601,9 @@ namespace MoriaMods
                      wcscmp(fnStr, STR("ClientAdjustPosition_Implementation")) == 0 ||
                      wcscmp(fnStr, STR("ClientVeryShortAdjustPosition")) == 0))
                 {
-                    // Zero out the parms to prevent the correction from applying
                     if (parms && func->GetParmsSize() > 0)
                         std::memset(parms, 0, func->GetParmsSize());
+                    VLOG(STR("[MoriaCppMod] [Fly] SUPPRESSED {} (flyMode=ON)\n"), fnStr);
                     return;
                 }
 
@@ -871,7 +873,21 @@ namespace MoriaMods
         // GetAsyncKeyState is safe here too (Win32 API, reads global state).
         void gameThreadTick(float deltaSeconds)
         {
+            // Detect dedicated server once (no GameViewport = headless)
+            if (!m_serverDetected)
+            {
+                m_serverDetected = true;
+                auto* pc = findPlayerController();
+                if (!pc)
+                {
+                    // No local PlayerController = dedicated server (headless)
+                    m_isDedicatedServer = true;
+                    VLOG(STR("[MoriaCppMod] Detected DEDICATED SERVER mode (no local PlayerController)\n"));
+                }
+            }
 
+            // Skip ALL UI creation on dedicated servers (no display)
+            if (!m_isDedicatedServer)
             {
                 bool justCreated = false;
                 if (m_characterLoaded && !m_mcBarWidget)
@@ -925,7 +941,7 @@ namespace MoriaMods
                     setWidgetVisibility(m_mcBarWidget, 1);
                     setWidgetVisibility(m_umgBarWidget, 1);
                 }
-            }
+            } // end if (!m_isDedicatedServer) — skip UI on headless server
 
 
 
