@@ -12,16 +12,18 @@ Whether you're building an elaborate Dwarven hall, clearing out unwanted scenery
 - [Quick-Build System](#quick-build-system)
 - [Building with Pitch and Roll](#building-with-pitch-and-roll)
 - [Rotation Control](#rotation-control)
+- [Snap Toggle](#snap-toggle)
 - [On-Screen Toolbars](#on-screen-toolbars)
 - [Target Inspection](#target-inspection)
 - [Environment Removal](#environment-removal)
 - [Inventory Management](#inventory-management)
-- [Toolbar Swap](#toolbar-swap)
 - [Super Dwarf — Hide Character and Fly Mode](#super-dwarf--hide-character-and-fly-mode)
+- [Stability Check](#stability-check)
 - [In-Game Configuration Menu](#in-game-configuration-menu)
 - [Game Modification Packs](#game-modification-packs)
 - [Crosshair Reticle](#crosshair-reticle)
 - [Save Game on Demand](#save-game-on-demand)
+- [Rename Character](#rename-character)
 - [Multiplayer and Server Support](#multiplayer-and-server-support)
 - [UI Scaling and Widget Repositioning](#ui-scaling-and-widget-repositioning)
 - [Localization](#localization)
@@ -59,7 +61,7 @@ Your saved recipes are stored to a file so they survive between play sessions. Y
 
 ### Automatic Icon Extraction
 
-When you assign a recipe, the mod extracts the recipe's in-game icon and caches it as an image file. These icons are displayed in the overlay bar so you always know which recipe is in which slot at a glance.
+When you assign a recipe, the mod extracts the recipe's in-game icon and caches it as a PNG image file. These icons are displayed in the overlay bar so you always know which recipe is in which slot at a glance.
 
 ---
 
@@ -89,7 +91,13 @@ The Rotation Control feature gives you fine-grained control over how much your b
 - Hold the **modifier key** and press the Rotation key to decrease the step.
 - Steps range from 5 degrees up to 90 degrees, in 5-degree increments.
 
-The overlay bar shows your current rotation step size in bold, along with the total accumulated rotation. When you manually select a new building piece from the menu, the total rotation resets to zero so you start fresh.
+The overlay bar shows your current rotation step size in bold, along with the total accumulated rotation. When you manually select a new building piece from the menu, the total rotation resets to zero so you start fresh. Your rotation step preference is saved to your configuration file.
+
+---
+
+## Snap Toggle
+
+Press the **Snap Toggle key ([ by default)** to turn building snap on or off. When snap is disabled, the game's snap distance is set to zero, allowing completely free placement of building pieces. Press the key again to restore snap to its normal value.
 
 ---
 
@@ -99,28 +107,26 @@ The mod provides two separate toolbars to keep important information visible whi
 
 ### Win32 Overlay Bar (Top of Screen)
 
-A transparent, always-visible bar sits at the very top of your screen, above the game. It shows:
+A transparent, always-visible bar sits at the very top of your screen, above the game. It has 12 slots showing:
 
-- **F1-F8 slots**: Each slot displays the icon of the saved building recipe (or is empty if unassigned).
-- **F9**: Shows your current rotation step size and total rotation.
-- **F10**: Shows which toolbar set you're using (T1 or T2 — see Toolbar Swap below).
-- **F11**: Shows target information when you inspect something.
-- **F12**: Shows a gear icon for the configuration menu.
+- **Slots 1-8**: Each slot displays the icon of the saved building recipe (or is empty if unassigned), corresponding to F1-F8.
+- **Slots 9-12**: Utility indicators for rotation step, target information, and configuration status.
 
-This overlay stays on top of the game window and doesn't interfere with clicking or gameplay.
+This overlay stays on top of the game window and doesn't interfere with clicking or gameplay. It automatically hides when the game HUD is hidden (for example, during photo mode).
 
 ### Mod Controller Toolbar (In-Game)
 
-A second toolbar appears in the lower-right corner of the game screen. This is an in-game widget with icons and key labels for all of the mod's controller functions:
+A second toolbar appears in the game screen as an in-game widget with icons and key labels. It has 9 slots for the mod's controller functions:
 
-- Rotation control
-- Snap toggle
-- Stability check (integrity inspection)
-- Super Dwarf (hide character / fly)
-- Target inspection
-- Toolbar swap indicator
-- Remove target / Undo last / Remove all (environment removal)
-- Configuration menu
+- **Slot 0**: Rotation control (shows current step and total rotation)
+- **Slot 1**: Snap toggle
+- **Slot 2**: Stability / integrity check
+- **Slot 3**: Super Dwarf (hide character / fly mode)
+- **Slot 4**: Target inspection
+- **Slot 5**: Reserved
+- **Slot 6**: Remove target (labeled "Single")
+- **Slot 7**: Undo last removal
+- **Slot 8**: Remove all of type (labeled "All")
 
 Each button shows its assigned key, so you always know which key does what.
 
@@ -133,10 +139,10 @@ Want to know what something in the game world actually is? The Target Inspection
 ### How to Use It
 
 1. Aim your crosshair at any object in the world.
-2. Press the **Target key (] by default)**.
-3. An information panel appears showing the object's name, display name, category, and whether it's a buildable item.
+2. Press the **Target key (} by default)**.
+3. An information panel appears showing the object's class, name, display name, asset path, whether it's a buildable item, and its recipe ID.
 4. The information is also automatically copied to your clipboard.
-5. The panel closes on its own after 10 seconds.
+5. The panel closes when you press the Target key again.
 
 ### Build from Target
 
@@ -156,11 +162,11 @@ Return to Moria's underground environments are filled with rocks, roots, crystal
 
 ### Persistence
 
-Your removals are saved to a file so they persist between play sessions. When you load into a world, the mod automatically re-hides everything you previously removed. The removal list is also organized by which area of the mines ("bubble") you're in, so removals in one area don't accidentally affect another.
+Your removals are saved to a file so they persist between play sessions. When you load into a world, the mod automatically re-hides everything you previously removed. The removal list is organized by which area of the mines ("bubble") you're in, so removals in one area don't accidentally affect another.
 
 ### Managing Removals
 
-The F12 configuration menu has a dedicated **Hide Environment** tab where you can see a list of everything you've removed, organized by type. Danger icons highlight type-wide removal rules so you know which categories are being bulk-removed.
+The F12 configuration menu has a dedicated **Environment** tab where you can see a list of everything you've removed, organized by type. Danger icons highlight type-wide removal rules so you know which categories are being bulk-removed.
 
 ---
 
@@ -199,31 +205,13 @@ Items in Return to Moria can have visual tints (colors) and rune effects applied
 
 ---
 
-## Toolbar Swap
-
-Your character's hotbar only has a limited number of slots, which means you're constantly swapping items in and out. The Toolbar Swap feature gives you **two complete hotbar loadouts** (called T1 and T2) that you can switch between instantly.
-
-### How to Use It
-
-Press the **Toolbar Swap key (Page Down by default)** to swap. The mod will:
-
-1. Save everything currently in your hotbar to the active toolbar set.
-2. Clear your hotbar.
-3. Load all the items from the other toolbar set into your hotbar.
-
-Items, their durability, their visual customizations (tints and effects), and even bags with their contents are all preserved through the swap. The overlay bar shows which toolbar set you're currently using (T1 or T2).
-
-There's a short cooldown between swaps to prevent accidental double-presses.
-
----
-
 ## Super Dwarf — Hide Character and Fly Mode
 
 Sometimes you need to get your character out of the way for building or photography, or you need to fly around to survey your work from above.
 
 ### Hide Character
 
-Press the **Super Dwarf key (] by default)** to toggle your character's visibility. Your dwarf disappears from view but you can still walk around, interact with objects, and build normally. Press the key again to make your character visible again. An eye icon on the Mod Controller toolbar shows the current state.
+Press the **Super Dwarf key (] by default)** to toggle your character's visibility. Your dwarf disappears from view but you can still walk around, interact with objects, and build normally. Press the key again to make your character visible again.
 
 ### Fly Mode
 
@@ -231,15 +219,31 @@ Hold the **modifier key** and press the Super Dwarf key to toggle fly mode. When
 
 ---
 
+## Stability Check
+
+Press the **Integrity Check key (/ by default)** to run a structural stability audit on the building pieces near you. The mod scans all stability components in the area and highlights any pieces that are structurally marginal or critical. This helps you identify weak points in your constructions before they collapse.
+
+---
+
 ## In-Game Configuration Menu
 
 Press **F12** to open the full configuration menu. This is a tabbed dialog that gives you control over every aspect of the mod without ever leaving the game.
 
-### Tab 1: Game Options
+### Tab 1: Key Bindings
+
+This tab lets you rebind every single key the mod uses. Keys are organized into sections (Quick Building, Mod Controller, Advanced Builder, Game Options) so they're easy to find. To rebind a key:
+
+1. Click on the key you want to change. It will show "Press key..."
+2. Press the new key you want to assign.
+3. The change is saved immediately.
+
+You can also change your modifier key (the key you hold for secondary actions) by cycling through Shift, Ctrl, Alt, and Right Alt.
+
+### Tab 2: Game Options
 
 This tab has toggle switches for optional features:
 
-- **Free Build**: Build without needing materials. Great for creative building.
+- **Free Build**: Build without needing materials.
 - **No Collision (Flying)**: Disable collision detection while flying.
 - **Unlock All Recipes**: Instantly unlock every building recipe in the game.
 - **Trash Item**: Enable or disable the Delete key item destruction feature.
@@ -250,17 +254,7 @@ This tab has toggle switches for optional features:
 - **Rename Character**: Change your character's display name.
 - **Save Game**: Force an immediate save of your game world.
 
-### Tab 2: Key Mapping
-
-This tab lets you rebind every single key the mod uses. Keys are organized into sections (Quick Building, Mod Controller, Advanced Builder, Game Options) so they're easy to find. To rebind a key:
-
-1. Click on the key you want to change. It will show "Press key..."
-2. Press the new key you want to assign.
-3. The change is saved immediately.
-
-You can also change your modifier key (the key you hold for secondary actions) by cycling through Shift, Ctrl, Alt, and Right Alt.
-
-### Tab 3: Hide Environment
+### Tab 3: Environment
 
 This tab shows a complete list of everything you've removed using the Environment Removal system. You can see:
 
@@ -270,11 +264,15 @@ This tab shows a complete list of everything you've removed using the Environmen
 
 Removal entries are organized by the area of the mines they belong to, with the area you're currently in shown first.
 
+### Tab 4: Game Mods
+
+This tab lists all available game modification packs (see below) with checkboxes to enable or disable each one. Changes take effect the next time you launch the game.
+
 ---
 
 ## Game Modification Packs
 
-The mod ships with **18 pre-built game modification packs** that tweak various aspects of the game. These are optional — you choose which ones to enable, and they take effect the next time you launch the game.
+The mod ships with **18 pre-built game modification packs** that tweak various aspects of the game. These are optional — you choose which ones to enable through the F12 configuration menu's Game Mods tab, and they take effect the next time you launch the game.
 
 ### Available Packs
 
@@ -315,6 +313,12 @@ The Game Options tab in the F12 configuration menu includes a **Save Game** butt
 
 ---
 
+## Rename Character
+
+The Game Options tab in the F12 configuration menu includes a **Rename Character** button that lets you change your dwarf's display name. An editable text box appears where you can type a new name, then confirm or cancel the change.
+
+---
+
 ## Multiplayer and Server Support
 
 The mod works in multiplayer and includes support for dedicated servers.
@@ -323,7 +327,7 @@ The mod works in multiplayer and includes support for dedicated servers.
 
 The installer includes an option to create a **server deployment folder** that contains everything a dedicated server needs:
 
-- A special Cheat Manager Enabler mod (for admin commands)
+- A Cheat Manager Enabler mod (for admin commands)
 - A Console Enabler mod (for server console access)
 - Shared utility libraries
 - A Game Mods configuration file
@@ -375,6 +379,7 @@ Every key listed below can be rebound through the in-game Configuration menu (F1
 | [ | Snap Toggle | Toggle building snap on/off |
 | ] | Super Dwarf | Hide character (modifier + key for fly mode) |
 | } | Target | Inspect aimed object (modifier + key to build from target) |
+| / | Integrity Check | Run structural stability audit on nearby buildings |
 | F12 | Configuration | Open the mod configuration menu |
 | Numpad 1 | Remove Target | Remove the aimed scenery object |
 | Numpad 2 | Undo Last | Undo the most recent removal |
@@ -385,7 +390,6 @@ Every key listed below can be rebound through the in-game Configuration menu (F1
 | End | Remove Attributes | Strip tint and rune effects from last-moved item |
 | . (Period) | Pitch Rotate | Tilt building piece forward/backward |
 | , (Comma) | Roll Rotate | Tilt building piece left/right |
-| Page Down | Toolbar Swap | Switch between hotbar loadout T1 and T2 |
 | Shift | Modifier | Hold for secondary actions on all keys above |
 
 ---
@@ -394,7 +398,7 @@ Every key listed below can be rebound through the in-game Configuration menu (F1
 
 ### Using the Installer (Recommended)
 
-1. Download the latest `KhazadDumAdvancedBuilderPack_vX.X.X_Setup.exe` from [Releases](https://github.com/jbowensii/MoriaAdvancedBuilder/releases).
+1. Download the latest installer from [Releases](https://github.com/jbowensii/MoriaAdvancedBuilder/releases).
 2. Run the installer. It will find your Return to Moria installation automatically.
 3. Choose whether to include the server deployment files (optional).
 4. Click Install. You're done.
