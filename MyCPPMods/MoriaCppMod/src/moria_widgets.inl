@@ -1604,13 +1604,8 @@
             m_toolbarSizeH[1] = m_screen.slateToFracY(abTotalH);
             m_abBarWidget = userWidget;
 
-            // Set initial gamepad focus on the AB button — it's always visible and toggles other toolbars
-            if (m_abSlotButton && isObjectAlive(m_abSlotButton))
-            {
-                auto* setFocusFn = m_abSlotButton->GetFunctionByNameInChain(STR("SetFocus"));
-                if (setFocusFn) safeProcessEvent(m_abSlotButton, setFocusFn, nullptr);
-                VLOG(STR("[MoriaCppMod] [AB] Initial gamepad focus set on AB button\n"));
-            }
+            // Gamepad focus is NOT set at creation — it would steal focus from game UI
+            // (e.g., player selection screen). Focus will be set on-demand when gamepad input is detected.
 
             showOnScreen(Loc::get("msg.ab_toolbar_created"), 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [AB] === Advanced Builder toolbar created ({}x{}) ===\n"),
