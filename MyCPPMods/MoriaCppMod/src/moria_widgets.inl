@@ -564,6 +564,7 @@
             m_umgSetBrushFn = nullptr;
             for (int i = 0; i < 8; i++)
             {
+                m_umgSlotButtons[i] = nullptr;
                 m_umgStateImages[i] = nullptr;
                 m_umgIconImages[i] = nullptr;
                 m_umgIconTextures[i] = nullptr;
@@ -630,6 +631,7 @@
             auto* borderClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Border"));
             auto* overlayClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Overlay"));
             auto* textBlockClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+            auto* buttonClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Button"));
             if (!userWidgetClass || !imageClass || !hboxClass || !vboxClass || !borderClass || !overlayClass)
             {
                 showErrorBox(L"UMG: missing widget classes!");
@@ -987,6 +989,31 @@
                 }
 
 
+                // Wrap slot VBox in UButton for gamepad navigation + native click
+                UObject* slotWidget = vbox;
+                if (buttonClass)
+                {
+                    FStaticConstructObjectParameters btnP(buttonClass, outer);
+                    UObject* btn = UObjectGlobals::StaticConstructObject(btnP);
+                    if (btn)
+                    {
+                        float transparent[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+                        std::memcpy(reinterpret_cast<uint8_t*>(btn) + 0x03B0, transparent, 16);
+                        *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(btn) + 0x03C3) = true;
+                        auto* setContentFn = btn->GetFunctionByNameInChain(STR("SetContent"));
+                        if (setContentFn)
+                        {
+                            struct { UObject* Content{nullptr}; UObject* Ret{nullptr}; } scp{};
+                            scp.Content = vbox;
+                            safeProcessEvent(btn, setContentFn, &scp);
+                        }
+                        else
+                            addChildToPanel(btn, STR("AddChild"), vbox);
+                        m_umgSlotButtons[i] = btn;
+                        slotWidget = btn;
+                    }
+                }
+
                 auto* addToHBoxFn = hbox->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
                 if (addToHBoxFn)
                 {
@@ -994,14 +1021,13 @@
                     auto* pR = findParam(addToHBoxFn, STR("ReturnValue"));
                     int sz = addToHBoxFn->GetParmsSize();
                     std::vector<uint8_t> ap(sz, 0);
-                    if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = vbox;
+                    if (pC) *reinterpret_cast<UObject**>(ap.data() + pC->GetOffset_Internal()) = slotWidget;
                     safeProcessEvent(hbox, addToHBoxFn, ap.data());
                     UObject* hSlot = pR ? *reinterpret_cast<UObject**>(ap.data() + pR->GetOffset_Internal()) : nullptr;
                     if (hSlot)
                     {
                         umgSetSlotSize(hSlot, 1.0f, 0);
                         umgSetVAlign(hSlot, 2);
-
                     }
                 }
 
@@ -1108,6 +1134,7 @@
             if (!m_abBarWidget) return;
             deferRemoveWidget(m_abBarWidget);
             m_abBarWidget = nullptr;
+            m_abSlotButton = nullptr;
             m_abKeyLabel = nullptr;
             m_abStateImage = nullptr;
             VLOG(STR("[MoriaCppMod] [AB] Advanced Builder toolbar removed\n"));
@@ -1160,6 +1187,7 @@
             auto* borderClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Border"));
             auto* overlayClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Overlay"));
             auto* textBlockClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+            auto* buttonClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Button"));
             if (!userWidgetClass || !imageClass || !vboxClass || !borderClass || !overlayClass)
             {
                 showErrorBox(L"AB: missing widget classes!");
@@ -1237,13 +1265,39 @@
             if (!vbox) return;
 
 
+            // Wrap vbox in UButton for gamepad navigation, then set as border content
+            UObject* borderContent = vbox;
+            if (buttonClass)
+            {
+                FStaticConstructObjectParameters btnP(buttonClass, outer);
+                UObject* btn = UObjectGlobals::StaticConstructObject(btnP);
+                if (btn)
+                {
+                    float transparent[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+                    std::memcpy(reinterpret_cast<uint8_t*>(btn) + 0x03B0, transparent, 16);
+                    *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(btn) + 0x03C3) = true;
+                    auto* btnSetContentFn = btn->GetFunctionByNameInChain(STR("SetContent"));
+                    if (btnSetContentFn)
+                    {
+                        struct { UObject* Content{nullptr}; UObject* Ret{nullptr}; } scp{};
+                        scp.Content = vbox;
+                        safeProcessEvent(btn, btnSetContentFn, &scp);
+                    }
+                    else
+                        addChildToPanel(btn, STR("AddChild"), vbox);
+                    m_abSlotButton = btn;
+                    borderContent = btn;
+                    VLOG(STR("[MoriaCppMod] [AB] Slot wrapped in UButton {:p}\n"), (void*)btn);
+                }
+            }
+
             auto* setContentFn = outerBorder->GetFunctionByNameInChain(STR("SetContent"));
             if (setContentFn)
             {
                 auto* pContent = findParam(setContentFn, STR("Content"));
                 int sz = setContentFn->GetParmsSize();
                 std::vector<uint8_t> sc(sz, 0);
-                if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = vbox;
+                if (pContent) *reinterpret_cast<UObject**>(sc.data() + pContent->GetOffset_Internal()) = borderContent;
                 safeProcessEvent(outerBorder, setContentFn, sc.data());
             }
 
@@ -1549,6 +1603,15 @@
             m_toolbarSizeW[1] = m_screen.slateToFracX(abTotalW);
             m_toolbarSizeH[1] = m_screen.slateToFracY(abTotalH);
             m_abBarWidget = userWidget;
+
+            // Set initial gamepad focus on the AB button — it's always visible and toggles other toolbars
+            if (m_abSlotButton && isObjectAlive(m_abSlotButton))
+            {
+                auto* setFocusFn = m_abSlotButton->GetFunctionByNameInChain(STR("SetFocus"));
+                if (setFocusFn) safeProcessEvent(m_abSlotButton, setFocusFn, nullptr);
+                VLOG(STR("[MoriaCppMod] [AB] Initial gamepad focus set on AB button\n"));
+            }
+
             showOnScreen(Loc::get("msg.ab_toolbar_created"), 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [AB] === Advanced Builder toolbar created ({}x{}) ===\n"),
                                             abTotalW, abTotalH);
@@ -2223,12 +2286,14 @@
             m_mcBarWidget = nullptr;
             for (int i = 0; i < MC_SLOTS; i++)
             {
+                m_mcSlotButtons[i] = nullptr;
                 m_mcStateImages[i] = nullptr;
                 m_mcIconImages[i] = nullptr;
                 m_mcSlotStates[i] = UmgSlotState::Empty;
                 m_mcKeyLabels[i] = nullptr;
                 m_mcKeyBgImages[i] = nullptr;
             }
+            m_mcFocusedSlot = -1;
             m_mcRotationLabel = nullptr;
             m_mcSlot0Overlay = nullptr;
             m_mcSlot6Overlay = nullptr;
@@ -2327,6 +2392,7 @@
             auto* borderClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Border"));
             auto* overlayClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Overlay"));
             auto* textBlockClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+            auto* buttonClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Button"));
             if (!userWidgetClass || !imageClass || !hboxClass || !vboxClass || !borderClass || !overlayClass)
             {
                 showErrorBox(L"MC: missing widget classes!");
@@ -2567,7 +2633,42 @@
                     }
 
 
-                    UObject* hSlot = addToHBox(hbox, vbox);
+                    // Wrap slot VBox in UButton for gamepad navigation + native click
+                    UObject* slotWidget = vbox;  // fallback if no button class
+                    if (buttonClass)
+                    {
+                        FStaticConstructObjectParameters btnP(buttonClass, outer);
+                        UObject* btn = UObjectGlobals::StaticConstructObject(btnP);
+                        if (btn)
+                        {
+                            // Make button transparent — only the slot content shows
+                            // BackgroundColor at offset 0x03B0 (FLinearColor, 16 bytes)
+                            float transparent[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+                            std::memcpy(reinterpret_cast<uint8_t*>(btn) + 0x03B0, transparent, 16);
+                            // IsFocusable at offset 0x03C3 — default true, but ensure it
+                            *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(btn) + 0x03C3) = true;
+
+                            // Add vbox as button content via UContentWidget::SetContent
+                            auto* setContentFn = btn->GetFunctionByNameInChain(STR("SetContent"));
+                            if (setContentFn)
+                            {
+                                struct { UObject* Content{nullptr}; UObject* Ret{nullptr}; } scp{};
+                                scp.Content = vbox;
+                                safeProcessEvent(btn, setContentFn, &scp);
+                            }
+                            else
+                            {
+                                // Fallback: AddChild from UPanelWidget
+                                addChildToPanel(btn, STR("AddChild"), vbox);
+                            }
+
+                            m_mcSlotButtons[i] = btn;
+                            slotWidget = btn;
+                            VLOG(STR("[MoriaCppMod] [MC] Slot {} wrapped in UButton {:p}\n"), i, (void*)btn);
+                        }
+                    }
+
+                    UObject* hSlot = addToHBox(hbox, slotWidget);
                     if (hSlot)
                     {
                         umgSetSlotSize(hSlot, 1.0f, 1);
@@ -2773,6 +2874,8 @@
 
 
             setMcSlotState(1, UmgSlotState::Disabled);
+
+            // Gamepad focus is set on the AB toolbar button (always visible, toggles other toolbars)
 
             showOnScreen(Loc::get("msg.mod_controller_created").c_str(), 3.0f, 0.0f, 1.0f, 0.0f);
             VLOG(STR("[MoriaCppMod] [MC] === Mod Controller bar creation complete ({}x{}) ===\n"),
@@ -3158,7 +3261,8 @@
                             if (tcVBox)
                             {
                                 m_ftTabContent[t] = tcVBox;
-                                if (t == 0) addChildToPanel(scrollBox, STR("AddChild"), tcVBox);
+                                addChildToPanel(scrollBox, STR("AddChild"), tcVBox);
+                                if (t != 0) setWidgetVisibility(tcVBox, 1); // Collapse non-active tabs
                             }
                         }
 
@@ -3854,18 +3958,18 @@
                 }
             }
 
+            // Switch tabs by toggling visibility — NOT ClearChildren/AddChild.
+            // ClearChildren destroys child widgets while MovieScene animation sequences
+            // are still registered with UUMGSequenceTickManager, causing a crash in
+            // TickWidgetAnimations when it tries to process stale sequences.
+            for (int i = 0; i < CONFIG_TAB_COUNT; i++)
+            {
+                if (m_ftTabContent[i] && isObjectAlive(m_ftTabContent[i]))
+                    setWidgetVisibility(m_ftTabContent[i], (i == tab) ? 0 : 1); // 0=Visible, 1=Collapsed
+            }
+
             if (m_ftScrollBox)
             {
-                // Hide before ClearChildren to prevent Slate PaintFastPath crash —
-                // Slate caches SWidget pointers; clearing children while visible can
-                // leave dangling references that crash in SImage::OnPaint.
-                setWidgetVisibility(m_ftScrollBox, 1); // ESlateVisibility::Collapsed
-                auto* clearFn = m_ftScrollBox->GetFunctionByNameInChain(STR("ClearChildren"));
-                if (clearFn) safeProcessEvent(m_ftScrollBox, clearFn, nullptr);
-                if (m_ftTabContent[tab])
-                    addChildToPanel(m_ftScrollBox, STR("AddChild"), m_ftTabContent[tab]);
-                setWidgetVisibility(m_ftScrollBox, 0); // ESlateVisibility::Visible
-
                 auto* setScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("SetScrollOffset"));
                 if (setScrollFn)
                 {
@@ -3949,10 +4053,8 @@
                 return;
             }
 
-            // Find the player character
-            std::vector<UObject*> dwarves;
-            UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
-            UObject* pawn = dwarves.empty() ? nullptr : dwarves[0];
+            // MP fix: use local pawn, not first dwarf in the world
+            UObject* pawn = getPawn();
             if (!pawn)
             {
                 showErrorBox(L"Save: no player character");

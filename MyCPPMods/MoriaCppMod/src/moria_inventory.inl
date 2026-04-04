@@ -228,10 +228,9 @@
         // Verbose logging only when s_verbose is true; corrections always run.
         void auditInventory()
         {
-            std::vector<UObject*> dwarves;
-            UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
-            if (dwarves.empty()) return;
-            UObject* pawn = dwarves[0];
+            // MP fix: audit local player's inventory only, not first dwarf found
+            UObject* pawn = getPawn();
+            if (!pawn) return;
 
             std::vector<UObject*> allComps;
             UObjectGlobals::FindAllOf(STR("InventoryComponent"), allComps);

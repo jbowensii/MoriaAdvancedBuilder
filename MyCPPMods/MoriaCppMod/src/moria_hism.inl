@@ -687,12 +687,11 @@
 
         void toggleHideCharacter()
         {
-            std::vector<UObject*> dwarves;
-            UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
-            if (dwarves.empty()) return;
+            // MP fix: only hide/show the LOCAL player's character, not all replicated dwarves
+            UObject* dwarf = getPawn();
+            if (!dwarf) return;
 
             m_characterHidden = !m_characterHidden;
-            for (auto* dwarf : dwarves)
             {
                 auto* fn = dwarf->GetFunctionByNameInChain(STR("SetActorHiddenInGame"));
                 if (fn)
@@ -711,9 +710,9 @@
 
         void toggleFlyMode()
         {
-            std::vector<UObject*> dwarves;
-            UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
-            if (dwarves.empty()) return;
+            // MP fix: only modify the LOCAL player's character, not all replicated dwarves
+            UObject* dwarf = getPawn();
+            if (!dwarf) return;
 
             m_flyMode = !m_flyMode;
             constexpr uint8_t MOVE_Falling = 3;
@@ -774,47 +773,40 @@
                 }
             }
 
-            // Also set locally for immediate visual feedback
-            for (auto* dwarf : dwarves)
+            // Set locally on the local player's pawn for immediate visual feedback
             {
                 auto** movCompPtr = dwarf->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
-                if (!movCompPtr) continue;
-                auto* movComp = *movCompPtr;
+                auto* movComp = movCompPtr ? *movCompPtr : nullptr;
                 if (!movComp)
                 {
                     VLOG(STR("[MoriaCppMod] CharacterMovement is null!\n"));
-                    continue;
                 }
-
-
-                if (!m_flyMode)
-                    setBoolProp(movComp, L"bCheatFlying", false);
-
-                auto* fn = movComp->GetFunctionByNameInChain(STR("SetMovementMode"));
-                if (fn)
+                else
                 {
-                    std::vector<uint8_t> params(fn->GetParmsSize(), 0);
-                    params[0] = m_flyMode ? MOVE_Flying : MOVE_Falling;
-                    safeProcessEvent(movComp, fn, params.data());
-                    VLOG(STR("[MoriaCppMod] SetMovementMode({}) called\n"),
-                                                    m_flyMode ? 5 : 3);
+                    if (!m_flyMode)
+                        setBoolProp(movComp, L"bCheatFlying", false);
+
+                    auto* fn = movComp->GetFunctionByNameInChain(STR("SetMovementMode"));
+                    if (fn)
+                    {
+                        std::vector<uint8_t> params(fn->GetParmsSize(), 0);
+                        params[0] = m_flyMode ? MOVE_Flying : MOVE_Falling;
+                        safeProcessEvent(movComp, fn, params.data());
+                        VLOG(STR("[MoriaCppMod] SetMovementMode({}) called\n"),
+                                                        m_flyMode ? 5 : 3);
+                    }
+
+                    if (m_flyMode)
+                        setBoolProp(movComp, L"bCheatFlying", true);
+
+                    // Server-authoritative fly: tell the server to trust client movement.
+                    setBoolProp(movComp, L"bIgnoreClientMovementErrorChecksAndCorrection", m_flyMode);
+                    setBoolProp(movComp, L"bServerAcceptClientAuthoritativePosition", m_flyMode);
+                    VLOG(STR("[MoriaCppMod] Server fly auth: bIgnoreClientMovement={} bServerAcceptClient={}\n"),
+                         m_flyMode ? 1 : 0, m_flyMode ? 1 : 0);
+
+                    VLOG(STR("[MoriaCppMod] bCheatFlying = {}\n"), m_flyMode ? 1 : 0);
                 }
-
-                if (m_flyMode)
-                    setBoolProp(movComp, L"bCheatFlying", true);
-
-                // Server-authoritative fly: tell the server to trust client movement.
-                // Without these, dedicated servers override client fly with position corrections.
-                // bIgnoreClientMovementErrorChecksAndCorrection: server skips error detection
-                // bServerAcceptClientAuthoritativePosition: server copies client position after sim
-                // Both are UPROPERTY(BlueprintReadWrite) on UCharacterMovementComponent.
-                setBoolProp(movComp, L"bIgnoreClientMovementErrorChecksAndCorrection", m_flyMode);
-                setBoolProp(movComp, L"bServerAcceptClientAuthoritativePosition", m_flyMode);
-                VLOG(STR("[MoriaCppMod] Server fly auth: bIgnoreClientMovement={} bServerAcceptClient={}\n"),
-                     m_flyMode ? 1 : 0, m_flyMode ? 1 : 0);
-
-                VLOG(STR("[MoriaCppMod] bCheatFlying = {}\n"), m_flyMode ? 1 : 0);
-
 
                 bool shouldDisableCollision = m_flyMode && m_noCollisionWhileFlying;
                 bool shouldRestoreCollision = !m_flyMode;
@@ -826,7 +818,7 @@
                         std::vector<uint8_t> colParams(colFn->GetParmsSize(), 0);
                         colParams[0] = shouldDisableCollision ? 0 : 1;
                         safeProcessEvent(dwarf, colFn, colParams.data());
-                        VLOG(STR("[MoriaCppMod] SetActorEnableCollision({}) Ã¢â‚¬â€ noclip {}\n"),
+                        VLOG(STR("[MoriaCppMod] SetActorEnableCollision({}) noclip {}\n"),
                                                         shouldDisableCollision ? 0 : 1, shouldDisableCollision ? STR("ON") : STR("OFF"));
                     }
                 }

@@ -729,6 +729,16 @@
             if (!m_pitchRollActive) return;
             if (!parms) return;
 
+            // MP guard: only patch builds from the local player's build component
+            // On a listen server, this prevents applying the host's pitch/roll to remote players' builds
+            UObject* localComp = m_cachedBuildComp.Get();
+            if (localComp && context != localComp)
+            {
+                VLOG(STR("[MoriaCppMod] [PitchRoll] BuildNewConstruction SKIPPED — context {} != localComp {} (remote player's build)\n"),
+                     (void*)context, (void*)localComp);
+                return;
+            }
+
             for (auto* prop : func->ForEachProperty())
             {
                 if (prop->GetName() != STR("Transform")) continue;

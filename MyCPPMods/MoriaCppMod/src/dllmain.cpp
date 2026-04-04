@@ -1,4 +1,4 @@
-// MoriaCppMod v6.0.0 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
+// MoriaCppMod v6.1.0 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -27,6 +27,8 @@ namespace MoriaMods
         bool m_replayActive{false};
         bool m_characterLoaded{false};
         bool m_isDedicatedServer{false};  // true = headless server (no viewport, skip UI)
+        UObject* m_localPC{nullptr};     // cached local PlayerController (set at character load)
+        UObject* m_localPawn{nullptr};   // cached local pawn (set at character load)
         bool m_serverDetected{false};     // flag: detection has run
         bool m_initialReplayDone{false};
         bool m_inventoryAuditDone{false};
@@ -293,6 +295,7 @@ namespace MoriaMods
 
 
         UObject* m_umgBarWidget{nullptr};
+        UObject* m_umgSlotButtons[8]{};           // UButton wrappers for gamepad navigation
         UObject* m_umgStateImages[8]{};
         UObject* m_umgIconImages[8]{};
         UObject* m_umgIconTextures[8]{};
@@ -308,9 +311,11 @@ namespace MoriaMods
 
         static constexpr int MC_SLOTS = 9;
         UObject* m_mcBarWidget{nullptr};
+        UObject* m_mcSlotButtons[MC_SLOTS]{};     // UButton wrappers for gamepad navigation
         UObject* m_mcStateImages[MC_SLOTS]{};
         UObject* m_mcIconImages[MC_SLOTS]{};
         UmgSlotState m_mcSlotStates[MC_SLOTS]{};
+        int m_mcFocusedSlot{-1};                  // currently focused MC slot for gamepad
 
 
         UObject* m_umgKeyLabels[8]{};
@@ -362,6 +367,7 @@ namespace MoriaMods
 
 
         UObject* m_abBarWidget{nullptr};
+        UObject* m_abSlotButton{nullptr};          // UButton wrapper for gamepad navigation
         UObject* m_abKeyLabel{nullptr};
         UObject* m_abStateImage{nullptr};
         bool m_toolbarsVisible{false};
@@ -449,14 +455,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("5.5.0");
+            ModVersion = STR("6.1.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.0.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.1.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -486,7 +492,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.0.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.1.0 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -586,6 +592,32 @@ namespace MoriaMods
             // Registered dynamically after config load via registerPitchRollKeys()
 
             s_instance = this;
+
+            // MP helper: check if a UWidget context belongs to the local player.
+            // Uses UWidget::GetOwningPlayer() UFUNCTION and compares against findPlayerController().
+            // Returns true if context is local or if we can't determine ownership (fail-open for single-player).
+            // MP helper: check if a UObject context belongs to the local player.
+            // Uses cached m_localPC/m_localPawn (set at character load) — no FindAllOf or
+            // ProcessEvent re-entrancy on the hot path. Walks the Outer chain to match ownership.
+            // Returns true if local or indeterminate (fail-open for single-player safety).
+            static auto isLocalContext = [](UObject* context) -> bool {
+                if (!context || !s_instance) return true;
+                if (!s_instance->m_localPC) return true;  // not cached yet — fail-open
+
+                // Walk the Outer chain looking for local PC or local pawn
+                UObject* outer = context;
+                int depth = 0;
+                while (outer && depth < 20)  // depth limit prevents infinite loops
+                {
+                    if (outer == s_instance->m_localPC) return true;
+                    if (s_instance->m_localPawn && outer == s_instance->m_localPawn) return true;
+                    outer = outer->GetOuterPrivate();
+                    depth++;
+                }
+
+                return false;  // context doesn't belong to local player
+            };
+
             Unreal::Hook::RegisterProcessEventPreCallback([](UObject* context, UFunction* func, void* parms) {
                 if (!s_instance) return;
                 if (!func) return;
@@ -609,6 +641,7 @@ namespace MoriaMods
 
                 if (wcscmp(fnStr, STR("RotatePressed")) == 0 || wcscmp(fnStr, STR("RotateCcwPressed")) == 0)
                 {
+                    if (s_instance->m_isDedicatedServer || !isLocalContext(context)) return;  // MP: only local player
                     std::wstring cls = safeClassName(context);
                     if (!cls.empty() && cls.find(STR("BuildHUD")) != std::wstring::npos)
                     {
@@ -628,8 +661,9 @@ namespace MoriaMods
                 }
                 else if (wcscmp(fnStr, STR("BuildNewConstruction")) == 0)
                 {
-                    // Pitch/Roll experiment: intercept the server build call and patch FTransform
-                    s_instance->onBuildNewConstruction(context, func, parms);
+                    // MP guard: only patch local player's builds (server has no pitch/roll state)
+                    if (!s_instance->m_isDedicatedServer)
+                        s_instance->onBuildNewConstruction(context, func, parms);
                     if (!s_instance->m_snapEnabled)
                     {
                         VLOG(STR("[MoriaCppMod] [Snap] Placement detected (BuildNewConstruction), auto-restoring snap\n"));
@@ -652,8 +686,22 @@ namespace MoriaMods
                 const auto fn = func->GetName();
                 const wchar_t* fnStr2 = fn.c_str();
 
+                // MP guard: skip UI/state hooks on dedicated server — each client has its own mod instance
+                // Only OnPlayerEnteredBubble is allowed through (useful for server-side bubble tracking)
+                if (s_instance->m_isDedicatedServer)
+                {
+                    if (wcscmp(fnStr2, STR("OnPlayerEnteredBubble")) == 0 && parms)
+                    {
+                        auto* bubble = *reinterpret_cast<UObject**>(static_cast<uint8_t*>(parms) + 8);
+                        if (bubble && isObjectAlive(bubble))
+                            s_instance->onBubbleEnteredEvent(bubble);
+                    }
+                    return;
+                }
+
                 if (wcscmp(fnStr2, STR("OnAfterShow")) == 0)
                 {
+                    if (!isLocalContext(context)) return;  // MP: only local player's UI
                     std::wstring cls = safeClassName(context);
                     if (cls == STR("UI_WBP_Build_Tab_C"))
                     {
@@ -674,6 +722,7 @@ namespace MoriaMods
 
                 if (wcscmp(fnStr2, STR("OnAfterHide")) == 0)
                 {
+                    if (!isLocalContext(context)) return;  // MP: only local player's UI
                     std::wstring cls = safeClassName(context);
                     if (cls == STR("UI_WBP_BuildHUDv2_C") || cls == STR("UI_WBP_Build_Tab_C"))
                     {
@@ -746,7 +795,7 @@ namespace MoriaMods
 
                 if (wcscmp(fnStr2, STR("ServerMoveItem")) == 0 || wcscmp(fnStr2, STR("MoveSwapItem")) == 0 || wcscmp(fnStr2, STR("BroadcastToContainers_OnChanged")) == 0)
                 {
-                    if (parms)
+                    if (parms && isLocalContext(context))  // MP: only capture local player's inventory
                     {
                         std::wstring cls = safeClassName(context);
                         if (cls == STR("MorInventoryComponent"))
@@ -758,6 +807,7 @@ namespace MoriaMods
                 if (s_instance->m_isAutoSelecting) return;
 
                 if (wcscmp(fnStr2, STR("blockSelectedEvent")) != 0) return;
+                if (!isLocalContext(context)) return;  // MP: only local player's recipe selection
                 std::wstring cls = safeClassName(context);
                 if (cls != STR("UI_WBP_Build_Tab_C")) return;
 
@@ -842,7 +892,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.0.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v6.1.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -1416,6 +1466,70 @@ namespace MoriaMods
                 }
             }
 
+
+            // Gamepad: poll UButton::IsPressed() on all toolbar slots
+            // This fires for gamepad A/Cross, mouse clicks routed through Slate, etc.
+            {
+                // MC toolbar (9 slots)
+                static bool s_mcBtnWasPressed[MC_SLOTS]{};
+                for (int i = 0; i < MC_SLOTS; i++)
+                {
+                    if (!m_mcSlotButtons[i] || !isObjectAlive(m_mcSlotButtons[i])) continue;
+                    auto* isPressedFn = m_mcSlotButtons[i]->GetFunctionByNameInChain(STR("IsPressed"));
+                    if (!isPressedFn) continue;
+                    struct { bool Ret{false}; } p{};
+                    safeProcessEvent(m_mcSlotButtons[i], isPressedFn, &p);
+                    if (p.Ret && !s_mcBtnWasPressed[i])
+                    {
+                        VLOG(STR("[MoriaCppMod] [Gamepad] MC slot {} button pressed\n"), i);
+                        dispatchMcSlot(i);
+                    }
+                    s_mcBtnWasPressed[i] = p.Ret;
+                }
+
+                // Quick Build toolbar (8 slots)
+                static bool s_qbBtnWasPressed[8]{};
+                for (int i = 0; i < 8; i++)
+                {
+                    if (!m_umgSlotButtons[i] || !isObjectAlive(m_umgSlotButtons[i])) continue;
+                    auto* isPressedFn = m_umgSlotButtons[i]->GetFunctionByNameInChain(STR("IsPressed"));
+                    if (!isPressedFn) continue;
+                    struct { bool Ret{false}; } p{};
+                    safeProcessEvent(m_umgSlotButtons[i], isPressedFn, &p);
+                    if (p.Ret && !s_qbBtnWasPressed[i])
+                    {
+                        VLOG(STR("[MoriaCppMod] [Gamepad] QB slot {} button pressed\n"), i);
+                        if (m_handleResolvePhase == HandleResolvePhase::Done)
+                        {
+                            ULONGLONG clickNow = GetTickCount64();
+                            if (clickNow - m_lastQBSelectTime >= 500)
+                                quickBuildSlot(i);
+                        }
+                    }
+                    s_qbBtnWasPressed[i] = p.Ret;
+                }
+
+                // Advanced Builder toolbar (1 slot)
+                static bool s_abBtnWasPressed{false};
+                if (m_abSlotButton && isObjectAlive(m_abSlotButton))
+                {
+                    auto* isPressedFn = m_abSlotButton->GetFunctionByNameInChain(STR("IsPressed"));
+                    if (isPressedFn)
+                    {
+                        struct { bool Ret{false}; } p{};
+                        safeProcessEvent(m_abSlotButton, isPressedFn, &p);
+                        if (p.Ret && !s_abBtnWasPressed)
+                        {
+                            VLOG(STR("[MoriaCppMod] [Gamepad] AB button pressed\n"));
+                            m_toolbarsVisible = !m_toolbarsVisible;
+                            uint8_t vis = m_toolbarsVisible ? 0 : 1;
+                            setWidgetVisibility(m_umgBarWidget, vis);
+                            setWidgetVisibility(m_mcBarWidget, vis);
+                        }
+                        s_abBtnWasPressed = p.Ret;
+                    }
+                }
+            }
 
             if (m_ftVisible && m_fontTestWidget)
             {
@@ -2031,9 +2145,9 @@ namespace MoriaMods
 
             if (m_characterLoaded && intervalElapsed(m_lastWorldCheck, 1000))
             {
-                std::vector<UObject*> dwarves;
-                UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
-                if (dwarves.empty())
+                // MP fix: check if LOCAL pawn still exists, not any dwarf in the world
+                UObject* localPawn = getPawn();
+                if (!localPawn)
                 {
                     VLOG(STR("[MoriaCppMod] Character lost Ã¢â‚¬â€ world unloading, resetting replay state\n"));
                     m_characterLoaded = false;
@@ -2042,6 +2156,8 @@ namespace MoriaMods
                     m_snapEnabled = true;
                     m_savedMaxSnapDistance = -1.0f;
                     m_buildMenuPrimed = false;
+                    m_localPC = nullptr;
+                    m_localPawn = nullptr;
 
                     m_cachedBuildComp = RC::Unreal::FWeakObjectPtr{};
                     m_cachedBuildHUD = RC::Unreal::FWeakObjectPtr{};
@@ -2196,27 +2312,31 @@ namespace MoriaMods
             {
                 if (intervalElapsed(m_lastCharPoll, 500))
                 {
-                    std::vector<UObject*> dwarves;
-                    UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
-                    if (!dwarves.empty())
+                    // MP fix: detect LOCAL pawn specifically, not any dwarf in the world
+                    UObject* localPawn = getPawn();
+                    if (localPawn)
                     {
                         m_characterLoaded = true;
                         m_charLoadTime = GetTickCount64();
-                        VLOG(STR("[MoriaCppMod] Character loaded - waiting 15s before replay\n"));
+                        m_localPC = findPlayerController();
+                        m_localPawn = getPawn();
+                        VLOG(STR("[MoriaCppMod] Character loaded — PC={:p} Pawn={:p}, waiting 15s before replay\n"),
+                             (void*)m_localPC, (void*)m_localPawn);
 
                         // Server fly: set client-authoritative movement on all characters at login.
                         // Tells the server to trust client positions (allows client fly to work).
-                        for (auto* dwarf : dwarves)
+                        // MP fix: only set server-fly flags on the LOCAL player's pawn
+                        if (m_localPawn && isObjectAlive(m_localPawn))
                         {
-                            if (!dwarf || !isObjectAlive(dwarf)) continue;
-                            auto** cmcPtr = dwarf->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
-                            if (!cmcPtr || !*cmcPtr) continue;
-                            auto* cmc = *cmcPtr;
-                            if (!isObjectAlive(cmc)) continue;
-                            setBoolProp(cmc, L"bIgnoreClientMovementErrorChecksAndCorrection", true);
-                            setBoolProp(cmc, L"bServerAcceptClientAuthoritativePosition", true);
-                            VLOG(STR("[MoriaCppMod] [ServerFly] Set client-auth movement on {:p}\n"),
-                                 static_cast<void*>(dwarf));
+                            auto** cmcPtr = m_localPawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
+                            if (cmcPtr && *cmcPtr && isObjectAlive(*cmcPtr))
+                            {
+                                auto* cmc = *cmcPtr;
+                                setBoolProp(cmc, L"bIgnoreClientMovementErrorChecksAndCorrection", true);
+                                setBoolProp(cmc, L"bServerAcceptClientAuthoritativePosition", true);
+                                VLOG(STR("[MoriaCppMod] [ServerFly] Set client-auth movement on local pawn {:p}\n"),
+                                     (void*)m_localPawn);
+                            }
                         }
                     }
                 }
