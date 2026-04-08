@@ -506,6 +506,11 @@
             }
             if (maxStack <= 0)
             {
+                // Log which tables were checked and their bind status
+                VLOG(STR("[MoriaCppMod] [Replenish] FAILED for '{}' — not found in any table:\n"), rowName);
+                const wchar_t* tblNames[] = {L"DT_Items", L"DT_Weapons", L"DT_Tools", L"DT_Armor", L"DT_Consumables", L"DT_Ores", L"DT_ContainerItems"};
+                for (int ti = 0; ti < 7; ti++)
+                    VLOG(STR("[MoriaCppMod] [Replenish]   {} bound={}\n"), tblNames[ti], itemTables[ti]->isBound() ? 1 : 0);
                 std::wstring msg = L"'" + rowName + L"' is not stackable";
                 showOnScreen(msg, 3.0f, 1.0f, 0.7f, 0.2f);
                 return;

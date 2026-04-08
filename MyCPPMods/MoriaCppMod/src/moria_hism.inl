@@ -370,6 +370,21 @@
                 std::string meshId = componentNameToMeshId(std::wstring(comp->GetName()));
                 bool isTypeRule = m_typeRemovals.count(meshId) > 0;
 
+                // Diagnostic: log first 20 unique mesh IDs found during replay
+                {
+                    static std::set<std::string> s_loggedMeshIds;
+                    if (s_loggedMeshIds.size() < 20 && s_loggedMeshIds.find(meshId) == s_loggedMeshIds.end())
+                    {
+                        s_loggedMeshIds.insert(meshId);
+                        // Check if this meshId exists in any saved removal
+                        bool inSaved = false;
+                        for (auto& sr : m_savedRemovals)
+                            if (sr.meshName == meshId) { inSaved = true; break; }
+                        VLOG(STR("[MoriaCppMod] [Replay-Diag] meshId='{}' inSaved={}\n"),
+                             std::wstring(meshId.begin(), meshId.end()), inSaved ? 1 : 0);
+                    }
+                }
+
                 if (!isTypeRule)
                 {
                     bool hasPending = false;

@@ -116,6 +116,8 @@
             file << "RemoveAttributes = " << (m_removeAttrsEnabled ? "true" : "false") << "\n";
             file << "PitchRotate = " << (m_pitchRotateEnabled ? "true" : "false") << "\n";
             file << "RollRotate = " << (m_rollRotateEnabled ? "true" : "false") << "\n";
+            file << "Controller = " << (m_controllerEnabled ? "true" : "false") << "\n";
+            file << "ControllerProfile = " << (m_controllerProfile == ControllerProfile::PS5 ? "PS5" : "Xbox") << "\n";
 
             bool hasCustomPos = false;
             for (int i = 0; i < TB_COUNT; i++)
@@ -242,6 +244,17 @@
                             else if (strEqualCI(kv->key, "RollRotate"))
                             {
                                 m_rollRotateEnabled = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                            else if (strEqualCI(kv->key, "Controller"))
+                            {
+                                m_controllerEnabled = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                            else if (strEqualCI(kv->key, "ControllerProfile"))
+                            {
+                                if (strEqualCI(kv->value, "PS5"))
+                                    m_controllerProfile = ControllerProfile::PS5;
+                                else
+                                    m_controllerProfile = ControllerProfile::Xbox;
                             }
                         }
                         else if (strEqualCI(section, "Positions"))

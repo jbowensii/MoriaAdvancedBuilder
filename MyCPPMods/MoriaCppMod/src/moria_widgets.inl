@@ -3283,6 +3283,60 @@
                             }
 
 
+                            // --- Controller checkbox + profile toggle (top of Game Options) ---
+                            {
+                                FStaticConstructObjectParameters ctrlRowP(hboxClass, outer);
+                                UObject* ctrlRow = UObjectGlobals::StaticConstructObject(ctrlRowP);
+                                if (ctrlRow)
+                                {
+                                    // Controller enabled checkbox
+                                    if (texCB)
+                                    {
+                                        FStaticConstructObjectParameters olP(overlayClass, outer);
+                                        UObject* cbOl = UObjectGlobals::StaticConstructObject(olP);
+                                        if (cbOl)
+                                        {
+                                            FStaticConstructObjectParameters imgP(imageClass, outer);
+                                            UObject* cbBg = UObjectGlobals::StaticConstructObject(imgP);
+                                            if (cbBg) { umgSetBrushNoMatch(cbBg, texCB, setBrushFn); umgSetBrushSize(cbBg, 80.0f, 80.0f); addToOverlay(cbOl, cbBg); }
+                                            if (texCheck)
+                                            {
+                                                FStaticConstructObjectParameters chkP(imageClass, outer);
+                                                UObject* chkImg = UObjectGlobals::StaticConstructObject(chkP);
+                                                if (chkImg)
+                                                {
+                                                    umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
+                                                    umgSetBrushSize(chkImg, 80.0f, 80.0f);
+                                                    addToOverlay(cbOl, chkImg);
+                                                    m_ftControllerCheckImg = chkImg;
+                                                    setWidgetVisibility(chkImg, m_controllerEnabled ? 0 : 1);
+                                                }
+                                            }
+                                            UObject* cSlot = addToHBox(ctrlRow, cbOl);
+                                            if (cSlot) umgSetVAlign(cSlot, 2);
+                                        }
+                                    }
+
+                                    // "Controller" label
+                                    UObject* ctrlLabel = makeTB(L"  Controller", 0.9f, 0.9f, 0.85f, 1.0f, 24);
+                                    if (ctrlLabel) { UObject* ls = addToHBox(ctrlRow, ctrlLabel); if (ls) umgSetVAlign(ls, 2); }
+
+                                    // Profile label: "Xbox" / "PS5" — clickable to toggle
+                                    UObject* profLabel = makeTB(
+                                        m_controllerProfile == ControllerProfile::PS5 ? L"  [PS5]" : L"  [Xbox]",
+                                        0.4f, 0.8f, 1.0f, 1.0f, 24);
+                                    if (profLabel)
+                                    {
+                                        m_ftControllerProfileLabel = profLabel;
+                                        UObject* ps = addToHBox(ctrlRow, profLabel);
+                                        if (ps) umgSetVAlign(ps, 2);
+                                    }
+
+                                    addToVBox(t1, ctrlRow);
+                                }
+                            }
+
+
                             {
                                 FStaticConstructObjectParameters rowP(hboxClass, outer);
                                 UObject* ncRow = UObjectGlobals::StaticConstructObject(rowP);

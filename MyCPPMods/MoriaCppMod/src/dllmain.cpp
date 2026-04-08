@@ -1,4 +1,4 @@
-// MoriaCppMod v6.2.0 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
+// MoriaCppMod v6.3.0 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -6,6 +6,7 @@
 #include "moria_common.h"
 #include "moria_reflection.h"
 #include "moria_keybinds.h"
+#include "moria_dualsense.h"
 #include <Unreal/Hooks.hpp>
 #include <UE4SSProgram.hpp>
 
@@ -122,6 +123,15 @@ namespace MoriaMods
             m_appliedRemovals.assign(m_savedRemovals.size(), false);
 
             VLOG(STR("[MoriaCppMod] Loaded {} position removals + {} type rules\n"), m_savedRemovals.size(), m_typeRemovals.size());
+            // Log first 5 saved mesh names for replay diagnostics
+            for (size_t i = 0; i < std::min(m_savedRemovals.size(), (size_t)5); i++)
+            {
+                auto& sr = m_savedRemovals[i];
+                VLOG(STR("[MoriaCppMod] [Saved-Diag] [{}] mesh='{}' pos=({},{},{}) bubble='{}'\n"),
+                     i, std::wstring(sr.meshName.begin(), sr.meshName.end()),
+                     sr.posX, sr.posY, sr.posZ,
+                     std::wstring(sr.bubbleId.begin(), sr.bubbleId.end()));
+            }
         }
 
         void appendToSaveFile(const SavedRemoval& sr)
@@ -321,6 +331,20 @@ namespace MoriaMods
         int m_gameHotbarSize{9};                  // game's hotbar slot count (9 slots: 0-7 + epic item at 8)
         bool m_modToolbarFocused{false};          // true when our mod toolbar has gamepad focus
         int m_gpFlatIndex{0};                     // current position in flat slot list (all mod slots)
+        ULONGLONG m_gpToggleTime{0};              // timestamp of last toggle for double-click detection
+        bool m_gpAnyButtonPressed{false};         // true if any nav/action button pressed during mod mode
+        int m_gpDismissCalloutFrame{0};           // countdown to send ESC after toggle (dismiss callout)
+
+        // Controller settings (persisted to INI)
+        enum class ControllerProfile : uint8_t { None = 0, Xbox = 1, PS5 = 2 };
+        bool m_controllerEnabled{false};          // F12 checkbox: controller input active
+        ControllerProfile m_controllerProfile{ControllerProfile::Xbox};  // Xbox or PS5
+        DualSenseReader m_dsReader;               // PS5 DualSense raw HID reader (fallback)
+        DSState m_dsState{};
+        DSState m_dsPrevState{};
+        DIGamepadReader m_diReader;               // DirectInput gamepad reader (works for ALL controllers)
+        DIGamepadState m_diState{};               // current DirectInput state
+        DIGamepadState m_diPrevState{};           // previous frame
 
 
         UObject* m_umgKeyLabels[8]{};
@@ -346,6 +370,8 @@ namespace MoriaMods
         UObject* m_ftCheckImages[BIND_COUNT]{};
         UObject* m_ftModBoxLabel{nullptr};
 
+        UObject* m_ftControllerCheckImg{nullptr};
+        UObject* m_ftControllerProfileLabel{nullptr};
         UObject* m_ftNoCollisionCheckImg{nullptr};
         UObject* m_ftNoCollisionLabel{nullptr};
         UObject* m_ftNoCollisionKeyLabel{nullptr};
@@ -460,14 +486,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.2.0");
+            ModVersion = STR("6.3.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.2.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.3.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -497,7 +523,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.2.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.3.0 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -644,19 +670,76 @@ namespace MoriaMods
                     return;
                 }
 
-                // Suppress game action bar input while mod toolbar has gamepad focus.
-                // This prevents the game from cycling its toolbar or activating hotbar slots
-                // while the player is navigating our mod toolbars with LB/RB/A.
-                if (s_instance->m_modToolbarFocused &&
-                    (wcscmp(fnStr, STR("HUD Focus From Controller")) == 0 ||
-                     wcscmp(fnStr, STR("HotBarActionRequest")) == 0 ||
-                     wcscmp(fnStr, STR("ProcessHotbarAction")) == 0 ||
-                     wcscmp(fnStr, STR("Navigate To Epic Item")) == 0 ||
-                     wcscmp(fnStr, STR("NavigateToEpicItem")) == 0))
+                // When mod toolbar is active, suppress ALL game functions triggered by gamepad.
+                if (s_instance->m_modToolbarFocused)
                 {
-                    if (parms && func->GetParmsSize() > 0)
-                        std::memset(parms, 0, func->GetParmsSize());
-                    return;
+                    // Log ALL ProcessEvent calls while in mod mode (first 50 unique names)
+                    // to find what L1/R1 triggers so we can suppress it
+                    {
+                        static std::set<std::wstring> s_loggedFns;
+                        if (s_loggedFns.size() < 50)
+                        {
+                            std::wstring fn2(fnStr);
+                            if (s_loggedFns.find(fn2) == s_loggedFns.end())
+                            {
+                                std::wstring cls = safeClassName(context);
+                                VLOG(STR("[MoriaCppMod] [ModMode-PE] fn='{}' cls='{}'\n"), fnStr, cls);
+                                s_loggedFns.insert(fn2);
+                            }
+                        }
+                    }
+
+                    // Suppress specific input/action bar functions.
+                    // Do NOT use substring matching — zeroing params for functions
+                    // like SetCalloutTargetText crashes (null FText → null deref).
+                    bool suppress =
+                        wcscmp(fnStr, STR("HUD Focus From Controller")) == 0 ||
+                        wcscmp(fnStr, STR("HotBarActionRequest")) == 0 ||
+                        wcscmp(fnStr, STR("ProcessHotbarAction")) == 0 ||
+                        wcscmp(fnStr, STR("Navigate To Epic Item")) == 0 ||
+                        wcscmp(fnStr, STR("NavigateToEpicItem")) == 0 ||
+                        wcscmp(fnStr, STR("ToggleGamepadNavIcons")) == 0 ||
+                        wcscmp(fnStr, STR("OnEmoteMenuFocusChanged")) == 0 ||
+                        wcscmp(fnStr, STR("CallEmote")) == 0 ||
+                        wcscmp(fnStr, STR("Input_AnyKey")) == 0 ||
+                        wcscmp(fnStr, STR("OnInputDeviceChanged")) == 0 ||
+                        wcscmp(fnStr, STR("OnBindInputs")) == 0 ||
+                        wcscmp(fnStr, STR("OnInputChanged")) == 0;
+                    if (suppress)
+                    {
+                        if (parms && func->GetParmsSize() > 0)
+                            std::memset(parms, 0, func->GetParmsSize());
+                        return;
+                    }
+                }
+
+                // Also suppress emote menu when D-pad Left is used as toggle
+                // (prevents callout from opening on the toggle press itself)
+                if (s_instance->m_controllerEnabled &&
+                    (wcscmp(fnStr, STR("OnEmoteMenuFocusChanged")) == 0 ||
+                     wcscmp(fnStr, STR("CallEmote")) == 0))
+                {
+                    // Check if D-pad Left is currently held (toggle button)
+                    // For Xbox: check XInput directly. For PS5: always suppress since
+                    // we need IsInputKeyDown to work without emote stealing focus.
+                    bool suppressEmote = false;
+                    if (s_instance->m_controllerProfile == ControllerProfile::Xbox)
+                    {
+                        XINPUT_STATE xs{};
+                        if (XInputGetState(0, &xs) == ERROR_SUCCESS)
+                            suppressEmote = (xs.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
+                    }
+                    else
+                    {
+                        // PS5: always suppress emote — D-pad Left is our toggle
+                        suppressEmote = true;
+                    }
+                    if (suppressEmote)
+                    {
+                        if (parms && func->GetParmsSize() > 0)
+                            std::memset(parms, 0, func->GetParmsSize());
+                        return;
+                    }
                 }
 
                 if (wcscmp(fnStr, STR("RotatePressed")) == 0 || wcscmp(fnStr, STR("RotateCcwPressed")) == 0)
@@ -947,7 +1030,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.2.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v6.3.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -1589,65 +1672,136 @@ namespace MoriaMods
                 }
             }
 
-            // Gamepad toolbar navigation: XInput-driven, slot-by-slot with LB/RB.
-            // All mod toolbar slots form one continuous strip navigated with LB/RB.
-            // A button activates the highlighted slot. Gold highlight via umgSetImageColor.
+            // Gamepad mod toolbar: D-pad toggle switches between game and mod toolbar control.
+            // OFF = all controller input passes to game normally.
+            // ON  = all controller input intercepted, game gets nothing, we navigate mod toolbars.
             //
-            // RB order: Game edge → AB(0) → MC(0..8) → QB(0..7) → Game
-            // LB order: Game edge → QB(7..0) → MC(8..0) → AB(0) → Game
+            // Xbox: D-pad Left = toggle.  PS5: D-pad Right or Touchpad = toggle.
+            // ON controls: LB/RB navigate slots, X/Square select, A/Cross modifier, B/Circle exit.
+            if (m_controllerEnabled && m_characterLoaded)
             {
-                static bool s_lastRB = false, s_lastLB = false, s_lastA = false;
-                XINPUT_STATE xstate{};
-                bool hasGamepad = (XInputGetState(0, &xstate) == ERROR_SUCCESS);
-                if (hasGamepad && m_characterLoaded)
-                {
-                    bool rb = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
-                    bool lb = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
-                    bool xBtn = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_X) != 0;  // select/activate
-                    bool aBtn = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_A) != 0;  // modifier (like SHIFT)
+                static bool s_lastRB{}, s_lastLB{}, s_lastX{}, s_lastA{};
+                static bool s_lastToggle{}, s_lastExit{};
 
-                    // Diagnostic: log all gamepad buttons to identify unmapped buttons
+                bool hasGamepad = false;
+                bool rb{}, lb{}, xBtn{}, aBtn{}, toggleBtn{}, exitBtn{};
+
+                // --- Read controller state based on profile ---
+                if (m_controllerProfile == ControllerProfile::Xbox)
+                {
+                    XINPUT_STATE xstate{};
+                    if (XInputGetState(0, &xstate) == ERROR_SUCCESS)
                     {
-                        static WORD s_lastButtons = 0;
-                        WORD btns = xstate.Gamepad.wButtons;
-                        WORD changed = btns & ~s_lastButtons;  // newly pressed
-                        if (changed)
+                        hasGamepad = true;
+                        rb        = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
+                        lb        = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER)  != 0;
+                        xBtn      = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_X)              != 0;
+                        aBtn      = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_A)              != 0;
+                        toggleBtn = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT)      != 0;
+                        exitBtn   = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_B)              != 0;
+                    }
+                }
+                else if (m_controllerProfile == ControllerProfile::PS5)
+                {
+                    // PS5: DirectInput — shared access, works with DualSense on Epic Games Store.
+                    // DualSense DirectInput button mapping:
+                    //   [0]=Square [1]=Cross [2]=Circle [3]=Triangle
+                    //   [4]=L1 [5]=R1 [6]=L2 [7]=R2
+                    //   [8]=Create [9]=Options [10]=L3 [11]=R3
+                    //   [12]=PS [13]=Touchpad
+                    m_diPrevState = m_diState;
+                    if (m_diReader.poll(m_diState))
+                    {
+                        hasGamepad = true;
+                        rb        = m_diState.buttons[5];   // R1
+                        lb        = m_diState.buttons[4];   // L1
+                        xBtn      = m_diState.buttons[0];   // Square
+                        aBtn      = m_diState.buttons[1];   // Cross
+                        toggleBtn = m_diState.dpadLeft;      // D-pad Left
+                        exitBtn   = m_diState.buttons[2];   // Circle
+
+                        // Log newly pressed buttons
+                        for (int b = 0; b < 14; b++)
                         {
-                            if (changed & XINPUT_GAMEPAD_DPAD_UP)        VLOG(STR("[MoriaCppMod] [GP-Btn] D-pad UP\n"));
-                            if (changed & XINPUT_GAMEPAD_DPAD_DOWN)      VLOG(STR("[MoriaCppMod] [GP-Btn] D-pad DOWN\n"));
-                            if (changed & XINPUT_GAMEPAD_DPAD_LEFT)      VLOG(STR("[MoriaCppMod] [GP-Btn] D-pad LEFT\n"));
-                            if (changed & XINPUT_GAMEPAD_DPAD_RIGHT)     VLOG(STR("[MoriaCppMod] [GP-Btn] D-pad RIGHT\n"));
-                            if (changed & XINPUT_GAMEPAD_START)          VLOG(STR("[MoriaCppMod] [GP-Btn] START\n"));
-                            if (changed & XINPUT_GAMEPAD_BACK)           VLOG(STR("[MoriaCppMod] [GP-Btn] BACK/SELECT\n"));
-                            if (changed & XINPUT_GAMEPAD_LEFT_THUMB)     VLOG(STR("[MoriaCppMod] [GP-Btn] LEFT STICK CLICK\n"));
-                            if (changed & XINPUT_GAMEPAD_RIGHT_THUMB)    VLOG(STR("[MoriaCppMod] [GP-Btn] RIGHT STICK CLICK\n"));
-                            if (changed & XINPUT_GAMEPAD_LEFT_SHOULDER)  VLOG(STR("[MoriaCppMod] [GP-Btn] LB\n"));
-                            if (changed & XINPUT_GAMEPAD_RIGHT_SHOULDER) VLOG(STR("[MoriaCppMod] [GP-Btn] RB\n"));
-                            if (changed & XINPUT_GAMEPAD_A)              VLOG(STR("[MoriaCppMod] [GP-Btn] A\n"));
-                            if (changed & XINPUT_GAMEPAD_B)              VLOG(STR("[MoriaCppMod] [GP-Btn] B\n"));
-                            if (changed & XINPUT_GAMEPAD_X)              VLOG(STR("[MoriaCppMod] [GP-Btn] X\n"));
-                            if (changed & XINPUT_GAMEPAD_Y)              VLOG(STR("[MoriaCppMod] [GP-Btn] Y\n"));
-                            // Also log triggers as buttons (threshold > 128)
-                            if (xstate.Gamepad.bLeftTrigger > 128)       VLOG(STR("[MoriaCppMod] [GP-Btn] LEFT TRIGGER\n"));
-                            if (xstate.Gamepad.bRightTrigger > 128)      VLOG(STR("[MoriaCppMod] [GP-Btn] RIGHT TRIGGER\n"));
+                            if (m_diState.buttons[b] && !m_diPrevState.buttons[b])
+                                VLOG(STR("[MoriaCppMod] [DI-Btn] Button {} pressed\n"), b);
                         }
-                        s_lastButtons = btns;
+                        if (m_diState.dpadLeft && !m_diPrevState.dpadLeft)
+                            VLOG(STR("[MoriaCppMod] [DI-Btn] D-pad LEFT\n"));
+                        if (m_diState.dpadRight && !m_diPrevState.dpadRight)
+                            VLOG(STR("[MoriaCppMod] [DI-Btn] D-pad RIGHT\n"));
+                        if (m_diState.dpadUp && !m_diPrevState.dpadUp)
+                            VLOG(STR("[MoriaCppMod] [DI-Btn] D-pad UP\n"));
+                        if (m_diState.dpadDown && !m_diPrevState.dpadDown)
+                            VLOG(STR("[MoriaCppMod] [DI-Btn] D-pad DOWN\n"));
+
+                        if (m_diState.connected && !m_diPrevState.connected)
+                            VLOG(STR("[MoriaCppMod] [DI] DirectInput gamepad connected\n"));
+                    }
+                }
+
+                if (hasGamepad)
+                {
+                    // B/Circle also exits mod toolbar mode
+                    if (exitBtn && !s_lastExit && m_modToolbarFocused)
+                        toggleBtn = true;
+
+                    UObject* pawn = m_localPawn ? m_localPawn : getPawn();
+                    auto* pc = m_localPC ? m_localPC : findPlayerController();
+
+                    // --- TOGGLE: D-pad Left enters/exits mod toolbar mode ---
+                    if (toggleBtn && !s_lastToggle)
+                    {
+                        m_modToolbarFocused = !m_modToolbarFocused;
+                        m_gpFlatIndex = 0;
+                        VLOG(STR("[MoriaCppMod] [Gamepad] MOD TOOLBAR {}\n"),
+                             m_modToolbarFocused ? STR("ON") : STR("OFF"));
+
+                        if (m_modToolbarFocused)
+                        {
+                            m_gpDismissCalloutFrame = 3;
+                            // Block pawn input only — NOT the PlayerController.
+                            // PC must stay unblocked so keyboard SHIFT+F keys still work.
+                            if (pawn) setBoolProp(pawn, L"bBlockInput", true);
+                        }
+                        else
+                        {
+                            if (pawn) setBoolProp(pawn, L"bBlockInput", false);
+                        }
                     }
 
-                    // Build flat slot list: all mod toolbar slots in RB order
-                    // AB(0) → MC(0..8) → QB(0..7)
-                    struct GPSlot { int tbId; int slot; };  // tbId: 0=QB, 1=MC, 2=AB
+                    // Delayed ESC to dismiss callout that D-pad Left triggers.
+                    // Only send ESC if we're STILL in mod toolbar mode (not a double-click).
+                    // Double-click (ON→OFF quickly) = leave callout visible.
+                    if (m_gpDismissCalloutFrame > 0)
+                    {
+                        if (!m_modToolbarFocused)
+                        {
+                            // Toggled back OFF before delay expired = double-click, skip ESC
+                            m_gpDismissCalloutFrame = 0;
+                            VLOG(STR("[MoriaCppMod] [Gamepad] Double-click — callout stays\n"));
+                        }
+                        else
+                        {
+                            m_gpDismissCalloutFrame--;
+                            if (m_gpDismissCalloutFrame == 0)
+                            {
+                                keybd_event(VK_ESCAPE, 0, 0, 0);
+                                keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
+                                VLOG(STR("[MoriaCppMod] [Gamepad] Delayed ESC → dismiss callout\n"));
+                            }
+                        }
+                    }
+
+                    // Build flat slot list: AB → MC → QB
+                    struct GPSlot { int tbId; int slot; };
                     GPSlot gpSlots[1 + MC_SLOTS + 8]{};
                     int gpCount = 0;
-
-                    // AB first (always visible)
                     if (m_abBarWidget)
                         gpSlots[gpCount++] = {2, 0};
-                    // MC next (if visible)
                     if (m_toolbarsVisible && m_mcBarWidget)
                         for (int i = 0; i < MC_SLOTS; i++)
                             gpSlots[gpCount++] = {1, i};
-                    // QB last (if visible)
                     if (m_toolbarsVisible && m_umgBarWidget)
                         for (int i = 0; i < 8; i++)
                             gpSlots[gpCount++] = {0, i};
@@ -1709,148 +1863,67 @@ namespace MoriaMods
                     };
 
                     // Helper: disable game action bar input (HitTestInvisible) and hide nav icons
-                    auto disableGameBar = [this]() {
-                        std::vector<UObject*> bars;
-                        UObjectGlobals::FindAllOf(STR("WBP_UI_ActionBar_C"), bars);
-                        for (auto* bar : bars) {
-                            if (!bar || !isObjectAlive(bar)) continue;
-                            // SetVisibility(HitTestInvisible = 3) — visible but ignores all input
-                            setWidgetVisibility(bar, 3);
-                            // Also toggle nav icons off
-                            auto* fn = bar->GetFunctionByNameInChain(STR("ToggleGamepadNavIcons"));
-                            if (fn) { uint8_t p[4]{}; safeProcessEvent(bar, fn, p); }
-                        }
-                    };
-
-                    // Helper: restore game action bar input, nav icons, and set focus to specific slot
-                    // targetIndex: 0 = first slot (coming from RB), 7 = last slot (coming from LB)
-                    auto enableGameBar = [this](int targetIndex) {
-                        std::vector<UObject*> bars;
-                        UObjectGlobals::FindAllOf(STR("WBP_UI_ActionBar_C"), bars);
-                        for (auto* bar : bars) {
-                            if (!bar || !isObjectAlive(bar)) continue;
-                            setWidgetVisibility(bar, 0);
-                            auto* toggleFn = bar->GetFunctionByNameInChain(STR("ToggleGamepadNavIcons"));
-                            if (toggleFn) { uint8_t p[4]{}; p[0] = 1; safeProcessEvent(bar, toggleFn, p); }
-                            // Set focus to the target slot via HUD Focus From Controller
-                            auto* focusFn = bar->GetFunctionByNameInChain(STR("HUD Focus From Controller"));
-                            if (focusFn)
-                            {
-                                int sz = focusFn->GetParmsSize();
-                                std::vector<uint8_t> fp(std::max(sz, 8), 0);
-                                fp[0] = 1;  // bFocused = true
-                                *reinterpret_cast<int32_t*>(fp.data() + 4) = targetIndex;
-                                safeProcessEvent(bar, focusFn, fp.data());
-                                VLOG(STR("[MoriaCppMod] [Gamepad] Restored game bar focus to index {}\n"), targetIndex);
-                            }
-                        }
-                    };
-
-                    // --- RB: advance one slot in mod toolbars ---
-                    if (rb && !s_lastRB && gpCount > 0)
+                    // --- Highlight first slot on enter ---
+                    if (m_modToolbarFocused && gpCount > 0)
                     {
-                        if (!m_modToolbarFocused)
-                        {
-                            // Enter from game right edge
-                            bool atRightEdge = m_gameActionBarFocused &&
-                                (m_gameActionBarIndex >= m_gameHotbarSize - 1 || m_gameActionBarIndex == -1);
-                            if (atRightEdge)
-                            {
-                                m_modToolbarFocused = true;
-                                m_gpFlatIndex = 0;
-                                setHL(gpSlots[0].tbId, gpSlots[0].slot, true);
-                                disableGameBar();
-                                VLOG(STR("[MoriaCppMod] [Gamepad] RB → mod slot 0 (tb={} s={})\n"),
-                                     gpSlots[0].tbId, gpSlots[0].slot);
-                            }
-                        }
-                        else
-                        {
-                            // Advance within mod toolbars
-                            setHL(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, false);
-                            int next = m_gpFlatIndex + 1;
-                            if (next < gpCount)
-                            {
-                                m_gpFlatIndex = next;
-                                setHL(gpSlots[next].tbId, gpSlots[next].slot, true);
-                                VLOG(STR("[MoriaCppMod] [Gamepad] RB → mod slot {} (tb={} s={})\n"),
-                                     next, gpSlots[next].tbId, gpSlots[next].slot);
-                            }
-                            else
-                            {
-                                // Past end → return to game at first slot
-                                m_modToolbarFocused = false;
-                                m_gpFlatIndex = 0;
-                                enableGameBar(0);
-                                VLOG(STR("[MoriaCppMod] [Gamepad] RB → Game slot 0\n"));
-                            }
-                        }
+                        // Ensure highlight is on current slot (handles fresh entry)
+                        setHL(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, true);
                     }
 
-                    // --- LB: go back one slot in mod toolbars ---
-                    if (lb && !s_lastLB && gpCount > 0)
+                    // --- Clear highlight on exit ---
+                    if (!m_modToolbarFocused && gpCount > 0)
                     {
-                        if (!m_modToolbarFocused)
-                        {
-                            // Enter from game left edge
-                            bool atLeftEdge = m_gameActionBarFocused &&
-                                (m_gameActionBarIndex <= 0 || m_gameActionBarIndex == -1);
-                            if (atLeftEdge)
-                            {
-                                int last = gpCount - 1;
-                                m_modToolbarFocused = true;
-                                m_gpFlatIndex = last;
-                                setHL(gpSlots[last].tbId, gpSlots[last].slot, true);
-                                disableGameBar();
-                                VLOG(STR("[MoriaCppMod] [Gamepad] LB → mod slot {} (tb={} s={})\n"),
-                                     last, gpSlots[last].tbId, gpSlots[last].slot);
-                            }
-                        }
-                        else
-                        {
-                            setHL(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, false);
-                            int prev = m_gpFlatIndex - 1;
-                            if (prev >= 0)
-                            {
-                                m_gpFlatIndex = prev;
-                                setHL(gpSlots[prev].tbId, gpSlots[prev].slot, true);
-                                VLOG(STR("[MoriaCppMod] [Gamepad] LB → mod slot {} (tb={} s={})\n"),
-                                     prev, gpSlots[prev].tbId, gpSlots[prev].slot);
-                            }
-                            else
-                            {
-                                // Past start → return to game at epic item (last slot)
-                                m_modToolbarFocused = false;
-                                m_gpFlatIndex = 0;
-                                enableGameBar(m_gameHotbarSize - 1);
-                                VLOG(STR("[MoriaCppMod] [Gamepad] LB → Game slot {}\n"), m_gameHotbarSize - 1);
-                            }
-                        }
+                        // Clear any stale highlight
+                        for (int i = 0; i < gpCount; i++)
+                            setHL(gpSlots[i].tbId, gpSlots[i].slot, false);
                     }
 
-                    // --- X button: activate highlighted slot ---
-                    // --- A button: modifier-activate highlighted slot (like SHIFT) ---
-                    static bool s_lastX = false;
-                    if (m_modToolbarFocused && m_gpFlatIndex < gpCount)
+                    // --- Navigation + action (only when mod toolbar is ON) ---
+                    if (m_modToolbarFocused && gpCount > 0)
                     {
+                        if (rb && !s_lastRB)
+                        {
+                            setHL(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, false);
+                            m_gpFlatIndex = (m_gpFlatIndex + 1) % gpCount;
+                            setHL(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, true);
+                            VLOG(STR("[MoriaCppMod] [Gamepad] RB → slot {}\n"), m_gpFlatIndex);
+                        }
+
+                        if (lb && !s_lastLB)
+                        {
+                            setHL(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, false);
+                            m_gpFlatIndex = (m_gpFlatIndex - 1 + gpCount) % gpCount;
+                            setHL(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, true);
+                            VLOG(STR("[MoriaCppMod] [Gamepad] LB → slot {}\n"), m_gpFlatIndex);
+                        }
+
+                        // Diagnostic: log raw button state every 60 frames while in mod mode
+                        static int s_diagFrame = 0;
+                        if (++s_diagFrame % 60 == 0)
+                            VLOG(STR("[MoriaCppMod] [GP-Diag] rb={} lb={} x={} a={} toggle={} exit={}\n"),
+                                 rb?1:0, lb?1:0, xBtn?1:0, aBtn?1:0, toggleBtn?1:0, exitBtn?1:0);
+
+                        static bool s_lastX{};
                         if (xBtn && !s_lastX)
                         {
-                            VLOG(STR("[MoriaCppMod] [Gamepad] X → tb={} slot={}\n"),
+                            VLOG(STR("[MoriaCppMod] [Gamepad] X → tb={} s={}\n"),
                                  gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot);
                             dispatchGP(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, false);
                         }
                         if (aBtn && !s_lastA)
                         {
-                            VLOG(STR("[MoriaCppMod] [Gamepad] A(mod) → tb={} slot={}\n"),
+                            VLOG(STR("[MoriaCppMod] [Gamepad] A(mod) → tb={} s={}\n"),
                                  gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot);
                             dispatchGP(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, true);
                         }
+                        s_lastX = xBtn;
                     }
 
                     s_lastRB = rb;
                     s_lastLB = lb;
-                    s_lastX = xBtn;
                     s_lastA = aBtn;
+                    s_lastToggle = toggleBtn;
+                    s_lastExit = exitBtn;
                 }
             }
 
@@ -2012,7 +2085,8 @@ namespace MoriaMods
                             int y = curY - contentY + static_cast<int>(scrollOff * s2p);
 
 
-                            int ncY0 = sectionH;
+                            int ctY0 = sectionH;        // Controller row (new, first)
+                            int ncY0 = ctY0 + rowH;     // No Collision
                             int rcY0 = ncY0 + rowH;
                             int sgY0 = rcY0 + rowH;
                             int trY0 = sgY0 + rowH;
@@ -2026,7 +2100,38 @@ namespace MoriaMods
                             bool inFullRow = (curX >= cbX0 && curX <= kbX1);
 
 
-                            if (inCheckBox && y >= ncY0 && y < ncY0 + rowH)
+                            // Controller checkbox (toggle enabled)
+                            if (inCheckBox && y >= ctY0 && y < ctY0 + rowH)
+                            {
+                                m_controllerEnabled = !m_controllerEnabled;
+                                if (m_ftControllerCheckImg && isObjectAlive(m_ftControllerCheckImg))
+                                    setWidgetVisibility(m_ftControllerCheckImg, m_controllerEnabled ? 0 : 1);
+                                if (!m_controllerEnabled && m_modToolbarFocused)
+                                {
+                                    // Exit mod toolbar mode if controller disabled while navigating
+                                    m_modToolbarFocused = false;
+                                    m_gpFlatIndex = 0;
+                                }
+                                saveConfig();
+                                VLOG(STR("[MoriaCppMod] [Settings] Controller: {}\n"), m_controllerEnabled ? STR("ON") : STR("OFF"));
+                            }
+                            // Controller profile toggle (click on the [Xbox]/[PS5] label)
+                            else if (inFullRow && !inCheckBox && y >= ctY0 && y < ctY0 + rowH)
+                            {
+                                m_controllerProfile = (m_controllerProfile == ControllerProfile::Xbox)
+                                    ? ControllerProfile::PS5 : ControllerProfile::Xbox;
+                                if (m_ftControllerProfileLabel && isObjectAlive(m_ftControllerProfileLabel))
+                                    umgSetText(m_ftControllerProfileLabel,
+                                        m_controllerProfile == ControllerProfile::PS5 ? L"  [PS5]" : L"  [Xbox]");
+                                // Close DualSense if switching away from PS5
+                                if (m_controllerProfile != ControllerProfile::PS5)
+                                    m_dsReader.close();
+                                saveConfig();
+                                VLOG(STR("[MoriaCppMod] [Settings] Controller profile: {}\n"),
+                                     m_controllerProfile == ControllerProfile::PS5 ? STR("PS5") : STR("Xbox"));
+                            }
+
+                            else if (inCheckBox && y >= ncY0 && y < ncY0 + rowH)
                             {
                                 m_noCollisionWhileFlying = !m_noCollisionWhileFlying;
                                 saveConfig();
@@ -2565,6 +2670,8 @@ namespace MoriaMods
                     for (auto& l : m_ftKeyBoxLabels) l = nullptr;
                     for (auto& c : m_ftCheckImages) c = nullptr;
                     m_ftModBoxLabel = nullptr;
+                    m_ftControllerCheckImg = nullptr;
+                    m_ftControllerProfileLabel = nullptr;
                     m_ftNoCollisionCheckImg = nullptr;
                     m_ftNoCollisionLabel = nullptr;
                     m_ftNoCollisionKeyLabel = nullptr;
@@ -2646,6 +2753,9 @@ namespace MoriaMods
                         m_localPawn = getPawn();
                         VLOG(STR("[MoriaCppMod] Character loaded — PC={:p} Pawn={:p}, waiting 15s before replay\n"),
                              (void*)m_localPC, (void*)m_localPawn);
+
+                        // Controller blocking at character load removed — UE4's bBlockInput
+                        // and DisableInput don't prevent the callout Gameplay Ability from firing.
 
                         // Server fly: set client-authoritative movement on all characters at login.
                         // Tells the server to trust client positions (allows client fly to work).
