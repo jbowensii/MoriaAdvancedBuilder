@@ -117,7 +117,36 @@ UObject* findPlayerController()
 {
     std::vector<UObject*> pcs;
     UObjectGlobals::FindAllOf(STR("PlayerController"), pcs);
-    return pcs.empty() ? nullptr : pcs[0];
+    if (pcs.empty()) return nullptr;
+
+    // In multiplayer the engine holds replicated proxies of every remote PC
+    // alongside the local one. Filter for the actual local PC by reading the
+    // UPROPERTY bIsLocalPlayerController directly (no warn-logging helper).
+    for (auto* pc : pcs)
+    {
+        if (!pc || !isObjectAlive(pc)) continue;
+        for (auto* strct = static_cast<UStruct*>(pc->GetClassPrivate());
+             strct; strct = strct->GetSuperStruct())
+        {
+            FBoolProperty* found = nullptr;
+            for (auto* prop : strct->ForEachProperty())
+            {
+                if (prop->GetName() == std::wstring_view(STR("bIsLocalPlayerController")))
+                {
+                    found = CastField<FBoolProperty>(prop);
+                    break;
+                }
+            }
+            if (found)
+            {
+                if (found->GetPropertyValueInContainer(pc)) return pc;
+                break;
+            }
+        }
+    }
+
+    // Fallback (dedicated server with only remote proxies, or property missing)
+    return nullptr;
 }
 
 UObject* getPawn()

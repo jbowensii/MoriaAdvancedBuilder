@@ -1,4 +1,4 @@
-// MoriaCppMod v6.3.0 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
+// MoriaCppMod v6.3.5 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -48,6 +48,7 @@ namespace MoriaMods
         ULONGLONG m_lastStreamCheck{0};
         ULONGLONG m_lastRescanTime{0};
         ULONGLONG m_lastBubbleCheck{0};
+        ULONGLONG m_lastServerFlySweep{0};
         ULONGLONG m_charLoadTime{0};
 
 
@@ -486,14 +487,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.3.0");
+            ModVersion = STR("6.3.5");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.3.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.3.5\n"));
         }
 
         ~MoriaCppMod() override
@@ -523,7 +524,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.3.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.3.5 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -804,7 +805,7 @@ namespace MoriaMods
 
                 if (wcscmp(fnStr2, STR("OnAfterShow")) == 0)
                 {
-                    if (!isLocalContext(context)) return;  // MP: only local player's UI
+                    // isLocalContext removed — UMG widgets have WidgetTree Outer, not PC/Pawn
                     std::wstring cls = safeClassName(context);
                     if (cls == STR("UI_WBP_Build_Tab_C"))
                     {
@@ -825,7 +826,7 @@ namespace MoriaMods
 
                 if (wcscmp(fnStr2, STR("OnAfterHide")) == 0)
                 {
-                    if (!isLocalContext(context)) return;  // MP: only local player's UI
+                    // isLocalContext removed — UMG widgets have WidgetTree Outer, not PC/Pawn
                     std::wstring cls = safeClassName(context);
                     if (cls == STR("UI_WBP_BuildHUDv2_C") || cls == STR("UI_WBP_Build_Tab_C"))
                     {
@@ -945,7 +946,9 @@ namespace MoriaMods
                 if (s_instance->m_isAutoSelecting) return;
 
                 if (wcscmp(fnStr2, STR("blockSelectedEvent")) != 0) return;
-                if (!isLocalContext(context)) return;  // MP: only local player's recipe selection
+                // Note: isLocalContext removed here — Build_Tab is a client-side UMG widget
+                // whose Outer chain leads to WidgetTree/GameInstance, not PC/Pawn.
+                // On a client, only the local player's Build_Tab exists.
                 std::wstring cls = safeClassName(context);
                 if (cls != STR("UI_WBP_Build_Tab_C")) return;
 
@@ -1030,7 +1033,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.3.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v6.3.5: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -2002,14 +2005,14 @@ namespace MoriaMods
                                 if (y >= 0)
                                 {
                                     int currentY = 0;
-                                    const wchar_t* lastSec = nullptr;
+                                    std::wstring lastSec;
                                     bool bindMatched = false;
                                     for (int b = 0; b < BIND_COUNT; b++)
                                     {
                                         if (s_bindings[b].label == L"Reserved") continue;
-                                        if (!lastSec || s_bindings[b].section != lastSec)
+                                        if (lastSec.empty() || s_bindings[b].section != lastSec)
                                         {
-                                            lastSec = s_bindings[b].section.c_str();
+                                            lastSec = s_bindings[b].section;
                                             currentY += sectionHeight;
                                         }
                                         if (y >= currentY && y < currentY + rowHeight)
@@ -2040,7 +2043,9 @@ namespace MoriaMods
                                         }
                                         currentY += rowHeight;
                                     }
-                                    if (!bindMatched && inKeyBox && y >= currentY && y < currentY + rowHeight)
+                                    // Modifier key: it's the LAST row on the Key Bindings tab.
+                                    // Any click in the keyBox column below all keybind rows = modifier key.
+                                    if (!bindMatched && inKeyBox)
                                     {
                                         if (s_modifierVK == VK_CONTROL) s_modifierVK = VK_SHIFT;
                                         else if (s_modifierVK == VK_SHIFT) s_modifierVK = VK_MENU;
@@ -2085,8 +2090,7 @@ namespace MoriaMods
                             int y = curY - contentY + static_cast<int>(scrollOff * s2p);
 
 
-                            int ctY0 = sectionH;        // Controller row (new, first)
-                            int ncY0 = ctY0 + rowH;     // No Collision
+                            int ncY0 = sectionH;        // No Collision (first row)
                             int rcY0 = ncY0 + rowH;
                             int sgY0 = rcY0 + rowH;
                             int trY0 = sgY0 + rowH;
@@ -2100,38 +2104,7 @@ namespace MoriaMods
                             bool inFullRow = (curX >= cbX0 && curX <= kbX1);
 
 
-                            // Controller checkbox (toggle enabled)
-                            if (inCheckBox && y >= ctY0 && y < ctY0 + rowH)
-                            {
-                                m_controllerEnabled = !m_controllerEnabled;
-                                if (m_ftControllerCheckImg && isObjectAlive(m_ftControllerCheckImg))
-                                    setWidgetVisibility(m_ftControllerCheckImg, m_controllerEnabled ? 0 : 1);
-                                if (!m_controllerEnabled && m_modToolbarFocused)
-                                {
-                                    // Exit mod toolbar mode if controller disabled while navigating
-                                    m_modToolbarFocused = false;
-                                    m_gpFlatIndex = 0;
-                                }
-                                saveConfig();
-                                VLOG(STR("[MoriaCppMod] [Settings] Controller: {}\n"), m_controllerEnabled ? STR("ON") : STR("OFF"));
-                            }
-                            // Controller profile toggle (click on the [Xbox]/[PS5] label)
-                            else if (inFullRow && !inCheckBox && y >= ctY0 && y < ctY0 + rowH)
-                            {
-                                m_controllerProfile = (m_controllerProfile == ControllerProfile::Xbox)
-                                    ? ControllerProfile::PS5 : ControllerProfile::Xbox;
-                                if (m_ftControllerProfileLabel && isObjectAlive(m_ftControllerProfileLabel))
-                                    umgSetText(m_ftControllerProfileLabel,
-                                        m_controllerProfile == ControllerProfile::PS5 ? L"  [PS5]" : L"  [Xbox]");
-                                // Close DualSense if switching away from PS5
-                                if (m_controllerProfile != ControllerProfile::PS5)
-                                    m_dsReader.close();
-                                saveConfig();
-                                VLOG(STR("[MoriaCppMod] [Settings] Controller profile: {}\n"),
-                                     m_controllerProfile == ControllerProfile::PS5 ? STR("PS5") : STR("Xbox"));
-                            }
-
-                            else if (inCheckBox && y >= ncY0 && y < ncY0 + rowH)
+                            if (inCheckBox && y >= ncY0 && y < ncY0 + rowH)
                             {
                                 m_noCollisionWhileFlying = !m_noCollisionWhileFlying;
                                 saveConfig();
@@ -2818,6 +2791,36 @@ namespace MoriaMods
             if (m_initialReplayDone && !m_replay.active && intervalElapsed(m_lastStreamCheck, 3000))
             {
                 checkForNewComponents();
+            }
+
+            // Server-fly sweep: on the authoritative machine (standalone or listen-server host),
+            // ensure every dwarf's CharacterMovement has client-auth flags set. This lets any
+            // player on the server fly — otherwise only the host's local pawn got the flags and
+            // remote clients were corrected back to the ground by the server.
+            if (m_characterLoaded && intervalElapsed(m_lastServerFlySweep, 2000))
+            {
+                std::vector<UObject*> dwarves;
+                UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
+                constexpr uint8_t ROLE_Authority = 3;
+                for (auto* pawn : dwarves)
+                {
+                    if (!pawn || !isObjectAlive(pawn)) continue;
+
+                    // Only touch pawns this machine has authority over.
+                    // On a listen-server host: all pawns (host + remote clients).
+                    // On a remote client: nothing (the local pawn is AutonomousProxy, remotes are SimulatedProxy).
+                    // On a dedicated server: all pawns.
+                    auto* roleProp = pawn->GetPropertyByNameInChain(STR("Role"));
+                    if (!roleProp) continue;
+                    uint8_t role = *reinterpret_cast<uint8_t*>(
+                        reinterpret_cast<uint8_t*>(pawn) + roleProp->GetOffset_Internal());
+                    if (role != ROLE_Authority) continue;
+
+                    auto** cmcPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
+                    if (!cmcPtr || !*cmcPtr || !isObjectAlive(*cmcPtr)) continue;
+                    setBoolProp(*cmcPtr, L"bIgnoreClientMovementErrorChecksAndCorrection", true);
+                    setBoolProp(*cmcPtr, L"bServerAcceptClientAuthoritativePosition", true);
+                }
             }
 
 
