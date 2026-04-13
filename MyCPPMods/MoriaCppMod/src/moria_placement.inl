@@ -172,28 +172,13 @@
             return true;
         }
 
-        UObject* m_lastGATA{nullptr};  // track last resolved GATA to detect new ghost
-
         UObject* resolveGATA()
         {
             auto* hud = getCachedBuildHUD();
             if (!hud) return nullptr;
             auto* weakPtr = hud->GetValuePtrByPropertyNameInChain<RC::Unreal::FWeakObjectPtr>(STR("TargetActor"));
             if (!weakPtr) return nullptr;
-            UObject* gata = weakPtr->Get();
-
-            // When a NEW GATA appears (different from last), apply the current rotation step.
-            // This fixes the bug where selecting a new piece resets SnapRotateIncrement
-            // to the game's default (90°) until the user presses F9 again.
-            if (gata && gata != m_lastGATA)
-            {
-                m_lastGATA = gata;
-                setGATARotation(gata, static_cast<float>(s_overlay.rotationStep.load()));
-                VLOG(STR("[MoriaCppMod] [Placement] New GATA {:p} — applied rotationStep={}\n"),
-                     (void*)gata, s_overlay.rotationStep.load());
-            }
-
-            return gata;
+            return weakPtr->Get();
         }
 
 
@@ -730,7 +715,6 @@
             m_experimentPitch = 0.0f;
             m_experimentRoll = 0.0f;
             m_origRelLocsCached = false;
-            m_lastGATA = nullptr;
             m_origRelLocs.clear();
             m_origRelRots.clear();
             m_pivotPoint = {0, 0, 0};
