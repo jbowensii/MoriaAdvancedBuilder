@@ -558,29 +558,30 @@
             }
 
 
-            auto* addFn = invComp->GetFunctionByNameInChain(STR("RequestAddItem"));
-            if (!addFn)
+            // ServerDebugSetItem is a Server RPC — UE4 routes it to the authority
+            // automatically, so it works for both host and non-host clients.
+            // RequestAddItem was local-only and silently failed on remote clients.
+            auto* setFn = invComp->GetFunctionByNameInChain(STR("ServerDebugSetItem"));
+            if (!setFn)
             {
-                VLOG(STR("[MoriaCppMod] [Replenish] RequestAddItem not found on invComp\n"));
-                showOnScreen(L"Replenish failed: RequestAddItem not found", 3.0f, 1.0f, 0.4f, 0.4f);
+                VLOG(STR("[MoriaCppMod] [Replenish] ServerDebugSetItem not found on invComp\n"));
+                showOnScreen(L"Replenish failed: ServerDebugSetItem not found", 3.0f, 1.0f, 0.4f, 0.4f);
                 return;
             }
 
             {
-                int sz = addFn->GetParmsSize();
+                int sz = setFn->GetParmsSize();
                 std::vector<uint8_t> p(sz, 0);
 
-                auto* pClass  = findParam(addFn, STR("Class"));
-                auto* pCount  = findParam(addFn, STR("Count"));
-                auto* pMethod = findParam(addFn, STR("Method"));
+                auto* pItem  = findParam(setFn, STR("Item"));
+                auto* pCount = findParam(setFn, STR("Count"));
 
-                if (pClass)  *reinterpret_cast<UClass**>(p.data() + pClass->GetOffset_Internal()) = m_lastPickedUpItemClass;
-                if (pCount)  *reinterpret_cast<int32_t*>(p.data() + pCount->GetOffset_Internal()) = deficit;
-                if (pMethod) *reinterpret_cast<uint8_t*>(p.data() + pMethod->GetOffset_Internal()) = 0;
+                if (pItem)  *reinterpret_cast<UClass**>(p.data() + pItem->GetOffset_Internal()) = m_lastPickedUpItemClass;
+                if (pCount) *reinterpret_cast<int32_t*>(p.data() + pCount->GetOffset_Internal()) = maxStack;
 
-                VLOG(STR("[MoriaCppMod] [Replenish] Calling RequestAddItem({}, count={}, method=Normal)\n"),
-                     m_lastPickedUpItemName, deficit);
-                safeProcessEvent(invComp, addFn, p.data());
+                VLOG(STR("[MoriaCppMod] [Replenish] Calling ServerDebugSetItem({}, count={})\n"),
+                     m_lastPickedUpItemName, maxStack);
+                safeProcessEvent(invComp, setFn, p.data());
             }
 
             std::wstring msg = L"Replenished " + rowName + L" +" + std::to_wstring(deficit) + L" (→" + std::to_wstring(maxStack) + L")";

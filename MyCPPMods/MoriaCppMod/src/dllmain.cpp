@@ -1,4 +1,4 @@
-// MoriaCppMod v6.3.5 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
+// MoriaCppMod v6.3.6 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -487,14 +487,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.3.5");
+            ModVersion = STR("6.3.6");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.3.5\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.3.6\n"));
         }
 
         ~MoriaCppMod() override
@@ -524,7 +524,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.3.5 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.3.6 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -749,7 +749,14 @@ namespace MoriaMods
                     std::wstring cls = safeClassName(context);
                     if (!cls.empty() && cls.find(STR("BuildHUD")) != std::wstring::npos)
                     {
-                        UObject* gata = s_instance->resolveGATA();
+                        // Read TargetActor directly from the BuildHUD context (the live
+                        // weak pointer) rather than the cached path, so even a freshly
+                        // spawned GATA that the cache hasn't seen yet gets the step applied.
+                        UObject* gata = nullptr;
+                        auto* weakPtr = context->GetValuePtrByPropertyNameInChain<RC::Unreal::FWeakObjectPtr>(STR("TargetActor"));
+                        if (weakPtr) gata = weakPtr->Get();
+                        if (!gata) gata = s_instance->resolveGATA();  // fallback
+
                         if (gata)
                         {
                             const int step = s_overlay.rotationStep.load();
@@ -1033,7 +1040,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.3.5: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v6.3.6: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
