@@ -782,6 +782,40 @@
 
                 VLOG(STR("[MoriaCppMod] [PitchRoll]   AFTER:  Quat({:.4f}, {:.4f}, {:.4f}, {:.4f})\n"),
                      quat[0], quat[1], quat[2], quat[3]);
+
+                // Adjust translation so the snap/pivot point stays at the same world
+                // position after rotation. Without this the placed piece drifts because
+                // the rotation pivot (FTransform origin) doesn't coincide with the snap
+                // point — the ghost preview handles this via rotateReticleVisual but the
+                // FTransform only has one origin.
+                //
+                // Math: if pivot is at local offset P, rotating the piece changes pivot's
+                // world position from T + Q_orig*P to T + Q_new*P.  Compensate:
+                //   T_new = T + Q_orig*P - Q_new*P
+                if (m_pivotPoint.x != 0.0f || m_pivotPoint.y != 0.0f || m_pivotPoint.z != 0.0f)
+                {
+                    // FTransform layout: Quat(16 bytes) then Translation(12 bytes)
+                    float* trans = quat + 4;
+
+                    // Pivot rotated by original yaw-only quaternion
+                    Quat4 qOrig = {ax, ay, az, aw};
+                    float owx, owy, owz;
+                    quatRotVec(qOrig, m_pivotPoint.x, m_pivotPoint.y, m_pivotPoint.z, owx, owy, owz);
+
+                    // Pivot rotated by new (yaw + pitch/roll) quaternion
+                    Quat4 qNew = {quat[0], quat[1], quat[2], quat[3]};
+                    float nwx, nwy, nwz;
+                    quatRotVec(qNew, m_pivotPoint.x, m_pivotPoint.y, m_pivotPoint.z, nwx, nwy, nwz);
+
+                    trans[0] += owx - nwx;
+                    trans[1] += owy - nwy;
+                    trans[2] += owz - nwz;
+
+                    VLOG(STR("[MoriaCppMod] [PitchRoll]   Pivot=({:.1f},{:.1f},{:.1f}) TransAdj=({:.2f},{:.2f},{:.2f})\n"),
+                         m_pivotPoint.x, m_pivotPoint.y, m_pivotPoint.z,
+                         owx - nwx, owy - nwy, owz - nwz);
+                }
+
                 VLOG(STR("[MoriaCppMod] [PitchRoll]   Applied Pitch={:.1f} Roll={:.1f}\n"),
                      m_experimentPitch, m_experimentRoll);
                 break;

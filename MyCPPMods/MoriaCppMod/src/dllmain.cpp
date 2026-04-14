@@ -1,4 +1,4 @@
-// MoriaCppMod v6.3.7 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
+// MoriaCppMod v6.3.8 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -487,14 +487,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.3.7");
+            ModVersion = STR("6.3.8");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.3.7\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.3.8\n"));
         }
 
         ~MoriaCppMod() override
@@ -524,7 +524,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.3.7 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.3.8 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -1036,7 +1036,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.3.7: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v6.3.8: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -2546,6 +2546,31 @@ namespace MoriaMods
             if (!m_replayActive) return;
             m_frameCounter++;
 
+            // Server-fly sweep: must run BEFORE the m_characterLoaded gate below,
+            // because on a dedicated server m_characterLoaded is never true (no local
+            // pawn) and the code returns early. The sweep needs to run on dedi servers
+            // and listen-server hosts to set client-auth movement flags on all dwarves.
+            if ((m_characterLoaded || m_isDedicatedServer) && intervalElapsed(m_lastServerFlySweep, 2000))
+            {
+                std::vector<UObject*> dwarves;
+                UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
+                constexpr uint8_t ROLE_Authority = 3;
+                for (auto* pawn : dwarves)
+                {
+                    if (!pawn || !isObjectAlive(pawn)) continue;
+                    auto* roleProp = pawn->GetPropertyByNameInChain(STR("Role"));
+                    if (!roleProp) continue;
+                    uint8_t role = *reinterpret_cast<uint8_t*>(
+                        reinterpret_cast<uint8_t*>(pawn) + roleProp->GetOffset_Internal());
+                    if (role != ROLE_Authority) continue;
+
+                    auto** cmcPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
+                    if (!cmcPtr || !*cmcPtr || !isObjectAlive(*cmcPtr)) continue;
+                    setBoolProp(*cmcPtr, L"bIgnoreClientMovementErrorChecksAndCorrection", true);
+                    setBoolProp(*cmcPtr, L"bServerAcceptClientAuthoritativePosition", true);
+                }
+            }
+
 
             if (m_characterLoaded && intervalElapsed(m_lastWorldCheck, 1000))
             {
@@ -2796,35 +2821,6 @@ namespace MoriaMods
                 checkForNewComponents();
             }
 
-            // Server-fly sweep: on the authoritative machine (standalone or listen-server host),
-            // ensure every dwarf's CharacterMovement has client-auth flags set. This lets any
-            // player on the server fly — otherwise only the host's local pawn got the flags and
-            // remote clients were corrected back to the ground by the server.
-            if (m_characterLoaded && intervalElapsed(m_lastServerFlySweep, 2000))
-            {
-                std::vector<UObject*> dwarves;
-                UObjectGlobals::FindAllOf(STR("BP_FGKDwarf_C"), dwarves);
-                constexpr uint8_t ROLE_Authority = 3;
-                for (auto* pawn : dwarves)
-                {
-                    if (!pawn || !isObjectAlive(pawn)) continue;
-
-                    // Only touch pawns this machine has authority over.
-                    // On a listen-server host: all pawns (host + remote clients).
-                    // On a remote client: nothing (the local pawn is AutonomousProxy, remotes are SimulatedProxy).
-                    // On a dedicated server: all pawns.
-                    auto* roleProp = pawn->GetPropertyByNameInChain(STR("Role"));
-                    if (!roleProp) continue;
-                    uint8_t role = *reinterpret_cast<uint8_t*>(
-                        reinterpret_cast<uint8_t*>(pawn) + roleProp->GetOffset_Internal());
-                    if (role != ROLE_Authority) continue;
-
-                    auto** cmcPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("CharacterMovement"));
-                    if (!cmcPtr || !*cmcPtr || !isObjectAlive(*cmcPtr)) continue;
-                    setBoolProp(*cmcPtr, L"bIgnoreClientMovementErrorChecksAndCorrection", true);
-                    setBoolProp(*cmcPtr, L"bServerAcceptClientAuthoritativePosition", true);
-                }
-            }
 
 
             if (m_initialReplayDone && !m_replay.active && intervalElapsed(m_lastRescanTime, 60000) && hasPendingRemovals())
