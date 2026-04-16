@@ -36,7 +36,7 @@ Whether you're building an elaborate Dwarven hall, clearing out unwanted scenery
 
 ## Installation
 
-Download the latest signed installer from the [Releases](https://github.com/jbowensii/MoriaAdvancedBuilder/releases) page. The installer automatically finds your Return to Moria installation (Epic Games Store or Steam), deploys everything to the right place, and takes care of all the setup for you. If you're upgrading from a previous version, the installer handles that too.
+Download the latest signed installer from the [Releases](https://github.com/jbowensii/MoriaAdvancedBuilder/releases) page. The installer automatically finds your Return to Moria installation (Epic Games Store or Steam), deploys everything to the right place, and takes care of all the setup for you. If your game is installed on a non-default drive (D:, E:, etc.), select the Custom path option and browse to your game folder. If you're upgrading from a previous version, the installer handles that too.
 
 For manual installation instructions, see [Installation Details](#installation-details) below.
 
@@ -77,7 +77,7 @@ Normally in Return to Moria, you can only rotate building pieces left and right 
 4. Use your normal rotation key to yaw (spin left/right) as usual.
 5. All three rotations combine together, so you can create any angle you want.
 
-The ghost preview (the transparent piece you see before placing) updates in real time to show you exactly how the piece will look, including for multi-part structures like walls with attached pillars or archways with decorative elements. When you place the piece, it goes down at exactly the angle shown in the preview.
+The ghost preview (the transparent piece you see before placing) updates in real time to show you exactly how the piece will look, including for multi-part structures like walls with attached pillars or archways with decorative elements. When you place the piece, it lands at exactly the position and angle shown in the ghost preview — the mod compensates for pivot-point offsets so there is no drift between what you see and what you get.
 
 Both pitch and roll rotation can be enabled or disabled individually through the F12 configuration menu under Game Options.
 
@@ -193,7 +193,7 @@ Need a full stack of something? The Replenish Item feature fills any stackable i
 2. Press the **Insert key**.
 3. The item's count is set to the maximum stack size as defined in the game's data.
 
-This works with any stackable item — ores, food, building materials, and more.
+This works with any stackable item — ores, food, building materials, and more. In multiplayer, the replenish command is sent as a server-authoritative request, so it works correctly whether you are the host or a connected client.
 
 ### Remove Attributes (End Key)
 
@@ -216,6 +216,12 @@ Press the **Super Dwarf key (] by default)** to toggle your character's visibili
 ### Fly Mode
 
 Hold the **modifier key** and press the Super Dwarf key to toggle fly mode. When fly mode is active, your character can fly freely in any direction without being affected by gravity. This is perfect for building tall structures, inspecting your work from above, or reaching areas that are normally hard to get to. Press the combination again to return to normal movement.
+
+Fly mode works in **single-player, listen-server (hosted) multiplayer, and dedicated servers**. The mod automatically sets server-authoritative movement flags so that the server accepts your position while flying, preventing the rubber-banding that would otherwise occur. On dedicated servers, the mod runs server-side and configures movement authority for all connected players.
+
+### No Collision While Flying
+
+When No Collision is enabled in Game Options, your character passes through walls, floors, and other solid objects while flying. This makes it easy to fly through structures for inspection or to reach enclosed areas.
 
 ---
 
@@ -241,18 +247,16 @@ You can also change your modifier key (the key you hold for secondary actions) b
 
 ### Tab 2: Game Options
 
-This tab has toggle switches for optional features:
+This tab has toggle switches and action buttons for optional features:
 
-- **Free Build**: Build without needing materials.
 - **No Collision (Flying)**: Disable collision detection while flying.
-- **Unlock All Recipes**: Instantly unlock every building recipe in the game.
+- **Rename Character**: Change your character's display name.
+- **Save Game**: Force an immediate save of your game world.
 - **Trash Item**: Enable or disable the Delete key item destruction feature.
 - **Replenish Item**: Enable or disable the Insert key stack refill feature.
 - **Remove Attributes**: Enable or disable the End key effect removal feature.
 - **Pitch Rotate**: Enable or disable tilting building pieces forward/backward.
 - **Roll Rotate**: Enable or disable tilting building pieces left/right.
-- **Rename Character**: Change your character's display name.
-- **Save Game**: Force an immediate save of your game world.
 
 ### Tab 3: Environment
 
@@ -321,25 +325,34 @@ The Game Options tab in the F12 configuration menu includes a **Rename Character
 
 ## Multiplayer and Server Support
 
-The mod works in multiplayer and includes support for dedicated servers.
+The mod is fully multiplayer-aware and includes dedicated server support. All players on a server can use the mod's features — fly mode, replenish, building, and rotation all work regardless of whether you are the host or a connected client.
 
-### For Server Hosts
+### For Server Operators
 
-The installer includes an option to create a **server deployment folder** that contains everything a dedicated server needs:
+The installer includes an option to create a **server deployment folder** with everything a dedicated server needs:
 
+- The mod DLL and UE4SS framework
 - A Cheat Manager Enabler mod (for admin commands)
 - A Console Enabler mod (for server console access)
 - Shared utility libraries
-- A Game Mods configuration file
+- A Game Mods configuration file with all definition packs
 - A server-specific README with setup instructions
+
+To deploy, simply copy the `Win64/` folder contents from the server package into your server's `Moria/Binaries/Win64/` directory.
 
 ### Automatic Server Detection
 
-When running on a dedicated server (headless, with no display), the mod automatically detects the server environment and skips all visual features (toolbars, overlays, UI panels) that wouldn't work without a screen. The game modification packs and server-side features continue to work normally.
+When running on a dedicated server (headless, no display), the mod automatically detects the server environment and skips all visual features (toolbars, overlays, UI panels). Server-side features continue to work:
 
-### Fly Mode on Servers
+- **Definition packs** apply DataTable changes on the server so all clients see consistent game data.
+- **Fly mode authority** — the server sets movement-authority flags on all player pawns, allowing any connected client to fly without being corrected back to the ground.
+- **HISM environment replay** — environment removals are replayed server-side so geometry is consistent for all clients.
 
-The fly mode feature includes special handling for multiplayer. It sets the necessary movement authority flags so that the server accepts the client's position while flying, preventing the rubber-banding that would normally occur when a player moves in ways the server doesn't expect.
+### How Fly Mode Works in Multiplayer
+
+Each player's mod instance handles the client-side fly (setting movement mode, visual state). The server-side mod (running on the host or dedicated server) sets two flags on every player's movement component — `bIgnoreClientMovementErrorChecksAndCorrection` and `bServerAcceptClientAuthoritativePosition` — which tell the server to accept the client's reported position without correction. This is what prevents rubber-banding.
+
+On a listen server (you hosting), the mod on your machine handles both roles. On a dedicated server, the mod running on the server handles the authority flags, and each client's mod handles the visual fly state.
 
 ---
 
