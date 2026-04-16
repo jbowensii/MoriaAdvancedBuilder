@@ -1,4 +1,4 @@
-// MoriaCppMod v6.3.9 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
+// MoriaCppMod v6.4.0 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -487,14 +487,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.3.9");
+            ModVersion = STR("6.4.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.3.9\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.4.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -516,15 +516,26 @@ namespace MoriaMods
             // Resolve UE4SS working directory for all file I/O (process CWD may differ)
             {
                 auto wd = UE4SSProgram::get_program().get_working_directory();
-                // Safe wchar_t→char conversion (paths are ASCII)
+                // Convert wchar_t path to UTF-8 std::string.
+                // The old static_cast<char> approach truncated Unicode characters —
+                // the ™ in Steam's folder name (U+2122) became 0x22 (double-quote),
+                // corrupting the path and silently breaking ALL file I/O.
                 s_ue4ssWorkDir.clear();
-                for (auto ch : wd) s_ue4ssWorkDir += static_cast<char>(ch);
+                if (!wd.empty())
+                {
+                    int needed = WideCharToMultiByte(CP_UTF8, 0, wd.c_str(), static_cast<int>(wd.size()), nullptr, 0, nullptr, nullptr);
+                    if (needed > 0)
+                    {
+                        s_ue4ssWorkDir.resize(needed);
+                        WideCharToMultiByte(CP_UTF8, 0, wd.c_str(), static_cast<int>(wd.size()), s_ue4ssWorkDir.data(), needed, nullptr, nullptr);
+                    }
+                }
                 if (!s_ue4ssWorkDir.empty() && s_ue4ssWorkDir.back() != '\\' && s_ue4ssWorkDir.back() != '/')
                     s_ue4ssWorkDir += '/';
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.3.9 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.4.0 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -1036,7 +1047,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.3.9: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v6.4.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
