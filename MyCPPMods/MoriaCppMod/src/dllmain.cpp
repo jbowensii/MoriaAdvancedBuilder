@@ -1,4 +1,4 @@
-// MoriaCppMod v6.4.0 — Return to Moria UE4SS C++ mod (~15,300 lines across dllmain.cpp + 11 .inl files)
+// MoriaCppMod v6.4.1 — Return to Moria UE4SS C++ mod (~15,500 lines across dllmain.cpp + 12 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -230,8 +230,18 @@ namespace MoriaMods
 
         #include "moria_stability.inl"
 
+        #include "moria_unlock.inl"
+
 
         static inline MoriaCppMod* s_instance{nullptr};
+
+        // v6.4.1 — Recipe unlock queue state (drained by main tick at UNLOCK_BATCH_SIZE/frame)
+        static constexpr int UNLOCK_BATCH_SIZE = 50;
+        std::vector<std::wstring> m_unlockQueue;
+        UObject*   m_unlockDiscoveryMgr{nullptr};
+        UFunction* m_unlockDiscoverRecipeFn{nullptr};
+        int m_unlockTotal{0};
+        int m_unlockProcessed{0};
 
 
         static constexpr int QUICK_BUILD_SLOTS = 12;
@@ -487,14 +497,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.4.0");
+            ModVersion = STR("6.4.1");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.4.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.4.1\n"));
         }
 
         ~MoriaCppMod() override
@@ -535,7 +545,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.4.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.4.1 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -630,6 +640,22 @@ namespace MoriaMods
 
 
             register_keydown_event(Input::Key::NUM_SEVEN, [this]() { if (m_ftVisible) return; createModControllerBar(); });
+
+            // v6.4.1 — Unlock all available recipes (filters disabled/dev/test/WIP/DLC-gated).
+            // Uses the game's own DiscoverRecipe UFUNCTION per recipe, paced 50/frame through the
+            // main tick's drainUnlockQueue() — avoids the FFastArraySerializer burst-flood that
+            // breaks worlds with the built-in cheat menu's bulk snapshot.
+            register_keydown_event(Input::Key::U, {Input::ModifierKey::CONTROL, Input::ModifierKey::SHIFT}, [this]() {
+                if (m_ftVisible) return;
+                unlockAllAvailableRecipes();
+            });
+
+            // v6.4.1 — Mark all lore as read (clears "NEW!" badges and nag prompts).
+            // Calls the game's own Blueprint MarkAllRead() on the live WBP_LoreScreen_v2_C instance.
+            register_keydown_event(Input::Key::L, {Input::ModifierKey::CONTROL, Input::ModifierKey::SHIFT}, [this]() {
+                if (m_ftVisible) return;
+                markAllLoreRead();
+            });
 
             // Pitch/Roll rotation — uses keybind system (BIND_PITCH_ROTATE, BIND_ROLL_ROTATE)
             // Registered dynamically after config load via registerPitchRollKeys()
@@ -1047,7 +1073,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.4.0: F1-F8=build | F9=rotate | F12=config | MC toolbar + AB bar\n"));
+                    STR("[MoriaCppMod] v6.4.1: F1-F8=build | F9=rotate | F12=config | Ctrl+Shift+U=unlock recipes | Ctrl+Shift+L=mark lore read\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -2553,6 +2579,7 @@ namespace MoriaMods
 
             placementTick();
             tickPitchRoll();
+            drainUnlockQueue();  // v6.4.1 — process 50 recipe-discovery calls per frame (no-op when queue empty)
 
             if (!m_replayActive) return;
             m_frameCounter++;
