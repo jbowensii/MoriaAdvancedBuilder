@@ -702,8 +702,8 @@
             if (!m_typeRemovals.count(meshId))
             {
                 m_typeRemovals.insert(meshId);
-                std::ofstream file(m_saveFilePath, std::ios::app);
-                if (file.is_open()) file << "@" << meshId << "\n";
+                std::ofstream file = openOutputFile(m_saveFilePath, std::ios::app);
+                if (file.is_open()) file << formatTypeRuleJson(meshId) << "\n";
                 buildRemovalEntries();
             }
 

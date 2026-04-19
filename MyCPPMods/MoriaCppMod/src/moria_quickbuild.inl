@@ -35,7 +35,7 @@
 
         void saveQuickBuildSlots()
         {
-            std::ofstream file(modPath("Mods/MoriaCppMod/quickbuild_slots.txt"), std::ios::trunc);
+            std::ofstream file = openOutputFile(modPath("Mods/MoriaCppMod/quickbuild_slots.txt"), std::ios::trunc);
             if (!file.is_open()) { VLOG(STR("[MoriaCppMod] saveQuickBuildSlots: failed to open file for writing\n")); return; }
             file << "# MoriaCppMod quick-build slots (F1-F8)\n";
             file << "# slot|displayName|textureName|rowName\n";
@@ -56,7 +56,7 @@
 
         void loadQuickBuildSlots()
         {
-            std::ifstream file(modPath("Mods/MoriaCppMod/quickbuild_slots.txt"));
+            std::ifstream file = openInputFile(modPath("Mods/MoriaCppMod/quickbuild_slots.txt"));
             if (!file.is_open()) { VLOG(STR("[MoriaCppMod] loadQuickBuildSlots: file not found or unreadable\n")); return; }
             std::string line;
             int loaded = 0;
@@ -82,7 +82,7 @@
 
         void saveConfig()
         {
-            std::ofstream file(iniPath(), std::ios::trunc);
+            std::ofstream file = openOutputFile(iniPath(), std::ios::trunc);
             if (!file.is_open()) { VLOG(STR("[MoriaCppMod] saveConfig: failed to open INI for writing\n")); return; }
 
             file << "; MoriaCppMod Configuration\n";
@@ -140,7 +140,7 @@
 
         void loadConfig()
         {
-            std::ifstream file(iniPath());
+            std::ifstream file = openInputFile(iniPath());
             if (file.is_open())
             {
                 std::string section;
@@ -275,7 +275,7 @@
             }
 
 
-            std::ifstream oldFile(oldKeybindPath());
+            std::ifstream oldFile = openInputFile(oldKeybindPath());
             if (oldFile.is_open())
             {
                 std::string line;
@@ -297,7 +297,7 @@
                 VLOG(STR("[MoriaCppMod] Migrated {} keybindings from keybindings.txt\n"), loaded);
 
                 saveConfig();
-                std::rename(oldKeybindPath().c_str(), modPath("Mods/MoriaCppMod/keybindings.txt.bak").c_str());
+                renameUtf8Path(oldKeybindPath(), modPath("Mods/MoriaCppMod/keybindings.txt.bak"));
                 return;
             }
 

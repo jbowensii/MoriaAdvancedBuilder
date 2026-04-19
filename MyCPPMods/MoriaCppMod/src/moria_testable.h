@@ -40,6 +40,44 @@ namespace MoriaMods
         return out;
     }
 
+    // v6.4.3 — Wide-path file I/O helpers. Windows std::ifstream/ofstream interpret
+    // const char* paths as the active code page (CP_ACP / CP_1252), NOT UTF-8. Steam's
+    // folder name "Return to Moria™" produces UTF-8 bytes 0xE2 0x84 0xA2 that decode as
+    // garbage in CP_1252, so file-open silently fails. Convert UTF-8 → UTF-16 and use the
+    // Microsoft wchar_t* overloads to route through the wide Windows file API instead.
+    inline std::wstring utf8PathToWide(const std::string& utf8Path)
+    {
+        if (utf8Path.empty()) return {};
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(),
+                                       static_cast<int>(utf8Path.size()), nullptr, 0);
+        if (wlen <= 0) return std::wstring(utf8Path.begin(), utf8Path.end()); // ASCII fallback
+        std::wstring out(static_cast<size_t>(wlen), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(),
+                            static_cast<int>(utf8Path.size()), out.data(), wlen);
+        return out;
+    }
+
+    inline std::ifstream openInputFile(const std::string& utf8Path,
+                                       std::ios_base::openmode mode = std::ios::in)
+    {
+        std::wstring w = utf8PathToWide(utf8Path);
+        return std::ifstream(w.c_str(), mode);
+    }
+
+    inline std::ofstream openOutputFile(const std::string& utf8Path,
+                                        std::ios_base::openmode mode = std::ios::out)
+    {
+        std::wstring w = utf8PathToWide(utf8Path);
+        return std::ofstream(w.c_str(), mode);
+    }
+
+    inline bool renameUtf8Path(const std::string& fromUtf8, const std::string& toUtf8)
+    {
+        std::wstring wf = utf8PathToWide(fromUtf8);
+        std::wstring wt = utf8PathToWide(toUtf8);
+        return _wrename(wf.c_str(), wt.c_str()) == 0;
+    }
+
     struct SavedRemoval
     {
         std::string meshName;
@@ -86,7 +124,7 @@ namespace MoriaMods
 
         static bool parseJsonFile(const std::string& path)
         {
-            std::ifstream file(path, std::ios::binary);
+            std::ifstream file = openInputFile(path, std::ios::binary);
             if (!file.is_open()) return false;
             std::string json((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
             file.close();

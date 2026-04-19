@@ -315,7 +315,7 @@ static std::vector<std::string> listFiles(const std::string& dir, const std::str
 
 static std::string readFileToString(const std::string& path)
 {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f = openInputFile(path, std::ios::binary);
     if (!f.is_open()) return "";
     std::ostringstream ss;
     ss << f.rdbuf();
@@ -326,7 +326,7 @@ static std::string readFileToString(const std::string& path)
 DefManifest parseManifest(const std::string& iniPath, const std::string& defBaseDir)
 {
     DefManifest manifest;
-    std::ifstream file(iniPath);
+    std::ifstream file = openInputFile(iniPath);
     if (!file.is_open()) return manifest;
 
     std::string section;
@@ -1559,7 +1559,7 @@ std::vector<GameModEntry> discoverGameMods()
 
     std::unordered_map<std::string, bool> enabledMap;
     {
-        std::ifstream file(gameModsIniPath());
+        std::ifstream file = openInputFile(gameModsIniPath());
         if (file.is_open())
         {
             std::string section, line;
@@ -1611,7 +1611,7 @@ std::vector<GameModEntry> discoverGameMods()
 
 void saveGameMods(const std::vector<GameModEntry>& entries)
 {
-    std::ofstream file(gameModsIniPath(), std::ios::trunc);
+    std::ofstream file = openOutputFile(gameModsIniPath(), std::ios::trunc);
     if (!file.is_open())
     {
         RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Failed to write Mods/GameMods.ini\n"));
@@ -1630,7 +1630,7 @@ void saveGameMods(const std::vector<GameModEntry>& entries)
 static std::vector<std::string> readEnabledMods(const std::string& gameModsPath)
 {
     std::vector<std::string> enabled;
-    std::ifstream file(gameModsPath);
+    std::ifstream file = openInputFile(gameModsPath);
     if (!file.is_open()) return enabled;
 
     std::string section;
@@ -1688,7 +1688,7 @@ void loadAndApplyDefinitions()
     {
 
         std::string iniPath = definitionsDir() + "\\" + modName + ".ini";
-        std::ifstream testFile(iniPath);
+        std::ifstream testFile = openInputFile(iniPath);
         if (!testFile.is_open())
         {
             RC::Output::send<RC::LogLevel::Warning>(

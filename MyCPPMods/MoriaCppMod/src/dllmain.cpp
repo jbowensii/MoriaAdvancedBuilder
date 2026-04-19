@@ -1,4 +1,4 @@
-// MoriaCppMod v6.4.2 — Return to Moria UE4SS C++ mod (~16,000 lines across dllmain.cpp + 12 .inl files)
+// MoriaCppMod v6.4.3 — Return to Moria UE4SS C++ mod (~16,000 lines across dllmain.cpp + 12 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -89,7 +89,7 @@ namespace MoriaMods
         {
             m_savedRemovals.clear();
             m_typeRemovals.clear();
-            std::ifstream file(m_saveFilePath);
+            std::ifstream file = openInputFile(m_saveFilePath);
             if (!file.is_open())
             {
                 VLOG(STR("[MoriaCppMod] No save file found (first run)\n"));
@@ -155,14 +155,14 @@ namespace MoriaMods
 
         void appendToSaveFile(const SavedRemoval& sr)
         {
-            std::ofstream file(m_saveFilePath, std::ios::app);
+            std::ofstream file = openOutputFile(m_saveFilePath, std::ios::app);
             if (!file.is_open()) return;
             file << formatRemovalJson(sr) << "\n";
         }
 
         void rewriteSaveFile()
         {
-            std::ofstream file(m_saveFilePath, std::ios::trunc);
+            std::ofstream file = openOutputFile(m_saveFilePath, std::ios::trunc);
             if (!file.is_open()) return;
             file << "# MoriaCppMod removed instances (JSON Lines format, v6.4.2+)\n";
             file << "# One JSON object per line. Lines starting with # are comments.\n";
@@ -178,7 +178,7 @@ namespace MoriaMods
         void buildRemovalEntries()
         {
             std::vector<RemovalEntry> entries;
-            std::ifstream file(m_saveFilePath);
+            std::ifstream file = openInputFile(m_saveFilePath);
             if (file.is_open())
             {
                 std::string line;
@@ -543,14 +543,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.4.2");
+            ModVersion = STR("6.4.3");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.4.2\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.4.3\n"));
         }
 
         ~MoriaCppMod() override
@@ -591,7 +591,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.4.2 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.4.3 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -1107,7 +1107,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.4.2: F1-F8=build | F9=rotate | F12=config (Cheats + Tweaks tabs, JSON removal storage)\n"));
+                    STR("[MoriaCppMod] v6.4.3: F1-F8=build | F9=rotate | F12=config (Steam path ™ fix — file I/O now works on all installs)\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread

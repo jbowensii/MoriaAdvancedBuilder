@@ -77,6 +77,9 @@ namespace MoriaMods
         return s_ue4ssWorkDir + relativePath;
     }
 
+    // v6.4.3 Steam ™ path fix — openInputFile / openOutputFile / renameUtf8Path helpers
+    // are defined in moria_testable.h (which is included above), before anything that needs them.
+
     #define VLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
 
     #define QUICKBUILD_LOGGING 1
