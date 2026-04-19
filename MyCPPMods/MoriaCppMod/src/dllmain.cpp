@@ -1,4 +1,4 @@
-// MoriaCppMod v6.4.3 — Return to Moria UE4SS C++ mod (~16,000 lines across dllmain.cpp + 12 .inl files)
+// MoriaCppMod v6.4.4 — Return to Moria UE4SS C++ mod (~16,000 lines across dllmain.cpp + 12 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -543,14 +543,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.4.3");
+            ModVersion = STR("6.4.4");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.4.3\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.4.4\n"));
         }
 
         ~MoriaCppMod() override
@@ -591,8 +591,27 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.4.3 (workDir={})\n"),
-                 std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
+            VLOG(STR("[MoriaCppMod] Loaded v6.4.4 (workDir={})\n"),
+                 utf8PathToWide(s_ue4ssWorkDir));
+
+            // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
+            // These tell the user exactly which paths the mod is trying to read and whether
+            // they exist. If the log shows a path containing â„¢ or other mangled chars, the
+            // wide-path fix didn't take effect (wrong DLL loaded, or Windows still coerced).
+            {
+                std::string gmIni = modPath("Mods/GameMods.ini");
+                std::string defs  = modPath("Mods/MoriaCppMod/definitions");
+                DWORD gmAttr = GetFileAttributesW(utf8PathToWide(gmIni).c_str());
+                DWORD dfAttr = GetFileAttributesW(utf8PathToWide(defs).c_str());
+                VLOG(STR("[MoriaCppMod] [Diag] GameMods.ini path = '{}' (attrs={:#x})\n"),
+                     utf8PathToWide(gmIni), gmAttr);
+                VLOG(STR("[MoriaCppMod] [Diag] definitions dir  = '{}' (attrs={:#x})\n"),
+                     utf8PathToWide(defs), dfAttr);
+                if (gmAttr == INVALID_FILE_ATTRIBUTES)
+                    VLOG(STR("[MoriaCppMod] [Diag] GameMods.ini NOT found (GLE={})\n"), GetLastError());
+                if (dfAttr == INVALID_FILE_ATTRIBUTES)
+                    VLOG(STR("[MoriaCppMod] [Diag] definitions dir NOT found (GLE={})\n"), GetLastError());
+            }
 
 
             Loc::load(modPath("Mods/MoriaCppMod/localization/"), s_language);
@@ -1107,7 +1126,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.4.3: F1-F8=build | F9=rotate | F12=config (Steam path ™ fix — file I/O now works on all installs)\n"));
+                    STR("[MoriaCppMod] v6.4.4: F1-F8=build | F9=rotate | F12=config (Steam path ™ fix — all file + directory enumeration now UTF-16)\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread

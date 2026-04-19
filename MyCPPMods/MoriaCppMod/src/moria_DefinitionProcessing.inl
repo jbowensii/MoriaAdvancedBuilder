@@ -295,19 +295,41 @@ static XmlElement xmlParse(const std::string& xml)
 
 static std::vector<std::string> listFiles(const std::string& dir, const std::string& pattern = "*")
 {
+    // v6.4.3 (hotfix) — use wide Windows API. FindFirstFileA interprets the path as the
+    // active code page, which mangles UTF-8 bytes like the ™ in Steam's folder name.
     std::vector<std::string> files;
-    WIN32_FIND_DATAA fd;
-    std::string searchPath = dir;
-    if (!searchPath.empty() && searchPath.back() != '\\' && searchPath.back() != '/') searchPath += '\\';
-    searchPath += pattern;
+    WIN32_FIND_DATAW fd;
+    std::string searchPathUtf8 = dir;
+    if (!searchPathUtf8.empty() && searchPathUtf8.back() != '\\' && searchPathUtf8.back() != '/')
+        searchPathUtf8 += '\\';
+    searchPathUtf8 += pattern;
+    std::wstring searchPathW = utf8PathToWide(searchPathUtf8);
 
-    HANDLE hFind = FindFirstFileA(searchPath.c_str(), &fd);
-    if (hFind == INVALID_HANDLE_VALUE) return files;
+    HANDLE hFind = FindFirstFileW(searchPathW.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE)
+    {
+        DWORD err = GetLastError();
+        VLOG(STR("[MoriaCppMod] [Def] listFiles '{}' FindFirstFileW failed (GLE={})\n"),
+             std::wstring(searchPathUtf8.begin(), searchPathUtf8.end()), err);
+        return files;
+    }
     do
     {
         if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
-            files.emplace_back(fd.cFileName);
-    } while (FindNextFileA(hFind, &fd));
+        {
+            // Convert the wide filename back to UTF-8 for our std::string-based API
+            std::wstring nameW(fd.cFileName);
+            int ulen = WideCharToMultiByte(CP_UTF8, 0, nameW.c_str(), (int)nameW.size(),
+                                           nullptr, 0, nullptr, nullptr);
+            if (ulen > 0)
+            {
+                std::string nameU(ulen, '\0');
+                WideCharToMultiByte(CP_UTF8, 0, nameW.c_str(), (int)nameW.size(),
+                                    nameU.data(), ulen, nullptr, nullptr);
+                files.emplace_back(std::move(nameU));
+            }
+        }
+    } while (FindNextFileW(hFind, &fd));
     FindClose(hFind);
     return files;
 }
@@ -1663,8 +1685,10 @@ void loadAndApplyDefinitions()
     }
 
 
-    WIN32_FIND_DATAA fd;
-    HANDLE hTest = FindFirstFileA((definitionsDir() + "\\*").c_str(), &fd);
+    // v6.4.3 (hotfix) — wide API for Steam ™ path compatibility
+    WIN32_FIND_DATAW fd;
+    std::wstring testPathW = utf8PathToWide(definitionsDir() + "\\*");
+    HANDLE hTest = FindFirstFileW(testPathW.c_str(), &fd);
     if (hTest == INVALID_HANDLE_VALUE)
     {
         VLOG(STR("[MoriaCppMod] [Def] No definitions directory found at Mods/MoriaCppMod/definitions/\n"));
