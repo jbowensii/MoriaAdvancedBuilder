@@ -3059,7 +3059,7 @@
                     UObject* slot = addToHBox(contentHBox, tabVBox);
                     if (slot) umgSetSlotPadding(slot, 2.5f, 10.0f, 2.5f, 0.0f);
 
-                    const wchar_t* tabNames[] = { L"Key Bindings", L"Game Options", L"Environment", L"Game Mods" };
+                    const wchar_t* tabNames[] = { L"Key Bindings", L"Game Options", L"Environment", L"Game Mods", L"Cheats", L"Tweaks" };
                     for (int i = 0; i < CONFIG_TAB_COUNT; i++)
                     {
                         FStaticConstructObjectParameters olTabP(overlayClass, outer);
@@ -3694,6 +3694,423 @@
                         }
 
 
+                        // v6.4.1 — Cheats tab (index 4). Two action buttons styled exactly like
+                        // the Rename Character / Save Game buttons in the Game Options tab:
+                        //   HBox: [Label stretched, pad L=92 T=24 B=24 VAlign=Center]
+                        //         [ texKeyBox overlay 400x128 with centered bold text, pad R=50 ]
+                        if (m_ftTabContent[4])
+                        {
+                            UObject* t4 = m_ftTabContent[4];
+
+                            // Helper lambda: build one action row matching SAVE NOW / RENAME pattern.
+                            auto makeCheatRow = [&](const wchar_t* rowLabel, const wchar_t* btnText,
+                                                    float btnR, float btnG, float btnB, float btnA,
+                                                    UObject*& outBtnImg) {
+                                FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                UObject* row = UObjectGlobals::StaticConstructObject(rowP);
+                                if (!row) return;
+
+                                UObject* label = makeTB(rowLabel, 0.86f, 0.90f, 0.96f, 0.85f, 24);
+                                if (label)
+                                {
+                                    UObject* ls = addToHBox(row, label);
+                                    if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 92.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
+                                }
+
+                                if (texKeyBox)
+                                {
+                                    FStaticConstructObjectParameters kbOlP(overlayClass, outer);
+                                    UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
+                                    if (kbOl)
+                                    {
+                                        FStaticConstructObjectParameters kbImgP(imageClass, outer);
+                                        UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
+                                        if (kbImg)
+                                        {
+                                            umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn);
+                                            umgSetBrushSize(kbImg, 400.0f, 128.0f);
+                                            addToOverlay(kbOl, kbImg);
+                                            outBtnImg = kbImg;
+                                        }
+                                        UObject* kbLabel = makeTB(btnText, btnR, btnG, btnB, btnA, 24);
+                                        if (kbLabel)
+                                        {
+                                            umgSetBold(kbLabel);
+                                            UObject* ks = addToOverlay(kbOl, kbLabel);
+                                            if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); }
+                                        }
+                                        UObject* kbSlot = addToHBox(row, kbOl);
+                                        if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 50.0f, 0.0f);
+                                    }
+                                }
+
+                                addToVBox(t4, row);
+                            };
+
+                            // UNLOCK button colored like RENAME (gold)
+                            makeCheatRow(STR("Unlock Recipes"), STR("UNLOCK"),
+                                         0.9f, 0.75f, 0.2f, 1.0f, m_ftCheatsUnlockBtnImg);
+
+                            // READ button colored like SAVE NOW (green)
+                            makeCheatRow(STR("Read All"), STR("READ"),
+                                         0.31f, 0.78f, 0.47f, 1.0f, m_ftCheatsReadBtnImg);
+
+                            // Peace Mode toggle row — checkbox on left, label, dynamic PEACE/FIGHT button
+                            {
+                                FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                UObject* pmRow = UObjectGlobals::StaticConstructObject(rowP);
+                                if (pmRow)
+                                {
+                                    // Checkbox overlay (diamond background + optional check mark)
+                                    if (texCB)
+                                    {
+                                        FStaticConstructObjectParameters olP(overlayClass, outer);
+                                        UObject* cbOl = UObjectGlobals::StaticConstructObject(olP);
+                                        if (cbOl)
+                                        {
+                                            FStaticConstructObjectParameters imgP(imageClass, outer);
+                                            UObject* cbBg = UObjectGlobals::StaticConstructObject(imgP);
+                                            if (cbBg) { umgSetBrushNoMatch(cbBg, texCB, setBrushFn); umgSetBrushSize(cbBg, 80.0f, 80.0f); addToOverlay(cbOl, cbBg); }
+                                            if (texCheck)
+                                            {
+                                                FStaticConstructObjectParameters chkP(imageClass, outer);
+                                                UObject* chkImg = UObjectGlobals::StaticConstructObject(chkP);
+                                                if (chkImg)
+                                                {
+                                                    umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
+                                                    umgSetBrushSize(chkImg, 80.0f, 80.0f);
+                                                    addToOverlay(cbOl, chkImg);
+                                                    m_ftPeaceCheckImg = chkImg;
+                                                    // Start hidden if peace mode is off
+                                                    auto* visFn = chkImg->GetFunctionByNameInChain(STR("SetVisibility"));
+                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = m_peaceModeEnabled ? 0 : 1; safeProcessEvent(chkImg, visFn, vp); }
+                                                }
+                                            }
+                                            m_ftPeaceCheckBoxOl = cbOl;
+                                            UObject* cbSlot = addToHBox(pmRow, cbOl);
+                                            if (cbSlot) umgSetSlotPadding(cbSlot, 4.0f, 24.0f, 8.0f, 24.0f);
+                                        }
+                                    }
+
+                                    // Label
+                                    UObject* pmLabel = makeTB(STR("Peace Mode"), 0.86f, 0.90f, 0.96f, 1.0f, 24);
+                                    if (pmLabel)
+                                    {
+                                        UObject* ls = addToHBox(pmRow, pmLabel);
+                                        if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 0.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
+                                    }
+
+                                    // Button: PEACE (green) when enabled, FIGHT (red/orange) when disabled
+                                    if (texKeyBox)
+                                    {
+                                        FStaticConstructObjectParameters kbOlP(overlayClass, outer);
+                                        UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
+                                        if (kbOl)
+                                        {
+                                            FStaticConstructObjectParameters kbImgP(imageClass, outer);
+                                            UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
+                                            if (kbImg)
+                                            {
+                                                umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn);
+                                                umgSetBrushSize(kbImg, 400.0f, 128.0f);
+                                                addToOverlay(kbOl, kbImg);
+                                                m_ftPeaceBtnImg = kbImg;
+                                            }
+                                            bool on = m_peaceModeEnabled;
+                                            UObject* kbLabel = makeTB(on ? L"PEACE" : L"FIGHT",
+                                                                       on ? 0.31f : 0.9f,
+                                                                       on ? 0.86f : 0.45f,
+                                                                       on ? 0.47f : 0.25f,
+                                                                       1.0f, 24);
+                                            if (kbLabel)
+                                            {
+                                                umgSetBold(kbLabel);
+                                                m_ftPeaceBtnLabel = kbLabel;
+                                                UObject* ks = addToOverlay(kbOl, kbLabel);
+                                                if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); }
+                                            }
+                                            UObject* kbSlot = addToHBox(pmRow, kbOl);
+                                            if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 50.0f, 0.0f);
+                                        }
+                                    }
+
+                                    addToVBox(t4, pmRow);
+                                }
+                            }
+
+                            // v6.4.1 — populate the cheat entries table (Clear All + categories + toggles)
+                            // IMPORTANT: m_buffStates persists across F12 open/close cycles so toggles
+                            // stay "on" when the player reopens the panel. Only widget-ref arrays
+                            // (which point to freshly-built widgets) are reset each rebuild.
+                            int nEntries = 0;
+                            const CheatEntry* entries = cheatEntries(nEntries);
+                            if ((int)m_buffStates.size() != nEntries)
+                                m_buffStates.assign(nEntries, false);
+                            m_ftBuffCheckImgs.assign(nEntries, nullptr);
+                            m_ftBuffBtnLabels.assign(nEntries, nullptr);
+                            m_buffRowTopYs.assign(nEntries, 0);
+                            m_buffRowHeights.assign(nEntries, 0);
+
+                            // Running Y offset within the tab content (relative to top of cheat entries block,
+                            // which itself lives at Y=384 past the 3 existing rows).
+                            int yCursor = 384;  // Unlock(128) + Read(128) + Peace(128) = 384 px before this block
+
+                            for (int i = 0; i < nEntries; ++i)
+                            {
+                                const CheatEntry& e = entries[i];
+                                m_buffRowTopYs[i] = yCursor;
+
+                                if (e.kind == CheatRowKind::SectionHeader)
+                                {
+                                    int h = 80;
+                                    m_buffRowHeights[i] = h;
+
+                                    FStaticConstructObjectParameters secOlP(overlayClass, outer);
+                                    UObject* secOl = UObjectGlobals::StaticConstructObject(secOlP);
+                                    if (secOl)
+                                    {
+                                        if (texSectionBg)
+                                        {
+                                            FStaticConstructObjectParameters secImgP(imageClass, outer);
+                                            UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
+                                            if (secImg) { umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn); umgSetBrushSize(secImg, 900.0f, 80.0f); addToOverlay(secOl, secImg); }
+                                        }
+                                        UObject* secLabel = makeTB(e.label, 0.78f, 0.86f, 1.0f, 1.0f, 28);
+                                        if (secLabel) { umgSetBold(secLabel); UObject* ts = addToOverlay(secOl, secLabel); if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); } }
+                                        addToVBox(t4, secOl);
+                                    }
+                                    yCursor += h;
+                                }
+                                else if (e.kind == CheatRowKind::ClearAllBtn)
+                                {
+                                    int h = 128;
+                                    m_buffRowHeights[i] = h;
+
+                                    FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                    UObject* row = UObjectGlobals::StaticConstructObject(rowP);
+                                    if (row)
+                                    {
+                                        UObject* lbl = makeTB(e.label, 0.86f, 0.90f, 0.96f, 0.85f, 24);
+                                        if (lbl)
+                                        {
+                                            UObject* ls = addToHBox(row, lbl);
+                                            if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 92.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
+                                        }
+                                        if (texKeyBox)
+                                        {
+                                            FStaticConstructObjectParameters kbOlP(overlayClass, outer);
+                                            UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
+                                            if (kbOl)
+                                            {
+                                                FStaticConstructObjectParameters kbImgP(imageClass, outer);
+                                                UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
+                                                if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
+                                                UObject* kbLabel = makeTB(STR("CLEAR"), 0.95f, 0.4f, 0.4f, 1.0f, 24);
+                                                if (kbLabel) { umgSetBold(kbLabel); UObject* ks = addToOverlay(kbOl, kbLabel); if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); } }
+                                                UObject* kbSlot = addToHBox(row, kbOl);
+                                                if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 50.0f, 0.0f);
+                                            }
+                                        }
+                                        addToVBox(t4, row);
+                                    }
+                                    yCursor += h;
+                                }
+                                else  // BuffToggle — checkbox + label + ON/OFF button
+                                {
+                                    int h = 128;
+                                    m_buffRowHeights[i] = h;
+
+                                    FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                    UObject* row = UObjectGlobals::StaticConstructObject(rowP);
+                                    if (row)
+                                    {
+                                        // Checkbox overlay (diamond + optional check mark)
+                                        if (texCB)
+                                        {
+                                            FStaticConstructObjectParameters olP(overlayClass, outer);
+                                            UObject* cbOl = UObjectGlobals::StaticConstructObject(olP);
+                                            if (cbOl)
+                                            {
+                                                FStaticConstructObjectParameters imgP(imageClass, outer);
+                                                UObject* cbBg = UObjectGlobals::StaticConstructObject(imgP);
+                                                if (cbBg) { umgSetBrushNoMatch(cbBg, texCB, setBrushFn); umgSetBrushSize(cbBg, 80.0f, 80.0f); addToOverlay(cbOl, cbBg); }
+                                                if (texCheck)
+                                                {
+                                                    FStaticConstructObjectParameters chkP(imageClass, outer);
+                                                    UObject* chkImg = UObjectGlobals::StaticConstructObject(chkP);
+                                                    if (chkImg)
+                                                    {
+                                                        umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
+                                                        umgSetBrushSize(chkImg, 80.0f, 80.0f);
+                                                        addToOverlay(cbOl, chkImg);
+                                                        m_ftBuffCheckImgs[i] = chkImg;
+                                                        // Reflect current state (persisted across F12 rebuilds)
+                                                        auto* visFn = chkImg->GetFunctionByNameInChain(STR("SetVisibility"));
+                                                        if (visFn) { uint8_t vp[8]{}; vp[0] = m_buffStates[i] ? 0 : 1; safeProcessEvent(chkImg, visFn, vp); }
+                                                    }
+                                                }
+                                                UObject* cbSlot = addToHBox(row, cbOl);
+                                                if (cbSlot) umgSetSlotPadding(cbSlot, 4.0f, 24.0f, 8.0f, 24.0f);
+                                            }
+                                        }
+
+                                        // Label
+                                        UObject* lbl = makeTB(e.label, 0.86f, 0.90f, 0.96f, 1.0f, 24);
+                                        if (lbl)
+                                        {
+                                            UObject* ls = addToHBox(row, lbl);
+                                            if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 0.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
+                                        }
+
+                                        // ON/OFF button
+                                        if (texKeyBox)
+                                        {
+                                            FStaticConstructObjectParameters kbOlP(overlayClass, outer);
+                                            UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
+                                            if (kbOl)
+                                            {
+                                                FStaticConstructObjectParameters kbImgP(imageClass, outer);
+                                                UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
+                                                if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
+                                                bool bOn = m_buffStates[i];
+                                                UObject* kbLabel = makeTB(bOn ? STR("ON") : STR("OFF"),
+                                                                          bOn ? 0.31f : 0.7f,
+                                                                          bOn ? 0.86f : 0.3f,
+                                                                          bOn ? 0.47f : 0.3f, 1.0f, 24);
+                                                if (kbLabel)
+                                                {
+                                                    umgSetBold(kbLabel);
+                                                    m_ftBuffBtnLabels[i] = kbLabel;
+                                                    UObject* ks = addToOverlay(kbOl, kbLabel);
+                                                    if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); }
+                                                }
+                                                UObject* kbSlot = addToHBox(row, kbOl);
+                                                if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 50.0f, 0.0f);
+                                            }
+                                        }
+
+                                        addToVBox(t4, row);
+                                    }
+                                    yCursor += h;
+                                }
+                            }
+                            m_cheatsContentTotalHeight = yCursor;
+
+                            VLOG(STR("[MoriaCppMod] [Settings] Cheats tab populated ({} entries, {} px tall)\n"),
+                                 nEntries + 3, m_cheatsContentTotalHeight);
+                        }
+
+
+                        // v6.4.1 — Tweaks tab (index 5). Same row layout as Cheats: label + cycling value button.
+                        // Each row is 128 tall (button). Category headers are 80 tall.
+                        if (m_ftTabContent[5])
+                        {
+                            UObject* t5 = m_ftTabContent[5];
+
+                            int nTweaks = 0;
+                            const TweakEntry* tweaks = tweakEntries(nTweaks);
+
+                            // Persist cycle indices across F12 rebuilds; widget refs reset each rebuild.
+                            if ((int)m_tweakCurrentIdx.size() != nTweaks)
+                                m_tweakCurrentIdx.assign(nTweaks, 0);
+                            m_ftTweakBtnLabels.assign(nTweaks, nullptr);
+                            m_tweakRowTopYs.assign(nTweaks, 0);
+                            m_tweakRowHeights.assign(nTweaks, 0);
+
+                            int yCursor = 0;
+                            for (int i = 0; i < nTweaks; ++i)
+                            {
+                                const TweakEntry& e = tweaks[i];
+                                m_tweakRowTopYs[i] = yCursor;
+
+                                if (e.kind == TweakKind::SectionHeader)
+                                {
+                                    int h = 80;
+                                    m_tweakRowHeights[i] = h;
+                                    FStaticConstructObjectParameters secOlP(overlayClass, outer);
+                                    UObject* secOl = UObjectGlobals::StaticConstructObject(secOlP);
+                                    if (secOl)
+                                    {
+                                        if (texSectionBg)
+                                        {
+                                            FStaticConstructObjectParameters secImgP(imageClass, outer);
+                                            UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
+                                            if (secImg) { umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn); umgSetBrushSize(secImg, 900.0f, 80.0f); addToOverlay(secOl, secImg); }
+                                        }
+                                        UObject* secLabel = makeTB(e.label, 0.78f, 0.86f, 1.0f, 1.0f, 28);
+                                        if (secLabel) { umgSetBold(secLabel); UObject* ts = addToOverlay(secOl, secLabel); if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); } }
+                                        addToVBox(t5, secOl);
+                                    }
+                                    yCursor += h;
+                                }
+                                else  // TweakRow / SpecialNoCost / SpecialInstantCraft — label + cycling value button
+                                {
+                                    int h = 128;
+                                    m_tweakRowHeights[i] = h;
+                                    FStaticConstructObjectParameters rowP(hboxClass, outer);
+                                    UObject* row = UObjectGlobals::StaticConstructObject(rowP);
+                                    if (row)
+                                    {
+                                        UObject* lbl = makeTB(e.label, 0.86f, 0.90f, 0.96f, 0.85f, 24);
+                                        if (lbl)
+                                        {
+                                            UObject* ls = addToHBox(row, lbl);
+                                            if (ls) { umgSetSlotSize(ls, 1.0f, 1); umgSetSlotPadding(ls, 92.0f, 24.0f, 0.0f, 24.0f); umgSetVAlign(ls, 2); }
+                                        }
+
+                                        if (texKeyBox)
+                                        {
+                                            FStaticConstructObjectParameters kbOlP(overlayClass, outer);
+                                            UObject* kbOl = UObjectGlobals::StaticConstructObject(kbOlP);
+                                            if (kbOl)
+                                            {
+                                                FStaticConstructObjectParameters kbImgP(imageClass, outer);
+                                                UObject* kbImg = UObjectGlobals::StaticConstructObject(kbImgP);
+                                                if (kbImg) { umgSetBrushNoMatch(kbImg, texKeyBox, setBrushFn); umgSetBrushSize(kbImg, 400.0f, 128.0f); addToOverlay(kbOl, kbImg); }
+
+                                                // Initial button text based on current cycle index.
+                                                // Index 0 = DEFAULT (always). Otherwise format depends on kind.
+                                                int ci = m_tweakCurrentIdx[i];
+                                                if (ci < 0 || ci >= (int)e.cycleValues.size()) ci = 0;
+                                                bool isDef = (ci == 0);
+                                                int initVal = e.cycleValues.empty() ? 0 : e.cycleValues[ci];
+                                                wchar_t textBuf[32];
+                                                if (isDef)
+                                                    swprintf(textBuf, 32, L"DEFAULT");
+                                                else if (e.kind == TweakKind::SpecialNoCost ||
+                                                         e.kind == TweakKind::SpecialInstantCraft)
+                                                    swprintf(textBuf, 32, L"ON");
+                                                else if (e.isMultiplier)
+                                                    swprintf(textBuf, 32, L"%dx", initVal);
+                                                else
+                                                    swprintf(textBuf, 32, L"%d", initVal);
+
+                                                float r = isDef ? 0.7f  : 0.31f;
+                                                float g = isDef ? 0.7f  : 0.86f;
+                                                float b = isDef ? 0.55f : 0.47f;
+                                                UObject* kbLabel = makeTB(textBuf, r, g, b, 1.0f, 24);
+                                                if (kbLabel)
+                                                {
+                                                    umgSetBold(kbLabel);
+                                                    m_ftTweakBtnLabels[i] = kbLabel;
+                                                    UObject* ks = addToOverlay(kbOl, kbLabel);
+                                                    if (ks) { umgSetHAlign(ks, 2); umgSetVAlign(ks, 2); }
+                                                }
+                                                UObject* kbSlot = addToHBox(row, kbOl);
+                                                if (kbSlot) umgSetSlotPadding(kbSlot, 0.0f, 0.0f, 50.0f, 0.0f);
+                                            }
+                                        }
+                                        addToVBox(t5, row);
+                                    }
+                                    yCursor += h;
+                                }
+                            }
+
+                            VLOG(STR("[MoriaCppMod] [Settings] Tweaks tab populated ({} entries, {} px tall)\n"),
+                                 nTweaks, yCursor);
+                        }
+
+
                         UObject* tab0Content = m_ftTabContent[0];
                         const wchar_t* lastSection = nullptr;
                         for (int b = 0; b < BIND_COUNT; b++)
@@ -4002,6 +4419,91 @@
                 umgSetText(m_ftModBoxLabel, std::wstring(modifierName(s_modifierVK)));
         }
 
+
+        // v6.4.1 Tweaks tab: format the button text for a tweak row based on its current cycle index.
+        // Index 0 is always "DEFAULT". For other indices, format depends on kind.
+        void updateTweakRowUI(int idx)
+        {
+            if (idx < 0 || idx >= (int)m_tweakCurrentIdx.size()) return;
+            if (idx >= (int)m_ftTweakBtnLabels.size() || !m_ftTweakBtnLabels[idx]) return;
+
+            int count = 0;
+            const TweakEntry* all = tweakEntries(count);
+            if (idx >= count) return;
+            const TweakEntry& e = all[idx];
+            if (e.cycleValues.empty()) return;
+
+            int ci = m_tweakCurrentIdx[idx];
+            if (ci < 0 || ci >= (int)e.cycleValues.size()) ci = 0;
+            bool isDefault = (ci == 0);
+            int val = e.cycleValues[ci];
+
+            wchar_t text[32];
+            if (isDefault)
+            {
+                swprintf(text, 32, L"DEFAULT");
+            }
+            else if (e.kind == TweakKind::SpecialNoCost ||
+                     e.kind == TweakKind::SpecialInstantCraft)
+            {
+                swprintf(text, 32, L"ON");
+            }
+            else if (e.isMultiplier)
+            {
+                swprintf(text, 32, L"%dx", val);
+            }
+            else
+            {
+                swprintf(text, 32, L"%d", val);
+            }
+
+            umgSetText(m_ftTweakBtnLabels[idx], text);
+            if (isDefault)
+                umgSetTextColor(m_ftTweakBtnLabels[idx], 0.7f, 0.7f, 0.55f, 1.0f);
+            else
+                umgSetTextColor(m_ftTweakBtnLabels[idx], 0.31f, 0.86f, 0.47f, 1.0f);
+        }
+
+        // v6.4.1 Cheats tab: sync one buff row's checkbox icon + button text/color with m_buffStates[idx].
+        void updateBuffRowUI(int idx)
+        {
+            if (idx < 0 || idx >= (int)m_buffStates.size()) return;
+            bool on = m_buffStates[idx];
+            if (idx < (int)m_ftBuffCheckImgs.size() && m_ftBuffCheckImgs[idx])
+            {
+                auto* visFn = m_ftBuffCheckImgs[idx]->GetFunctionByNameInChain(STR("SetVisibility"));
+                if (visFn) { uint8_t p[8]{}; p[0] = on ? 0 : 1; safeProcessEvent(m_ftBuffCheckImgs[idx], visFn, p); }
+            }
+            if (idx < (int)m_ftBuffBtnLabels.size() && m_ftBuffBtnLabels[idx])
+            {
+                umgSetText(m_ftBuffBtnLabels[idx], on ? L"ON" : L"OFF");
+                umgSetTextColor(m_ftBuffBtnLabels[idx],
+                                on ? 0.31f : 0.7f,
+                                on ? 0.86f : 0.3f,
+                                on ? 0.47f : 0.3f, 1.0f);
+            }
+        }
+
+        // v6.4.1 Peace Mode: sync checkbox visibility + button text/color with m_peaceModeEnabled.
+        void updateFtPeaceMode()
+        {
+            bool on = m_peaceModeEnabled;
+            if (m_ftPeaceCheckImg)
+            {
+                auto* visFn = m_ftPeaceCheckImg->GetFunctionByNameInChain(STR("SetVisibility"));
+                if (visFn) { uint8_t p[8]{}; p[0] = on ? 0 : 1; safeProcessEvent(m_ftPeaceCheckImg, visFn, p); }
+            }
+            if (m_ftPeaceBtnLabel)
+            {
+                umgSetText(m_ftPeaceBtnLabel, on ? L"PEACE" : L"FIGHT");
+                // Green when PEACE on, red/orange when FIGHT (off)
+                umgSetTextColor(m_ftPeaceBtnLabel,
+                                on ? 0.31f : 0.9f,
+                                on ? 0.86f : 0.45f,
+                                on ? 0.47f : 0.25f,
+                                1.0f);
+            }
+        }
 
         void updateFtNoCollision()
         {

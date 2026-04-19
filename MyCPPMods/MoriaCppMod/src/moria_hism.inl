@@ -257,10 +257,12 @@
             {
                 m_currentBubbleName = newName;
                 m_currentBubbleId = newId;
+                m_currentBubble = bubble;  // v6.4.2 cache for local-coord math
                 VLOG(STR("[MoriaCppMod] [Bubble] Entered: '{}' (id={})\n"),
                      newName, std::wstring(newId.begin(), newId.end()));
                 return true;
             }
+            m_currentBubble = bubble;  // always refresh pointer even on same id (bubble reload)
             return false;
         }
 
@@ -277,10 +279,39 @@
             {
                 m_currentBubbleName = newName;
                 m_currentBubbleId = newId;
+                m_currentBubble = bubble;  // v6.4.2 cache
                 VLOG(STR("[MoriaCppMod] [Bubble] Event: entered '{}' (id={})\n"),
                      newName, std::wstring(newId.begin(), newId.end()));
                 m_processedComps.clear();
             }
+            else
+            {
+                m_currentBubble = bubble;  // refresh pointer
+            }
+        }
+
+        // v6.4.2 — Compute bubble-local coords from world coords by subtracting the current
+        // bubble's WorldTransform.Translation. FTransform layout in UE4.27:
+        //   0x00..0x0F FQuat Rotation    (16 bytes, SSE-aligned)
+        //   0x10..0x1F FVector Translation (12 bytes + 4 padding)
+        //   0x20..0x2F FVector Scale3D     (12 bytes + 4 padding)
+        // On UWorldLayoutBubble, WorldTransform starts at 0x0100 → Translation at 0x0110.
+        // Rotation/scale are assumed identity for bubbles; we only subtract the translation.
+        bool computeBubbleLocal(UObject* bubble, float wx, float wy, float wz,
+                                float& outLx, float& outLy, float& outLz)
+        {
+            outLx = wx; outLy = wy; outLz = wz;
+            if (!bubble || !isObjectAlive(bubble)) return false;
+            uint8_t* base = reinterpret_cast<uint8_t*>(bubble);
+            uint8_t* transAddr = base + 0x0110;
+            if (!isReadableMemory(transAddr, 12)) return false;
+            float tx = *reinterpret_cast<float*>(transAddr + 0);
+            float ty = *reinterpret_cast<float*>(transAddr + 4);
+            float tz = *reinterpret_cast<float*>(transAddr + 8);
+            outLx = wx - tx;
+            outLy = wy - ty;
+            outLz = wz - tz;
+            return true;
         }
 
         void migrateRemovalsToBubbles()
@@ -617,6 +648,9 @@
                         sr.posY = py;
                         sr.posZ = pz;
                         sr.bubbleId = m_currentBubbleId;
+                        sr.bubbleName = wideToUtf8(m_currentBubbleName);
+                        // v6.4.2 — capture bubble-local coords (relative to bubble origin)
+                        computeBubbleLocal(m_currentBubble, px, py, pz, sr.localX, sr.localY, sr.localZ);
                         m_savedRemovals.push_back(sr);
                         m_appliedRemovals.push_back(true);
                         appendToSaveFile(sr);

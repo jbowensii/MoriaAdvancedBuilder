@@ -1,3 +1,706 @@
+// moria_unlock.inl — Recipe unlock + read-history clear + buff toggles + peace mode (v6.4.1)
+
+        // v6.4.1 — Cheats tab buff entry data.
+        enum class CheatRowKind { ClearAllBtn, SectionHeader, BuffToggle };
+        struct CheatEntry {
+            CheatRowKind kind;
+            const wchar_t* label;
+            const wchar_t* effect1;  // nullptr if not applicable
+            const wchar_t* effect2;  // nullptr if only one effect
+        };
+
+        // Full catalogue of cheat entries beneath the existing Unlock/Read/PeaceMode rows.
+        // Kept in a single static table so the UI builder + click handler can iterate identically.
+        static const CheatEntry* cheatEntries(int& outCount)
+        {
+            static const CheatEntry entries[] = {
+                { CheatRowKind::ClearAllBtn,   STR("Clear All Buffs"),    STR("GE_DebugRemoveBuffs"),  STR("GE_ClearFoodBuffs") },
+
+                { CheatRowKind::SectionHeader, STR("God-Mode"),           nullptr, nullptr },
+                { CheatRowKind::BuffToggle,    STR("Ring of Power"),      STR("GE_DEV_RingOfPower"),            nullptr },
+                { CheatRowKind::BuffToggle,    STR("Boots of Speed"),     STR("GE_BootsOfDebugSpeed"),          nullptr },
+                { CheatRowKind::BuffToggle,    STR("No Fall Damage"),     STR("GE_FallDamageImmunity"),         nullptr },
+                { CheatRowKind::BuffToggle,    STR("Shadow Immunity"),    STR("GE_Darkness_Immunity"),          STR("GE_AntiShadowPoisonConsumable") },
+
+                { CheatRowKind::SectionHeader, STR("Environmental"),      nullptr, nullptr },
+                { CheatRowKind::BuffToggle,    STR("Warmth Buff"),        STR("GE_Warm"),                       nullptr },
+                { CheatRowKind::BuffToggle,    STR("Poison Immunity"),    STR("GE_AntiPoisonConsumable"),       nullptr },
+
+                { CheatRowKind::SectionHeader, STR("Survival"),           nullptr, nullptr },
+                { CheatRowKind::BuffToggle,    STR("No Hunger"),          STR("GE_Full"),                       nullptr },
+                { CheatRowKind::BuffToggle,    STR("Breakfast"),          STR("GE_Full_Breakfast"),             nullptr },
+                { CheatRowKind::BuffToggle,    STR("Second Breakfast"),   STR("GE_Full_SecondBreakfast"),       nullptr },
+                { CheatRowKind::BuffToggle,    STR("Lunch"),              STR("GE_Full_Lunch"),                 nullptr },
+                { CheatRowKind::BuffToggle,    STR("Dinner"),             STR("GE_Full_Dinner"),                nullptr },
+
+                { CheatRowKind::SectionHeader, STR("Attributes"),         nullptr, nullptr },
+                { CheatRowKind::BuffToggle,    STR("Health Regen"),       STR("GE_HealthBrewSip"),              STR("GE_RingHuntersOrc_PersistentHealingBuff") },
+                { CheatRowKind::BuffToggle,    STR("Stamina"),            STR("GE_StaminaBrewSip"),             STR("GE_StaminaBrew") },
+                { CheatRowKind::BuffToggle,    STR("Defense"),            STR("GE_DefenseBrewSip"),             nullptr },
+                { CheatRowKind::BuffToggle,    STR("Cold Immunity"),      STR("GE_FrostBrew"),                  nullptr },
+                { CheatRowKind::BuffToggle,    STR("Strength"),           STR("GE_BeornBrewEffects"),           nullptr },
+                { CheatRowKind::BuffToggle,    STR("Vitality"),           STR("GE_EntBrewEffects"),             nullptr },
+                { CheatRowKind::BuffToggle,    STR("Swiftness"),          STR("GE_RohanBrewEffects"),           nullptr },
+                { CheatRowKind::BuffToggle,    STR("Evening"),            STR("GE_EveningAleSip"),              nullptr },
+                { CheatRowKind::BuffToggle,    STR("Energy"),             STR("GE_EveningAle_ReplenishEnergyEffect"), nullptr },
+                { CheatRowKind::BuffToggle,    STR("Health"),             STR("GE_HealthBrew"),                 nullptr },
+                { CheatRowKind::BuffToggle,    STR("Defensive"),          STR("GE_DefensiveBrew"),              nullptr },
+
+                { CheatRowKind::SectionHeader, STR("Combat"),             nullptr, nullptr },
+                { CheatRowKind::BuffToggle,    STR("Damage"),             STR("GE_AttackBoost_Consumable"),     nullptr },
+                { CheatRowKind::BuffToggle,    STR("Damage Reduction"),   STR("GE_DefenseBoost_Consumable"),    nullptr },
+                { CheatRowKind::BuffToggle,    STR("Boost Stamina"),      STR("GE_StaminaBoost_Consumable"),    nullptr },
+                { CheatRowKind::BuffToggle,    STR("Free Dodge"),         STR("GE_FreeDodge_Consumable"),       nullptr },
+                { CheatRowKind::BuffToggle,    STR("Free Sprint"),        STR("GE_FreeSprint_Consumable"),      nullptr },
+
+                { CheatRowKind::SectionHeader, STR("Armor"),              nullptr, nullptr },
+                { CheatRowKind::BuffToggle,    STR("Armor Glow"),         STR("GE_Armor_Illuminate"),           nullptr },
+                { CheatRowKind::BuffToggle,    STR("Shield Glow"),        STR("GE_Shield_Illuminate"),          nullptr },
+                { CheatRowKind::BuffToggle,    STR("Rune Light"),         STR("GE_Rune_OnEquipLightEffect"),    nullptr },
+                { CheatRowKind::BuffToggle,    STR("Torch"),              STR("GE_Torch"),                      nullptr },
+            };
+            outCount = (int)(sizeof(entries) / sizeof(entries[0]));
+            return entries;
+        }
+
+        // v6.4.1 — Tweaks tab entries. Each row cycles through a preset list of integer values.
+        // Index 0 is always 0 == DEFAULT (restore originals). Multiplier tweaks interpret the
+        // remaining values as "N× original"; absolute tweaks use the value directly.
+        enum class TweakKind { SectionHeader, TweakRow, SpecialNoCost, SpecialInstantCraft };
+        struct TweakEntry
+        {
+            TweakKind kind;
+            const wchar_t* label;
+            const wchar_t* fieldName;        // property name inside row struct
+            bool isFloat;                    // false = int32, true = float
+            bool isMultiplier;               // true = original*value, false = absolute value
+            bool requiresOriginalGt1;        // only affect rows where original > 1 (MaxStack only)
+            const wchar_t* rowStructFilter;  // nullptr = any table with field; else require this exact struct
+            std::vector<int> cycleValues;    // [0]=0 DEFAULT; rest = target values (or multipliers)
+        };
+
+        static const TweakEntry* tweakEntries(int& outCount)
+        {
+            static const TweakEntry entries[] = {
+                { TweakKind::TweakRow, STR("Max Stack"), STR("MaxStackSize"),
+                  /*isFloat=*/false, /*isMult=*/false, /*gt1=*/true, /*filter=*/nullptr,
+                  {0, 99, 999, 9999} },
+
+                { TweakKind::TweakRow, STR("Trade Multiplier"), STR("BaseTradeValue"),
+                  /*isFloat=*/true, /*isMult=*/true, /*gt1=*/false, /*filter=*/nullptr,
+                  {0, 2, 3, 5, 10} },
+
+                { TweakKind::SectionHeader, STR("Weapons"), nullptr, false, false, false, nullptr, {} },
+
+                { TweakKind::TweakRow, STR("Durability"), STR("Durability"),
+                  /*isFloat=*/false, /*isMult=*/true, /*gt1=*/false,
+                  /*filter=*/STR("MorWeaponDefinition"),
+                  {0, 2, 5, 10} },
+
+                { TweakKind::TweakRow, STR("Damage"), STR("Damage"),
+                  /*isFloat=*/false, /*isMult=*/true, /*gt1=*/false,
+                  /*filter=*/STR("MorWeaponDefinition"),
+                  {0, 2} },
+
+                { TweakKind::TweakRow, STR("Speed"), STR("Speed"),
+                  /*isFloat=*/true, /*isMult=*/true, /*gt1=*/false,
+                  /*filter=*/STR("MorWeaponDefinition"),
+                  {0, 2} },
+
+                { TweakKind::SectionHeader, STR("Armor"), nullptr, false, false, false, nullptr, {} },
+
+                { TweakKind::TweakRow, STR("Durability"), STR("Durability"),
+                  /*isFloat=*/false, /*isMult=*/true, /*gt1=*/false,
+                  /*filter=*/STR("MorArmorDefinition"),
+                  {0, 2, 5, 10} },
+
+                { TweakKind::TweakRow, STR("Damage Reduction"), STR("DamageReduction"),
+                  /*isFloat=*/true, /*isMult=*/true, /*gt1=*/false,
+                  /*filter=*/STR("MorArmorDefinition"),
+                  {0, 2} },
+
+                { TweakKind::TweakRow, STR("Damage Protection"), STR("DamageProtection"),
+                  /*isFloat=*/true, /*isMult=*/true, /*gt1=*/false,
+                  /*filter=*/STR("MorArmorDefinition"),
+                  {0, 2, 5, 10} },
+
+                { TweakKind::SectionHeader, STR("Tools"), nullptr, false, false, false, nullptr, {} },
+
+                { TweakKind::TweakRow, STR("Durability"), STR("Durability"),
+                  /*isFloat=*/false, /*isMult=*/true, /*gt1=*/false,
+                  /*filter=*/STR("MorToolDefinition"),
+                  {0, 2, 5, 10} },
+
+                { TweakKind::TweakRow, STR("Stamina Cost"), STR("StaminaCost"),
+                  /*isFloat=*/true, /*isMult=*/false, /*gt1=*/false,
+                  /*filter=*/STR("MorToolDefinition"),
+                  {0, 0} },    // index 0=DEFAULT, index 1=set to 0
+
+                { TweakKind::TweakRow, STR("Energy Cost"), STR("EnergyCost"),
+                  /*isFloat=*/true, /*isMult=*/false, /*gt1=*/false,
+                  /*filter=*/STR("MorToolDefinition"),
+                  {0, 0} },    // index 0=DEFAULT, index 1=set to 0
+
+                { TweakKind::TweakRow, STR("Carve Hits"), STR("CarveHits"),
+                  /*isFloat=*/false, /*isMult=*/false, /*gt1=*/false,
+                  /*filter=*/STR("MorToolDefinition"),
+                  {0, 1} },    // index 0=DEFAULT, index 1=set to 1 (one-hit mining)
+
+                { TweakKind::SectionHeader, STR("Crafting"), nullptr, false, false, false, nullptr, {} },
+
+                { TweakKind::SpecialNoCost, STR("No Cost"), nullptr,
+                  false, false, false, nullptr, {0, 1} },  // OFF / ON
+
+                { TweakKind::SpecialInstantCraft, STR("Instant Craft"), nullptr,
+                  false, false, false, nullptr, {0, 1} },  // OFF / ON
+            };
+            outCount = (int)(sizeof(entries) / sizeof(entries[0]));
+            return entries;
+        }
+
+        // Iterate every DataTable; for each row whose RowStruct contains `fieldName`
+        // (optionally gated by exact rowStructName match), read the current value into
+        // m_tweakOriginals (first time only), then write the new value.
+        // If useDefault is true, restore from originals instead.
+        void applyFieldTweak(const wchar_t* fieldName, bool isFloat, bool isMultiplier,
+                             bool requiresGt1, const wchar_t* rowStructFilter,
+                             int tweakValue, bool useDefault)
+        {
+            if (!fieldName || !fieldName[0]) return;
+            std::vector<UObject*> dts;
+            UObjectGlobals::FindAllOf(STR("DataTable"), dts);
+
+            int totalRowsTouched = 0;
+            int totalTablesTouched = 0;
+
+            for (UObject* dt : dts)
+            {
+                if (!dt || !isObjectAlive(dt)) continue;
+
+                // Get RowStruct
+                auto** rsPtr = dt->GetValuePtrByPropertyNameInChain<UStruct*>(STR("RowStruct"));
+                if (!rsPtr || !*rsPtr) continue;
+                UStruct* rowStruct = *rsPtr;
+
+                // Optional exact-struct filter
+                if (rowStructFilter && rowStructFilter[0])
+                {
+                    try
+                    {
+                        std::wstring rsName = rowStruct->GetName();
+                        if (rsName != rowStructFilter) continue;
+                    }
+                    catch (...) { continue; }
+                }
+
+                // Find the property inside the row struct, walking the super chain.
+                // ForEachProperty returns only properties declared directly on the struct, not
+                // inherited ones — so we also iterate super structs for base-class fields like
+                // MaxStackSize (declared on FMorItemDefinition but inherited by FMorConsumableDefinition,
+                // FMorWeaponDefinition, etc.).
+                FProperty* targetProp = nullptr;
+                for (UStruct* walk = rowStruct; walk && !targetProp; walk = walk->GetSuperStruct())
+                {
+                    for (auto* prop : walk->ForEachProperty())
+                    {
+                        if (prop->GetName() == std::wstring_view(fieldName))
+                        {
+                            targetProp = prop;
+                            break;
+                        }
+                    }
+                }
+                if (!targetProp) continue;
+                int fieldOff = targetProp->GetOffset_Internal();
+
+                // Bind DataTable for row enumeration
+                std::wstring tName;
+                try { tName = dt->GetName(); } catch (...) { continue; }
+                DataTableUtil util;
+                if (!util.bind(tName.c_str())) continue;
+
+                auto rowNames = util.getRowNames();
+                int rowsTouched = 0;
+                for (const auto& rn : rowNames)
+                {
+                    uint8_t* rowData = util.findRowData(rn.c_str());
+                    if (!rowData) continue;
+                    uint8_t* fieldAddr = rowData + fieldOff;
+                    if (!isReadableMemory(fieldAddr, 4)) continue;
+
+                    // Composite key: "<rowData addr hex>|<fieldName>"
+                    wchar_t kbuf[64];
+                    swprintf(kbuf, 64, L"%p|%ls", (void*)rowData, fieldName);
+                    std::wstring key(kbuf);
+
+                    // Capture original on first encounter
+                    if (!m_tweakOriginals.count(key))
+                    {
+                        double orig = isFloat ? (double)*reinterpret_cast<float*>(fieldAddr)
+                                              : (double)*reinterpret_cast<int32_t*>(fieldAddr);
+                        m_tweakOriginals[key] = orig;
+                    }
+                    double original = m_tweakOriginals[key];
+
+                    if (useDefault)
+                    {
+                        // Restore original
+                        if (isFloat) *reinterpret_cast<float*>(fieldAddr)   = (float)original;
+                        else         *reinterpret_cast<int32_t*>(fieldAddr) = (int32_t)original;
+                        rowsTouched++;
+                        continue;
+                    }
+
+                    if (requiresGt1 && original <= 1.0) continue;
+
+                    double finalValue = isMultiplier ? original * (double)tweakValue
+                                                     : (double)tweakValue;
+                    if (isFloat) *reinterpret_cast<float*>(fieldAddr)   = (float)finalValue;
+                    else         *reinterpret_cast<int32_t*>(fieldAddr) = (int32_t)finalValue;
+                    rowsTouched++;
+                }
+
+                if (rowsTouched > 0) { totalRowsTouched += rowsTouched; totalTablesTouched++; }
+            }
+
+            VLOG(STR("[Tweak] field '{}' → {} {} rows across {} tables\n"),
+                 fieldName,
+                 useDefault ? STR("restored") : STR("set on"),
+                 totalRowsTouched, totalTablesTouched);
+        }
+
+        // v6.4.1 SpecialNoCost — set all FMorRecipeDefinition-derived DT rows to zero material cost
+        // (DefaultRequiredMaterials[*].Count = 0) and set bAllowRefunds = true on construction recipes.
+        void applyNoCostRecipe(bool useDefault)
+        {
+            std::vector<UObject*> dts;
+            UObjectGlobals::FindAllOf(STR("DataTable"), dts);
+
+            int totalRows = 0;
+            int totalTables = 0;
+            for (UObject* dt : dts)
+            {
+                if (!dt || !isObjectAlive(dt)) continue;
+
+                auto** rsPtr = dt->GetValuePtrByPropertyNameInChain<UStruct*>(STR("RowStruct"));
+                if (!rsPtr || !*rsPtr) continue;
+                UStruct* rowStruct = *rsPtr;
+
+                // Must inherit from FMorRecipeDefinition (i.e., has DefaultRequiredMaterials array at 0x40)
+                bool hasDRM = false;
+                for (UStruct* w = rowStruct; w && !hasDRM; w = w->GetSuperStruct())
+                {
+                    for (auto* p : w->ForEachProperty())
+                    {
+                        if (p->GetName() == std::wstring_view(L"DefaultRequiredMaterials"))
+                        { hasDRM = true; break; }
+                    }
+                }
+                if (!hasDRM) continue;
+
+                // Detect if this is a construction recipe table (has bAllowRefunds)
+                bool isConstructionRecipe = false;
+                for (UStruct* w = rowStruct; w && !isConstructionRecipe; w = w->GetSuperStruct())
+                {
+                    for (auto* p : w->ForEachProperty())
+                    {
+                        if (p->GetName() == std::wstring_view(L"bAllowRefunds"))
+                        { isConstructionRecipe = true; break; }
+                    }
+                }
+
+                std::wstring tName;
+                try { tName = dt->GetName(); } catch (...) { continue; }
+                DataTableUtil util;
+                if (!util.bind(tName.c_str())) continue;
+
+                auto rowNames = util.getRowNames();
+                int rows = 0;
+                for (const auto& rn : rowNames)
+                {
+                    uint8_t* rowData = util.findRowData(rn.c_str());
+                    if (!rowData) continue;
+
+                    // DefaultRequiredMaterials is at offset 0x40 in FMorRecipeDefinition (base)
+                    uint8_t* arrBase = rowData + 0x40;
+                    if (!isReadableMemory(arrBase, 16)) continue;
+
+                    uint8_t* arrData = *reinterpret_cast<uint8_t**>(arrBase);
+                    int32_t arrNum   = *reinterpret_cast<int32_t*>(arrBase + 8);
+                    if (!arrData || arrNum <= 0 || arrNum > 100) { /* still continue to bAllowRefunds */ }
+                    else
+                    {
+                        // Each element is FMorRequiredRecipeMaterial (0x28 bytes), Count at +0x20 (int32)
+                        constexpr int kStride = 0x28;
+                        for (int32_t i = 0; i < arrNum; ++i)
+                        {
+                            uint8_t* elem = arrData + i * kStride;
+                            if (!isReadableMemory(elem, kStride)) continue;
+                            int32_t* countAddr = reinterpret_cast<int32_t*>(elem + 0x20);
+
+                            wchar_t kbuf[96];
+                            swprintf(kbuf, 96, L"%p|DRM[%d].Count", (void*)rowData, i);
+                            std::wstring key(kbuf);
+
+                            if (!m_tweakOriginals.count(key))
+                                m_tweakOriginals[key] = (double)*countAddr;
+
+                            if (useDefault) *countAddr = (int32_t)m_tweakOriginals[key];
+                            else            *countAddr = 0;
+                        }
+                    }
+
+                    // bAllowRefunds at offset 0xF2 (bool, 1 byte) — construction recipes only
+                    if (isConstructionRecipe)
+                    {
+                        uint8_t* flagAddr = rowData + 0xF2;
+                        if (isReadableMemory(flagAddr, 1))
+                        {
+                            wchar_t kbuf[96];
+                            swprintf(kbuf, 96, L"%p|bAllowRefunds", (void*)rowData);
+                            std::wstring key(kbuf);
+
+                            if (!m_tweakOriginals.count(key))
+                                m_tweakOriginals[key] = (double)*flagAddr;
+
+                            if (useDefault) *flagAddr = (uint8_t)m_tweakOriginals[key];
+                            else            *flagAddr = 1;
+                        }
+                    }
+
+                    rows++;
+                }
+                if (rows > 0) { totalRows += rows; totalTables++; }
+            }
+            VLOG(STR("[Tweak] NoCost → {} {} rows across {} recipe tables\n"),
+                 useDefault ? STR("restored") : STR("zeroed"),
+                 totalRows, totalTables);
+        }
+
+        // v6.4.1 SpecialInstantCraft — set CraftTimeSeconds to 0.1s on all FMorItemRecipeDefinition rows.
+        void applyInstantCraft(bool useDefault)
+        {
+            std::vector<UObject*> dts;
+            UObjectGlobals::FindAllOf(STR("DataTable"), dts);
+
+            int totalRows = 0;
+            int totalTables = 0;
+            for (UObject* dt : dts)
+            {
+                if (!dt || !isObjectAlive(dt)) continue;
+
+                auto** rsPtr = dt->GetValuePtrByPropertyNameInChain<UStruct*>(STR("RowStruct"));
+                if (!rsPtr || !*rsPtr) continue;
+                UStruct* rowStruct = *rsPtr;
+
+                // Find CraftTimeSeconds on the row struct (walk super chain)
+                FProperty* ctProp = nullptr;
+                for (UStruct* w = rowStruct; w && !ctProp; w = w->GetSuperStruct())
+                {
+                    for (auto* p : w->ForEachProperty())
+                    {
+                        if (p->GetName() == std::wstring_view(L"CraftTimeSeconds"))
+                        { ctProp = p; break; }
+                    }
+                }
+                if (!ctProp) continue;
+                int ctOff = ctProp->GetOffset_Internal();
+
+                std::wstring tName;
+                try { tName = dt->GetName(); } catch (...) { continue; }
+                DataTableUtil util;
+                if (!util.bind(tName.c_str())) continue;
+
+                auto rowNames = util.getRowNames();
+                int rows = 0;
+                for (const auto& rn : rowNames)
+                {
+                    uint8_t* rowData = util.findRowData(rn.c_str());
+                    if (!rowData) continue;
+                    float* ctAddr = reinterpret_cast<float*>(rowData + ctOff);
+                    if (!isReadableMemory((uint8_t*)ctAddr, 4)) continue;
+
+                    wchar_t kbuf[64];
+                    swprintf(kbuf, 64, L"%p|CraftTimeSeconds", (void*)rowData);
+                    std::wstring key(kbuf);
+
+                    if (!m_tweakOriginals.count(key))
+                        m_tweakOriginals[key] = (double)*ctAddr;
+
+                    if (useDefault) *ctAddr = (float)m_tweakOriginals[key];
+                    else            *ctAddr = 0.1f;
+                    rows++;
+                }
+                if (rows > 0) { totalRows += rows; totalTables++; }
+            }
+            VLOG(STR("[Tweak] InstantCraft → {} {} rows across {} tables\n"),
+                 useDefault ? STR("restored") : STR("set to 0.1s"),
+                 totalRows, totalTables);
+        }
+
+        // Cycle one tweak entry forward. cycleValues[0] is always the DEFAULT slot (its numeric
+        // value is ignored); the tweak restores originals when curIdx==0 and otherwise applies
+        // cycleValues[curIdx].
+        void cycleTweakValue(int idx)
+        {
+            int count = 0;
+            const TweakEntry* all = tweakEntries(count);
+            if (idx < 0 || idx >= count) return;
+            const TweakEntry& e = all[idx];
+
+            int& curIdx = m_tweakCurrentIdx[idx];
+            curIdx = (curIdx + 1) % (int)e.cycleValues.size();
+            int newVal = e.cycleValues[curIdx];
+            bool useDefault = (curIdx == 0);
+
+            switch (e.kind)
+            {
+                case TweakKind::TweakRow:
+                    applyFieldTweak(e.fieldName, e.isFloat, e.isMultiplier,
+                                    e.requiresOriginalGt1, e.rowStructFilter,
+                                    newVal, useDefault);
+                    break;
+                case TweakKind::SpecialNoCost:
+                    applyNoCostRecipe(useDefault);
+                    break;
+                case TweakKind::SpecialInstantCraft:
+                    applyInstantCraft(useDefault);
+                    break;
+                default: break;
+            }
+
+            updateTweakRowUI(idx);
+        }
+
+        // Cache: short GE name → UClass*. Populated from enumerating loaded GE Class Default Objects.
+        std::unordered_map<std::wstring, UClass*> m_geClassCache;
+        bool m_geClassCachePopulated{false};
+
+        // Populate the cache by iterating every UObject via UE4SS's ForEachUObject, filtering
+        // to UClass objects whose super-chain includes UGameplayEffect. Expensive on first call
+        // (~50K objects), cheap on subsequent calls.
+        void populateGEClassCache()
+        {
+            if (m_geClassCachePopulated) return;
+            m_geClassCachePopulated = true;
+
+            // Find the UGameplayEffect base class by its full engine path
+            UClass* geBaseClass = UObjectGlobals::StaticFindObject<UClass*>(
+                nullptr, nullptr, STR("/Script/GameplayAbilities.GameplayEffect"));
+            if (!geBaseClass)
+            {
+                VLOG(STR("[Buff] UGameplayEffect base class not found — cache left empty\n"));
+                return;
+            }
+
+            int indexed = 0;
+            int visited = 0;
+
+            UObjectGlobals::ForEachUObject([&](UObject* obj, int32_t /*idx*/, int32_t /*chunk*/) -> LoopAction {
+                visited++;
+                if (!obj) return LoopAction::Continue;
+
+                UClass* objClass = nullptr;
+                try { objClass = obj->GetClassPrivate(); } catch (...) { return LoopAction::Continue; }
+                if (!objClass) return LoopAction::Continue;
+
+                std::wstring cname;
+                try { cname = objClass->GetName(); } catch (...) { return LoopAction::Continue; }
+
+                // Is this UObject itself a UClass-derived object?
+                bool isClassObj = (cname == L"Class" ||
+                                   cname == L"BlueprintGeneratedClass" ||
+                                   cname == L"DynamicClass");
+                if (!isClassObj) return LoopAction::Continue;
+
+                // Walk its super chain looking for UGameplayEffect
+                UStruct* asStruct = static_cast<UStruct*>(obj);
+                for (UStruct* s = asStruct; s; s = s->GetSuperStruct())
+                {
+                    if (s == geBaseClass)
+                    {
+                        std::wstring name;
+                        try { name = obj->GetName(); } catch (...) { break; }
+                        if (name.size() > 2 && name.substr(name.size() - 2) == L"_C")
+                            name = name.substr(0, name.size() - 2);
+                        if (!name.empty() && m_geClassCache.find(name) == m_geClassCache.end())
+                        {
+                            m_geClassCache[name] = static_cast<UClass*>(obj);
+                            indexed++;
+                        }
+                        break;
+                    }
+                }
+                return LoopAction::Continue;
+            });
+
+            VLOG(STR("[Buff] populateGEClassCache: indexed {} GE classes (visited {} objects)\n"),
+                 indexed, visited);
+        }
+
+        // Find a GameplayEffect class by its short name (without _C).
+        UClass* findGameplayEffectClass(const wchar_t* shortName)
+        {
+            if (!shortName || !shortName[0]) return nullptr;
+            populateGEClassCache();
+
+            std::wstring key(shortName);
+            auto it = m_geClassCache.find(key);
+            if (it != m_geClassCache.end()) return it->second;
+
+            // Not in cache — may not be loaded yet. Force a fresh scan in case it was just loaded.
+            m_geClassCachePopulated = false;
+            m_geClassCache.clear();  // wipe to allow fresh indexing
+            populateGEClassCache();
+            it = m_geClassCache.find(key);
+            if (it != m_geClassCache.end()) return it->second;
+
+            VLOG(STR("[Buff] class '{}' not loaded (not in GE cache)\n"), shortName);
+            return nullptr;
+        }
+
+        // Find the local player's AbilitySystemComponent via the cached pawn.
+        UObject* getPlayerAbilitySystem()
+        {
+            UObject* pawn = m_localPawn;
+            if (!pawn || !isObjectAlive(pawn)) pawn = getPawn();
+            if (!pawn || !isObjectAlive(pawn)) return nullptr;
+
+            auto** ascPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("AbilitySystem"));
+            if (!ascPtr || !*ascPtr) return nullptr;
+            if (!isObjectAlive(*ascPtr)) return nullptr;
+            return *ascPtr;
+        }
+
+        // Apply one GameplayEffect by class-name lookup. Returns true on success.
+        bool applyGEByName(const wchar_t* name)
+        {
+            if (!name || !name[0]) return false;
+            UObject* asc = getPlayerAbilitySystem();
+            if (!asc) { VLOG(STR("[Buff] ASC not found for {}\n"), name); return false; }
+
+            UClass* geCls = findGameplayEffectClass(name);
+            if (!geCls) { VLOG(STR("[Buff] class '{}' not found\n"), name); return false; }
+
+            auto* fn = asc->GetFunctionByNameInChain(STR("BP_ApplyGameplayEffectToSelf"));
+            if (!fn) { VLOG(STR("[Buff] BP_ApplyGameplayEffectToSelf UFunction missing\n")); return false; }
+
+            int pSize = fn->GetParmsSize();
+            std::vector<uint8_t> buf(pSize, 0);
+            auto* pCls   = findParam(fn, STR("GameplayEffectClass"));
+            auto* pLevel = findParam(fn, STR("Level"));
+            if (!pCls) return false;
+            *reinterpret_cast<UClass**>(buf.data() + pCls->GetOffset_Internal()) = geCls;
+            if (pLevel)
+                *reinterpret_cast<float*>(buf.data() + pLevel->GetOffset_Internal()) = 1.0f;
+            // EffectContext left zeroed — engine handles empty context
+
+            if (!safeProcessEvent(asc, fn, buf.data())) return false;
+            VLOG(STR("[Buff] Applied {}\n"), name);
+            return true;
+        }
+
+        // Remove all active instances of the given GE class.
+        bool removeGEByName(const wchar_t* name)
+        {
+            if (!name || !name[0]) return false;
+            UObject* asc = getPlayerAbilitySystem();
+            if (!asc) return false;
+
+            UClass* geCls = findGameplayEffectClass(name);
+            if (!geCls) return false;
+
+            auto* fn = asc->GetFunctionByNameInChain(STR("RemoveActiveGameplayEffectBySourceEffect"));
+            if (!fn) return false;
+
+            int pSize = fn->GetParmsSize();
+            std::vector<uint8_t> buf(pSize, 0);
+            auto* pCls = findParam(fn, STR("GameplayEffect"));
+            if (!pCls) return false;
+            *reinterpret_cast<UClass**>(buf.data() + pCls->GetOffset_Internal()) = geCls;
+            // InstigatorAbilitySystemComponent: nullptr → match any
+            // StacksToRemove: 0 → remove all (zeroed)
+
+            if (!safeProcessEvent(asc, fn, buf.data())) return false;
+            VLOG(STR("[Buff] Removed {}\n"), name);
+            return true;
+        }
+
+        // Toggle one buff entry by index into cheatEntries().
+        void toggleBuffEntry(int idx)
+        {
+            int count = 0;
+            const CheatEntry* all = cheatEntries(count);
+            if (idx < 0 || idx >= count) return;
+            if (all[idx].kind != CheatRowKind::BuffToggle) return;
+
+            m_buffStates[idx] = !m_buffStates[idx];
+            bool state = m_buffStates[idx];
+            if (state)
+            {
+                if (all[idx].effect1) applyGEByName(all[idx].effect1);
+                if (all[idx].effect2) applyGEByName(all[idx].effect2);
+                VLOG(STR("[Cheats] '{}' ON\n"), all[idx].label);
+            }
+            else
+            {
+                if (all[idx].effect1) removeGEByName(all[idx].effect1);
+                if (all[idx].effect2) removeGEByName(all[idx].effect2);
+                VLOG(STR("[Cheats] '{}' OFF\n"), all[idx].label);
+            }
+            updateBuffRowUI(idx);
+        }
+
+        // v6.4.1 — Buff refresh tick. Re-applies every toggled-on buff every BUFF_REFRESH_MS
+        // milliseconds so duration-based effects (HasDuration policy) never expire naturally.
+        // Called from the main tick; cheap no-op when no buffs are active.
+        ULONGLONG m_lastBuffRefresh{0};
+        static constexpr ULONGLONG BUFF_REFRESH_MS = 30000;  // every 30 seconds
+        void refreshActiveBuffs()
+        {
+            if (m_buffStates.empty()) return;
+            ULONGLONG now = GetTickCount64();
+            if (now - m_lastBuffRefresh < BUFF_REFRESH_MS) return;
+            m_lastBuffRefresh = now;
+
+            int count = 0;
+            const CheatEntry* all = cheatEntries(count);
+            int refreshed = 0;
+            for (int i = 0; i < count && i < (int)m_buffStates.size(); ++i)
+            {
+                if (!m_buffStates[i]) continue;
+                if (all[i].kind != CheatRowKind::BuffToggle) continue;
+                if (all[i].effect1) { applyGEByName(all[i].effect1); refreshed++; }
+                if (all[i].effect2) { applyGEByName(all[i].effect2); refreshed++; }
+            }
+            if (refreshed > 0)
+                VLOG(STR("[Buff] Refreshed {} active effects (periodic tick)\n"), refreshed);
+        }
+
+        // Clear All Buffs action — applies GE_DebugRemoveBuffs + GE_ClearFoodBuffs, then uncheck
+        // every toggle on the Cheats tab and refresh their UI.
+        void clearAllBuffs()
+        {
+            applyGEByName(STR("GE_DebugRemoveBuffs"));
+            applyGEByName(STR("GE_ClearFoodBuffs"));
+
+            int count = 0;
+            const CheatEntry* all = cheatEntries(count);
+            for (int i = 0; i < count; ++i)
+            {
+                if (all[i].kind != CheatRowKind::BuffToggle) continue;
+                if (!m_buffStates[i]) continue;
+                // Also explicitly remove each individual effect (belt + suspenders, in case debug removal misses some)
+                if (all[i].effect1) removeGEByName(all[i].effect1);
+                if (all[i].effect2) removeGEByName(all[i].effect2);
+                m_buffStates[i] = false;
+                updateBuffRowUI(i);
+            }
+            VLOG(STR("[Cheats] Clear All Buffs — all toggles reset\n"));
+            showOnScreen(L"All buffs cleared", 3.0f, 0.3f, 1.0f, 0.3f);
+        }
+
+
 // moria_unlock.inl — Recipe unlock + read-history clear (v6.4.1)
 //
 // Two features, both operate entirely through game UFUNCTIONs — zero raw memory writes:
@@ -346,6 +1049,53 @@
             return marked;
         }
 
+        // v6.4.1 Peace Mode — toggle AMorAISpawnManager.MaxSpawnLimit between its saved-original
+        // value and 0. When enabled: no new orcs/goblins/trolls spawn. Existing enemies remain.
+        // When disabled: spawn cap restored. State persists across F12 open/close.
+        void togglePeaceMode()
+        {
+            std::vector<UObject*> mgrs;
+            UObjectGlobals::FindAllOf(STR("MorAISpawnManager"), mgrs);
+            if (mgrs.empty())
+            {
+                VLOG(STR("[PeaceMode] MorAISpawnManager not found — load a world first\n"));
+                showOnScreen(L"Load a world first", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+            UObject* mgr = mgrs[0];
+            if (!isObjectAlive(mgr)) return;
+
+            auto* prop = mgr->GetPropertyByNameInChain(STR("MaxSpawnLimit"));
+            if (!prop)
+            {
+                VLOG(STR("[PeaceMode] MaxSpawnLimit property not found\n"));
+                showOnScreen(L"MaxSpawnLimit not found", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
+            uint8_t* base = reinterpret_cast<uint8_t*>(mgr) + prop->GetOffset_Internal();
+            if (!isReadableMemory(base, sizeof(float))) return;
+            float* cur = reinterpret_cast<float*>(base);
+
+            m_peaceModeEnabled = !m_peaceModeEnabled;
+
+            if (m_peaceModeEnabled)
+            {
+                if (m_savedMaxSpawnLimit < 0.0f) m_savedMaxSpawnLimit = *cur;
+                *cur = 0.0f;
+                VLOG(STR("[PeaceMode] ENABLED — MaxSpawnLimit {} -> 0\n"), m_savedMaxSpawnLimit);
+                showOnScreen(L"Peace Mode ON", 3.0f, 0.3f, 1.0f, 0.3f);
+            }
+            else
+            {
+                float restoreTo = (m_savedMaxSpawnLimit >= 0.0f) ? m_savedMaxSpawnLimit : 50.0f;
+                *cur = restoreTo;
+                VLOG(STR("[PeaceMode] DISABLED — MaxSpawnLimit -> {}\n"), restoreTo);
+                showOnScreen(L"Peace Mode OFF", 3.0f, 1.0f, 0.5f, 0.2f);
+            }
+
+            updateFtPeaceMode();
+        }
+
         // v6.4.1 Phase 2: mark ALL categories as read — lore, goals, tutorials, tips.
         //
         // Uses three approaches in sequence:
@@ -482,6 +1232,31 @@
                 if (invoked == 0)
                 {
                     VLOG(STR("[MarkRead] Phase 6: No UI_WBP_Recipe_Viewer_C instance — open pause menu Crafting once\n"));
+                }
+            }
+
+            // Phase 7: Goals screen — WBP_GoalsScreen_C::MarkAllAsRead() (one-shot, covers goals,
+            // mysteries, tutorials, tips categories natively). Must be called in addition to Phase 2's
+            // per-entry SetLoreEntryViewed because MarkAllAsRead may persist differently.
+            {
+                std::vector<UObject*> screens;
+                UObjectGlobals::FindAllOf(STR("WBP_GoalsScreen_C"), screens);
+                int invoked = 0;
+                for (UObject* screen : screens)
+                {
+                    if (!screen || !isObjectAlive(screen)) continue;
+                    auto* fn = screen->GetFunctionByNameInChain(STR("MarkAllAsRead"));
+                    if (fn && safeProcessEvent(screen, fn, nullptr))
+                    {
+                        anyScreenFound = true;
+                        invoked++;
+                        VLOG(STR("[MarkRead] Phase 7: WBP_GoalsScreen_C::MarkAllAsRead invoked on {}\n"),
+                             screen->GetName());
+                    }
+                }
+                if (invoked == 0)
+                {
+                    VLOG(STR("[MarkRead] Phase 7: No WBP_GoalsScreen_C instance — open Goals menu once\n"));
                 }
             }
 

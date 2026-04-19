@@ -27,19 +27,36 @@ namespace MoriaMods
 {
 
 
+    // v6.4.2 — UTF-8 conversion helper for bubble display names.
+    static std::string wideToUtf8(const std::wstring& w)
+    {
+        if (w.empty()) return {};
+        int needed = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(),
+                                         nullptr, 0, nullptr, nullptr);
+        if (needed <= 0) return {};
+        std::string out(needed, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(),
+                            out.data(), needed, nullptr, nullptr);
+        return out;
+    }
+
     struct SavedRemoval
     {
         std::string meshName;
-        float posX{0}, posY{0}, posZ{0};
-        std::string bubbleId;
+        float posX{0}, posY{0}, posZ{0};          // world coords (absolute)
+        float localX{0}, localY{0}, localZ{0};    // bubble-local coords (world - bubble.Translation)
+        std::string bubbleId;                     // sanitized ASCII id (e.g. "Hollin_01")
+        std::string bubbleName;                   // human-readable display name (UTF-8)
     };
 
     struct RemovalEntry
     {
         bool isTypeRule{false};
         std::string meshName;
-        float posX{0}, posY{0}, posZ{0};
+        float posX{0}, posY{0}, posZ{0};          // world
+        float localX{0}, localY{0}, localZ{0};    // bubble-local
         std::string bubbleId;
+        std::string bubbleName;                   // human-readable display name
         std::wstring friendlyName;
         std::wstring fullPathW;
         std::wstring coordsW;
@@ -761,8 +778,10 @@ namespace MoriaMods
     struct ParsedRemovalPosition
     {
         std::string meshName;
-        float posX, posY, posZ;
+        float posX{0}, posY{0}, posZ{0};
+        float localX{0}, localY{0}, localZ{0};
         std::string bubbleId;
+        std::string bubbleName;
     };
 
     struct ParsedRemovalTypeRule
@@ -773,13 +792,130 @@ namespace MoriaMods
     using ParsedRemovalLine = std::variant<std::monostate, ParsedRemovalPosition, ParsedRemovalTypeRule>;
 
 
+    // Minimal JSON field extractors for our specific schema.
+    // Handles: "key":"value", "key":[num,num,num]. No nested objects, no escapes beyond basic.
+    namespace RemovalJson
+    {
+        // Extract string value for given key. Returns empty string if not found.
+        static std::string extractString(const std::string& line, const std::string& key)
+        {
+            std::string quotedKey = "\"" + key + "\"";
+            size_t k = line.find(quotedKey);
+            if (k == std::string::npos) return {};
+            size_t colon = line.find(':', k + quotedKey.size());
+            if (colon == std::string::npos) return {};
+            size_t openQ = line.find('"', colon + 1);
+            if (openQ == std::string::npos) return {};
+            size_t closeQ = line.find('"', openQ + 1);
+            // Handle escaped quotes by scanning past \" sequences
+            while (closeQ != std::string::npos && closeQ > 0 && line[closeQ - 1] == '\\')
+                closeQ = line.find('"', closeQ + 1);
+            if (closeQ == std::string::npos) return {};
+            std::string raw = line.substr(openQ + 1, closeQ - openQ - 1);
+            // Unescape \\ and \"
+            std::string out;
+            out.reserve(raw.size());
+            for (size_t i = 0; i < raw.size(); ++i)
+            {
+                if (raw[i] == '\\' && i + 1 < raw.size()) { out += raw[i + 1]; ++i; }
+                else out += raw[i];
+            }
+            return out;
+        }
+
+        // Extract number array for given key. Returns empty if not found or malformed.
+        static std::vector<float> extractFloatArray(const std::string& line, const std::string& key)
+        {
+            std::vector<float> result;
+            std::string quotedKey = "\"" + key + "\"";
+            size_t k = line.find(quotedKey);
+            if (k == std::string::npos) return result;
+            size_t lb = line.find('[', k + quotedKey.size());
+            size_t rb = line.find(']', lb);
+            if (lb == std::string::npos || rb == std::string::npos) return result;
+            std::string arr = line.substr(lb + 1, rb - lb - 1);
+            std::istringstream ss(arr);
+            std::string tok;
+            while (std::getline(ss, tok, ','))
+            {
+                try { result.push_back(std::stof(tok)); }
+                catch (...) { return {}; }
+            }
+            return result;
+        }
+
+        // Escape a string for use as a JSON string value.
+        static std::string escape(const std::string& s)
+        {
+            std::string out;
+            out.reserve(s.size() + 4);
+            for (char c : s)
+            {
+                if (c == '"' || c == '\\') { out += '\\'; out += c; }
+                else if (c == '\n') out += "\\n";
+                else if (c == '\r') out += "\\r";
+                else if (c == '\t') out += "\\t";
+                else out += c;
+            }
+            return out;
+        }
+    }
+
+    // Format one SavedRemoval as a single-line JSON object (JSON Lines style).
+    static std::string formatRemovalJson(const SavedRemoval& sr)
+    {
+        char buf[1024];
+        std::snprintf(buf, sizeof(buf),
+            "{\"mesh\":\"%s\",\"bubble\":\"%s\",\"bubbleName\":\"%s\",\"world\":[%.2f,%.2f,%.2f],\"local\":[%.2f,%.2f,%.2f]}",
+            RemovalJson::escape(sr.meshName).c_str(),
+            RemovalJson::escape(sr.bubbleId).c_str(),
+            RemovalJson::escape(sr.bubbleName).c_str(),
+            sr.posX, sr.posY, sr.posZ,
+            sr.localX, sr.localY, sr.localZ);
+        return buf;
+    }
+
+    // Format a type-rule entry as a single-line JSON object.
+    static std::string formatTypeRuleJson(const std::string& meshName)
+    {
+        return "{\"typeRule\":\"" + RemovalJson::escape(meshName) + "\"}";
+    }
+
+
     static ParsedRemovalLine parseRemovalLine(const std::string& line)
     {
         if (line.empty() || line[0] == '#') return std::monostate{};
-        if (line[0] == '@')
+
+        // JSON Lines format: line starts with '{'
+        if (line[0] == '{')
         {
-            return ParsedRemovalTypeRule{line.substr(1)};
+            // Type rule?
+            std::string typeRule = RemovalJson::extractString(line, "typeRule");
+            if (!typeRule.empty())
+                return ParsedRemovalTypeRule{typeRule};
+
+            // Position entry
+            ParsedRemovalPosition result;
+            result.meshName = RemovalJson::extractString(line, "mesh");
+            if (result.meshName.empty()) return std::monostate{};
+
+            result.bubbleId = RemovalJson::extractString(line, "bubble");
+            result.bubbleName = RemovalJson::extractString(line, "bubbleName");
+
+            auto world = RemovalJson::extractFloatArray(line, "world");
+            if (world.size() >= 3) { result.posX = world[0]; result.posY = world[1]; result.posZ = world[2]; }
+
+            auto local = RemovalJson::extractFloatArray(line, "local");
+            if (local.size() >= 3) { result.localX = local[0]; result.localY = local[1]; result.localZ = local[2]; }
+
+            return result;
         }
+
+        // Legacy @ prefix for type rules (pre-v6.4.2)
+        if (line[0] == '@')
+            return ParsedRemovalTypeRule{line.substr(1)};
+
+        // Legacy pipe-delimited format (pre-v6.4.2). Parsed for backwards compat; rewritten as JSON on next save.
         std::istringstream ss(line);
         ParsedRemovalPosition result;
         std::string token;
@@ -792,7 +928,6 @@ namespace MoriaMods
             result.posY = std::stof(token);
             if (!std::getline(ss, token, '|')) return std::monostate{};
             result.posZ = std::stof(token);
-            // Optional bubbleId (5th field)
             if (std::getline(ss, token, '|') && !token.empty())
                 result.bubbleId = token;
         }

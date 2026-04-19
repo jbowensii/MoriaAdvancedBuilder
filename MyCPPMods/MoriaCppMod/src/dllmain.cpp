@@ -1,4 +1,4 @@
-// MoriaCppMod v6.4.1 — Return to Moria UE4SS C++ mod (~15,500 lines across dllmain.cpp + 12 .inl files)
+// MoriaCppMod v6.4.2 — Return to Moria UE4SS C++ mod (~16,000 lines across dllmain.cpp + 12 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -39,6 +39,7 @@ namespace MoriaMods
         UObject* m_worldLayout{nullptr};
         std::string m_currentBubbleId;
         std::wstring m_currentBubbleName;
+        UObject* m_currentBubble{nullptr};  // v6.4.2 — cached for bubble-local coord calc
         PSOffsets m_ps;
         std::vector<bool> m_appliedRemovals;
 
@@ -95,18 +96,28 @@ namespace MoriaMods
                 return;
             }
             std::string line;
+            bool sawLegacyLine = false;  // track if any line was non-JSON non-comment (for auto-migration)
             while (std::getline(file, line))
             {
+                if (!line.empty() && line[0] != '#' && line[0] != '{' && line[0] != '\r')
+                    sawLegacyLine = true;
+
                 auto parsed = parseRemovalLine(line);
                 if (auto* pos = std::get_if<ParsedRemovalPosition>(&parsed))
                 {
-                    m_savedRemovals.push_back({pos->meshName, pos->posX, pos->posY, pos->posZ, pos->bubbleId});
+                    m_savedRemovals.push_back({
+                        pos->meshName,
+                        pos->posX, pos->posY, pos->posZ,
+                        pos->localX, pos->localY, pos->localZ,
+                        pos->bubbleId,
+                        pos->bubbleName});
                 }
                 else if (auto* tr = std::get_if<ParsedRemovalTypeRule>(&parsed))
                 {
                     m_typeRemovals.insert(tr->meshName);
                 }
             }
+            file.close();
 
             {
                 size_t before = m_savedRemovals.size();
@@ -124,6 +135,13 @@ namespace MoriaMods
             m_appliedRemovals.assign(m_savedRemovals.size(), false);
 
             VLOG(STR("[MoriaCppMod] Loaded {} position removals + {} type rules\n"), m_savedRemovals.size(), m_typeRemovals.size());
+
+            // v6.4.2 — auto-migrate legacy pipe-delimited or @-prefixed entries to JSON format.
+            if (sawLegacyLine)
+            {
+                VLOG(STR("[MoriaCppMod] Detected legacy-format entries — rewriting save file as JSON Lines\n"));
+                rewriteSaveFile();
+            }
             // Log first 5 saved mesh names for replay diagnostics
             for (size_t i = 0; i < std::min(m_savedRemovals.size(), (size_t)5); i++)
             {
@@ -139,26 +157,21 @@ namespace MoriaMods
         {
             std::ofstream file(m_saveFilePath, std::ios::app);
             if (!file.is_open()) return;
-            file << sr.meshName << "|" << sr.posX << "|" << sr.posY << "|" << sr.posZ;
-            if (!sr.bubbleId.empty()) file << "|" << sr.bubbleId;
-            file << "\n";
+            file << formatRemovalJson(sr) << "\n";
         }
 
         void rewriteSaveFile()
         {
             std::ofstream file(m_saveFilePath, std::ios::trunc);
             if (!file.is_open()) return;
-            file << "# MoriaCppMod removed instances\n";
-            file << "# meshName|posX|posY|posZ[|bubbleId] = single instance\n";
-            file << "# @meshName = remove ALL of this type\n";
+            file << "# MoriaCppMod removed instances (JSON Lines format, v6.4.2+)\n";
+            file << "# One JSON object per line. Lines starting with # are comments.\n";
+            file << "# Position entry: {\"mesh\":\"...\",\"bubble\":\"<id>\",\"bubbleName\":\"<display name>\",\"world\":[x,y,z],\"local\":[x,y,z]}\n";
+            file << "# Type rule:      {\"typeRule\":\"...\"}\n";
             for (auto& type : m_typeRemovals)
-                file << "@" << type << "\n";
+                file << formatTypeRuleJson(type) << "\n";
             for (auto& sr : m_savedRemovals)
-            {
-                file << sr.meshName << "|" << sr.posX << "|" << sr.posY << "|" << sr.posZ;
-                if (!sr.bubbleId.empty()) file << "|" << sr.bubbleId;
-                file << "\n";
-            }
+                file << formatRemovalJson(sr) << "\n";
         }
 
 
@@ -172,40 +185,43 @@ namespace MoriaMods
                 while (std::getline(file, line))
                 {
                     if (line.empty() || line[0] == '#') continue;
+                    auto parsed = parseRemovalLine(line);
+
                     RemovalEntry entry{};
-                    if (line[0] == '@')
+                    if (auto* tr = std::get_if<ParsedRemovalTypeRule>(&parsed))
                     {
                         entry.isTypeRule = true;
-                        entry.meshName = line.substr(1);
+                        entry.meshName = tr->meshName;
                         entry.friendlyName = extractFriendlyName(entry.meshName);
                         entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
-                        entry.coordsW = Loc::get("ui.type_rule") + L" (all instances)";
+                        // JSON-tagged display for type rules
+                        std::string json = formatTypeRuleJson(entry.meshName);
+                        entry.coordsW = std::wstring(json.begin(), json.end());
+                    }
+                    else if (auto* pos = std::get_if<ParsedRemovalPosition>(&parsed))
+                    {
+                        entry.isTypeRule = false;
+                        entry.meshName = pos->meshName;
+                        entry.posX = pos->posX; entry.posY = pos->posY; entry.posZ = pos->posZ;
+                        entry.localX = pos->localX; entry.localY = pos->localY; entry.localZ = pos->localZ;
+                        entry.bubbleId = pos->bubbleId;
+                        entry.bubbleName = pos->bubbleName;
+                        entry.friendlyName = extractFriendlyName(entry.meshName);
+                        entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
+                        // JSON-tagged display: compact one-line object showing bubble id + name + world + local coords
+                        char buf[512];
+                        std::snprintf(buf, sizeof(buf),
+                            "{\"bubble\":\"%s\",\"bubbleName\":\"%s\",\"world\":[%.1f,%.1f,%.1f],\"local\":[%.1f,%.1f,%.1f]}",
+                            RemovalJson::escape(entry.bubbleId).c_str(),
+                            RemovalJson::escape(entry.bubbleName).c_str(),
+                            entry.posX, entry.posY, entry.posZ,
+                            entry.localX, entry.localY, entry.localZ);
+                        std::string s(buf);
+                        entry.coordsW = std::wstring(s.begin(), s.end());
                     }
                     else
                     {
-                        entry.isTypeRule = false;
-                        std::istringstream ss(line);
-                        std::string token;
-                        if (!std::getline(ss, entry.meshName, '|')) continue;
-                        try
-                        {
-                            if (!std::getline(ss, token, '|')) continue;
-                            entry.posX = std::stof(token);
-                            if (!std::getline(ss, token, '|')) continue;
-                            entry.posY = std::stof(token);
-                            if (!std::getline(ss, token, '|')) continue;
-                            entry.posZ = std::stof(token);
-                        }
-                        catch (...)
-                        {
-                            continue;
-                        }
-                        // Parse optional bubbleId (5th field)
-                        if (std::getline(ss, token, '|') && !token.empty())
-                            entry.bubbleId = token;
-                        entry.friendlyName = extractFriendlyName(entry.meshName);
-                        entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
-                        entry.coordsW = std::format(L"X: {:.1f}   Y: {:.1f}   Z: {:.1f}", entry.posX, entry.posY, entry.posZ);
+                        continue;  // unrecognized line
                     }
                     entries.push_back(std::move(entry));
                 }
@@ -370,13 +386,43 @@ namespace MoriaMods
 
         UObject* m_fontTestWidget{nullptr};
         bool m_ftVisible{false};
-        UObject* m_ftTabImages[4]{};
-        UObject* m_ftTabLabels[4]{};
+        UObject* m_ftTabImages[6]{};
+        UObject* m_ftTabLabels[6]{};
         UObject* m_ftTabActiveTexture{nullptr};
         UObject* m_ftTabInactiveTexture{nullptr};
         int m_ftSelectedTab{0};
         UObject* m_ftScrollBox{nullptr};
-        UObject* m_ftTabContent[4]{};
+        UObject* m_ftTabContent[6]{};
+
+        // v6.4.1 Cheats tab — widget refs for action buttons and toggle state
+        UObject* m_ftCheatsUnlockBtnImg{nullptr};
+        UObject* m_ftCheatsReadBtnImg{nullptr};
+
+        // v6.4.1 Peace Mode — zero MaxSpawnLimit on AMorAISpawnManager to suppress new spawns.
+        bool m_peaceModeEnabled{false};
+        float m_savedMaxSpawnLimit{-1.0f};             // -1 = not yet captured
+        UObject* m_ftPeaceCheckImg{nullptr};           // check icon (visible when enabled)
+        UObject* m_ftPeaceBtnLabel{nullptr};           // button text ("PEACE"/"FIGHT")
+        UObject* m_ftPeaceCheckBoxOl{nullptr};         // checkbox hit-test ref
+        UObject* m_ftPeaceBtnImg{nullptr};             // button hit-test ref
+
+        // v6.4.1 Cheats tab buff toggles — parallel arrays to cheatEntries().
+        std::vector<bool>      m_buffStates;             // active/inactive state per entry
+        std::vector<UObject*>  m_ftBuffCheckImgs;        // checkbox mark widget per entry
+        std::vector<UObject*>  m_ftBuffBtnLabels;        // ON/OFF label per entry (nullptr for headers)
+        std::vector<int>       m_buffRowTopYs;           // row top-Y offset within the content VBox (px, at 1x scale)
+        std::vector<int>       m_buffRowHeights;         // row height (px, at 1x scale)
+        int m_cheatsContentTotalHeight{0};               // total rendered height of the cheat entries area
+
+        // v6.4.1 Tweaks tab — parallel arrays to tweakEntries(). Each entry cycles through a set
+        // of integer values; applyFieldTweak modifies all DataTable rows whose RowStruct has the field.
+        std::vector<int>       m_tweakCurrentIdx;        // current index in cycleValues (0 = DEFAULT)
+        std::vector<UObject*>  m_ftTweakBtnLabels;       // button text widget per entry
+        std::vector<int>       m_tweakRowTopYs;          // row top-Y per entry (px, at 1x scale)
+        std::vector<int>       m_tweakRowHeights;        // row height per entry (px, at 1x scale)
+        // Key: (rowData pointer + fieldName), Value: original value before any tweak.
+        // Used to restore DEFAULT and to compute multipliers from the original baseline.
+        std::unordered_map<std::wstring, double> m_tweakOriginals;
         UObject* m_ftKeyBoxLabels[BIND_COUNT]{};
         UObject* m_ftCheckImages[BIND_COUNT]{};
         UObject* m_ftModBoxLabel{nullptr};
@@ -497,14 +543,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.4.1");
+            ModVersion = STR("6.4.2");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.4.1\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.4.2\n"));
         }
 
         ~MoriaCppMod() override
@@ -545,7 +591,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.4.1 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.4.2 (workDir={})\n"),
                  std::wstring(s_ue4ssWorkDir.begin(), s_ue4ssWorkDir.end()));
 
 
@@ -641,21 +687,9 @@ namespace MoriaMods
 
             register_keydown_event(Input::Key::NUM_SEVEN, [this]() { if (m_ftVisible) return; createModControllerBar(); });
 
-            // v6.4.1 — Unlock all available recipes (filters disabled/dev/test/WIP/DLC-gated).
-            // Uses the game's own DiscoverRecipe UFUNCTION per recipe, paced 50/frame through the
-            // main tick's drainUnlockQueue() — avoids the FFastArraySerializer burst-flood that
-            // breaks worlds with the built-in cheat menu's bulk snapshot.
-            register_keydown_event(Input::Key::U, {Input::ModifierKey::CONTROL, Input::ModifierKey::SHIFT}, [this]() {
-                if (m_ftVisible) return;
-                unlockAllAvailableRecipes();
-            });
-
-            // v6.4.1 — Mark all lore as read (clears "NEW!" badges and nag prompts).
-            // Calls the game's own Blueprint MarkAllRead() on the live WBP_LoreScreen_v2_C instance.
-            register_keydown_event(Input::Key::L, {Input::ModifierKey::CONTROL, Input::ModifierKey::SHIFT}, [this]() {
-                if (m_ftVisible) return;
-                markAllLoreRead();
-            });
+            // v6.4.1 — Recipe unlock + Mark-all-read features moved to the F12 Cheats tab.
+            // See moria_unlock.inl for unlockAllAvailableRecipes() + markAllLoreRead() entry points.
+            // Keybinds removed; buttons in F12 > Cheats tab are the only entry now.
 
             // Pitch/Roll rotation — uses keybind system (BIND_PITCH_ROTATE, BIND_ROLL_ROTATE)
             // Registered dynamically after config load via registerPitchRollKeys()
@@ -1073,7 +1107,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.4.1: F1-F8=build | F9=rotate | F12=config | Ctrl+Shift+U=unlock recipes | Ctrl+Shift+L=mark lore read\n"));
+                    STR("[MoriaCppMod] v6.4.2: F1-F8=build | F9=rotate | F12=config (Cheats + Tweaks tabs, JSON removal storage)\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -1459,13 +1493,20 @@ namespace MoriaMods
             }
 
 
+            // v6.4.1 — skip single-key action binds (trash/replenish/remove-attrs) when ANY modifier
+            // is held. Prevents Ctrl+Shift+L etc. from accidentally triggering the trash dialog when
+            // the player just presses a modifier-combo key meant for something else.
+            const bool modDown =
+                ((GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0) ||
+                ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) ||
+                ((GetAsyncKeyState(VK_MENU)    & 0x8000) != 0);
             {
                 static bool s_lastReplenishKey = false;
                 uint8_t vk = s_bindings[BIND_REPLENISH_ITEM].key;
                 if (vk != 0)
                 {
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                    if (nowDown && !s_lastReplenishKey && !m_ftVisible)
+                    if (nowDown && !s_lastReplenishKey && !m_ftVisible && !modDown)
                     {
                         if (m_replenishItemEnabled) replenishLastItem();
                         else showInfoMessage(Loc::get("msg.replenish_disabled"));
@@ -1479,7 +1520,7 @@ namespace MoriaMods
                 if (vk != 0)
                 {
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                    if (nowDown && !s_lastRemoveAttrsKey && !m_ftVisible)
+                    if (nowDown && !s_lastRemoveAttrsKey && !m_ftVisible && !modDown)
                     {
                         if (m_removeAttrsEnabled) removeItemAttributes();
                         else showInfoMessage(Loc::get("msg.remove_attrs_disabled"));
@@ -1493,7 +1534,7 @@ namespace MoriaMods
                 if (vk != 0)
                 {
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                    if (nowDown && !s_lastTrashKey && !m_ftVisible && !m_trashDlgVisible)
+                    if (nowDown && !s_lastTrashKey && !m_ftVisible && !m_trashDlgVisible && !modDown)
                     {
                         if (m_trashItemEnabled) showTrashDialog();
                         else showInfoMessage(Loc::get("msg.trash_disabled"));
@@ -2336,6 +2377,147 @@ namespace MoriaMods
                                 }
                             }
                         }
+
+
+                        // v6.4.1 — Cheats tab (index 4): existing 3 rows (Unlock/Read/Peace) at
+                        // contentY + 0/128/256, plus the buff entries table beneath starting at
+                        // contentY + 384. All entries at 1x-scale Y offsets are in m_buffRowTopYs +
+                        // m_buffRowHeights; multiply by s2p and add scrollOff.
+                        if (m_ftSelectedTab == 4)
+                        {
+                            // Read current scroll offset (scrollbox moves tab content upward)
+                            float scrollOff = 0.0f;
+                            if (m_ftScrollBox)
+                            {
+                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                if (getScrollFn)
+                                {
+                                    int gsz = getScrollFn->GetParmsSize();
+                                    std::vector<uint8_t> sp(gsz, 0);
+                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
+                                    auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
+                                    if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
+                                        scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
+                                }
+                            }
+
+                            int btnLeft  = static_cast<int>(wLeft + (1540.0f - 30.0f - 50.0f - 400.0f) * s2p);
+                            int btnRight = static_cast<int>(wLeft + (1540.0f - 30.0f - 50.0f) * s2p);
+
+                            int contentY = static_cast<int>(wTop + 40.0f * s2p);
+                            int scrollPx = static_cast<int>(scrollOff * s2p);
+
+                            // Existing 3 rows (unscrolled at tab top — tab content follows scroll like a VBox)
+                            auto rowY = [&](int y1x, int h1x, int& outTop, int& outBot) {
+                                outTop = contentY - scrollPx + static_cast<int>(y1x * s2p);
+                                outBot = outTop + static_cast<int>(h1x * s2p);
+                            };
+
+                            int unlockT, unlockB; rowY(0,   128, unlockT, unlockB);
+                            int readT,   readB;   rowY(128, 128, readT,   readB);
+                            int peaceT,  peaceB;  rowY(256, 128, peaceT,  peaceB);
+
+                            // Diamond checkbox column (for Peace Mode row + buff toggles)
+                            int cbX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f + 4.0f + 4.0f) * s2p);
+                            int cbX1 = cbX0 + static_cast<int>(80.0f * s2p);
+
+                            bool handled = false;
+
+                            // --- Existing 3 rows (button click) ---
+                            if (curX >= btnLeft && curX <= btnRight)
+                            {
+                                if (curY >= unlockT && curY <= unlockB)
+                                { VLOG(STR("[MoriaCppMod] [Cheats] UNLOCK clicked\n")); unlockAllAvailableRecipes(); handled = true; }
+                                else if (curY >= readT && curY <= readB)
+                                { VLOG(STR("[MoriaCppMod] [Cheats] READ clicked\n"));   markAllLoreRead(); handled = true; }
+                                else if (curY >= peaceT && curY <= peaceB)
+                                { VLOG(STR("[MoriaCppMod] [Cheats] PEACE/FIGHT clicked\n")); togglePeaceMode(); handled = true; }
+                            }
+                            // --- Peace Mode checkbox click ---
+                            if (!handled && curX >= cbX0 && curX <= cbX1 && curY >= peaceT && curY <= peaceB)
+                            { VLOG(STR("[MoriaCppMod] [Cheats] Peace checkbox clicked\n")); togglePeaceMode(); handled = true; }
+
+                            // --- Buff entries (clear-all / headers / toggles) ---
+                            if (!handled)
+                            {
+                                int count = (int)m_buffRowTopYs.size();
+                                int ncEntries = 0;
+                                const CheatEntry* entries = cheatEntries(ncEntries);
+                                for (int i = 0; i < count && i < ncEntries; ++i)
+                                {
+                                    int rowT, rowB;
+                                    rowY(m_buffRowTopYs[i], m_buffRowHeights[i], rowT, rowB);
+                                    if (curY < rowT || curY > rowB) continue;
+
+                                    if (entries[i].kind == CheatRowKind::ClearAllBtn)
+                                    {
+                                        if (curX >= btnLeft && curX <= btnRight)
+                                        {
+                                            VLOG(STR("[MoriaCppMod] [Cheats] CLEAR clicked\n"));
+                                            clearAllBuffs();
+                                            handled = true;
+                                        }
+                                    }
+                                    else if (entries[i].kind == CheatRowKind::BuffToggle)
+                                    {
+                                        bool onCheckbox = (curX >= cbX0 && curX <= cbX1);
+                                        bool onButton   = (curX >= btnLeft && curX <= btnRight);
+                                        if (onCheckbox || onButton)
+                                        {
+                                            VLOG(STR("[MoriaCppMod] [Cheats] Toggle '{}' clicked (via {})\n"),
+                                                 entries[i].label, onButton ? STR("button") : STR("checkbox"));
+                                            toggleBuffEntry(i);
+                                            handled = true;
+                                        }
+                                    }
+                                    // Section headers are non-interactive.
+                                    break;
+                                }
+                            }
+                        }
+
+                        // v6.4.1 — Tweaks tab (index 5). Click on a row's value button cycles.
+                        if (m_ftSelectedTab == 5)
+                        {
+                            // Read scroll offset (same pattern as tab 4)
+                            float scrollOff = 0.0f;
+                            if (m_ftScrollBox)
+                            {
+                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                if (getScrollFn)
+                                {
+                                    int gsz = getScrollFn->GetParmsSize();
+                                    std::vector<uint8_t> sp(gsz, 0);
+                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
+                                    auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
+                                    if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
+                                        scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
+                                }
+                            }
+
+                            int btnLeft  = static_cast<int>(wLeft + (1540.0f - 30.0f - 50.0f - 400.0f) * s2p);
+                            int btnRight = static_cast<int>(wLeft + (1540.0f - 30.0f - 50.0f) * s2p);
+                            int contentY = static_cast<int>(wTop + 40.0f * s2p);
+                            int scrollPx = static_cast<int>(scrollOff * s2p);
+
+                            int count = (int)m_tweakRowTopYs.size();
+                            int nTweaks = 0;
+                            const TweakEntry* entries = tweakEntries(nTweaks);
+                            for (int i = 0; i < count && i < nTweaks; ++i)
+                            {
+                                int rowT = contentY - scrollPx + static_cast<int>(m_tweakRowTopYs[i] * s2p);
+                                int rowB = rowT + static_cast<int>(m_tweakRowHeights[i] * s2p);
+                                if (curY < rowT || curY > rowB) continue;
+
+                                if (entries[i].kind != TweakKind::SectionHeader &&
+                                    curX >= btnLeft && curX <= btnRight)
+                                {
+                                    VLOG(STR("[MoriaCppMod] [Tweaks] '{}' clicked\n"), entries[i].label);
+                                    cycleTweakValue(i);
+                                }
+                                break;
+                            }
+                        }
                     }
                 }
                 s_lastFtLMB = lmbDown;
@@ -2579,7 +2761,8 @@ namespace MoriaMods
 
             placementTick();
             tickPitchRoll();
-            drainUnlockQueue();  // v6.4.1 — process 50 recipe-discovery calls per frame (no-op when queue empty)
+            drainUnlockQueue();   // v6.4.1 — process 50 recipe-discovery calls per frame (no-op when queue empty)
+            refreshActiveBuffs(); // v6.4.1 — re-apply toggled-on buffs every 5s so they don't expire
 
             if (!m_replayActive) return;
             m_frameCounter++;
@@ -2672,6 +2855,7 @@ namespace MoriaMods
                     m_worldLayout = nullptr;
                     m_currentBubbleId.clear();
                     m_currentBubbleName.clear();
+                    m_currentBubble = nullptr;
                     m_replay = {};
 
                     m_appliedRemovals.assign(m_appliedRemovals.size(), false);
