@@ -117,6 +117,38 @@
             file << "PitchRotate = " << (m_pitchRotateEnabled ? "true" : "false") << "\n";
             file << "RollRotate = " << (m_rollRotateEnabled ? "true" : "false") << "\n";
 
+            // v6.4.4+ — persist Cheats tab state (Peace Mode + buff toggles).
+            // Only "true" entries are written so the INI stays tidy; absent keys = false.
+            {
+                file << "\n[Cheats]\n";
+                file << "PeaceMode = " << (m_peaceModeEnabled ? "true" : "false") << "\n";
+                int nCheats = 0;
+                const CheatEntry* cheats = cheatEntries(nCheats);
+                for (int i = 0; i < nCheats && i < (int)m_buffStates.size(); ++i)
+                {
+                    if (cheats[i].kind != CheatRowKind::BuffToggle) continue;
+                    if (!m_buffStates[i]) continue;  // skip defaults
+                    std::string key = sanitizeIniKey(std::wstring(cheats[i].label));
+                    if (key.empty()) continue;
+                    file << "Buff_" << key << " = true\n";
+                }
+            }
+
+            // v6.4.4+ — persist Tweaks tab cycle indices. Only non-default (index > 0) are written.
+            {
+                file << "\n[Tweaks]\n";
+                int nTweaks = 0;
+                const TweakEntry* tweaks = tweakEntries(nTweaks);
+                for (int i = 0; i < nTweaks && i < (int)m_tweakCurrentIdx.size(); ++i)
+                {
+                    if (tweaks[i].kind == TweakKind::SectionHeader) continue;
+                    if (m_tweakCurrentIdx[i] <= 0) continue;  // skip DEFAULT
+                    std::string key = sanitizeIniKey(std::wstring(tweaks[i].label));
+                    if (key.empty()) continue;
+                    file << key << " = " << m_tweakCurrentIdx[i] << "\n";
+                }
+            }
+
             bool hasCustomPos = false;
             for (int i = 0; i < TB_COUNT; i++)
                 if (m_toolbarPosX[i] >= 0) hasCustomPos = true;
@@ -242,6 +274,62 @@
                             else if (strEqualCI(kv->key, "RollRotate"))
                             {
                                 m_rollRotateEnabled = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                        }
+                        else if (strEqualCI(section, "Cheats"))
+                        {
+                            // v6.4.4+ Cheats tab persistence. Keys:
+                            //   PeaceMode = true/false
+                            //   Buff_<sanitizedLabel> = true   (only "true" entries present)
+                            if (strEqualCI(kv->key, "PeaceMode"))
+                            {
+                                m_pendingPeaceMode = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                            else if (kv->key.size() > 5 && strEqualCI(kv->key.substr(0, 5), "Buff_"))
+                            {
+                                std::string label = kv->key.substr(5);
+                                bool isTrue = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                                if (isTrue)
+                                {
+                                    int nCheats = 0;
+                                    const CheatEntry* cheats = cheatEntries(nCheats);
+                                    if ((int)m_buffStates.size() != nCheats) m_buffStates.assign(nCheats, false);
+                                    for (int i = 0; i < nCheats; ++i)
+                                    {
+                                        if (cheats[i].kind != CheatRowKind::BuffToggle) continue;
+                                        std::string entryKey = sanitizeIniKey(std::wstring(cheats[i].label));
+                                        if (strEqualCI(entryKey, label))
+                                        {
+                                            m_buffStates[i] = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        else if (strEqualCI(section, "Tweaks"))
+                        {
+                            // v6.4.4+ Tweaks tab persistence. Keys:
+                            //   <sanitizedLabel> = <cycleIndex>
+                            // (index 0 = DEFAULT and is never written)
+                            int nTweaks = 0;
+                            const TweakEntry* tweaks = tweakEntries(nTweaks);
+                            if ((int)m_tweakCurrentIdx.size() != nTweaks) m_tweakCurrentIdx.assign(nTweaks, 0);
+                            for (int i = 0; i < nTweaks; ++i)
+                            {
+                                if (tweaks[i].kind == TweakKind::SectionHeader) continue;
+                                std::string entryKey = sanitizeIniKey(std::wstring(tweaks[i].label));
+                                if (strEqualCI(entryKey, kv->key))
+                                {
+                                    try
+                                    {
+                                        int idx = std::stoi(kv->value);
+                                        if (idx >= 0 && idx < (int)tweaks[i].cycleValues.size())
+                                            m_tweakCurrentIdx[i] = idx;
+                                    }
+                                    catch (...) {}
+                                    break;
+                                }
                             }
                         }
                         else if (strEqualCI(section, "Positions"))

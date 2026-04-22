@@ -52,12 +52,6 @@
                 { CheatRowKind::BuffToggle,    STR("Boost Stamina"),      STR("GE_StaminaBoost_Consumable"),    nullptr },
                 { CheatRowKind::BuffToggle,    STR("Free Dodge"),         STR("GE_FreeDodge_Consumable"),       nullptr },
                 { CheatRowKind::BuffToggle,    STR("Free Sprint"),        STR("GE_FreeSprint_Consumable"),      nullptr },
-
-                { CheatRowKind::SectionHeader, STR("Armor"),              nullptr, nullptr },
-                { CheatRowKind::BuffToggle,    STR("Armor Glow"),         STR("GE_Armor_Illuminate"),           nullptr },
-                { CheatRowKind::BuffToggle,    STR("Shield Glow"),        STR("GE_Shield_Illuminate"),          nullptr },
-                { CheatRowKind::BuffToggle,    STR("Rune Light"),         STR("GE_Rune_OnEquipLightEffect"),    nullptr },
-                { CheatRowKind::BuffToggle,    STR("Torch"),              STR("GE_Torch"),                      nullptr },
             };
             outCount = (int)(sizeof(entries) / sizeof(entries[0]));
             return entries;
@@ -470,6 +464,7 @@
             }
 
             updateTweakRowUI(idx);
+            saveConfig();  // v6.4.4+ — persist to MoriaCppMod.ini
         }
 
         // Cache: short GE name → UClass*. Populated from enumerating loaded GE Class Default Objects.
@@ -649,6 +644,65 @@
                 VLOG(STR("[Cheats] '{}' OFF\n"), all[idx].label);
             }
             updateBuffRowUI(idx);
+            saveConfig();  // v6.4.4+ — persist to MoriaCppMod.ini
+        }
+
+        // v6.4.4+ — re-apply any buffs/tweaks/peace-mode that were loaded from INI.
+        // Called from the character-loaded block in dllmain.cpp once the player's ASC is available
+        // (GE classes can't be discovered or applied before then).
+        void applySavedCheatsAndTweaks()
+        {
+            // Peace Mode
+            if (m_pendingPeaceMode && !m_peaceModeEnabled)
+            {
+                VLOG(STR("[Cheats] Re-applying Peace Mode from INI\n"));
+                m_peaceModeEnabled = false;  // togglePeaceMode flips it; start from false
+                togglePeaceMode();
+                m_pendingPeaceMode = false;
+            }
+
+            // Buffs — re-apply every state that was loaded as ON
+            int nCheats = 0;
+            const CheatEntry* cheats = cheatEntries(nCheats);
+            int applied = 0;
+            for (int i = 0; i < nCheats && i < (int)m_buffStates.size(); ++i)
+            {
+                if (cheats[i].kind != CheatRowKind::BuffToggle) continue;
+                if (!m_buffStates[i]) continue;
+                if (cheats[i].effect1) applyGEByName(cheats[i].effect1);
+                if (cheats[i].effect2) applyGEByName(cheats[i].effect2);
+                updateBuffRowUI(i);
+                applied++;
+            }
+            if (applied > 0) VLOG(STR("[Cheats] Re-applied {} buffs from INI\n"), applied);
+
+            // Tweaks — re-apply every non-default cycle index
+            int nTweaks = 0;
+            const TweakEntry* tweaks = tweakEntries(nTweaks);
+            int twApplied = 0;
+            for (int i = 0; i < nTweaks && i < (int)m_tweakCurrentIdx.size(); ++i)
+            {
+                const TweakEntry& e = tweaks[i];
+                if (e.kind == TweakKind::SectionHeader) continue;
+                int ci = m_tweakCurrentIdx[i];
+                if (ci <= 0) continue;  // DEFAULT — nothing to do
+                if (ci >= (int)e.cycleValues.size()) continue;
+                int newVal = e.cycleValues[ci];
+                switch (e.kind)
+                {
+                    case TweakKind::TweakRow:
+                        applyFieldTweak(e.fieldName, e.isFloat, e.isMultiplier,
+                                        e.requiresOriginalGt1, e.rowStructFilter,
+                                        newVal, /*useDefault=*/false);
+                        break;
+                    case TweakKind::SpecialNoCost:        applyNoCostRecipe(false); break;
+                    case TweakKind::SpecialInstantCraft:  applyInstantCraft(false); break;
+                    default: break;
+                }
+                updateTweakRowUI(i);
+                twApplied++;
+            }
+            if (twApplied > 0) VLOG(STR("[Tweaks] Re-applied {} tweaks from INI\n"), twApplied);
         }
 
         // v6.4.1 — Buff refresh tick. Re-applies every toggled-on buff every BUFF_REFRESH_MS
@@ -698,6 +752,7 @@
             }
             VLOG(STR("[Cheats] Clear All Buffs — all toggles reset\n"));
             showOnScreen(L"All buffs cleared", 3.0f, 0.3f, 1.0f, 0.3f);
+            saveConfig();  // v6.4.4+ — persist to MoriaCppMod.ini
         }
 
 
@@ -1094,6 +1149,7 @@
             }
 
             updateFtPeaceMode();
+            saveConfig();  // v6.4.4+ — persist to MoriaCppMod.ini
         }
 
         // v6.4.1 Phase 2: mark ALL categories as read — lore, goals, tutorials, tips.

@@ -1,4 +1,4 @@
-// MoriaCppMod v6.4.4 — Return to Moria UE4SS C++ mod (~16,000 lines across dllmain.cpp + 12 .inl files)
+// MoriaCppMod v6.4.5 — Return to Moria UE4SS C++ mod (~16,000 lines across dllmain.cpp + 12 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -400,6 +400,7 @@ namespace MoriaMods
 
         // v6.4.1 Peace Mode — zero MaxSpawnLimit on AMorAISpawnManager to suppress new spawns.
         bool m_peaceModeEnabled{false};
+        bool m_pendingPeaceMode{false};                // v6.4.4+ — loaded from INI, applied on char load
         float m_savedMaxSpawnLimit{-1.0f};             // -1 = not yet captured
         UObject* m_ftPeaceCheckImg{nullptr};           // check icon (visible when enabled)
         UObject* m_ftPeaceBtnLabel{nullptr};           // button text ("PEACE"/"FIGHT")
@@ -543,14 +544,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.4.4");
+            ModVersion = STR("6.4.5");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.4.4\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.4.5\n"));
         }
 
         ~MoriaCppMod() override
@@ -591,7 +592,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.4.4 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.4.5 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -1126,7 +1127,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.4.4: F1-F8=build | F9=rotate | F12=config (Steam path ™ fix — all file + directory enumeration now UTF-16)\n"));
+                    STR("[MoriaCppMod] v6.4.5: F1-F8=build | F9=rotate | F12=config (trash-dialog crash guard, INS replenish restored, light cheats removed)\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -1525,7 +1526,7 @@ namespace MoriaMods
                 if (vk != 0)
                 {
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                    if (nowDown && !s_lastReplenishKey && !m_ftVisible && !modDown)
+                    if (nowDown && !s_lastReplenishKey && !m_ftVisible)
                     {
                         if (m_replenishItemEnabled) replenishLastItem();
                         else showInfoMessage(Loc::get("msg.replenish_disabled"));
@@ -3014,6 +3015,10 @@ namespace MoriaMods
                                      (void*)m_localPawn);
                             }
                         }
+
+                        // v6.4.4+ — re-apply persisted Cheats + Tweaks state now that the
+                        // player's ASC + DataTables + world are all ready. No-op if nothing saved.
+                        applySavedCheatsAndTweaks();
                     }
                 }
                 return;

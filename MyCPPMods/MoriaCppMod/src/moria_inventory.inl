@@ -759,9 +759,11 @@
                     if (itemRow)
                     {
 
-                        UObject* cdo = m_lastPickedUpItemClass->GetClassDefaultObject();
+                        UObject* cdo = nullptr;
+                        if (m_lastPickedUpItemClass && isObjectAlive(m_lastPickedUpItemClass))
+                            cdo = m_lastPickedUpItemClass->GetClassDefaultObject();
                         UObject* iconTex = nullptr;
-                        if (cdo)
+                        if (cdo && isObjectAlive(cdo))
                         {
                             auto* getIconFn = cdo->GetFunctionByNameInChain(STR("GetIcon"));
                             if (getIconFn)

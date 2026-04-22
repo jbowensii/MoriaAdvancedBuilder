@@ -78,6 +78,28 @@ namespace MoriaMods
         return _wrename(wf.c_str(), wt.c_str()) == 0;
     }
 
+    // v6.4.4+ — sanitize a wide label into an INI-key-safe ASCII string.
+    // Spaces → underscore; non-alphanumeric-non-underscore chars dropped.
+    // Used to turn cheat/tweak display labels ("Ring of Power") into INI keys ("Ring_of_Power").
+    inline std::string sanitizeIniKey(const std::wstring& label)
+    {
+        std::string out;
+        out.reserve(label.size());
+        for (wchar_t wc : label)
+        {
+            if (wc == L' ' || wc == L'\t') { out += '_'; }
+            else if (wc >= 128) { /* skip non-ASCII */ }
+            else
+            {
+                char c = static_cast<char>(wc);
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '_')
+                    out += c;
+            }
+        }
+        return out;
+    }
+
     struct SavedRemoval
     {
         std::string meshName;
