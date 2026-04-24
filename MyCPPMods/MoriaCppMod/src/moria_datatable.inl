@@ -68,6 +68,28 @@ struct DataTableUtil
     }
 
 
+    // v6.4.5+ — bind from an already-resolved UDataTable UObject (skip FindAllOf lookup)
+    bool bindFromObject(UObject* dt, const wchar_t* logName = nullptr)
+    {
+        table = nullptr; rowStruct = nullptr; rowSize = 0;
+        propOffsetCache.clear(); rowStructOff = -2;
+        tableName = logName ? logName : (dt ? std::wstring(dt->GetName()) : L"(null)");
+        if (!dt) return false;
+        table = dt;
+        resolveOffset(table, L"RowStruct", rowStructOff);
+        if (rowStructOff >= 0)
+        {
+            auto* base = reinterpret_cast<uint8_t*>(table);
+            rowStruct = *reinterpret_cast<UStruct**>(base + rowStructOff);
+            if (rowStruct) rowSize = rowStruct->GetPropertiesSize();
+        }
+        VLOG(STR("[MoriaCppMod] [DT] BoundObj '{}' RowStruct={} rowSize={}\n"),
+             tableName,
+             rowStruct ? rowStruct->GetName() : STR("(null)"),
+             rowSize);
+        return true;
+    }
+
     void unbind()
     {
         table = nullptr; rowStruct = nullptr; rowSize = 0;
@@ -101,6 +123,25 @@ struct DataTableUtil
             catch (...) { names.push_back(L"(error)"); }
         }
         return names;
+    }
+
+    // v6.4.5+ — Return raw FName values from the RowMap without string round-tripping.
+    // Preserves any Number suffix on auto-incremented FNames (e.g. Zone_5 vs FName("Zone", 5)).
+    std::vector<FName> getRowNamesRaw() const
+    {
+        std::vector<FName> out;
+        RowMapHeader hdr{};
+        if (!getRowMapHeader(hdr)) return out;
+        out.reserve(hdr.Num);
+        for (int32_t i = 0; i < hdr.Num; i++)
+        {
+            uint8_t* elem = hdr.Data + i * SET_ELEMENT_SIZE;
+            if (!isReadableMemory(elem, SET_ELEMENT_SIZE)) continue;
+            FName rowName;
+            std::memcpy(&rowName, elem, FNAME_SIZE);
+            out.push_back(rowName);
+        }
+        return out;
     }
 
 

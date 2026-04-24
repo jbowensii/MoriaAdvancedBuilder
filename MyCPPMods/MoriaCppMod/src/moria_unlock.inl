@@ -1327,3 +1327,247 @@
             VLOG(STR("[MarkRead] Complete — total entries marked across all phases: {}\n"), totalMarked);
             showOnScreen(L"All categories marked as read", 3.0f, 0.3f, 1.0f, 0.3f);
         }
+
+        // v6.4.5+ — Walk the super-chain of a struct to find a property by name.
+        // Returns its offset within the struct, or -1 if not found.
+        int findStructFieldOffset(UStruct* strct, const wchar_t* fieldName)
+        {
+            if (!strct || !fieldName) return -1;
+            for (UStruct* s = strct; s; s = s->GetSuperStruct())
+            {
+                for (auto* prop : s->ForEachProperty())
+                {
+                    if (!prop) continue;
+                    std::wstring n;
+                    try { n = prop->GetName(); } catch (...) { continue; }
+                    if (n == fieldName) return prop->GetOffset_Internal();
+                }
+            }
+            return -1;
+        }
+
+        // v6.4.5+ — Resolve a DataTable by property name off the UMorDatabase singleton.
+        // The Moria database holds UDataTable* pointers (e.g. ZonesTable, LandmarksTable,
+        // WaypointsTable) under asset names we can't predict, so we read them via reflection.
+        UObject* resolveDatabaseTable(UObject* db, const wchar_t* propName)
+        {
+            if (!db || !propName) return nullptr;
+            auto** ptr = db->GetValuePtrByPropertyNameInChain<UObject*>(propName);
+            if (!ptr || !*ptr) return nullptr;
+            if (!isObjectAlive(*ptr)) return nullptr;
+            return *ptr;
+        }
+
+        // v6.4.5+ — Fallback: scan all loaded UDataTables and pick the first whose name
+        // contains the given substring (case-insensitive). Diagnostic-only — returns the
+        // first hit even if multiple match.
+        UObject* findDataTableContaining(const wchar_t* needle)
+        {
+            if (!needle) return nullptr;
+            std::wstring wantLower(needle);
+            for (auto& c : wantLower) c = static_cast<wchar_t>(towlower(c));
+
+            std::vector<UObject*> dts;
+            UObjectGlobals::FindAllOf(STR("DataTable"), dts);
+            for (auto* dt : dts)
+            {
+                if (!dt) continue;
+                try
+                {
+                    std::wstring n(dt->GetName());
+                    std::wstring lo(n);
+                    for (auto& c : lo) c = static_cast<wchar_t>(towlower(c));
+                    if (lo.find(wantLower) != std::wstring::npos) return dt;
+                }
+                catch (...) {}
+            }
+            return nullptr;
+        }
+
+        // v6.4.5+ — Reveal entire map: mark every zone and every landmark as discovered
+        // via AMorDiscoveryManager::EncounterZone / EncounterLandmark. Pulls the authoritative
+        // DataTable pointers off UMorDatabase::ZonesTable / LandmarksTable / WaypointsTable
+        // via reflection (asset names aren't predictable). Server-authoritative — only the
+        // host sees effect. Bound to NUM* (VK_MULTIPLY).
+        void revealEntireMap()
+        {
+            VLOG(STR("[RevealMap] revealEntireMap() invoked\n"));
+
+            // UMorDatabase singleton
+            UObject* morDb = nullptr;
+            {
+                std::vector<UObject*> dbs;
+                UObjectGlobals::FindAllOf(STR("MorDatabase"), dbs);
+                for (auto* d : dbs) { if (d && isObjectAlive(d)) { morDb = d; break; } }
+            }
+            if (morDb)
+                VLOG(STR("[RevealMap] UMorDatabase found at {}\n"), (void*)morDb);
+            else
+                VLOG(STR("[RevealMap] UMorDatabase NOT found — will try name-search fallback\n"));
+
+            // 1. Find AMorDiscoveryManager singleton
+            UObject* discoveryMgr = nullptr;
+            {
+                std::vector<UObject*> mgrs;
+                UObjectGlobals::FindAllOf(STR("MorDiscoveryManager"), mgrs);
+                for (auto* m : mgrs)
+                {
+                    if (m && isObjectAlive(m)) { discoveryMgr = m; break; }
+                }
+            }
+            if (!discoveryMgr)
+            {
+                VLOG(STR("[RevealMap] AMorDiscoveryManager not found — bail\n"));
+                showOnScreen(L"Reveal Map: DiscoveryManager not found", 3.0f, 1.0f, 0.4f, 0.4f);
+                return;
+            }
+
+            // 2. Local character
+            UObject* localChar = getPawn();
+            if (!localChar || !isObjectAlive(localChar))
+            {
+                VLOG(STR("[RevealMap] no local pawn — bail\n"));
+                showOnScreen(L"Reveal Map: no local character", 3.0f, 1.0f, 0.4f, 0.4f);
+                return;
+            }
+
+            // Zones + chapters revealed via AMorMinimapManager::SetStartingDiscoveredZones
+            // and UMorGameMinimapWidget::DiscoverAllChapters (no Character param, no crash).
+            // AMorDiscoveryManager::EncounterZone / EncounterLandmark were tried first but
+            // crash inside the native implementation on this game build — removed.
+            // with the full zone list in one shot. No per-row Character param → no SEH.
+            int minimapZonesPushed = 0;
+            {
+                UObject* mmMgr = nullptr;
+                std::vector<UObject*> mgrs;
+                UObjectGlobals::FindAllOf(STR("MorMinimapManager"), mgrs);
+                for (auto* m : mgrs) { if (m && isObjectAlive(m)) { mmMgr = m; break; } }
+
+                if (mmMgr)
+                {
+                    UObject* zonesDt = resolveDatabaseTable(morDb, STR("ZonesTable"));
+                    if (!zonesDt) zonesDt = findDataTableContaining(STR("Zone"));
+                    DataTableUtil zt;
+                    if (zonesDt && zt.bindFromObject(zonesDt, L"ZonesTable"))
+                    {
+                        auto raw = zt.getRowNamesRaw();
+                        const int HANDLE_SIZE = 16;  // {UDataTable*, FName RowName}
+                        std::vector<uint8_t> pack(raw.size() * HANDLE_SIZE, 0);
+                        for (size_t i = 0; i < raw.size(); i++)
+                        {
+                            uint8_t* slot = pack.data() + i * HANDLE_SIZE;
+                            *reinterpret_cast<UObject**>(slot + 0) = zonesDt;
+                            std::memcpy(slot + 8, &raw[i], sizeof(FName));
+                        }
+
+                        // Build a TArray<FMorZoneRowHandle> header pointing at our packed buffer
+                        struct FakeTArray { void* Data; int32_t Num; int32_t Max; };
+                        FakeTArray arr{ pack.data(), static_cast<int32_t>(raw.size()), static_cast<int32_t>(raw.size()) };
+
+                        auto* setStartFn = mmMgr->GetFunctionByNameInChain(STR("SetStartingDiscoveredZones"));
+                        if (setStartFn)
+                        {
+                            int sz = setStartFn->GetParmsSize();
+                            std::vector<uint8_t> buf(sz, 0);
+                            // Only one param: the TArray (pass-by-ref). It lives at offset 0.
+                            auto* pArr = findParam(setStartFn, STR("DiscoveredZones"));
+                            int arrOff = pArr ? pArr->GetOffset_Internal() : 0;
+                            std::memcpy(buf.data() + arrOff, &arr, sizeof(arr));
+                            if (safeProcessEvent(mmMgr, setStartFn, buf.data()))
+                                minimapZonesPushed = static_cast<int>(raw.size());
+                            VLOG(STR("[RevealMap] SetStartingDiscoveredZones: pushed={} (of {} rows)\n"),
+                                 minimapZonesPushed, static_cast<int>(raw.size()));
+                        }
+                        else
+                        {
+                            VLOG(STR("[RevealMap] SetStartingDiscoveredZones UFunction missing on MinimapManager\n"));
+                        }
+                    }
+                }
+                else
+                {
+                    VLOG(STR("[RevealMap] AMorMinimapManager not found\n"));
+                }
+            }
+
+            // v6.4.5+ — Also call DiscoverAllChapters() on every active minimap widget
+            int chaptersDiscovered = 0;
+            {
+                std::vector<UObject*> widgets;
+                UObjectGlobals::FindAllOf(STR("MorGameMinimapWidget"), widgets);
+                for (auto* w : widgets)
+                {
+                    if (!w || !isObjectAlive(w)) continue;
+                    auto* fn = w->GetFunctionByNameInChain(STR("DiscoverAllChapters"));
+                    if (fn && safeProcessEvent(w, fn, nullptr))
+                        chaptersDiscovered++;
+                }
+                VLOG(STR("[RevealMap] DiscoverAllChapters called on {} minimap widgets\n"), chaptersDiscovered);
+            }
+
+            // Waypoints (populates fast-travel points)
+            int waypointCount = 0;
+            {
+                UObject* wpMgr = nullptr;
+                std::vector<UObject*> mgrs;
+                UObjectGlobals::FindAllOf(STR("MorWaypointsManager"), mgrs);
+                for (auto* m : mgrs) { if (m && isObjectAlive(m)) { wpMgr = m; break; } }
+
+                if (wpMgr)
+                {
+                    auto* discFn = wpMgr->GetFunctionByNameInChain(STR("DiscoverWaypointByRowHandle"));
+                    if (discFn)
+                    {
+                        auto* pHandle = findParam(discFn, STR("WaypointRowHandle"));
+                        auto* pLoc = findParam(discFn, STR("CallingLocation"));
+                        auto* pZone = findParam(discFn, STR("TargetZone"));
+                        if (pHandle && pLoc && pZone)
+                        {
+                            UObject* wpDt = resolveDatabaseTable(morDb, STR("WaypointsTable"));
+                            if (!wpDt) wpDt = findDataTableContaining(STR("Waypoint"));
+                            DataTableUtil wpTable;
+                            if (wpDt && wpTable.bindFromObject(wpDt, L"WaypointsTable"))
+                            {
+                                auto wpRaw = wpTable.getRowNamesRaw();
+                                int parmsSize = discFn->GetParmsSize();
+                                std::vector<uint8_t> buf(parmsSize, 0);
+
+                                auto* hSp = static_cast<FStructProperty*>(pHandle);
+                                UStruct* handleStruct = hSp ? hSp->GetStruct() : nullptr;
+                                int rowNameInnerOff = findStructFieldOffset(handleStruct, STR("RowName"));
+                                int dtInnerOff = findStructFieldOffset(handleStruct, STR("DataTable"));
+                                int handleOff = pHandle->GetOffset_Internal();
+                                int rowNameAbs = (rowNameInnerOff >= 0) ? (handleOff + rowNameInnerOff) : (handleOff + 8);
+                                int dtAbs = (dtInnerOff >= 0) ? (handleOff + dtInnerOff) : handleOff;
+                                VLOG(STR("[RevealMap] Waypoints call prep: parms={} handleOff={} rowNameInner={} dtInner={} rows={}\n"),
+                                     parmsSize, handleOff, rowNameInnerOff, dtInnerOff,
+                                     static_cast<int>(wpRaw.size()));
+
+                                // Use character's current location as the "calling location"
+                                FVec3f charLoc = getPawnLocation();
+                                for (auto& fn : wpRaw)
+                                {
+                                    std::fill(buf.begin(), buf.end(), uint8_t{0});
+                                    *reinterpret_cast<UObject**>(buf.data() + dtAbs) = wpDt;
+                                    std::memcpy(buf.data() + rowNameAbs, &fn, sizeof(FName));
+                                    std::memcpy(buf.data() + pLoc->GetOffset_Internal(), &charLoc, sizeof(FVec3f));
+                                    // TargetZone left zeroed — empty handle means "any zone"
+                                    if (safeProcessEvent(wpMgr, discFn, buf.data()))
+                                        waypointCount++;
+                                }
+                                VLOG(STR("[RevealMap] Waypoints: {} discovered (of {} rows)\n"),
+                                     waypointCount, static_cast<int>(wpRaw.size()));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Final summary on screen
+            wchar_t summary[128];
+            swprintf(summary, 128,
+                     L"Map revealed: %d zones, %d chapters, %d waypoints",
+                     minimapZonesPushed, chaptersDiscovered, waypointCount);
+            VLOG(STR("[RevealMap] DONE — {}\n"), std::wstring(summary));
+            showOnScreen(summary, 4.0f, 0.3f, 1.0f, 0.5f);
+        }

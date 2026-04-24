@@ -314,6 +314,196 @@
             return true;
         }
 
+        // v6.4.5+ — Gather every bubble-identifying field we can read from the current
+        // UWorldLayoutBubble, push into the Target Info widget (same widget as ']'), and
+        // copy a formatted multi-line string to the Windows clipboard.
+        // Bound to Num0. Always VLOGs entry so poll issues are visible in UE4SS.log.
+        void captureBubbleInfo()
+        {
+            VLOG(STR("[MoriaCppMod] [BubbleInfo] captureBubbleInfo() invoked\n"));
+
+            // Refresh current bubble — do NOT trust a cached pointer alone
+            updateCurrentBubble();
+
+            UObject* bubble = m_currentBubble;
+            if (!bubble || !isObjectAlive(bubble))
+            {
+                VLOG(STR("[MoriaCppMod] [BubbleInfo] no current bubble (bubble={} alive={})\n"),
+                     (void*)bubble, bubble ? (isObjectAlive(bubble) ? 1 : 0) : -1);
+                showOnScreen(L"Bubble info: not in a bubble", 3.0f, 1.0f, 0.4f, 0.4f);
+                return;
+            }
+
+            std::wstring clsName;
+            {
+                UClass* c = nullptr;
+                try { c = bubble->GetClassPrivate(); } catch (...) {}
+                if (c && isObjectAlive(c))
+                {
+                    try { clsName = c->GetName(); } catch (...) {}
+                }
+            }
+
+            std::wstring instName;
+            try { instName = bubble->GetName(); } catch (...) {}
+
+            std::wstring pathName;
+            try { pathName = bubble->GetPathName(); } catch (...) {}
+
+            std::wstring displayName;
+            if (auto* p = bubble->GetPropertyByNameInChain(STR("DisplayName")))
+            {
+                uint8_t* addr = reinterpret_cast<uint8_t*>(bubble) + p->GetOffset_Internal();
+                if (isReadableMemory(addr, sizeof(FText)))
+                {
+                    auto* text = reinterpret_cast<FText*>(addr);
+                    try { displayName = text->ToString(); } catch (...) {}
+                }
+            }
+
+            std::wstring bdName, bdPath;
+            if (auto** bdPtr = bubble->GetValuePtrByPropertyNameInChain<UObject*>(STR("BubbleDefinition")))
+            {
+                UObject* bd = *bdPtr;
+                if (bd && isObjectAlive(bd))
+                {
+                    try { bdName = bd->GetName(); } catch (...) {}
+                    try { bdPath = bd->GetPathName(); } catch (...) {}
+                }
+            }
+
+            std::wstring cellStr;
+            if (auto* p = bubble->GetPropertyByNameInChain(STR("RootCellPosition")))
+            {
+                uint8_t* base = reinterpret_cast<uint8_t*>(bubble) + p->GetOffset_Internal();
+                if (isReadableMemory(base, 12))
+                {
+                    int32_t x = *reinterpret_cast<int32_t*>(base + 0);
+                    int32_t y = *reinterpret_cast<int32_t*>(base + 4);
+                    int32_t z = *reinterpret_cast<int32_t*>(base + 8);
+                    cellStr = L"(" + std::to_wstring(x) + L"," + std::to_wstring(y) + L"," + std::to_wstring(z) + L")";
+                }
+            }
+
+            std::wstring landmarkRow;
+            if (auto* p = bubble->GetPropertyByNameInChain(STR("LandmarkHandle")))
+            {
+                auto* sp = static_cast<FStructProperty*>(p);
+                UStruct* strct = sp ? sp->GetStruct() : nullptr;
+                if (strct)
+                {
+                    uint8_t* base = reinterpret_cast<uint8_t*>(bubble) + p->GetOffset_Internal();
+                    for (UStruct* s = strct; s; s = s->GetSuperStruct())
+                    {
+                        for (auto* inner : s->ForEachProperty())
+                        {
+                            if (!inner) continue;
+                            std::wstring n;
+                            try { n = inner->GetName(); } catch (...) { continue; }
+                            if (n == STR("RowName"))
+                            {
+                                uint8_t* fnaddr = base + inner->GetOffset_Internal();
+                                if (isReadableMemory(fnaddr, sizeof(FName)))
+                                {
+                                    FName fn = *reinterpret_cast<FName*>(fnaddr);
+                                    try { landmarkRow = fn.ToString(); } catch (...) {}
+                                }
+                                break;
+                            }
+                        }
+                        if (!landmarkRow.empty()) break;
+                    }
+                }
+            }
+
+            // Translation from WorldTransform (0x0110)
+            std::wstring transStr;
+            {
+                uint8_t* base = reinterpret_cast<uint8_t*>(bubble) + 0x0110;
+                if (isReadableMemory(base, 12))
+                {
+                    float tx = *reinterpret_cast<float*>(base + 0);
+                    float ty = *reinterpret_cast<float*>(base + 4);
+                    float tz = *reinterpret_cast<float*>(base + 8);
+                    wchar_t buf[96];
+                    swprintf(buf, 96, L"(%.1f, %.1f, %.1f)", tx, ty, tz);
+                    transStr = buf;
+                }
+            }
+
+            // Build clipboard payload (multi-line, all fields)
+            std::wstring clip;
+            clip += L"=== Bubble Info ===\r\n";
+            clip += L"Class:           " + clsName + L"\r\n";
+            clip += L"Instance Name:   " + instName + L"\r\n";
+            clip += L"Display Name:    " + displayName + L"\r\n";
+            clip += L"Definition:      " + (bdName.empty() ? std::wstring(L"(none)") : bdName) + L"\r\n";
+            if (!bdPath.empty())
+                clip += L"Definition Path: " + bdPath + L"\r\n";
+            clip += L"Root Cell:       " + (cellStr.empty() ? std::wstring(L"(unavailable)") : cellStr) + L"\r\n";
+            clip += L"World Transform: " + (transStr.empty() ? std::wstring(L"(unavailable)") : transStr) + L"\r\n";
+            clip += L"Landmark Row:    " + (landmarkRow.empty() ? std::wstring(L"(none)") : landmarkRow) + L"\r\n";
+            clip += L"Full Path:       " + pathName;
+
+            VLOG(STR("[MoriaCppMod] [BubbleInfo] gathered: class='{}' inst='{}' display='{}' def='{}' cell='{}' trans='{}' landmark='{}'\n"),
+                 clsName, instName, displayName, bdName, cellStr, transStr, landmarkRow);
+
+            // Clipboard (same pattern as showTargetInfoUMG)
+            HWND hwnd = findGameWindow();
+            bool copied = false;
+            if (OpenClipboard(hwnd))
+            {
+                EmptyClipboard();
+                size_t sz = (clip.size() + 1) * sizeof(wchar_t);
+                HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, sz);
+                if (hMem)
+                {
+                    if (auto* ptr = GlobalLock(hMem))
+                    {
+                        memcpy(ptr, clip.c_str(), sz);
+                        GlobalUnlock(hMem);
+                        SetClipboardData(CF_UNICODETEXT, hMem);
+                        copied = true;
+                    }
+                }
+                CloseClipboard();
+            }
+            VLOG(STR("[MoriaCppMod] [BubbleInfo] clipboard copied={}\n"), copied ? 1 : 0);
+
+            // Push into the Target Info widget (same box as ']'): map bubble fields to labels
+            //   Class    ← WorldLayoutBubble
+            //   Name     ← instance name
+            //   Display  ← DisplayName
+            //   Path     ← BubbleDefinition path (or name)
+            //   Build    ← shown but reused as "Cell: (x,y,z)  @ (tx,ty,tz)"
+            //   Recipe   ← Landmark row (when present)
+            std::wstring pathField = !bdPath.empty() ? bdPath
+                                    : (!bdName.empty() ? bdName : pathName);
+            std::wstring recipeField;
+            if (!landmarkRow.empty()) recipeField = L"Landmark=" + landmarkRow;
+            if (!cellStr.empty())
+            {
+                if (!recipeField.empty()) recipeField += L"  ";
+                recipeField += L"Cell=" + cellStr;
+            }
+            if (!transStr.empty())
+            {
+                if (!recipeField.empty()) recipeField += L"  ";
+                recipeField += L"T=" + transStr;
+            }
+
+            showTargetInfoUMG(instName,
+                              displayName,
+                              pathField,
+                              clsName,
+                              /*buildable=*/false,
+                              recipeField,
+                              /*rowName=*/L"");
+
+            if (!copied)
+                showOnScreen(L"Bubble clipboard copy FAILED", 3.0f, 1.0f, 0.4f, 0.4f);
+        }
+
         void migrateRemovalsToBubbles()
         {
             m_worldLayout = nullptr;  // Clear before re-find to avoid stale early-return

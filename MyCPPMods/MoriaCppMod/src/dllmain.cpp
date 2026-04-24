@@ -1562,6 +1562,37 @@ namespace MoriaMods
                     s_lastTrashKey = nowDown;
                 }
             }
+            // Num* — reveal entire map: all zones, landmarks, waypoints (v6.4.5+)
+            {
+                static bool s_lastRevealMapKey = false;
+                bool nowDown = (GetAsyncKeyState(VK_MULTIPLY) & 0x8000) != 0;
+                if (nowDown && !s_lastRevealMapKey)
+                {
+                    VLOG(STR("[MoriaCppMod] [RevealMap] NUM* press detected (ftVisible={} modDown={})\n"),
+                         m_ftVisible ? 1 : 0, modDown ? 1 : 0);
+                    if (!m_ftVisible && !modDown)
+                        revealEntireMap();
+                }
+                s_lastRevealMapKey = nowDown;
+            }
+            // Num0 — capture bubble info to clipboard + Target Info widget (v6.4.5+)
+            // Windows maps numpad-0 to VK_NUMPAD0 only when NumLock is ON; with NumLock OFF
+            // the same physical key sends VK_INSERT (which Replenish owns). We always
+            // check VK_NUMPAD0 and also fall back to a fresh key-state via GetKeyState
+            // to survive focus-related async state drops.
+            {
+                static bool s_lastBubbleInfoKey = false;
+                bool nowDown = (GetAsyncKeyState(VK_NUMPAD0) & 0x8000) != 0;
+                if (nowDown && !s_lastBubbleInfoKey)
+                {
+                    bool numLockOn = (GetKeyState(VK_NUMLOCK) & 0x0001) != 0;
+                    VLOG(STR("[MoriaCppMod] [BubbleInfo] NUM0 press detected (numLock={} ftVisible={} modDown={})\n"),
+                         numLockOn ? 1 : 0, m_ftVisible ? 1 : 0, modDown ? 1 : 0);
+                    if (!m_ftVisible && !modDown)
+                        captureBubbleInfo();
+                }
+                s_lastBubbleInfoKey = nowDown;
+            }
             // Pitch rotation (,  / SHIFT+,)
             // Pitch rotation (. / SHIFT+.) — BIND_PITCH_ROTATE defaults to '.'
             {
