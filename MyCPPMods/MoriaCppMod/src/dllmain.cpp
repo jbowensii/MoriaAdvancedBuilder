@@ -1,4 +1,4 @@
-// MoriaCppMod v6.4.5 — Return to Moria UE4SS C++ mod (~16,000 lines across dllmain.cpp + 12 .inl files)
+// MoriaCppMod v6.5.0 — Return to Moria UE4SS C++ mod (~16,000 lines across dllmain.cpp + 12 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -544,14 +544,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.4.5");
+            ModVersion = STR("6.5.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.4.5\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.5.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -592,7 +592,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.4.5 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.5.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -1127,7 +1127,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.4.5: F1-F8=build | F9=rotate | F12=config (trash-dialog crash guard, INS replenish restored, light cheats removed)\n"));
+                    STR("[MoriaCppMod] v6.5.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -1562,7 +1562,7 @@ namespace MoriaMods
                     s_lastTrashKey = nowDown;
                 }
             }
-            // Num* — reveal entire map: all zones, landmarks, waypoints (v6.4.5+)
+            // Num* — reveal map (zones + chapters only) (v6.4.5+)
             {
                 static bool s_lastRevealMapKey = false;
                 bool nowDown = (GetAsyncKeyState(VK_MULTIPLY) & 0x8000) != 0;
