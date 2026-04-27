@@ -398,6 +398,8 @@ Every key listed below can be rebound through the in-game Configuration menu (F1
 | Numpad 2 | Undo Last | Undo the most recent removal |
 | Numpad 3 | Remove All | Remove all objects of the aimed type |
 | Numpad + | Advanced Builder | Open the advanced builder (modifier + key to reposition toolbars) |
+| Numpad 0 | Bubble Info | Capture details of the targeted bubble to clipboard and Target Info widget |
+| Numpad * | Reveal Map | Reveal every zone, chapter, and waypoint on the minimap |
 | Delete | Trash Item | Destroy the last-moved inventory item |
 | Insert | Replenish Item | Fill the last-moved item to max stack size |
 | End | Remove Attributes | Strip tint and rune effects from last-moved item |

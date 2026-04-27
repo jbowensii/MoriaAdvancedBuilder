@@ -64,7 +64,7 @@ namespace MoriaMods
     using namespace RC::Unreal;
 
 
-    inline bool s_verbose = true;
+    inline bool s_verbose = false;
     inline std::string s_language = "en";
     inline std::string s_ue4ssWorkDir;  // set once in on_unreal_init from UE4SSProgram::get_working_directory
 
