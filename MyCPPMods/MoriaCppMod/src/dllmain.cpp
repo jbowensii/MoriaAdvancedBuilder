@@ -539,6 +539,8 @@ namespace MoriaMods
 
         #include "moria_widget_harvest.inl"
 
+        #include "moria_join_world_ui.inl"
+
         #include "moria_overlay_mgmt.inl"
 
       public:
@@ -915,6 +917,11 @@ namespace MoriaMods
                             s_instance->m_showSettleTime = GetTickCount64();
                             // Don't transition yet — let placementTick handle after settle delay
                         }
+                    }
+                    // v6.6.0+ — intercept Join Other World screen and replace with mod-owned duplicate
+                    else if (cls == STR("WBP_UI_JoinWorldScreen_C"))
+                    {
+                        s_instance->onNativeJoinWorldShown(context);
                     }
                     return;
                 }
@@ -2832,6 +2839,17 @@ namespace MoriaMods
             tickPitchRoll();
             drainUnlockQueue();   // v6.4.1 — process 50 recipe-discovery calls per frame (no-op when queue empty)
             refreshActiveBuffs(); // v6.4.1 — re-apply toggled-on buffs every 5s so they don't expire
+            tickJoinWorldUI();    // v6.6.0 — consume pending show/hide flags for mod-owned Join World UI
+
+            // Esc closes the mod-owned Join World UI (placeholder iteration)
+            if (m_modJoinWorldWidget.Get())
+            {
+                static bool s_lastEscJW = false;
+                bool nowDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+                if (nowDown && !s_lastEscJW)
+                    m_pendingHideJoinWorldUI = true;
+                s_lastEscJW = nowDown;
+            }
 
             if (!m_replayActive) return;
             m_frameCounter++;

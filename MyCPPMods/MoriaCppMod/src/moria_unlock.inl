@@ -708,10 +708,16 @@
         // v6.4.1 — Buff refresh tick. Re-applies every toggled-on buff every BUFF_REFRESH_MS
         // milliseconds so duration-based effects (HasDuration policy) never expire naturally.
         // Called from the main tick; cheap no-op when no buffs are active.
+        // v6.6.0 fix — gate on m_characterLoaded so the timer doesn't tick before world
+        // load. m_buffStates is populated from MoriaCppMod.ini at startup (loadConfig
+        // reads [Cheats] Buff_* entries), which made the timer burn its 30s window on
+        // applyGEByName calls into a void with no ASC. Early-return *before* the timer
+        // check so the first post-load tick fires immediately.
         ULONGLONG m_lastBuffRefresh{0};
         static constexpr ULONGLONG BUFF_REFRESH_MS = 30000;  // every 30 seconds
         void refreshActiveBuffs()
         {
+            if (!m_characterLoaded) return;
             if (m_buffStates.empty()) return;
             ULONGLONG now = GetTickCount64();
             if (now - m_lastBuffRefresh < BUFF_REFRESH_MS) return;
