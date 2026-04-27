@@ -537,6 +537,8 @@ namespace MoriaMods
 
         #include "moria_widgets.inl"
 
+        #include "moria_widget_harvest.inl"
+
         #include "moria_overlay_mgmt.inl"
 
       public:
@@ -1592,6 +1594,22 @@ namespace MoriaMods
                         captureBubbleInfo();
                 }
                 s_lastBubbleInfoKey = nowDown;
+            }
+            // N — debug widget harvest (v6.6.0+, dev-only). Constructs the 12 Join World
+            // widget classes off-viewport, walks each WidgetTree, dumps to JSON under
+            // Mods/MoriaCppMod/widget-harvest/. Used to plan C++ duplicates.
+            // Plain N (no modifier) since N isn't bound to any other action.
+            {
+                static bool s_lastHarvestKey = false;
+                bool nowDown = (GetAsyncKeyState('N') & 0x8000) != 0;
+                if (nowDown && !s_lastHarvestKey)
+                {
+                    VLOG(STR("[MoriaCppMod] [WidgetHarvest] N press detected (ftVisible={} modDown={})\n"),
+                         m_ftVisible ? 1 : 0, modDown ? 1 : 0);
+                    if (!m_ftVisible && !modDown)
+                        harvestJoinWorldWidgets();
+                }
+                s_lastHarvestKey = nowDown;
             }
             // Pitch rotation (,  / SHIFT+,)
             // Pitch rotation (. / SHIFT+.) — BIND_PITCH_ROTATE defaults to '.'

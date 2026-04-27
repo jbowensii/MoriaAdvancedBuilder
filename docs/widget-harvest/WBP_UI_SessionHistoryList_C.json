@@ -1,0 +1,28 @@
+{
+  "widgetClass":"WBP_UI_SessionHistoryList_C",
+  "harvestedAt":"Apr 27 2026 18:40:10",
+  "modVersion":"6.6.0",
+  "root":
+  {
+    "name":"SizeBox_0",
+    "class":"SizeBox",
+    "slot":null,
+    "extras":{"WidthOverride":900,"HeightOverride":0,"bOverride_WidthOverride":true,"bOverride_HeightOverride":true,"Visibility":4},
+    "children":[
+      {
+        "name":"SessionBox",
+        "class":"VerticalBox",
+        "slot":{"slotClass":"SizeBoxSlot","HAlign":0,"VAlign":0},
+        "extras":{"Visibility":4},
+        "children":[
+          {
+            "name":"SessionHistoryLabel",
+            "class":"UI_WBP_Text_Header_C",
+            "slot":{"slotClass":"VerticalBoxSlot","HAlign":0,"VAlign":1},
+            "extras":{"Visibility":4}
+          }
+        ]
+      }
+    ]
+  }
+}
