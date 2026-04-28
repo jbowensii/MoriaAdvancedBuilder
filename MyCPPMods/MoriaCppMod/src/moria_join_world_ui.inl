@@ -20,6 +20,237 @@
         bool m_suppressNextJoinWorldIntercept{false};  // re-entry guard: skip next OnAfterShow trigger
         ULONGLONG m_modJoinWorldShownAt{0};
 
+        // Cached UClass refs harvested from the native widget tree on first intercept.
+        // UClasses live forever once loaded — safe to cache as raw pointers.
+        UClass* m_jwCls_FrontEndButton{nullptr};       // WBP_FrontEndButton_C
+        UClass* m_jwCls_CraftBigButton{nullptr};       // UI_WBP_Craft_BigButton_C
+        UClass* m_jwCls_GameDataPanel{nullptr};        // WBP_JoinWorldScreen_GameDataPanel_C
+        UClass* m_jwCls_SessionHistoryList{nullptr};   // WBP_UI_SessionHistoryList_C
+        UClass* m_jwCls_AdvancedJoinPanel{nullptr};    // WBP_UI_AdvancedJoinOptions_C
+        UClass* m_jwCls_LowerThird{nullptr};           // UI_WBP_LowerThird_C
+        UClass* m_jwCls_NetworkAlert{nullptr};         // WBP_UI_NetworkAlert_C
+        UClass* m_jwCls_ControlPrompt{nullptr};        // UI_WBP_HUD_ControlPrompt_C
+        UClass* m_jwCls_TextHeader{nullptr};           // UI_WBP_Text_Header_C
+
+        // ---- Look-and-feel cloning: captured FSlateFontInfo struct bytes ----
+        // We memcpy the whole 88-byte FSlateFontInfo from native TextBlocks at
+        // intercept time, then apply via SetFont when constructing our duplicates.
+        // This preserves font asset, typeface, size, color, outline, shadows —
+        // everything the harvested JSON couldn't reach via reflection.
+        uint8_t m_jwFontTitle[FONT_STRUCT_SIZE]{};         // "JOIN OTHER WORLD"
+        uint8_t m_jwFontBreadcrumb[FONT_STRUCT_SIZE]{};    // "WORLD SELECTION"
+        uint8_t m_jwFontSubtitle[FONT_STRUCT_SIZE]{};      // "Enter Invite Code..."
+        uint8_t m_jwFontHistoryHeader[FONT_STRUCT_SIZE]{}; // "SESSION HISTORY"
+        bool m_jwFontTitleCaptured{false};
+        bool m_jwFontBreadcrumbCaptured{false};
+        bool m_jwFontSubtitleCaptured{false};
+        bool m_jwFontHistoryHeaderCaptured{false};
+
+        // ---------- Look-and-feel cloning helpers (PATTERN) ----------
+        // Capture the entire FSlateFontInfo struct from a TextBlock's Font property.
+        // The struct is plain-old-data + UObject pointers (font asset), no heap-owned
+        // members, so a memcpy is safe and fast.
+        bool jw_captureFontFromTextBlock(UObject* textBlock, uint8_t* outBuf)
+        {
+            if (!textBlock || !isObjectAlive(textBlock)) return false;
+            int fontOff = resolveOffset(textBlock, L"Font", s_off_font);
+            if (fontOff < 0) return false;
+            std::memcpy(outBuf, reinterpret_cast<uint8_t*>(textBlock) + fontOff, FONT_STRUCT_SIZE);
+            return true;
+        }
+
+        // Apply a previously-captured FSlateFontInfo struct to a TextBlock via
+        // its SetFont UFunction. Optional sizeOverride lets you reuse the same
+        // captured font with a different size (e.g., title font @ 18pt for a label).
+        void jw_applyCapturedFont(UObject* textBlock, const uint8_t* fontBuf, int32_t sizeOverride = -1)
+        {
+            if (!textBlock || !isObjectAlive(textBlock)) return;
+            auto* fn = textBlock->GetFunctionByNameInChain(STR("SetFont"));
+            if (!fn) return;
+            auto* p = findParam(fn, STR("InFontInfo"));
+            if (!p) return;
+            uint8_t local[FONT_STRUCT_SIZE];
+            std::memcpy(local, fontBuf, FONT_STRUCT_SIZE);
+            if (sizeOverride > 0)
+                std::memcpy(local + fontSizeOff(), &sizeOverride, sizeof(int32_t));
+            std::vector<uint8_t> parmBuf(fn->GetParmsSize(), 0);
+            std::memcpy(parmBuf.data() + p->GetOffset_Internal(), local, FONT_STRUCT_SIZE);
+            safeProcessEvent(textBlock, fn, parmBuf.data());
+        }
+
+        // ---------- Class cache + look-and-feel capture ----------
+        // Walks the native WBP_UI_JoinWorldScreen_C widget tree once and:
+        //   1. caches UClass refs for game-styled child widgets we'll instantiate
+        //   2. captures FSlateFontInfo bytes from key TextBlocks for font cloning
+        // Both run in a single tree walk to avoid double iteration.
+        void cacheJoinWorldClassRefs(UObject* userWidget)
+        {
+            if (!userWidget) return;
+            // Already cached?
+            if (m_jwCls_FrontEndButton && m_jwCls_GameDataPanel) return;
+
+            // Native UserWidget itself has no children — content lives under
+            // WidgetTree.RootWidget. Walk down to that first.
+            auto* wtPtr = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtPtr ? *wtPtr : nullptr;
+            UObject* root = nullptr;
+            if (widgetTree)
+            {
+                auto* rootPtr = widgetTree->GetValuePtrByPropertyNameInChain<UObject*>(STR("RootWidget"));
+                root = rootPtr ? *rootPtr : nullptr;
+            }
+            if (!root)
+            {
+                VLOG(STR("[JoinWorldUI] cache: no WidgetTree.RootWidget on native widget\n"));
+                return;
+            }
+
+            // Recursive walker over the panel tree
+            std::function<void(UObject*)> walk = [&](UObject* w) {
+                if (!w || !isObjectAlive(w)) return;
+
+                std::wstring cls = safeClassName(w);
+                std::wstring name;
+                try { name = w->GetName(); } catch (...) {}
+
+                UClass* c = w->GetClassPrivate();
+                if (c)
+                {
+                    if (cls == STR("WBP_FrontEndButton_C") && !m_jwCls_FrontEndButton)
+                        m_jwCls_FrontEndButton = c;
+                    else if (cls == STR("UI_WBP_Craft_BigButton_C") && !m_jwCls_CraftBigButton)
+                        m_jwCls_CraftBigButton = c;
+                    else if (cls == STR("WBP_JoinWorldScreen_GameDataPanel_C") && !m_jwCls_GameDataPanel)
+                        m_jwCls_GameDataPanel = c;
+                    else if (cls == STR("WBP_UI_SessionHistoryList_C") && !m_jwCls_SessionHistoryList)
+                        m_jwCls_SessionHistoryList = c;
+                    else if (cls == STR("WBP_UI_AdvancedJoinOptions_C") && !m_jwCls_AdvancedJoinPanel)
+                        m_jwCls_AdvancedJoinPanel = c;
+                    else if (cls == STR("UI_WBP_LowerThird_C") && !m_jwCls_LowerThird)
+                        m_jwCls_LowerThird = c;
+                    else if (cls == STR("WBP_UI_NetworkAlert_C") && !m_jwCls_NetworkAlert)
+                        m_jwCls_NetworkAlert = c;
+                    else if (cls == STR("UI_WBP_HUD_ControlPrompt_C") && !m_jwCls_ControlPrompt)
+                        m_jwCls_ControlPrompt = c;
+                    else if (cls == STR("UI_WBP_Text_Header_C") && !m_jwCls_TextHeader)
+                        m_jwCls_TextHeader = c;
+                }
+
+                // Look-and-feel capture: snapshot FSlateFontInfo bytes from
+                // specific named TextBlocks. Names from harvested JSON tree.
+                if (cls == STR("TextBlock"))
+                {
+                    if (name == STR("Title") && !m_jwFontTitleCaptured)
+                        m_jwFontTitleCaptured = jw_captureFontFromTextBlock(w, m_jwFontTitle);
+                    else if (name == STR("TextBlock_63") && !m_jwFontBreadcrumbCaptured)
+                        m_jwFontBreadcrumbCaptured = jw_captureFontFromTextBlock(w, m_jwFontBreadcrumb);
+                    else if (name == STR("InviteCodeLabel") && !m_jwFontSubtitleCaptured)
+                        m_jwFontSubtitleCaptured = jw_captureFontFromTextBlock(w, m_jwFontSubtitle);
+                }
+
+                // Walk into UPanelWidget.Slots — each slot has a Content UWidget
+                auto* slotsAddr = w->GetValuePtrByPropertyNameInChain<TArray<UObject*>>(STR("Slots"));
+                if (slotsAddr)
+                {
+                    int n = slotsAddr->Num();
+                    for (int i = 0; i < n; ++i)
+                    {
+                        UObject* slot = (*slotsAddr)[i];
+                        if (!slot || !isObjectAlive(slot)) continue;
+                        auto* contentPtr = slot->GetValuePtrByPropertyNameInChain<UObject*>(STR("Content"));
+                        if (contentPtr && *contentPtr)
+                            walk(*contentPtr);
+                    }
+                }
+                // Single-child via Content (UContentWidget like Border/SizeBox)
+                auto* singleContent = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("Content"));
+                if (singleContent && *singleContent)
+                    walk(*singleContent);
+
+                // For nested UUserWidget instances (e.g. WBP_UI_AdvancedJoinOptions_C),
+                // also recurse into THEIR WidgetTree.RootWidget so we can pick up classes
+                // they define internally.
+                auto* nestedWt = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+                if (nestedWt && *nestedWt)
+                {
+                    auto* nestedRoot = (*nestedWt)->GetValuePtrByPropertyNameInChain<UObject*>(STR("RootWidget"));
+                    if (nestedRoot && *nestedRoot && *nestedRoot != w)
+                        walk(*nestedRoot);
+                }
+            };
+
+            walk(root);
+
+            VLOG(STR("[JoinWorldUI] class cache: feBtn={:p} bigBtn={:p} gameData={:p} sessHist={:p} advJoin={:p} lowerThird={:p} netAlert={:p} ctrlPrompt={:p} txtHdr={:p}\n"),
+                 (void*)m_jwCls_FrontEndButton, (void*)m_jwCls_CraftBigButton,
+                 (void*)m_jwCls_GameDataPanel, (void*)m_jwCls_SessionHistoryList,
+                 (void*)m_jwCls_AdvancedJoinPanel, (void*)m_jwCls_LowerThird,
+                 (void*)m_jwCls_NetworkAlert, (void*)m_jwCls_ControlPrompt,
+                 (void*)m_jwCls_TextHeader);
+            VLOG(STR("[JoinWorldUI] font capture: title={} breadcrumb={} subtitle={} histHeader={}\n"),
+                 m_jwFontTitleCaptured ? 1 : 0, m_jwFontBreadcrumbCaptured ? 1 : 0,
+                 m_jwFontSubtitleCaptured ? 1 : 0, m_jwFontHistoryHeaderCaptured ? 1 : 0);
+        }
+
+        // Construct a game-styled widget by class. Returns nullptr if class isn't cached.
+        // Uses WidgetBlueprintLibrary::Create so the Blueprint's PreConstruct/Construct
+        // logic runs and textures self-apply.
+        UObject* jw_createGameWidget(UClass* widgetClass)
+        {
+            if (!widgetClass) return nullptr;
+            auto* pc = findPlayerController();
+            if (!pc) return nullptr;
+            auto* createFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
+            auto* wblClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
+            if (!createFn || !wblClass) return nullptr;
+            UObject* wblCDO = wblClass->GetClassDefaultObject();
+            if (!wblCDO) return nullptr;
+
+            int csz = createFn->GetParmsSize();
+            std::vector<uint8_t> cp(csz, 0);
+            auto* pWC = findParam(createFn, STR("WorldContextObject"));
+            auto* pWT = findParam(createFn, STR("WidgetType"));
+            auto* pOP = findParam(createFn, STR("OwningPlayer"));
+            auto* pRV = findParam(createFn, STR("ReturnValue"));
+            if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
+            if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = widgetClass;
+            if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
+            try { safeProcessEvent(wblCDO, createFn, cp.data()); } catch (...) { return nullptr; }
+            return pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
+        }
+
+        // Set the label on a WBP_FrontEndButton_C. The BP's PreConstruct reads
+        // ButtonLabel (FText member) and writes ButtonText.Text from it, so setting
+        // the inner TextBlock alone is overwritten. UpdateTextLabel(FText) UFunction
+        // sets ButtonLabel correctly so the BP's logic stays consistent.
+        void jw_setFrontEndButtonLabel(UObject* btn, const std::wstring& label)
+        {
+            if (!btn || !isObjectAlive(btn)) return;
+            auto* fn = btn->GetFunctionByNameInChain(STR("UpdateTextLabel"));
+            if (fn)
+            {
+                auto* p = findParam(fn, STR("Text"));
+                if (p)
+                {
+                    FText ftext(label.c_str());
+                    std::vector<uint8_t> buf(fn->GetParmsSize(), 0);
+                    std::memcpy(buf.data() + p->GetOffset_Internal(), &ftext, sizeof(FText));
+                    safeProcessEvent(btn, fn, buf.data());
+                    return;
+                }
+            }
+            // Fallback: write ButtonLabel directly + set ButtonText.Text
+            auto* btnLabelPtr = btn->GetValuePtrByPropertyNameInChain<FText>(STR("ButtonLabel"));
+            if (btnLabelPtr)
+            {
+                FText ftext(label.c_str());
+                *btnLabelPtr = ftext;
+            }
+            auto* btnTxtPtr = btn->GetValuePtrByPropertyNameInChain<UObject*>(STR("ButtonText"));
+            if (btnTxtPtr && *btnTxtPtr)
+                umgSetText(*btnTxtPtr, label);
+        }
+
         // ---------- Show / hide ----------
         // Called by post-hook on the game thread. Defers actual UMG work to
         // the next main tick to avoid re-entering the WidgetTree mid-PE.
@@ -46,6 +277,10 @@
 
             VLOG(STR("[JoinWorldUI] native WBP_UI_JoinWorldScreen_C OnAfterShow at {:p}, queuing replacement\n"),
                  (void*)nativeWidget);
+
+            // Cache class refs for game-styled child widgets — this is our one chance
+            // before RemoveFromParent + GC eats the tree.
+            cacheJoinWorldClassRefs(nativeWidget);
 
             m_nativeJoinWorldWidget = FWeakObjectPtr(nativeWidget);
             m_pendingShowJoinWorldUI = true;
@@ -362,16 +597,9 @@
             if (widgetTree) setRootWidget(widgetTree, root);
 
             // ── BACKGROUND ───────────────────────────────────────────────
-            // Translucent dark overlay across the entire viewport (subtle, lets
-            // the dwarf scene render through). Anchored 0,0 → 1,1 (full screen).
-            UObject* fullBg = mk(borderClass);
-            jw_setBorderColor(fullBg, 0.0f, 0.0f, 0.0f, 0.35f);
-            UObject* fullBgSlot = jw_addToCanvas(root, fullBg);
-            jw_setCanvasSlot(fullBgSlot,
-                             0.0f, 0.0f, 1.0f, 1.0f,   // anchors: full
-                             0.0f, 0.0f, 0.0f, 0.0f,   // pos/size 0 because anchor stretch
-                             0.0f, 0.0f,
-                             false);
+            // No full-viewport overlay — the original screen lets the dwarf
+            // render through unmodified. Each input field has its own dark
+            // backing box; we don't dim the whole scene.
 
             // ── CONTENT COLUMN ─────────────────────────────────────────
             // SizeBox(width 720) holding a VerticalBox with all the join widgets.
@@ -382,30 +610,32 @@
             UObject* contentVb = mk(vboxClass);
             jw_setContent(contentSb, contentVb);
 
-            // 1. Breadcrumb "WORLD SELECTION"
+            // 1. Breadcrumb "WORLD SELECTION" — uses captured font if available
             UObject* breadcrumb = mk(textClass);
             umgSetText(breadcrumb, L"WORLD SELECTION");
-            umgSetTextColor(breadcrumb, 0.55f, 0.85f, 0.85f, 1.0f);
-            umgSetFontSize(breadcrumb, 14);
+            if (m_jwFontBreadcrumbCaptured)
+                jw_applyCapturedFont(breadcrumb, m_jwFontBreadcrumb);
+            else { umgSetTextColor(breadcrumb, 0.55f, 0.85f, 0.85f, 1.0f); umgSetFontSize(breadcrumb, 14); }
             addToVBox(contentVb, breadcrumb);
 
             UObject* spacer1 = mk(spacerClass); addToVBox(contentVb, spacer1);
 
-            // 2. Title "JOIN OTHER WORLD"
+            // 2. Title "JOIN OTHER WORLD" — uses captured font (game's serif)
             UObject* title = mk(textClass);
             umgSetText(title, L"JOIN OTHER WORLD");
-            umgSetTextColor(title, 1.0f, 1.0f, 1.0f, 1.0f);
-            umgSetFontSize(title, 36);
-            umgSetBold(title);
+            if (m_jwFontTitleCaptured)
+                jw_applyCapturedFont(title, m_jwFontTitle);
+            else { umgSetTextColor(title, 1.0f, 1.0f, 1.0f, 1.0f); umgSetFontSize(title, 28); }
             addToVBox(contentVb, title);
 
             UObject* spacer2 = mk(spacerClass); addToVBox(contentVb, spacer2);
 
-            // 3. Subtitle
+            // 3. Subtitle "Enter Invite Code..." — uses captured font
             UObject* subtitle = mk(textClass);
             umgSetText(subtitle, L"Enter Invite Code for Hosted Game or Server");
-            umgSetTextColor(subtitle, 0.85f, 0.85f, 0.85f, 1.0f);
-            umgSetFontSize(subtitle, 16);
+            if (m_jwFontSubtitleCaptured)
+                jw_applyCapturedFont(subtitle, m_jwFontSubtitle);
+            else { umgSetTextColor(subtitle, 0.85f, 0.85f, 0.85f, 1.0f); umgSetFontSize(subtitle, 16); }
             addToVBox(contentVb, subtitle);
 
             // 4. Invite code row — HorizontalBox with input field + search button
@@ -427,14 +657,23 @@
             UObject* inviteInputSlot = addToHBox(inviteHb, inviteInputSb);
             if (inviteInputSlot) { umgSetVAlign(inviteInputSlot, 2); umgSetSlotPadding(inviteInputSlot, 0, 8, 12, 0); }
 
-            //   Search button placeholder: small dark square button labeled "Search"
+            //   Search button — game-styled WBP_FrontEndButton_C if available, fallback to bare UMG
             UObject* searchSb = mk(sizeBoxClass);
             jw_setSizeBoxOverride(searchSb, 100.0f, 48.0f);
-            UObject* searchBtn = mk(buttonClass);
-            UObject* searchLbl = mk(textClass);
-            umgSetText(searchLbl, L"Search");
-            umgSetTextColor(searchLbl, 1.0f, 1.0f, 1.0f, 1.0f);
-            jw_setContent(searchBtn, searchLbl);
+            UObject* searchBtn = nullptr;
+            if (m_jwCls_FrontEndButton)
+            {
+                searchBtn = jw_createGameWidget(m_jwCls_FrontEndButton);
+                if (searchBtn) jw_setFrontEndButtonLabel(searchBtn, L"Search");
+            }
+            if (!searchBtn)
+            {
+                searchBtn = mk(buttonClass);
+                UObject* searchLbl = mk(textClass);
+                umgSetText(searchLbl, L"Search");
+                umgSetTextColor(searchLbl, 1.0f, 1.0f, 1.0f, 1.0f);
+                jw_setContent(searchBtn, searchLbl);
+            }
             jw_setContent(searchSb, searchBtn);
             UObject* searchSlot = addToHBox(inviteHb, searchSb);
             if (searchSlot) { umgSetVAlign(searchSlot, 2); umgSetSlotPadding(searchSlot, 0, 8, 0, 0); }
@@ -443,20 +682,30 @@
 
             UObject* spacer3 = mk(spacerClass); addToVBox(contentVb, spacer3);
 
-            // 5. Advanced Join Options button (pill style)
-            UObject* advBtn = mk(buttonClass);
-            UObject* advLbl = mk(textClass);
-            umgSetText(advLbl, L"  Advanced Join Options  ");
-            umgSetTextColor(advLbl, 0.9f, 0.9f, 0.9f, 1.0f);
-            jw_setContent(advBtn, advLbl);
+            // 5. Advanced Join Options button — game-styled WBP_FrontEndButton_C
+            UObject* advBtn = nullptr;
+            if (m_jwCls_FrontEndButton)
+            {
+                advBtn = jw_createGameWidget(m_jwCls_FrontEndButton);
+                if (advBtn) jw_setFrontEndButtonLabel(advBtn, L"Advanced Join Options");
+            }
+            if (!advBtn)
+            {
+                advBtn = mk(buttonClass);
+                UObject* advLbl = mk(textClass);
+                umgSetText(advLbl, L"  Advanced Join Options  ");
+                umgSetTextColor(advLbl, 0.9f, 0.9f, 0.9f, 1.0f);
+                jw_setContent(advBtn, advLbl);
+            }
             UObject* advSlot = addToVBox(contentVb, advBtn);
             if (advSlot) { umgSetSlotPadding(advSlot, 0, 12, 0, 12); }
 
-            // 6. Session History header
+            // 6. Session History header — reuses breadcrumb font (same style)
             UObject* histHeader = mk(textClass);
             umgSetText(histHeader, L"SESSION HISTORY");
-            umgSetTextColor(histHeader, 0.55f, 0.85f, 0.85f, 1.0f);
-            umgSetFontSize(histHeader, 14);
+            if (m_jwFontBreadcrumbCaptured)
+                jw_applyCapturedFont(histHeader, m_jwFontBreadcrumb);
+            else { umgSetTextColor(histHeader, 0.55f, 0.85f, 0.85f, 1.0f); umgSetFontSize(histHeader, 14); }
             addToVBox(contentVb, histHeader);
 
             UObject* histSpacer = mk(spacerClass); addToVBox(contentVb, histSpacer);
@@ -474,13 +723,10 @@
             UObject* histRowSlot = addToVBox(contentVb, histRowBorder);
             if (histRowSlot) { umgSetSlotPadding(histRowSlot, 0, 4, 0, 0); }
 
-            // ── BACK BUTTON (bottom-left) ───────────────────────────────
-            // Matches the original "Back" with controller hint at viewport bottom-left.
-            UObject* backBtn = mk(buttonClass);
-            UObject* backLbl = mk(textClass);
-            umgSetText(backLbl, L"  ← Back (Esc)  ");
-            umgSetTextColor(backLbl, 1.0f, 1.0f, 1.0f, 1.0f);
-            jw_setContent(backBtn, backLbl);
+            // No bottom-left Back button — the original gets its Back UI from a
+            // separate LowerThird widget that lives outside the JoinWorldScreen
+            // proper. Esc closes our duplicate and restores the native, which
+            // brings the LowerThird back along with it. Keep our footprint small.
 
             // ── ADD CONTENT TO ROOT CANVAS ─────────────────────────────
             UObject* contentSlot = jw_addToCanvas(root, contentSb);
@@ -491,13 +737,7 @@
                              0.0f, 0.0f,
                              true);
 
-            UObject* backSlot = jw_addToCanvas(root, backBtn);
-            // Anchor bottom-left, position (40, -40) i.e., 40 from left, 40 above bottom.
-            jw_setCanvasSlot(backSlot,
-                             0.0f, 1.0f, 0.0f, 1.0f,
-                             40.0f, -56.0f, 0.0f, 0.0f,
-                             0.0f, 0.0f,
-                             true);
+            // (back button removed — see note above)
 
             // ── ADD TO VIEWPORT ────────────────────────────────────────
             {
