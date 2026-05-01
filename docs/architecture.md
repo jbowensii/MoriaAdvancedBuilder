@@ -6,9 +6,9 @@ A UE4SS C++ mod for Return to Moria (Unreal Engine 4.27). Provides HISM instance
 
 ## Source Layout
 
-The main class `MoriaCppMod` lives in `src/dllmain.cpp` (~2,244 lines). It inherits from `RC::CppUserModBase` (the UE4SS mod API). The class body is assembled via `#include` directives that pull `.inl` files directly into the class scope. **Include order matters** because later files call functions defined in earlier ones.
+The main class `MoriaCppMod` lives in `src/dllmain.cpp` (~3,200 lines). It inherits from `RC::CppUserModBase` (the UE4SS mod API). The class body is assembled via `#include` directives that pull `.inl` files directly into the class scope. **Include order matters** because later files call functions defined in earlier ones.
 
-Total source: ~15,300 lines across dllmain.cpp + 11 .inl files + 4 headers.
+Total source: ~17,000 lines across dllmain.cpp + 14 .inl files + 4 headers.
 
 ### Headers (included at file top, before the class)
 
@@ -34,6 +34,12 @@ Total source: ~15,300 lines across dllmain.cpp + 11 .inl files + 4 headers.
 | 9 | `moria_quickbuild.inl` | ~1,121 | Quick-build state machine dispatch, recipe selection, icon extraction pipeline, slot I/O. |
 | 10 | `moria_widgets.inl` | ~4,483 | UMG widget creation (builders bar, MC toolbar, AB toggle, config menu, target info popup, crosshair reticle, error box, trash dialog). `deferRemoveWidget()` for safe widget destruction. |
 | 11 | `moria_overlay_mgmt.inl` | ~596 | Overlay lifecycle, slot sync, overlay start/stop, input mode switching, toolbar repositioning. |
+| 12 | `moria_widget_harvest.inl` | ~508 | Dev-only: walks UMG widget trees and dumps them to JSON for analysis. Triggered by N hotkey on supported screens. |
+| 13 | `moria_session_history.inl` | ~1,030 | v6.7.0+: JSON-backed session-history storage (replaces broken native auto-history); CRUD with XOR+Base64 password obfuscation; injects rows via BP `AddSessionHistoryItem`; right-click delete with `WBP_UI_GenericPopup_C` confirmation. |
+| 14 | `moria_join_world_ui.inl` | ~970 | v6.6.0+: in-place modification of native `WBP_UI_JoinWorldScreen_C` — tints TextBlocks, calls `injectSessionHistoryRows()`. Native flow handles all clicks/Esc/back-nav. |
+| 15 | `moria_advanced_join_ui.inl` | ~245 | v6.6.0+: in-place modification of native `WBP_UI_AdvancedJoinOptions_C` — tints TextBlocks. |
+
+**See [joinworld-ui-takeover.md](joinworld-ui-takeover.md)** for the in-place UI take-over methodology — the safe pattern for replacing/augmenting a game UMG screen without breaking native button wiring.
 
 ### Separate Compilation Unit
 

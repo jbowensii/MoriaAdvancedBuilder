@@ -80,6 +80,22 @@ namespace MoriaMods
     // v6.4.3 Steam ™ path fix — openInputFile / openOutputFile / renameUtf8Path helpers
     // are defined in moria_testable.h (which is included above), before anything that needs them.
 
+    // UTF-8 ↔ wide-string helpers. NEVER do `std::wstring(s.begin(), s.end())` —
+    // that zero-extends each UTF-8 byte, corrupting any character above 0x7F.
+    // Always use these for runtime strings that may contain non-ASCII (server
+    // names, passwords, paths with the Steam ™ symbol, accented domains, etc.).
+    inline std::wstring utf8ToWide(const std::string& s)
+    {
+        if (s.empty()) return std::wstring();
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+        if (wlen <= 0) return std::wstring();
+        std::wstring out(static_cast<size_t>(wlen), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), &out[0], wlen);
+        return out;
+    }
+
+    // wideToUtf8 already defined in moria_testable.h (above) — re-using it.
+
     #define VLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
 
     #define QUICKBUILD_LOGGING 1

@@ -1,4 +1,4 @@
-// MoriaCppMod v6.6.0 — Return to Moria UE4SS C++ mod (~16,000 lines across dllmain.cpp + 12 .inl files)
+// MoriaCppMod v6.7.0 — Return to Moria UE4SS C++ mod (~16,000 lines across dllmain.cpp + 14 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -7,6 +7,7 @@
 #include "moria_reflection.h"
 #include "moria_keybinds.h"
 #include "moria_dualsense.h"
+#include "moria_join_assets.h"
 #include <Unreal/Hooks.hpp>
 #include <UE4SSProgram.hpp>
 
@@ -539,7 +540,11 @@ namespace MoriaMods
 
         #include "moria_widget_harvest.inl"
 
+        #include "moria_session_history.inl"
+
         #include "moria_join_world_ui.inl"
+
+        #include "moria_advanced_join_ui.inl"
 
         #include "moria_overlay_mgmt.inl"
 
@@ -548,14 +553,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.6.0");
+            ModVersion = STR("6.7.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.6.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.7.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -596,7 +601,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.6.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.7.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -901,8 +906,235 @@ namespace MoriaMods
                     return;
                 }
 
+                // GenericPopup Confirm/Cancel detection. The actual click event
+                // is `OnButtonReleasedEvent` on the WBP_FrontEndButton instance
+                // (NOT OnMenuButtonClicked). We compare the firing button to
+                // the popup's ConfirmButton / CancelButton members.
+                if (wcsstr(fnStr2, STR("OnButtonReleasedEvent")) != nullptr ||
+                    wcsstr(fnStr2, STR("OnMenuButtonClicked"))   != nullptr)
+                {
+                    s_instance->onAnyMenuButtonClicked(context, fnStr2);
+                }
+
+                // Diagnostic popup-trace — gated behind s_verbose AND filters
+                // BEFORE the expensive Outer-chain walk, so production builds
+                // pay nothing here. The Outer walk only runs when (a) the
+                // popup is up, (b) the fn name passes the noise filter, AND
+                // (c) verbose logging is on. Original unfiltered version flooded
+                // ProcessEvent + caused IsInViewport-style input interference.
+                if (s_verbose &&
+                    s_instance->m_pendingDeletePopup.Get() != nullptr &&
+                    wcscmp(fnStr2, STR("IsInViewport")) != 0 &&
+                    wcscmp(fnStr2, STR("IsHovered"))    != 0 &&
+                    wcscmp(fnStr2, STR("Tick"))         != 0 &&
+                    wcscmp(fnStr2, STR("OnMouseMove"))  != 0 &&
+                    wcscmp(fnStr2, STR("OnMouseEnter")) != 0 &&
+                    wcscmp(fnStr2, STR("OnMouseLeave")) != 0 &&
+                    wcsstr(fnStr2, STR("ReceiveTick"))  == nullptr &&
+                    wcsstr(fnStr2, STR("SetColor"))     == nullptr &&
+                    wcsstr(fnStr2, STR("SetContentColor")) == nullptr)
+                {
+                    UObject* popupW = s_instance->m_pendingDeletePopup.Get();
+                    bool isOnPopup = (context == popupW);
+                    if (!isOnPopup && context && popupW && isObjectAlive(context))
+                    {
+                        UObject* o = context;
+                        for (int i = 0; i < 4 && o; ++i)  // walk capped at 4 (was 6)
+                        {
+                            try { o = o->GetOuterPrivate(); } catch (...) { break; }
+                            if (o == popupW) { isOnPopup = true; break; }
+                        }
+                    }
+                    if (isOnPopup)
+                    {
+                        VLOG(STR("[SessionHistory] popup-trace fn='{}' ctx-cls='{}'\n"),
+                             fnStr2, safeClassName(context).c_str());
+                    }
+                }
+
+                // Manual Direct/Local Join button click — fires the BndEvt
+                // delegate handler on the AdvancedJoinOptions widget. We
+                // DEFER reading the input field text to the next main tick
+                // (queueManualJoinCapture) — calling GetText + Conv_TextToString
+                // from inside this post-hook would re-enter ProcessEvent and is
+                // a documented reentrancy hazard.
+                if ((wcsstr(fnStr2, STR("Button_DirectJoinIP")) != nullptr ||
+                     wcsstr(fnStr2, STR("Button_JoinLocal")) != nullptr) &&
+                    wcsstr(fnStr2, STR("OnMenuButtonClicked")) != nullptr)
+                {
+                    bool isLocal = (wcsstr(fnStr2, STR("Button_JoinLocal")) != nullptr);
+                    s_instance->queueManualJoinCapture(context, isLocal);
+                }
+
+                // Hook BP-level join events. We listen for any UFunction whose
+                // name contains a Join keyword as a coarse first filter, then
+                // narrow by signature inside. Earlier we tried direct C++
+                // function names (DirectJoinSessionWithPassword) but those may
+                // not be UFunctions exposed to ProcessEvent. The BP events are
+                // always UFunctions and reliably fire.
+                if (parms && (wcsstr(fnStr2, STR("JoinSession")) != nullptr ||
+                              wcsstr(fnStr2, STR("DirectJoin")) != nullptr ||
+                              wcsstr(fnStr2, STR("TryJoinPreviousSession")) != nullptr ||
+                              wcsstr(fnStr2, STR("OnJoinSessionHistoryItemPressed")) != nullptr ||
+                              wcsstr(fnStr2, STR("JoinByIP_Pressed")) != nullptr ||
+                              wcsstr(fnStr2, STR("JoinLocalDedicatedServer_Pressed")) != nullptr))
+                {
+                    if (s_verbose)
+                    {
+                        VLOG(STR("[SessionHistory] join-related fn fired: '{}' on cls='{}'\n"),
+                             fnStr2, safeClassName(context).c_str());
+                    }
+
+                    // Try to read FMorConnectionHistoryItem from parms (BP delegates
+                    // pass it as the only argument). Layout offsets relative to parm
+                    // base: WorldName@0x00, InviteString@0x18, OptionalPassword@0x38.
+                    // If the function's first param is named differently we still
+                    // read those offsets blindly — it's safe since we're reading
+                    // FString members which are always 16 bytes.
+                    auto* p = func->GetChildProperties();
+                    int32_t baseOff = -1;
+                    bool isHistoryItem = false;
+                    if (auto* firstProp = func->GetPropertyByNameInChain(STR("Connection History Item Data")))
+                    { baseOff = firstProp->GetOffset_Internal(); isHistoryItem = true; }
+                    else if (auto* alt = func->GetPropertyByNameInChain(STR("ConnectionHistoryItemData")))
+                    { baseOff = alt->GetOffset_Internal(); isHistoryItem = true; }
+                    else if (auto* alt2 = func->GetPropertyByNameInChain(STR("ConnectionHistoryData")))
+                    { baseOff = alt2->GetOffset_Internal(); isHistoryItem = true; }
+                    (void)p;
+
+                    auto fStringToUtf8Str = [](FString* fs) -> std::string {
+                        if (!fs) return "";
+                        const wchar_t* w = fs->GetCharArray().GetData();
+                        if (!w || !*w) return "";
+                        int wlen = (int)wcslen(w);
+                        int u8 = WideCharToMultiByte(CP_UTF8, 0, w, wlen, nullptr, 0, nullptr, nullptr);
+                        std::string out(u8, '\0');
+                        WideCharToMultiByte(CP_UTF8, 0, w, wlen, &out[0], u8, nullptr, nullptr);
+                        return out;
+                    };
+
+                    if (isHistoryItem && baseOff >= 0)
+                    {
+                        uint8_t* hist = static_cast<uint8_t*>(parms) + baseOff;
+                        FString* worldName  = reinterpret_cast<FString*>(hist + 0x00);
+                        FString* inviteStr  = reinterpret_cast<FString*>(hist + 0x18);
+                        FString* optPwd     = reinterpret_cast<FString*>(hist + 0x38);
+                        std::string nameStr = fStringToUtf8Str(worldName);
+                        std::string hostStr = fStringToUtf8Str(inviteStr);
+                        std::string passStr = fStringToUtf8Str(optPwd);
+
+                        std::string domain = hostStr, port;
+                        size_t colon = hostStr.rfind(':');
+                        if (colon != std::string::npos && colon > 0 && colon < hostStr.size() - 1)
+                        {
+                            std::string tail = hostStr.substr(colon + 1);
+                            bool allDigits = !tail.empty();
+                            for (char c : tail) if (c < '0' || c > '9') { allDigits = false; break; }
+                            if (allDigits) { domain = hostStr.substr(0, colon); port = tail; }
+                        }
+
+                        SessionHistoryEntry entry;
+                        entry.name     = nameStr.empty() ? hostStr : nameStr;
+                        entry.domain   = domain;
+                        entry.port     = port;
+                        entry.password = passStr;
+                        entry.lastJoined = "";
+                        s_instance->addOrUpdateSessionHistory(entry);
+                        VLOG(STR("[SessionHistory] saved (history-item) name='{}' host='{}' port='{}'\n"),
+                             std::wstring(entry.name.begin(), entry.name.end()).c_str(),
+                             std::wstring(entry.domain.begin(), entry.domain.end()).c_str(),
+                             std::wstring(entry.port.begin(), entry.port.end()).c_str());
+                    }
+                }
+
+                // Original direct-call hook (kept as a fallback in case the
+                // C++ implementation is also exposed as a UFunction).
+                if (parms &&
+                    (wcscmp(fnStr2, STR("DirectJoinSessionWithPassword")) == 0 ||
+                     wcscmp(fnStr2, STR("DirectJoinLocalSessionWithPassword")) == 0))
+                {
+                    bool isLocal = (wcscmp(fnStr2, STR("DirectJoinLocalSessionWithPassword")) == 0);
+                    auto* p1 = func->GetPropertyByNameInChain(STR("HostAndOptionalPort"));
+                    if (!p1) p1 = func->GetPropertyByNameInChain(STR("PortString"));
+                    auto* p2 = func->GetPropertyByNameInChain(STR("OptionalPassword"));
+                    if (p1 && p2)
+                    {
+                        FString* host = reinterpret_cast<FString*>(
+                            static_cast<uint8_t*>(parms) + p1->GetOffset_Internal());
+                        FString* pass = reinterpret_cast<FString*>(
+                            static_cast<uint8_t*>(parms) + p2->GetOffset_Internal());
+
+                        // FString → std::string (UTF-8)
+                        auto fStringToUtf8 = [](FString* fs) -> std::string {
+                            if (!fs) return "";
+                            const wchar_t* w = fs->GetCharArray().GetData();
+                            if (!w || !*w) return "";
+                            int wlen = (int)wcslen(w);
+                            int u8len = WideCharToMultiByte(CP_UTF8, 0, w, wlen, nullptr, 0, nullptr, nullptr);
+                            std::string out(u8len, '\0');
+                            WideCharToMultiByte(CP_UTF8, 0, w, wlen, &out[0], u8len, nullptr, nullptr);
+                            return out;
+                        };
+
+                        std::string hostStr = fStringToUtf8(host);
+                        std::string passStr = fStringToUtf8(pass);
+
+                        // Split host:port (if present)
+                        std::string domain = hostStr, port;
+                        size_t colon = hostStr.rfind(':');
+                        if (colon != std::string::npos && colon > 0 && colon < hostStr.size() - 1)
+                        {
+                            // Avoid splitting IPv6-style strings: only split if
+                            // everything after ':' is digits
+                            std::string tail = hostStr.substr(colon + 1);
+                            bool allDigits = !tail.empty();
+                            for (char c : tail) if (c < '0' || c > '9') { allDigits = false; break; }
+                            if (allDigits)
+                            {
+                                domain = hostStr.substr(0, colon);
+                                port   = tail;
+                            }
+                        }
+                        if (isLocal && port.empty()) { port = hostStr; domain = "127.0.0.1"; }
+
+                        SessionHistoryEntry entry;
+                        entry.name     = (isLocal ? "Local Server " : "Direct Join ") + hostStr;
+                        entry.domain   = domain;
+                        entry.port     = port;
+                        entry.password = passStr;
+                        entry.lastJoined = "";  // addOrUpdate fills with now
+                        s_instance->addOrUpdateSessionHistory(entry);
+
+                        VLOG(STR("[SessionHistory] hooked {} — captured host='{}', port='{}', pwd-len={}\n"),
+                             fnStr2,
+                             utf8ToWide(domain).c_str(),
+                             utf8ToWide(port).c_str(),
+                             (int)passStr.size());
+                    }
+                }
+
                 if (wcscmp(fnStr2, STR("OnAfterShow")) == 0)
                 {
+                    // Popup tracker: log any widget whose class name contains
+                    // Popup/Confirm/Dialog so we can discover the real class
+                    // path of game-native confirmation popups (e.g. for our
+                    // session-history delete confirm). User triggers quit-game
+                    // confirm or similar, we log it.
+                    std::wstring clsForPopup = safeClassName(context);
+                    if (clsForPopup.find(STR("Popup")) != std::wstring::npos ||
+                        clsForPopup.find(STR("PopUp")) != std::wstring::npos ||
+                        clsForPopup.find(STR("Confirm")) != std::wstring::npos ||
+                        clsForPopup.find(STR("Dialog")) != std::wstring::npos)
+                    {
+                        std::wstring path;
+                        try
+                        {
+                            UClass* uc = static_cast<UClass*>(context->GetClassPrivate());
+                            if (uc) path = uc->GetFullName();
+                        } catch (...) {}
+                        VLOG(STR("[PopupTracker] OnAfterShow on cls='{}' fullClassPath='{}'\n"),
+                             clsForPopup.c_str(), path.c_str());
+                    }
                     // isLocalContext removed — UMG widgets have WidgetTree Outer, not PC/Pawn
                     std::wstring cls = safeClassName(context);
                     if (cls == STR("UI_WBP_Build_Tab_C"))
@@ -922,6 +1154,12 @@ namespace MoriaMods
                     else if (cls == STR("WBP_UI_JoinWorldScreen_C"))
                     {
                         s_instance->onNativeJoinWorldShown(context);
+                    }
+                    // Sister widget — AdvancedJoinOptions panel that opens when user
+                    // clicks "Advanced Join Options" on the JoinWorld screen.
+                    else if (cls == STR("WBP_UI_AdvancedJoinOptions_C"))
+                    {
+                        s_instance->onNativeAdvancedJoinShown(context);
                     }
                     return;
                 }
@@ -1136,7 +1374,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.6.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map\n"));
+                    STR("[MoriaCppMod] v6.7.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod-owned Join World UI + JSON session history\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -2840,16 +3078,29 @@ namespace MoriaMods
             drainUnlockQueue();   // v6.4.1 — process 50 recipe-discovery calls per frame (no-op when queue empty)
             refreshActiveBuffs(); // v6.4.1 — re-apply toggled-on buffs every 5s so they don't expire
             tickJoinWorldUI();    // v6.6.0 — consume pending show/hide flags for mod-owned Join World UI
+            tickAdvancedJoinUI(); // v6.6.0 — consume pending show/hide flags for mod-owned Advanced Join Options UI
 
-            // Esc closes the mod-owned Join World UI (placeholder iteration)
+            // Session history right-click → confirm → delete
             if (m_modJoinWorldWidget.Get())
             {
-                static bool s_lastEscJW = false;
-                bool nowDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-                if (nowDown && !s_lastEscJW)
-                    m_pendingHideJoinWorldUI = true;
-                s_lastEscJW = nowDown;
+                pollRightClickDeleteSessionHistory();
             }
+            tickSessionHistoryConfirm();
+            tickSessionHistoryDeferredCapture();
+
+            // Esc / close: native flow handles all dismissal — we only modify
+            //   widgets in place, so Esc on the native widget runs the BP's
+            //   own ClosePanel/back-nav logic. We just clear our tracking
+            //   pointers when the widget is no longer alive (handled below).
+            if (m_modJoinWorldWidget.Get() == nullptr)
+            {
+                // Auto-clear stale state when native widget is gone
+                static bool s_loggedClear = false;
+                if (!s_loggedClear) { s_loggedClear = true; }
+            }
+
+            // (legacy hit-test mouse handlers removed — we now modify the native
+            //  widget in place, so its real buttons handle Advanced/Close/etc.)
 
             if (!m_replayActive) return;
             m_frameCounter++;
