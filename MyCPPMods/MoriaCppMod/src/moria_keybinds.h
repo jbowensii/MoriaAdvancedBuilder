@@ -62,6 +62,20 @@ namespace MoriaMods
 
     inline std::atomic<uint8_t> s_modifierVK{VK_SHIFT};
 
+    // v6.8.0 CP3 — per-slot chord-aware storage for the Quick Build "Set"
+    // action (the chord that saves the current recipe to slot N). Defaults
+    // mirror the legacy "Shift + use chord" model so dispatch keeps working
+    // until the user rebinds a SET row in Settings → Key Mapping.
+    //   vk        — primary key VK code
+    //   modBits   — bShift bit0, bCtrl bit1, bAlt bit2, bCmd bit3
+    struct SetBind { uint8_t vk; uint8_t modBits; };
+    inline SetBind s_setBindings[8] = {
+        { Input::Key::F1, 0x01 }, { Input::Key::F2, 0x01 },
+        { Input::Key::F3, 0x01 }, { Input::Key::F4, 0x01 },
+        { Input::Key::F5, 0x01 }, { Input::Key::F6, 0x01 },
+        { Input::Key::F7, 0x01 }, { Input::Key::F8, 0x01 },
+    };
+
 
     inline std::string iniPath() { return modPath("Mods/MoriaCppMod/MoriaCppMod.ini"); }
     inline std::string oldKeybindPath() { return modPath("Mods/MoriaCppMod/keybindings.txt"); }
@@ -70,6 +84,23 @@ namespace MoriaMods
     inline bool isModifierDown()
     {
         return (GetAsyncKeyState(s_modifierVK.load()) & 0x8000) != 0;
+    }
+
+    // v6.8.0 CP3 — chord-held check: VK + modifier-bits chord matches the
+    // current keyboard state. modBits: bit0=Shift, bit1=Ctrl, bit2=Alt.
+    // The primary key uses & 1 (just-pressed edge) when checked via the
+    // caller's edge-detector; this helper only reads the held state.
+    inline bool isChordHeld(uint8_t vk, uint8_t modBits)
+    {
+        if (!vk) return false;
+        if ((GetAsyncKeyState(vk) & 0x8000) == 0) return false;
+        bool shift = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0;
+        bool ctrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        bool alt   = (GetAsyncKeyState(VK_MENU)    & 0x8000) != 0;
+        if (((modBits & 0x01) != 0) != shift) return false;
+        if (((modBits & 0x02) != 0) != ctrl)  return false;
+        if (((modBits & 0x04) != 0) != alt)   return false;
+        return true;
     }
 
 

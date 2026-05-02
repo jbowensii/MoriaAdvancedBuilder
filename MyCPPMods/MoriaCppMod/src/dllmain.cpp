@@ -1,4 +1,4 @@
-// MoriaCppMod v6.7.0 — Return to Moria UE4SS C++ mod (~16,000 lines across dllmain.cpp + 14 .inl files)
+// MoriaCppMod v6.9.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -293,6 +293,9 @@ namespace MoriaMods
 
         enum class SelectResult { Found, Loading, NotFound };
         int m_pendingQuickBuildSlot{-1};
+        // v6.9.0 CP3 — edge-detector for chord-aware Quick Build SET + USE.
+        bool m_qbSetEdge[8]{};
+        bool m_qbUseEdge[8]{};
         PlacePhase m_qbPhase{PlacePhase::Idle};
         ULONGLONG m_showSettleTime{0};
         ULONGLONG m_lastHandleResolveSlotTime{0};
@@ -546,6 +549,8 @@ namespace MoriaMods
 
         #include "moria_advanced_join_ui.inl"
 
+        #include "moria_settings_ui.inl"
+
         #include "moria_overlay_mgmt.inl"
 
       public:
@@ -553,14 +558,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.7.0");
+            ModVersion = STR("6.9.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.7.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.9.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -601,7 +606,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.7.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.9.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -685,23 +690,19 @@ namespace MoriaMods
             const Input::Key fkeys[] = {Input::Key::F1, Input::Key::F2, Input::Key::F3, Input::Key::F4, Input::Key::F5, Input::Key::F6, Input::Key::F7, Input::Key::F8};
             for (int i = 0; i < 8; i++)
             {
+                // USE chord (F-key alone). v6.9.0 CP3 — gate: bail if ANY
+                // modifier is held, since SET dispatch (chord polling in
+                // gameThreadTick) handles modifier+key combos.
                 register_keydown_event(fkeys[i], [this, i]() {
-                    if (m_ftVisible || !s_bindings[i].enabled) return;
+                    if (m_ftVisible || isSettingsScreenOpen() || !s_bindings[i].enabled) return;
                     if (m_handleResolvePhase != HandleResolvePhase::Done) return;
+                    if ((GetAsyncKeyState(VK_SHIFT)   & 0x8000) ||
+                        (GetAsyncKeyState(VK_CONTROL) & 0x8000) ||
+                        (GetAsyncKeyState(VK_MENU)    & 0x8000)) return;
                     quickBuildSlot(i);
                 });
-                register_keydown_event(fkeys[i], {Input::ModifierKey::SHIFT}, [this, i]() {
-                    if (m_ftVisible || !s_bindings[i].enabled) return;
-                    if (isModifierDown()) assignRecipeSlot(i);
-                });
-                register_keydown_event(fkeys[i], {Input::ModifierKey::CONTROL}, [this, i]() {
-                    if (m_ftVisible || !s_bindings[i].enabled) return;
-                    if (isModifierDown()) assignRecipeSlot(i);
-                });
-                register_keydown_event(fkeys[i], {Input::ModifierKey::ALT}, [this, i]() {
-                    if (m_ftVisible || !s_bindings[i].enabled) return;
-                    if (isModifierDown()) assignRecipeSlot(i);
-                });
+                // Legacy SHIFT/CTRL/ALT registrations removed — chord-aware
+                // polling in gameThreadTick handles SET dispatch.
             }
 
 
@@ -1161,12 +1162,82 @@ namespace MoriaMods
                     {
                         s_instance->onNativeAdvancedJoinShown(context);
                     }
+                    // v6.9.0+ Settings take-over — capture every Settings-related
+                    // widget that fires OnAfterShow so we can plan modifications.
+                    // The main SettingsScreen also queues a tree dump.
+                    else if (cls == STR("WBP_SettingsScreen_C") ||
+                             cls == STR("UI_WBP_EscapeMenu2_C"))
+                    {
+                        s_instance->onNativeSettingsScreenShown(context);
+                        s_instance->onSettingsRelatedShown(context, fnStr2);
+                    }
+                    // v6.9.0 CP1 — inject mod keymap rows when the EditMappingTab
+                    // becomes visible. This fires both on first Settings open
+                    // and when the user clicks into the keymap navbar tab.
+                    else if (cls == STR("WBP_EditMappingTab_C"))
+                    {
+                        s_instance->onSettingsRelatedShown(context, fnStr2);
+                        s_instance->injectModKeybindRows(context);
+                    }
+                    // v6.9.0 CP4 — inject Mod Game Options section.
+                    else if (cls == STR("WBP_GameplayTab_C"))
+                    {
+                        s_instance->onSettingsRelatedShown(context, fnStr2);
+                        s_instance->injectModGameOptions(context);
+                    }
+                    else if (cls.find(STR("Tab_C")) != std::wstring::npos &&
+                             (cls.find(STR("Settings")) != std::wstring::npos ||
+                              cls.find(STR("Controls")) != std::wstring::npos ||
+                              cls.find(STR("Mapping")) != std::wstring::npos ||
+                              cls.find(STR("Audio"))    != std::wstring::npos ||
+                              cls.find(STR("Video"))    != std::wstring::npos ||
+                              cls.find(STR("Gameplay")) != std::wstring::npos ||
+                              cls.find(STR("Accessibility")) != std::wstring::npos ||
+                              cls.find(STR("Legal"))    != std::wstring::npos ||
+                              cls.find(STR("Controller")) != std::wstring::npos))
+                    {
+                        s_instance->onSettingsRelatedShown(context, fnStr2);
+                    }
                     return;
                 }
 
 
+                // v6.9.0 CP4 — Mod Game Options button clicks. Fires on
+                // every WBP_FrontEndButton_C click; we filter by tracked
+                // pointer in onModGameOptionClicked.
+                if (wcscmp(fnStr2, STR("OnMenuButtonClicked")) == 0)
+                {
+                    s_instance->onModGameOptionClicked(context);
+                    return;
+                }
+
+                // v6.9.0 CP2 — capture rebinds done via the in-game keymap UI.
+                // OnKeySelectedBP fires on a WBP_SettingsKeySelector_C after
+                // the user picks a new chord. We persist to MoriaCppMod.ini
+                // if the selector is one of ours.
+                if (wcscmp(fnStr2, STR("OnKeySelectedBP")) == 0)
+                {
+                    std::wstring cls = safeClassName(context);
+                    VLOG(STR("[SettingsUI] OnKeySelectedBP fired on cls='{}' obj={:p}\n"),
+                         cls.c_str(), (void*)context);
+                    // Match any class name containing "KeySelector" so
+                    // child-BP variants are caught too.
+                    if (cls.find(STR("KeySelector")) != std::wstring::npos)
+                    {
+                        s_instance->onModSelectorRebound(context);
+                    }
+                    return;
+                }
+
                 if (wcscmp(fnStr2, STR("OnAfterHide")) == 0)
                 {
+                    // Clear settings-screen-open gate when SettingsScreen
+                    // hides so mod input handlers resume normal operation.
+                    {
+                        std::wstring cls2 = safeClassName(context);
+                        if (cls2 == STR("WBP_SettingsScreen_C"))
+                            s_instance->onNativeSettingsScreenHidden();
+                    }
                     // isLocalContext removed — UMG widgets have WidgetTree Outer, not PC/Pawn
                     std::wstring cls = safeClassName(context);
                     if (cls == STR("UI_WBP_BuildHUDv2_C") || cls == STR("UI_WBP_Build_Tab_C"))
@@ -1374,7 +1445,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.7.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod-owned Join World UI + JSON session history\n"));
+                    STR("[MoriaCppMod] v6.9.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -3079,6 +3150,52 @@ namespace MoriaMods
             refreshActiveBuffs(); // v6.4.1 — re-apply toggled-on buffs every 5s so they don't expire
             tickJoinWorldUI();    // v6.6.0 — consume pending show/hide flags for mod-owned Join World UI
             tickAdvancedJoinUI(); // v6.6.0 — consume pending show/hide flags for mod-owned Advanced Join Options UI
+            tickSettingsUI();     // v6.9.0 — Settings screen take-over (mod keybinds in keymap tab)
+            tickReapplyModifierPrefixes(); // v6.9.0 — keep "L-SHIFT + F1" text on SET rows alive
+            tickCaptureSpecialKeys();      // v6.9.0 — capture DEL/INS/HOME/etc the BP rejects
+
+            // v6.9.0 CP3 — Quick Build chord-aware dispatch.
+            //   USE (s_bindings[i].key, no modifiers): user-rebound USE
+            //     chord — fires quickBuildSlot on rising edge.
+            //   SET (s_setBindings[i].vk + modBits): user-rebound SET
+            //     chord — fires assignRecipeSlot on rising edge.
+            // Default-bound USE dispatch (F1..F8 alone) still flows
+            // through register_keydown_event for low-latency keystroke;
+            // the polling here handles non-default rebinds.
+            if (!m_ftVisible && !isSettingsScreenOpen() &&
+                m_handleResolvePhase == HandleResolvePhase::Done)
+            {
+                for (int i = 0; i < 8; ++i)
+                {
+                    if (!s_bindings[i].enabled) continue;
+                    // SET chord
+                    bool setHeld = isChordHeld(s_setBindings[i].vk, s_setBindings[i].modBits);
+                    if (setHeld && !m_qbSetEdge[i])
+                    {
+                        m_qbSetEdge[i] = true;
+                        assignRecipeSlot(i);
+                    }
+                    else if (!setHeld && m_qbSetEdge[i])
+                    {
+                        m_qbSetEdge[i] = false;
+                    }
+                    // USE chord (only if rebinding moved off F1..F8)
+                    bool isDefaultFKey = (s_bindings[i].key == (uint8_t)(0x70 + i));
+                    if (!isDefaultFKey)
+                    {
+                        bool useHeld = isChordHeld(s_bindings[i].key, 0);
+                        if (useHeld && !m_qbUseEdge[i])
+                        {
+                            m_qbUseEdge[i] = true;
+                            quickBuildSlot(i);
+                        }
+                        else if (!useHeld && m_qbUseEdge[i])
+                        {
+                            m_qbUseEdge[i] = false;
+                        }
+                    }
+                }
+            }
 
             // Session history right-click → confirm → delete
             if (m_modJoinWorldWidget.Get())

@@ -106,6 +106,21 @@
             }
             file << "ModifierKey = " << modifierToIniName(s_modifierVK) << "\n";
 
+            // v6.8.0 CP3 — Quick Build "Set" chord per slot.
+            // Format: QuickBuild<N>Set = [SHIFT+|CTRL+|ALT+]<key>
+            file << "\n[KeybindingsSet]\n";
+            for (int i = 0; i < 8; ++i)
+            {
+                std::string prefix;
+                if (s_setBindings[i].modBits & 0x01) prefix += "SHIFT+";
+                if (s_setBindings[i].modBits & 0x02) prefix += "CTRL+";
+                if (s_setBindings[i].modBits & 0x04) prefix += "ALT+";
+                std::wstring wname = keyName(s_setBindings[i].vk);
+                std::string name;
+                for (auto wc : wname) name += static_cast<char>(wc);
+                file << "QuickBuild" << (i + 1) << "Set = " << prefix << name << "\n";
+            }
+
             file << "\n[Preferences]\n";
             file << "Verbose = " << (s_verbose ? "true" : "false") << "\n";
             file << "RotationStep = " << s_overlay.rotationStep.load() << "\n";
@@ -187,7 +202,33 @@
                     }
                     else if (auto* kv = std::get_if<ParsedIniKeyValue>(&parsed))
                     {
-                        if (strEqualCI(section, "Keybindings"))
+                        if (strEqualCI(section, "KeybindingsSet"))
+                        {
+                            // v6.8.0 CP3 — parse "QuickBuild<N>Set = [SHIFT+|CTRL+|ALT+]<key>"
+                            std::string k = kv->key;
+                            if (k.size() > 11 && strEqualCI(k.substr(0, 10), "QuickBuild")
+                                && strEqualCI(k.substr(k.size() - 3), "Set"))
+                            {
+                                int slot = -1;
+                                try { slot = std::stoi(k.substr(10, k.size() - 13)) - 1; } catch (...) {}
+                                if (slot >= 0 && slot < 8)
+                                {
+                                    std::string val = kv->value;
+                                    uint8_t mods = 0;
+                                    for (;;)
+                                    {
+                                        if (val.size() >= 6 && strEqualCI(val.substr(0, 6), "SHIFT+"))      { mods |= 0x01; val = val.substr(6); }
+                                        else if (val.size() >= 5 && strEqualCI(val.substr(0, 5), "CTRL+")) { mods |= 0x02; val = val.substr(5); }
+                                        else if (val.size() >= 4 && strEqualCI(val.substr(0, 4), "ALT+"))  { mods |= 0x04; val = val.substr(4); }
+                                        else break;
+                                    }
+                                    std::wstring wval(val.begin(), val.end());
+                                    auto vk = nameToVK(wval);
+                                    if (vk) { s_setBindings[slot].vk = *vk; s_setBindings[slot].modBits = mods; }
+                                }
+                            }
+                        }
+                        else if (strEqualCI(section, "Keybindings"))
                         {
                             if (strEqualCI(kv->key, "ModifierKey"))
                             {
