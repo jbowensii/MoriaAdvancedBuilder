@@ -77,6 +77,7 @@
             std::string    iniKey;
             FWeakObjectPtr modGlyphImg;
             FWeakObjectPtr nativeKeyGlyphForSize; // captured KeyGlyph for brush.ImageSize cloning
+            uint8_t        lastAppliedModBits{0xFF}; // sentinel, forces first apply
         };
         std::vector<KeymapRow> m_keymapRows;
 
@@ -1318,7 +1319,17 @@
                 }
 
                 // Update glyph texture + visibility based on current modBits.
+                // Only re-apply brush when modBits actually changed — otherwise
+                // jw_setImageBrush logs spam every frame.
                 UObject* tex = glyphTextureForMods(r.modBits);
+                if (r.lastAppliedModBits == r.modBits)
+                {
+                    // No-op fast path: brush already correct, just refresh
+                    // visibility (cheap — no log).
+                    setWidgetVisibility(glyph, needGlyph ? 0 : 1);
+                    continue;
+                }
+                r.lastAppliedModBits = r.modBits;
                 if (needGlyph && tex && m_imageSetBrushFn)
                 {
                     // Match F1 KeyGlyph's HEIGHT exactly (so SHIFT/CTRL/ALT

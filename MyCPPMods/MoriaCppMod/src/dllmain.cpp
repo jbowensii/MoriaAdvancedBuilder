@@ -1466,8 +1466,199 @@ namespace MoriaMods
                         try { loadAndApplyDefinitions(); }
                         catch (...) { RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Exception during definition loading\n")); }
                     }
+                    // v6.9.0 — one-shot FGK DynamicTableAsset diagnostic.
+                    // Logs each FGK wrapper's TableAsset, TestTableAsset, and
+                    // DynamicTableAsset pointers + RowMap counts to determine
+                    // whether DynamicTableAsset is initialized at runtime
+                    // and is a viable runtime-additions slot for build menu.
+                    if (!m_fgkDiagDone)
+                    {
+                        m_fgkDiagDone = true;
+                        try { dumpFGKWrapperDiagnostic(); }
+                        catch (...) { VLOG(STR("[FGKDiag] exception\n")); }
+                    }
                     return {false, false};
                 });
+        }
+
+        bool m_fgkDiagDone{false};
+        void dumpFGKWrapperDiagnostic()
+        {
+            VLOG(STR("[FGKDiag] === Begin FGK DynamicTableAsset diagnostic ===\n"));
+            // Wrapper class names known from CXXHeaderDump/Moria.hpp.
+            const wchar_t* wrapperClasses[] = {
+                STR("MorConstructionsTable"),
+                STR("MorConstructionRecipesTable"),
+                STR("MorConstructionStabilitiesTable"),
+                STR("MorConsumablesTable"),
+                STR("MorContainerItemsTable"),
+                STR("MorCosmeticConvertTable"),
+                STR("MorWeaponsTable"),
+                STR("MorToolsTable"),
+                STR("MorArmorsTable"),
+                STR("MorOresTable"),
+                STR("MorItemsTable"),
+            };
+            int totalLogged = 0;
+            for (auto* wname : wrapperClasses)
+            {
+                std::vector<UObject*> instances;
+                UObjectGlobals::FindAllOf(wname, instances);
+                if (instances.empty()) {
+                    VLOG(STR("[FGKDiag] {}: no instances found\n"), wname);
+                    continue;
+                }
+                for (UObject* w : instances)
+                {
+                    if (!w || !isObjectAlive(w)) continue;
+                    auto* taPtr = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("TableAsset"));
+                    auto* ttPtr = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("TestTableAsset"));
+                    auto* dtPtr = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("DynamicTableAsset"));
+                    UObject* ta = taPtr ? *taPtr : nullptr;
+                    UObject* tt = ttPtr ? *ttPtr : nullptr;
+                    UObject* dt = dtPtr ? *dtPtr : nullptr;
+                    auto rowCount = [](UObject* tbl) -> int {
+                        if (!tbl) return -1;
+                        auto* rm = tbl->GetValuePtrByPropertyNameInChain<uint8_t>(STR("RowMap"));
+                        if (!rm) return -2;
+                        int32_t num = *reinterpret_cast<int32_t*>(rm + 8); // TMap layout: Data*, Num, Max
+                        return num;
+                    };
+                    VLOG(STR("[FGKDiag] {} @{:p}  TableAsset={:p} (rows={})  TestAsset={:p} (rows={})  DynamicAsset={:p} (rows={})\n"),
+                         wname, (void*)w,
+                         (void*)ta, rowCount(ta),
+                         (void*)tt, rowCount(tt),
+                         (void*)dt, rowCount(dt));
+                    if (dt && isObjectAlive(dt))
+                    {
+                        std::wstring dtCls = safeClassName(dt);
+                        std::wstring dtName;
+                        try { dtName = dt->GetName(); } catch (...) {}
+                        VLOG(STR("[FGKDiag]   DynamicAsset class='{}' name='{}'\n"), dtCls.c_str(), dtName.c_str());
+                    }
+                    ++totalLogged;
+                }
+            }
+            VLOG(STR("[FGKDiag] === End — logged {} wrapper instances ===\n"), totalLogged);
+
+            // DiscoveryManager probe deferred to tickFGKDiscoveryDiag —
+            // manager spawns AFTER LoadMap (per-world actor), so polling
+            // each tick until it exists is the right hook point.
+        }
+
+        // Path #5 diagnostic — dump UMorConstructionsTable.ActorRowNameLookup
+        // (TMap<TSoftClassPtr<AActor>, FName> at offset 0x110, header size 0x50).
+        //
+        // UE4 TMap memory layout:
+        //   TSet<TPair<K,V>> Pairs:
+        //     TSparseArray<TSetElement<TPair<K,V>>>:
+        //       0x00: Data*  (pointer to elements)
+        //       0x08: Num    (total slots including holes)
+        //       0x0C: Max    (capacity)
+        //       0x10: NumFreeIndices
+        //       0x14: FirstFreeIndex
+        //       0x18: TBitArray AllocationFlags
+        //   ... + hash table after sparse array
+        //
+        // Element layout (TSetElement<TPair<K,V>>):
+        //   TPair<K,V>:
+        //     K = TSoftClassPtr<AActor> = TSoftObjectPtr<UClass> = 0x28 bytes
+        //     V = FName = 0x08 bytes
+        //   Then HashNextId (4) + HashIndex (4) = 0x38 total per element
+        bool m_actorLookupDiagDone{false};
+        void tickActorLookupDiag()
+        {
+            if (m_actorLookupDiagDone) return;
+            std::vector<UObject*> wrappers;
+            UObjectGlobals::FindAllOf(STR("MorConstructionsTable"), wrappers);
+            if (wrappers.empty()) return;
+            m_actorLookupDiagDone = true;
+
+            VLOG(STR("[ActorLookup] === Begin ActorRowNameLookup dump ===\n"));
+            for (UObject* w : wrappers)
+            {
+                if (!w || !isObjectAlive(w)) continue;
+                auto* base = reinterpret_cast<uint8_t*>(w);
+                struct SparseArrayHdr {
+                    uint8_t* Data;       // 0x00
+                    int32_t  Num;        // 0x08
+                    int32_t  Max;        // 0x0C
+                    int32_t  NumFree;    // 0x10
+                    int32_t  FirstFree;  // 0x14
+                };
+                SparseArrayHdr* sa = reinterpret_cast<SparseArrayHdr*>(base + 0x110);
+                VLOG(STR("[ActorLookup] wrapper @{:p}  Data={:p} Num={} Max={} NumFree={} FirstFree={}\n"),
+                     (void*)w, (void*)sa->Data, sa->Num, sa->Max, sa->NumFree, sa->FirstFree);
+
+                // Hex-dump first 64 bytes of element data + flag bits 0x18..0x40
+                if (sa->Data && sa->Num > 0)
+                {
+                    // First, dump raw bytes 0x18..0x50 (TBitArray + hash table head)
+                    VLOG(STR("[ActorLookup] hdr-rest bytes (0x18..0x50):\n"));
+                    for (int row = 0x18; row < 0x50; row += 16) {
+                        VLOG(STR("[ActorLookup]   +0x{:02x}: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}  {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}\n"),
+                             row,
+                             base[0x110 + row+0], base[0x110 + row+1], base[0x110 + row+2], base[0x110 + row+3],
+                             base[0x110 + row+4], base[0x110 + row+5], base[0x110 + row+6], base[0x110 + row+7],
+                             base[0x110 + row+8], base[0x110 + row+9], base[0x110 + row+10], base[0x110 + row+11],
+                             base[0x110 + row+12], base[0x110 + row+13], base[0x110 + row+14], base[0x110 + row+15]);
+                    }
+                    // Hex-dump first 256 bytes of element data — NO FName
+                    // interpretation. Lets us see actual layout without
+                    // crashing on bad ComparisonIndex values.
+                    VLOG(STR("[ActorLookup] First 256 bytes of element data:\n"));
+                    int dumpBytes = sa->Num < 8 ? sa->Num * 0x40 : 256;
+                    if (dumpBytes > 256) dumpBytes = 256;
+                    for (int row = 0; row < dumpBytes; row += 16) {
+                        if (!isReadableMemory(sa->Data + row, 16)) {
+                            VLOG(STR("[ActorLookup]   +0x{:03x}: <unreadable>\n"), row);
+                            break;
+                        }
+                        uint8_t* p = sa->Data + row;
+                        VLOG(STR("[ActorLookup]   +0x{:03x}: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}  {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}\n"),
+                             row,
+                             p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
+                             p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15]);
+                    }
+                }
+            }
+            VLOG(STR("[ActorLookup] === End ===\n"));
+        }
+
+        bool m_dmDiagDone{false};
+        void tickFGKDiscoveryDiag()
+        {
+            if (m_dmDiagDone) return;
+            std::vector<UObject*> dms;
+            UObjectGlobals::FindAllOf(STR("MorDiscoveryManager"), dms);
+            if (dms.empty()) return; // not spawned yet
+            m_dmDiagDone = true;
+            VLOG(STR("[FGKDiag] === DiscoveryManager.Recipes (post-load) ===\n"));
+            VLOG(STR("[FGKDiag] DiscoveryManager instances: {}\n"), (int)dms.size());
+            for (UObject* dm : dms)
+            {
+                if (!dm || !isObjectAlive(dm)) continue;
+                auto* base = reinterpret_cast<uint8_t*>(dm);
+                struct TAH { uint8_t* Data; int32_t Num; int32_t Max; };
+                TAH* recipes = reinterpret_cast<TAH*>(base + 0x0220);
+                VLOG(STR("[FGKDiag] DM @{:p}  Recipes.Data={:p} Num={} Max={}\n"),
+                     (void*)dm, (void*)recipes->Data, recipes->Num, recipes->Max);
+                if (recipes->Data && recipes->Num > 0)
+                {
+                    constexpr int kStride = 0x128;
+                    int n = recipes->Num < 5 ? recipes->Num : 5;
+                    for (int i = 0; i < n; ++i)
+                    {
+                        uint8_t* row = recipes->Data + (size_t)i * kStride;
+                        FName* rn = reinterpret_cast<FName*>(row + 0xD8 + 0x8);
+                        std::wstring rnStr;
+                        try { rnStr = rn->ToString(); } catch (...) {}
+                        VLOG(STR("[FGKDiag]   Recipes[{}] Result.RowName='{}'\n"),
+                             i, rnStr.empty() ? STR("(?)") : rnStr.c_str());
+                    }
+                }
+            }
+            VLOG(STR("[FGKDiag] === End DiscoveryManager diagnostic ===\n"));
         }
 
 
@@ -3153,6 +3344,8 @@ namespace MoriaMods
             tickSettingsUI();     // v6.9.0 — Settings screen take-over (mod keybinds in keymap tab)
             tickReapplyModifierPrefixes(); // v6.9.0 — keep "L-SHIFT + F1" text on SET rows alive
             tickCaptureSpecialKeys();      // v6.9.0 — capture DEL/INS/HOME/etc the BP rejects
+            tickFGKDiscoveryDiag();        // v6.9.0 — one-shot probe of AMorDiscoveryManager.Recipes
+            tickActorLookupDiag();         // v6.9.0 — Path #5 ActorRowNameLookup TMap byte-layout dump
 
             // v6.9.0 CP3 — Quick Build chord-aware dispatch.
             //   USE (s_bindings[i].key, no modifiers): user-rebound USE
