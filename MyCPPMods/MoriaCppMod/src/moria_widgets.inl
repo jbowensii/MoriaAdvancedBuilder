@@ -2253,14 +2253,30 @@
 
             {
                 m_screen.refresh(findPlayerController());
+                // Re-check widget liveness after findPlayerController (which
+                // can trigger GC during world unload, leaving m_errorBoxWidget
+                // alive but with a corrupted class pointer).
+                if (!m_errorBoxWidget || !isObjectAlive(m_errorBoxWidget)) {
+                    m_errorBoxWidget = nullptr;
+                    return;
+                }
                 float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
                 float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
-                setWidgetPosition(m_errorBoxWidget, m_screen.fracToPixelX(fracX),
-                                                    m_screen.fracToPixelY(fracY), true);
+                try {
+                    setWidgetPosition(m_errorBoxWidget, m_screen.fracToPixelX(fracX),
+                                                        m_screen.fracToPixelY(fracY), true);
+                } catch (...) {
+                    m_errorBoxWidget = nullptr;
+                    return;
+                }
             }
 
-            if (!isObjectAlive(m_errorBoxWidget)) { m_errorBoxWidget = nullptr; return; }
-            auto* fn = m_errorBoxWidget->GetFunctionByNameInChain(STR("SetVisibility"));
+            if (!m_errorBoxWidget || !isObjectAlive(m_errorBoxWidget)) {
+                m_errorBoxWidget = nullptr;
+                return;
+            }
+            UFunction* fn = nullptr;
+            try { fn = m_errorBoxWidget->GetFunctionByNameInChain(STR("SetVisibility")); } catch (...) {}
             if (fn) { uint8_t p[8]{}; p[0] = 0; safeProcessEvent(m_errorBoxWidget, fn, p); }
 
             m_ebShowTick = GetTickCount64();

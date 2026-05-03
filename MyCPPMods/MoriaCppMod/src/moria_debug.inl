@@ -266,6 +266,12 @@
             {
             case 0:
             {
+                // v0.30 — gate Set Rotation to ghost-visible only.
+                UObject* gata = resolveGATA();
+                if (!gata) {
+                    showOnScreen(L"Place a build piece first", 2.0f, 1.0f, 0.5f, 0.2f);
+                    break;
+                }
                 bool modDown = isModifierDown();
                 int cur = s_overlay.rotationStep;
                 int next;
@@ -276,8 +282,7 @@
                 s_overlay.rotationStep = next;
                 s_overlay.needsUpdate = true;
                 saveConfig();
-                UObject* gata = resolveGATA();
-                if (gata) setGATARotation(gata, static_cast<float>(next));
+                setGATARotation(gata, static_cast<float>(next));
                 std::wstring msg = L"Rotation step: " + std::to_wstring(next) + L"\xB0";
                 showOnScreen(msg, 2.0f, 0.0f, 1.0f, 0.0f);
                 updateMcRotationLabel();

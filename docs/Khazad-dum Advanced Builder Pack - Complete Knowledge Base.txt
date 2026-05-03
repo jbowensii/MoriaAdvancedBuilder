@@ -3,8 +3,8 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Version 6.0.0
-March 2026
+Document Version 6.7.1
+May 2026
 ================================================================================
 
 
@@ -130,6 +130,19 @@ PART 3: USER INTERFACE AND DATA SYSTEMS
          3.8.3  Root Cause: FGK Wrapper Cache
          3.8.4  Pak Mounting Research
          3.8.5  Lessons for Future Modders
+    3.9  Mod-Owned Join World UI (v6.7.0+)
+         3.9.1  Why In-Place Modification (Not Spawn-Duplicate)
+         3.9.2  Architecture: ProcessEvent OnAfterShow Hook
+         3.9.3  Session History JSON Storage
+         3.9.4  Row Injection via AddSessionHistoryItem
+         3.9.5  FString Lifetime Around ProcessEvent
+         3.9.6  UTF-8 String Conversion (Critical)
+         3.9.7  Capture-on-Join: BP Event Hooks
+         3.9.8  Deferred Field-Read Out of Post-Hook
+         3.9.9  Right-Click Delete + GenericPopup
+         3.9.10 ProcessEvent Budget per Tick
+         3.9.11 Visual Mod Marker (Sky-Blue Tints)
+         3.9.12 What Did Not Work (v6.6.0 Spawn-Duplicate)
 
 FOOTER AND CREDITS
 
@@ -2430,12 +2443,448 @@ layer.
     from the DataTable without an FGK wrapper cache.
 
 
+--------------------------------------------------------------------------------
+3.9  MOD-OWNED JOIN WORLD UI (v6.7.0+)
+--------------------------------------------------------------------------------
+
+The Join Other World screen (WBP_UI_JoinWorldScreen) and its sister Advanced
+Join Options panel are taken over by the mod to replace the game's broken
+auto-managed connection history. The mod stores history in a user-controlled
+JSON file, supports right-click deletion with a confirmation popup, and
+auto-saves connection attempts as the user joins servers.
+
+This section documents the in-place modification methodology, the
+ProcessEvent rules that emerged during development, and the abandoned
+spawn-duplicate approach that preceded it.
+
+
+3.9.1  WHY IN-PLACE MODIFICATION (NOT SPAWN-DUPLICATE)
+
+The first attempt (v6.6.0) spawned a fresh BP instance via
+WidgetBlueprintLibrary::Create using the same UClass as the native widget.
+The intent was full mod ownership: take the native widget out of the
+viewport, show the duplicate, and have complete control over its behavior.
+
+This failed because a standalone-spawned UserWidget has no MainMenu wiring.
+In the native flow, MainMenu owns the JoinWorld widget, subscribes to its
+delegates (OnPanelClosed, JoinByIP_Pressed, etc.), and knows how to
+back-navigate when the user dismisses it. A fresh spawn has none of that.
+Symptoms cascaded:
+
+    - Esc locked up the game (input mode pointed at a removed widget)
+    - Advanced Join Options rendered UNDER the JoinWorld duplicate
+      (BP added it to viewport at default ZOrder, our duplicate was at 250)
+    - Click Join did nothing (delegate had no subscriber)
+    - Click Cancel/Confirm on the delete-confirm popup did nothing
+      (popup BP subscriptions to its own buttons did not fire because the
+      popup was spawned standalone, not via the BP's normal show pipeline)
+    - Native screens still bled through (incomplete RemoveFromParent)
+
+The pivot to in-place modification took roughly 30 minutes once decided.
+Six hours of iteration on the spawn-duplicate path produced no working
+behavior.
+
+The rule: if you see two of {Esc lockup, Advanced under main, Join does
+nothing, popup buttons do nothing, native screens bleed through}, stop
+iterating on hooks/timing/ZOrder and pivot to in-place modification.
+
+
+3.9.2  ARCHITECTURE: PROCESSEVENT OnAfterShow HOOK
+
+The mod hooks the global ProcessEvent post-callback. When a UFunction named
+"OnAfterShow" fires on the JoinWorld or AdvancedJoinOptions widget, the
+mod reacts:
+
+    Hook::RegisterProcessEventPostCallback handler:
+        if fnName == "OnAfterShow":
+            cls = safeClassName(context)
+            if cls == "WBP_UI_JoinWorldScreen_C":
+                onNativeJoinWorldShown(context)
+            elif cls == "WBP_UI_AdvancedJoinOptions_C":
+                onNativeAdvancedJoinShown(context)
+
+    onNativeJoinWorldShown(nativeWidget):
+        m_nativeJoinWorldWidget = m_modJoinWorldWidget = nativeWidget
+        m_pendingShowJoinWorldUI = true     // deferred to next tick
+
+    tickJoinWorldUI() (called from on_update):
+        if m_pendingShowJoinWorldUI:
+            applyModificationsToJoinWorld()
+
+    applyModificationsToJoinWorld():
+        // Walk the live native widget tree, modify in place
+        tint TextBlock_63 (WORLD SELECTION) sky-blue
+        tint Title (JOIN OTHER WORLD) sky-blue
+        tint InviteCodeLabel sky-blue
+        injectSessionHistoryRows(widget)    // see 3.9.4
+
+The native widget is NEVER removed from the viewport. The MainMenu's
+references to it remain intact. All native button wiring works. Esc, Back
+navigation, the SessionHistorySwitcher (which flips between SessionHistory
+and AdvancedJoinOptions when the user clicks the Advanced button), and
+every BP delegate continues to function natively.
+
+hideModJoinWorldUI() is a no-op that just clears the FWeakObjectPtr fields.
+There is no restore-from-RemoveFromParent dance. The native widget handles
+its own dismissal via the BP's normal Close/Esc path.
+
+
+3.9.3  SESSION HISTORY JSON STORAGE
+
+File: <game>/ue4ss/Mods/MoriaCppMod/session_history.json
+Path constructed via modPath() so it survives the Win64 vs Win64/ue4ss/
+working-directory difference.
+
+Schema (UTF-8 JSON array of objects, hand-rolled minimal parser):
+
+    [
+      {"name": "Mereaks 1st World", "domain": "mereaksvtt.com",
+       "port": "7003", "password": "enc:Q0ZbVQ==",
+       "lastJoined": "2026-04-30T08:00:00Z"},
+      ...
+    ]
+
+Passwords are XOR-obfuscated (16-byte key "MoriaModSessKey!") + Base64,
+prefixed with "enc:" for migration detection. Plaintext entries (legacy or
+hand-edited) are auto-migrated to the encrypted form on next save.
+
+Threat model: defend against casual JSON-file viewing. Not against an
+attacker with the mod source. The decryption key is in the binary; this
+is fundamental for any local-credential storage that needs to reuse the
+password.
+
+CRUD entry points (in moria_session_history.inl):
+
+    loadSessionHistory()    // read JSON, parse, populate m_sessionHistory
+    saveSessionHistory()    // serialize, write atomically
+    addOrUpdateSessionHistory(entry)
+        // match by domain+port (case-insensitive on domain),
+        // update in place or append
+    removeSessionHistoryAt(idx)
+    removeSessionHistory(domain, port)
+
+
+3.9.4  ROW INJECTION VIA AddSessionHistoryItem
+
+The naive approach is to manually construct WBP_UI_SessionHistory_Item_C
+widgets via jw_createGameWidget() and set their TextBlock text by hand.
+This works visually but breaks click behavior — fresh rows have no
+ConnectionHistoryItemData populated, no delegate subscriptions wired, and
+no parent registration.
+
+The correct approach is to use the BP's own data-driven UFunction:
+
+    UFunction* AddSessionHistoryItem(FMorConnectionHistoryItem)
+
+Found by searching the CXX header dump:
+dumps/CXXHeaderDump/WBP_UI_SessionHistoryList.hpp.
+
+The mod walks SessionBox children, removes any non-SessionHistoryLabel
+rows, then calls AddSessionHistoryItem once per JSON entry. The BP's
+implementation creates the row, sets ConnectionHistoryItemData from the
+struct, subscribes JoinSessionPressed -> OnJoinSessionHistoryItemPressed,
+and registers with the parent. Click then fires the native chain
+automatically:
+
+    SelectButton.OnReleased -> JoinSessionPressed delegate ->
+    SessionHistoryList.OnJoinSessionHistoryItemPressed ->
+    JoinWorldScreen.OnTryJoinPreviousSessionPressed ->
+    UMorGameSessionManager.DirectJoinSessionWithPassword
+
+Zero manual delegate binding. The architecture lesson: when the game has
+a typed Add<X>Item(struct) UFunction for a list, use it. Don't manually
+build rows.
+
+FMorConnectionHistoryItem layout (88 bytes, from
+dumps/CXXHeaderDump/Moria.hpp:1960):
+
+    Offset  Type                 Field
+    0x00    FString              WorldName
+    0x10    EMorConnectionType   ConnectionType (0=InviteCode, 1=IpAndPort)
+    0x18    FString              InviteString  (used as HostAndOptionalPort)
+    0x28    FString              UniqueInviteCode  (empty for IP joins)
+    0x38    FString              OptionalPassword
+    0x48    bool                 bIsDedicatedServer
+    0x50    int64                FDateTime ticks
+
+
+3.9.5  FString LIFETIME AROUND PROCESSEVENT
+
+When passing a struct containing FStrings to a BP UFunction, the FStrings
+must be constructed via placement-new in the parm buffer:
+
+    std::memset(dst, 0, 0x58);
+    new (dst + 0x00) FString(utf8ToWide(name).c_str());
+    new (dst + 0x18) FString(utf8ToWide(url).c_str());
+
+Each FString constructor heap-allocates an internal buffer.
+
+The critical second step: after safeProcessEvent returns, the heap
+allocations are STILL OWNED by our parm buffer copy. UE4 BP value-param
+semantics deep-copy the struct on entry (the BP's row instance gets its
+own copies of every FString), so destructing the caller's copy is safe
+AND required:
+
+    try { safeProcessEvent(target, fn, buf.data()); } catch (...) {}
+    destroyConnectionHistoryItem(buf.data() + offset);
+
+    void destroyConnectionHistoryItem(uint8_t* dst) {
+        reinterpret_cast<FString*>(dst + 0x00)->~FString();
+        reinterpret_cast<FString*>(dst + 0x18)->~FString();
+        reinterpret_cast<FString*>(dst + 0x28)->~FString();
+        reinterpret_cast<FString*>(dst + 0x38)->~FString();
+    }
+
+Without the destruct, every inject leaks 4 heap allocations per row. With
+15 sample entries re-injected on every delete, the leak compounds quickly.
+
+Caught by code review on 2026-05-01.
+
+
+3.9.6  UTF-8 STRING CONVERSION (CRITICAL)
+
+The byte-by-byte std::wstring construction zero-extends each UTF-8 byte:
+
+    // BROKEN — corrupts non-ASCII:
+    std::wstring w(s.begin(), s.end());
+
+For any character above 0x7F (the Steam install folder symbol "Return
+to Moria(TM)" with the trademark glyph, accented domain names, password
+symbols, anything non-ASCII), each multi-byte UTF-8 sequence becomes
+multiple wchars with high bits zero, producing mojibake.
+
+The correct conversion uses MultiByteToWideChar with CP_UTF8:
+
+    inline std::wstring utf8ToWide(const std::string& s) {
+        if (s.empty()) return {};
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, s.data(),
+                                       (int)s.size(), nullptr, 0);
+        std::wstring out(wlen, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(),
+                            &out[0], wlen);
+        return out;
+    }
+
+This helper lives in moria_common.h. Use it (and the symmetric
+wideToUtf8 in moria_testable.h) for every runtime string crossing the
+char/wchar boundary.
+
+Five sites in dllmain.cpp and moria_session_history.inl were broken
+before the v6.7.0 review. The pre-existing project rule "Path conversion
+uses WideCharToMultiByte(CP_UTF8) — NEVER static_cast<char> on wchar_t
+paths" covered the path-direction case. v6.7.0 extends it: never
+wstring(begin, end) either, in either direction.
+
+
+3.9.7  CAPTURE-ON-JOIN: BP EVENT HOOKS
+
+When a user joins a server (by clicking a history row, by entering a
+host:port in the Advanced panel and clicking Direct Join, or by entering
+a port and clicking Local Join), the mod auto-saves the entry to
+session_history.json.
+
+The native session manager's DirectJoinSessionWithPassword is a C++
+direct call. Its ProcessEvent post-hook does NOT reliably fire — many
+C++ functions exposed in the header dump are NOT UFunctions reachable
+through the BP dispatch system. Hooking them requires a different
+mechanism (vtable patching, function-pointer hooks).
+
+Instead, the mod hooks BP-level events that ARE always UFunctions and
+fire reliably:
+
+    Hook                                     Triggers when               Source of data
+    ---------------------------------------  --------------------------  -----------------------
+    OnJoinSessionHistoryItemPressed          User clicks a history row   FMorConnectionHistoryItem in parms
+    JoinSessionPressed                       Same delegate, narrower     Same
+    Button_DirectJoinIP +                    User clicks Direct Join     (deferred read of TextField_*)
+        OnMenuButtonClicked
+    Button_JoinLocal +                       User clicks Local Join      (deferred read of TextField_*)
+        OnMenuButtonClicked
+
+BP-generated UFunctions have long auto-names like
+"BndEvt__WBP_UI_AdvancedJoinOptions_Button_DirectJoinIP_K2Node_ComponentBoundEvent_0_OnMenuButtonClicked__DelegateSignature".
+The hook uses substring match (wcsstr), not exact match.
+
+
+3.9.8  DEFERRED FIELD-READ OUT OF POST-HOOK
+
+Reading the Direct/Local Join input field text from inside the post-hook
+re-enters ProcessEvent twice (once for GetText, once for
+KismetTextLibrary:Conv_TextToString). Re-entering ProcessEvent from
+inside ProcessEvent is a documented reentrancy hazard in the
+ue4ss-stability guide.
+
+The fix: stash the click context in a member field, and process it on
+the next main tick (off the hook stack):
+
+    // In the post-hook (synchronous, must be cheap):
+    queueManualJoinCapture(context, isLocal);
+
+    // In tickSessionHistoryDeferredCapture() (next main tick):
+    UObject* w = m_pendingManualJoinWidget.Get();
+    if (!w || !isObjectAlive(w)) return;
+    // SAFE to call GetText + Conv_TextToString here
+    std::string host = readFieldText(w, "TextField_DirectJoinIP");
+    std::string pwd  = readFieldText(w, "TextField_DirectJoinPassword");
+    ...
+    addOrUpdateSessionHistory(entry);
+    m_pendingManualJoinWidget = FWeakObjectPtr();   // consume
+
+The widget reference is held as FWeakObjectPtr so a dead widget between
+press and tick fails the .Get() and is silently skipped.
+
+
+3.9.9  RIGHT-CLICK DELETE + GenericPopup
+
+A user can right-click any session-history row to delete it. The flow:
+
+    Mouse polling on the main tick:
+        sample IsHovered() per row -> sticky-keep last hovered row
+        on RMB release: if a row was hovered, open the confirm popup
+
+    Confirm popup spawned via:
+        UClass* popupCls = StaticFindObject<UClass*>(
+            "/Game/UI/PopUp/WBP_UI_GenericPopup.WBP_UI_GenericPopup_C")
+        UObject* popup = jw_createGameWidget(popupCls)
+        AddToViewport(popup, ZOrder=500)
+        OnShowWithTwoButtons("Delete from Session History?",
+                             "Are you sure ...?",
+                             "Delete", "Cancel")
+
+    Click detection in the global post-hook:
+        if fnName contains "OnButtonReleasedEvent":
+            confirmBtn = popup.ConfirmButton    // member access via reflection
+            cancelBtn  = popup.CancelButton
+            if context == confirmBtn: delete entry, re-inject rows
+            elif context == cancelBtn: do nothing
+            // Force-close popup ourselves:
+            popup.Hide()    // play hide animation
+            deferRemoveWidget(popup)
+
+The popup class path was found by runtime tracker (not by guessing). A
+diagnostic post-hook logged any class containing "Popup" in its name.
+The user triggered the game's Quit-to-Desktop confirmation, the log
+revealed /Game/UI/PopUp/ (note the capital U; an earlier guess used
+/Game/UI/MainMenu/ which failed silently).
+
+The actual click event fires as "OnButtonReleasedEvent", NOT
+"OnMenuButtonClicked". The latter is the broadcast that follows;
+OnButtonReleasedEvent fires on the WBP_FrontEndButton_C instance and is
+the signal we want.
+
+Because the popup is spawned standalone (not via the BP's normal show
+pipeline), the BP's own subscriptions to its Confirm/Cancel buttons do
+NOT fire. The mod handles the click itself and force-closes via Hide()
++ deferRemoveWidget().
+
+
+3.9.10  PROCESSEVENT BUDGET PER TICK
+
+ProcessEvent is expensive (FName lookup, parm marshalling, virtual
+dispatch) AND shares a scheduler with input handling. Patterns that fire
+it at high frequency on hot paths can silently break UI input
+processing. Two observed instances during v6.6/v6.7 development:
+
+    1. Polling IsInViewport on the delete-confirm popup at 40 Hz
+       (one call per main-tick iteration). The Confirm/Cancel buttons
+       on the popup completely stopped responding to clicks. Removing
+       the polling restored input.
+
+    2. Polling IsHovered per row per tick at 60 Hz with 15 rows
+       = roughly 900 ProcessEvent calls per second. Did not visibly
+       break input but was at the edge. Throttled to 100 ms cadence
+       (10 Hz total) in the v6.7.0 review fixes. 15 rows x 10 Hz =
+       150 calls per second is comfortably under the budget.
+
+Rules of thumb:
+
+    - Hot per-tick paths: throttle to <=10 ProcessEvent calls per
+      second total. Implement via:
+
+          static ULONGLONG s_lastSampleMs = 0;
+          ULONGLONG nowMs = GetTickCount64();
+          bool shouldSample = (nowMs - s_lastSampleMs) >= 100;
+          if (shouldSample) s_lastSampleMs = nowMs;
+          if (shouldSample) for (auto& row : rows) callIsHovered(row);
+
+    - Never poll for an event that has a hook. Hook the event instead.
+
+    - Inside ProcessEvent post-hooks: gate diagnostic VLOG blocks behind
+      s_verbose AND filter by fn name BEFORE doing expensive work
+      (Outer-chain walks, safeClassName(), string formatting). The
+      VLOG macro is gated, but argument expressions are evaluated
+      regardless if they appear outside the macro.
+
+
+3.9.11  VISUAL MOD MARKER (SKY-BLUE TINTS)
+
+Every TextBlock the mod modifies is tinted bright sky-blue:
+
+    umgSetTextColor(tb, 0.35f, 0.65f, 1.0f, 1.0f);
+
+This is a deliberate, visible mod marker so the user can confirm at a
+glance that the mod is active. Per-screen targets:
+
+    JoinWorld:           TextBlock_63   (WORLD SELECTION)
+                         Title          (JOIN OTHER WORLD)
+                         InviteCodeLabel
+    AdvancedJoinOptions: TextBlock_68   (description)
+                         TextBlock_180  (label 1)
+                         TextBlock_1, _2, _3 (labels 2-4)
+                         JoinErrorText
+
+The mod was originally developed with bright yellow text per the user's
+request, then switched to sky-blue at v6.7.0 for better visual harmony
+with the game's color palette.
+
+
+3.9.12  WHAT DID NOT WORK (v6.6.0 SPAWN-DUPLICATE)
+
+The v6.6.0 spawn-duplicate iteration is preserved in git history at the
+v6.6.0 tag for archeological reference. Several patterns were attempted
+and discarded:
+
+    [FAILED] WidgetBlueprintLibrary::Create + AddToViewport at higher
+             ZOrder. Loses MainMenu wiring; standalone widget has no
+             parent context.
+
+    [FAILED] RemoveFromParent the native + spawn duplicate + add the
+             native back later. The native widget's internal state was
+             often left in a stale switcher position; re-adding caused
+             cascading OnAfterShow fires and game lockups.
+
+    [FAILED] Capture FSlateFontInfo bytes and re-apply via memcpy to
+             primitively-built duplicate widgets. Worked for the visual
+             content but produced no functional buttons because the
+             primitive widgets had no BP wiring.
+
+    [FAILED] Hide the JoinWorld widget via SetVisibility=Collapsed
+             while the duplicate Advanced panel was up. Cascaded into
+             a Niagara render-thread crash because particle emitters
+             on collapsed UMG state-image widgets dereferenced freed
+             pointers.
+
+    [FAILED] Polling IsInViewport / IsHovered / Tick at 60 Hz to
+             detect popup-gone or hover state. ProcessEvent re-entry
+             broke input dispatch.
+
+    [FAILED] FText shallow-copying via memcpy to set popup title /
+             message strings. The shared-pointer refcount underneath
+             FText was not bumped; the buffer became a dangling
+             reference once the local FText went out of scope. Replaced
+             by placement-new + paired destruct (3.9.5).
+
+The single working pattern is in-place modification of the live native
+widget. Everything else is a variation on "fight the BP wiring", and
+the BP wiring always wins.
+
+
 ================================================================================
 FOOTER AND CREDITS
 ================================================================================
 
 Khazad-dum Advanced Builder Pack
-Version 6.0.0
+Document Version 6.7.1
 
 Author: jbowensii
 GitHub: https://github.com/jbowensii/MoriaAdvancedBuilder

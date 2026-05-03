@@ -1,6 +1,38 @@
 
 
 
+// Returns true when our process owns the foreground (focused) window.
+// Used to gate GetAsyncKeyState-based input polling so the mod doesn't
+// react to keystrokes the user typed into another app while alt-tabbed.
+// UE4SS-registered keydown events (`register_keydown_event`) already
+// respect engine focus, so they don't need this guard.
+inline bool isGameWindowFocused()
+{
+    HWND fg = ::GetForegroundWindow();
+    if (!fg) return false;
+    DWORD fgPid = 0;
+    ::GetWindowThreadProcessId(fg, &fgPid);
+    return fgPid == ::GetCurrentProcessId();
+}
+
+// Focus-aware wrapper around the Win32 GetAsyncKeyState. Returns 0 when
+// the game isn't the foreground process, suppressing every keybind /
+// modifier check the mod performs while alt-tabbed.
+inline SHORT focusedAsyncKeyState(int vk)
+{
+    if (!isGameWindowFocused()) return 0;
+    return ::GetAsyncKeyState(vk);
+}
+
+// Macro-replace every GetAsyncKeyState call in our codebase that follows
+// this include so the focus guard kicks in automatically. Win32 API calls
+// outside our mod (UE4SS internals, system code) are unaffected because
+// they don't include this header.
+#ifdef GetAsyncKeyState
+#  undef GetAsyncKeyState
+#endif
+#define GetAsyncKeyState focusedAsyncKeyState
+
 struct ScreenCoords
 {
 
@@ -113,10 +145,27 @@ static bool isObjectAlive(UObject* obj)
 }
 
 
+// SEH-wrapped FindAllOf. C++ functions with destructors can't host __try,
+// so we put the call in a plain helper. Returns false on AV (caller
+// should treat as "no results"). The output vector is filled on success.
+static bool seh_findAllOf(const wchar_t* className, std::vector<UObject*>* out) noexcept
+{
+    __try {
+        UObjectGlobals::FindAllOf(className, *out);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 UObject* findPlayerController()
 {
     std::vector<UObject*> pcs;
-    UObjectGlobals::FindAllOf(STR("PlayerController"), pcs);
+    // FindAllOf iterates GUObjectArray and reads each entry's class via
+    // a virtual call. During world unload some entries are in the
+    // process of being destroyed — their vtable becomes garbage
+    // (0xFFF... or 0x000... pattern) and the dispatch AVs. Wrap in SEH.
+    if (!seh_findAllOf(STR("PlayerController"), &pcs)) return nullptr;
     if (pcs.empty()) return nullptr;
 
     // In multiplayer the engine holds replicated proxies of every remote PC

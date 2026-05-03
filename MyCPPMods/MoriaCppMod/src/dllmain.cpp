@@ -760,6 +760,49 @@ namespace MoriaMods
                 const auto fnName = func->GetName();
                 const wchar_t* fnStr = fnName.c_str();
 
+                // CP5 v0.5 — pre-hook WBP_SettingsScreen.PreConstruct or
+                // Construct or OnInitialized. Append Cheats to tabArray
+                // BEFORE the navbar's Construct runs (navbar reads tabArray
+                // directly during its own Construct).
+                if (context && (wcscmp(fnStr, STR("PreConstruct")) == 0 ||
+                                wcscmp(fnStr, STR("Construct")) == 0 ||
+                                wcscmp(fnStr, STR("OnInitialized")) == 0))
+                {
+                    std::wstring cls = safeClassName(context);
+                    if (cls == STR("WBP_SettingsScreen_C"))
+                    {
+                        s_instance->appendCheatsTabToArray(context);
+                    }
+                }
+                // CP5 v0.7 — when user clicks the Cheats tab in the navbar,
+                // redirect the tab name to "Gameplay" so the framework
+                // displays the Gameplay tab content. Set a flag so the
+                // Gameplay tab's OnAfterShow hook injects cheats content
+                // instead of (or in addition to) Mod Game Options.
+                if (wcscmp(fnStr, STR("navTabPressed")) == 0 && parms)
+                {
+                    s_instance->onNavTabPressedPre(context, func, parms);
+                }
+                // Legacy v0.4 hook — keep in case some path still calls it.
+                if (wcscmp(fnStr, STR("Initialize NavBar")) == 0 ||
+                    wcscmp(fnStr, STR("InitializeNavBar")) == 0)
+                {
+                    s_instance->onInitializeNavBarPre(context, func, parms);
+                }
+                // Diagnostic: log all UFunctions called on the navbar class
+                // (one-shot per name) so we can find the function that
+                // populates tabs even if its name differs from expected.
+                {
+                    static std::set<std::wstring> s_seenNavbarFns;
+                    std::wstring cls = safeClassName(context);
+                    if (cls == STR("UI_WBP_NavBar_Build_C") &&
+                        s_seenNavbarFns.size() < 50 &&
+                        s_seenNavbarFns.insert(fnStr).second)
+                    {
+                        VLOG(STR("[NavBarDiag] PE-pre on NavBar class: '{}'\n"), fnStr);
+                    }
+                }
+
                 // Suppress server movement corrections when fly mode is active
                 // This prevents the server from forcing us back to walking/falling
                 if (s_instance->m_flyMode &&
@@ -913,9 +956,52 @@ namespace MoriaMods
                 // (NOT OnMenuButtonClicked). We compare the firing button to
                 // the popup's ConfirmButton / CancelButton members.
                 if (wcsstr(fnStr2, STR("OnButtonReleasedEvent")) != nullptr ||
-                    wcsstr(fnStr2, STR("OnMenuButtonClicked"))   != nullptr)
+                    wcsstr(fnStr2, STR("OnMenuButtonClicked"))   != nullptr ||
+                    wcsstr(fnStr2, STR("OnButtonPressedEvent"))  != nullptr ||
+                    wcscmp(fnStr2, STR("OnClicked")) == 0)
                 {
                     s_instance->onAnyMenuButtonClicked(context, fnStr2);
+                    s_instance->maybeFireCarouselButton(context);
+                    // v0.35 — BndEvt_..._{Prev,Next}Button_..._OnButton...
+                    // delegates fire on the carousel itself; the fn name
+                    // contains "PrevButton" or "NextButton".
+                    s_instance->maybeFireCarouselViaDelegate(context, fnStr2);
+                }
+
+                // v0.32 — Native settings checkbox state-change.
+                // BP delegate name: BndEvt__WBP_SettingsCheckBox_OptionCheckBox_K2Node_..._OnCheckBoxComponentStateChanged__DelegateSignature
+                // The C++-level event UMorSettingsCheckBox::OnCheckBoxStateChanged is also fine.
+                if ((wcsstr(fnStr2, STR("OnCheckBoxComponentStateChanged")) != nullptr ||
+                     wcscmp(fnStr2, STR("OnCheckBoxStateChanged")) == 0) && parms)
+                {
+                    bool newState = false;
+                    newState = *reinterpret_cast<bool*>(parms);
+                    s_instance->maybeFireCheckBoxRow(context, newState);
+                }
+
+                // v0.33 — Native settings carousel value changed.
+                // Delegate signature: CarouselValueChanged(FString SelectedValue)
+                if (wcscmp(fnStr2, STR("CarouselValueChanged")) == 0 && parms)
+                {
+                    FString* fs = reinterpret_cast<FString*>(parms);
+                    std::wstring val;
+                    try {
+                        if (fs && fs->GetCharArray().GetData())
+                            val = std::wstring(fs->GetCharArray().GetData());
+                    } catch (...) {}
+                    s_instance->maybeFireCarouselRow(context, val);
+                }
+
+                // CP5 v0.12 — post-hook on navTabPressed. Pre-hook
+                // rewrites KeyName "Cheats" -> "Gameplay" so the framework
+                // displays the Gameplay widget. After navTabPressed runs,
+                // the framework has set currentTabName + highlighted the
+                // Gameplay button. We patch currentTabName back to "Cheats"
+                // and force the navbar to refresh selection so the visual
+                // highlight matches what the user clicked.
+                if (wcscmp(fnStr2, STR("navTabPressed")) == 0 && parms)
+                {
+                    s_instance->onNavTabPressedPost(context, func, parms);
                 }
 
                 // Diagnostic popup-trace — gated behind s_verbose AND filters
@@ -1171,6 +1257,22 @@ namespace MoriaMods
                     {
                         s_instance->onNativeSettingsScreenShown(context);
                         s_instance->onSettingsRelatedShown(context, fnStr2);
+                        // CP5 — append a NEW "Cheats" tab to tabArray (don't replace legal).
+                        if (cls == STR("WBP_SettingsScreen_C"))
+                            s_instance->appendCheatsTabToArray(context);
+                        // v0.50 — inject mod action buttons (Rename/Save/Unlock/
+                        // Read All/Clear All Buffs) into the pause menu's
+                        // VerticalBox_0 right above LeaveButton.
+                        if (cls == STR("UI_WBP_EscapeMenu2_C"))
+                            s_instance->injectPauseMenuButtons(context);
+                    }
+                    // CP5 — when the cheats tab spawns its content widget, inject the cheats UI.
+                    // Native legal tab spawns the same class but for a different tabArray index;
+                    // injectCheatsTabContent uses the m_cheatsTabExpectedNext flag to differentiate.
+                    else if (cls == STR("WBP_LegalTab_C"))
+                    {
+                        s_instance->onSettingsRelatedShown(context, fnStr2);
+                        s_instance->injectCheatsTabContent(context);
                     }
                     // v6.9.0 CP1 — inject mod keymap rows when the EditMappingTab
                     // becomes visible. This fires both on first Settings open
@@ -1203,12 +1305,37 @@ namespace MoriaMods
                 }
 
 
-                // v6.9.0 CP4 — Mod Game Options button clicks. Fires on
-                // every WBP_FrontEndButton_C click; we filter by tracked
-                // pointer in onModGameOptionClicked.
-                if (wcscmp(fnStr2, STR("OnMenuButtonClicked")) == 0)
+                // v6.9.0 CP4 + v0.49 — Mod Game Options button clicks.
+                // Catch both BP-level OnMenuButtonClicked AND the lower
+                // BndEvt OnButtonReleasedEvent on FrontEndButton class.
                 {
-                    s_instance->onModGameOptionClicked(context);
+                    bool isMenuClick = wcscmp(fnStr2, STR("OnMenuButtonClicked")) == 0;
+                    bool isFEReleased = (wcsstr(fnStr2, STR("OnButtonReleasedEvent")) != nullptr);
+                    if (isMenuClick || isFEReleased)
+                    {
+                        // Diagnostic: log what's firing on what class.
+                        static int s_clickDiagCount = 0;
+                        if (s_clickDiagCount < 24) {
+                            VLOG(STR("[CP4-CLICK] fn='{}' ctxCls='{}' ctx={:p}\n"),
+                                 fnStr2,
+                                 context ? safeClassName(context).c_str() : L"null",
+                                 (void*)context);
+                            ++s_clickDiagCount;
+                        }
+                        s_instance->onModGameOptionClicked(context);
+                        s_instance->onCheatsTabButtonClicked(context);
+                        if (isMenuClick) return;
+                    }
+                }
+
+                // CP5 v0.3 — append Cheats entry to GetNavBarTabs OutArray.
+                // The navbar UI calls this UFunction and renders the
+                // returned array. Modifying tabArray alone isn't enough
+                // because BP iterates the OutArray copy. Augmenting the
+                // OutArray here makes every call see 8 tabs.
+                if (wcscmp(fnStr2, STR("GetNavBarTabs")) == 0)
+                {
+                    s_instance->onGetNavBarTabsPost(context, func, parms);
                     return;
                 }
 
@@ -1221,10 +1348,13 @@ namespace MoriaMods
                     std::wstring cls = safeClassName(context);
                     VLOG(STR("[SettingsUI] OnKeySelectedBP fired on cls='{}' obj={:p}\n"),
                          cls.c_str(), (void*)context);
-                    // Match any class name containing "KeySelector" so
-                    // child-BP variants are caught too.
                     if (cls.find(STR("KeySelector")) != std::wstring::npos)
                     {
+                        // CP5 — first try cheats dispatch. Cheat rows are
+                        // KeySelectors with our cheats label; clicks fire
+                        // the cheat action and we IGNORE the captured key.
+                        if (s_instance->maybeFireCheatFromSelector(context))
+                            return;
                         s_instance->onModSelectorRebound(context);
                     }
                     return;
@@ -2328,6 +2458,7 @@ namespace MoriaMods
             }
             // Pitch rotation (,  / SHIFT+,)
             // Pitch rotation (. / SHIFT+.) — BIND_PITCH_ROTATE defaults to '.'
+            // v0.30 — gated to ghost-visible (resolveGATA returns non-null).
             {
                 static bool s_lastPitchKey = false;
                 uint8_t vk = s_bindings[BIND_PITCH_ROTATE].key;
@@ -2336,7 +2467,7 @@ namespace MoriaMods
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
                     if (nowDown && !s_lastPitchKey && !m_ftVisible)
                     {
-                        if (m_pitchRotateEnabled)
+                        if (m_pitchRotateEnabled && resolveGATA())
                         {
                             float step = static_cast<float>(s_overlay.rotationStep.load());
                             if (isModifierDown()) step = -step;
@@ -2350,6 +2481,7 @@ namespace MoriaMods
                 }
             }
             // Roll rotation (, / SHIFT+,) — BIND_ROLL_ROTATE defaults to ','
+            // v0.30 — gated to ghost-visible.
             {
                 static bool s_lastRollKey = false;
                 uint8_t vk = s_bindings[BIND_ROLL_ROTATE].key;
@@ -2358,7 +2490,7 @@ namespace MoriaMods
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
                     if (nowDown && !s_lastRollKey && !m_ftVisible)
                     {
-                        if (m_rollRotateEnabled)
+                        if (m_rollRotateEnabled && resolveGATA())
                         {
                             float step = static_cast<float>(s_overlay.rotationStep.load());
                             if (isModifierDown()) step = -step;
@@ -3552,6 +3684,7 @@ namespace MoriaMods
             tickSettingsUI();     // v6.9.0 — Settings screen take-over (mod keybinds in keymap tab)
             tickReapplyModifierPrefixes(); // v6.9.0 — keep "L-SHIFT + F1" text on SET rows alive
             tickCaptureSpecialKeys();      // v6.9.0 — capture DEL/INS/HOME/etc the BP rejects
+            tickReapplyCheatsContext();    // v6.9.0 — keep Cheats-tab visibility swap stable
             tickFGKDiscoveryDiag();        // v6.9.0 — one-shot probe of AMorDiscoveryManager.Recipes
             tickActorLookupDiag();         // v6.9.0 — Path #5 ActorRowNameLookup TMap byte-layout dump
             tickFGKInjectionTest();        // v6.9.0 — runtime AddRow + HandleDataTableChanged test
