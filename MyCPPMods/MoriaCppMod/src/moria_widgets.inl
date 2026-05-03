@@ -2893,6 +2893,822 @@
                                             mcTotalW, mcTotalH);
         }
 
+        // ─────────────────────────────────────────────────────────────────
+        // v6.10.0 — "New Building Bar"
+        //
+        // Spawns one extra UWBP_UI_ActionBar_C instance, anchored to the
+        // top-center of the HUD, and tames it so that:
+        //   - all 4 special slots (Epic / HeavyCarry / MainHand / Offhand)
+        //     and their slot markers + decorative frames are Collapsed,
+        //   - all inventory wiring is neutralised by NULLing out
+        //     InventoryComponent / equipmentComponent / MorCharacter on
+        //     OUR instance only, so the BP's Tick / OnInvChanged paths
+        //     short-circuit on null instead of trying to read inventory.
+        //
+        // This is Phase 1 — chrome only, no function. Phase 2 will:
+        //   - layer our 8 builder-slot icons over slotMarker1..8
+        //   - layer our F# key labels on top
+        //   - route clicks/keypresses to our existing dispatch
+        //
+        // The native HUD ActionBar is untouched — our pointer is a
+        // separate UObject of the same class.
+        // ─────────────────────────────────────────────────────────────────
+        void destroyNewBuildingBar()
+        {
+            if (!m_newBuildingBar) return;
+            deferRemoveWidget(m_newBuildingBar);
+            m_newBuildingBar = nullptr;
+            for (int i = 0; i < 8; ++i)
+            {
+                m_nbbSlotEmpty[i]  = nullptr;
+                m_nbbSlotFocus[i]  = nullptr;
+                m_nbbSlotIcon[i]   = nullptr;
+                m_nbbSlotKeyLbl[i] = nullptr;
+                m_nbbSlotMarker[i] = nullptr;
+                m_nbbSlotButton[i] = nullptr;
+            }
+            VLOG(STR("[MoriaCppMod] [NewBuildingBar] removed\n"));
+        }
+
+        // v6.10.0 — Highlight/un-highlight a slot by toggling its
+        // "focused" overlay's Visibility. Phase 2 wires this to clicks +
+        // F# key presses. Slot range 0..7.
+        void newBuildingBarHighlight(int slot, bool on)
+        {
+            if (slot < 0 || slot >= 8) return;
+            UObject* fx = m_nbbSlotFocus[slot];
+            if (!fx || !isObjectAlive(fx)) return;
+            if (auto* visPtr = fx->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility")))
+                *visPtr = on ? 0 : 1; // 0=Visible, 1=Collapsed
+            setWidgetVisibility(fx, on ? 0 : 1);
+        }
+
+        // v0.10 — Populate each slot icon from m_recipeSlots[i].textureName
+        // — the QuickBuild assignments loaded from the INI. Walks the
+        // global Texture2D set once, then SetBrushFromTexture on each
+        // slot icon image. Slots without an assignment stay invisible.
+        void populateNewBuildingBarIcons()
+        {
+            if (!m_newBuildingBar || !isObjectAlive(m_newBuildingBar)) return;
+            UFunction* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(
+                nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
+            if (!setBrushFn) return;
+
+            // Resolve all needed textures by name in one pass.
+            std::vector<UObject*> textures;
+            try { UObjectGlobals::FindAllOf(STR("Texture2D"), textures); } catch (...) {}
+            UObject* slotTex[QUICK_BUILD_SLOTS]{};
+            int filled = 0;
+            for (int i = 0; i < QUICK_BUILD_SLOTS; ++i)
+            {
+                if (!m_recipeSlots[i].used || m_recipeSlots[i].textureName.empty()) continue;
+                const std::wstring& want = m_recipeSlots[i].textureName;
+                for (auto* t : textures) {
+                    if (!t) continue;
+                    if (t->GetName() == want) { slotTex[i] = t; break; }
+                }
+            }
+
+            // Apply to each slot icon image.
+            for (int i = 0; i < 8; ++i)
+            {
+                UObject* iImg = m_nbbSlotIcon[i];
+                if (!iImg || !isObjectAlive(iImg)) continue;
+                if (!slotTex[i])
+                {
+                    // No texture assigned — keep the slot empty.
+                    if (auto* visPtr = iImg->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility")))
+                        *visPtr = 1;
+                    setWidgetVisibility(iImg, 1);
+                    continue;
+                }
+                umgSetBrush(iImg, slotTex[i], setBrushFn);
+                if (s_off_brush >= 0) {
+                    uint8_t* base = reinterpret_cast<uint8_t*>(iImg);
+                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 128.0f;
+                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 128.0f;
+                }
+                if (auto* visPtr = iImg->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility")))
+                    *visPtr = 0; // Visible
+                setWidgetVisibility(iImg, 0);
+                ++filled;
+            }
+            VLOG(STR("[NewBuildingBar] populated {} slot icons from m_recipeSlots\n"), filled);
+        }
+
+        // v6.10.0 — Re-read s_bindings[0..7].key and update each slot's
+        // F# label. Call this after the user rebinds a QuickBuild key
+        // in Settings → Key Mapping so the bar reflects the new chord.
+        void refreshNewBuildingBarKeyLabels()
+        {
+            if (!m_newBuildingBar || !isObjectAlive(m_newBuildingBar)) return;
+            for (int i = 0; i < 8; ++i)
+            {
+                UObject* tb = m_nbbSlotKeyLbl[i];
+                if (!tb || !isObjectAlive(tb)) continue;
+                std::wstring kn = keyName(s_bindings[i].key);
+                umgSetText(tb, kn);
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // Discover-and-replicate (v0.2 of the New Building Bar).
+        //
+        // The "spawn an ActionBar and tame it" approach failed because the
+        // BP keeps re-asserting its Tick / Construct logic over our
+        // overrides — the Epic slot reappears, the placeholder "99" comes
+        // back, etc. Instead we now:
+        //
+        //   1. Spawn a hidden ActionBar instance ONLY to read its widget
+        //      tree at runtime. Discover the texture pointers and brush
+        //      ImageSize from each named UImage member.
+        //   2. Destroy the discovery spawn (deferRemoveWidget).
+        //   3. Build a brand-new UMG widget tree from scratch using those
+        //      captured textures, with our own layout. The BP never gets
+        //      to touch this — it's a plain UUserWidget with primitives.
+        //
+        // This is the same capture-and-replay pattern documented in the
+        // ue4-ui-duplication skill (used for the JoinWorld UI clone).
+        // ─────────────────────────────────────────────────────────────────
+        struct NbbDiscoveredAssets {
+            UObject* texTopFrameLeft{nullptr};
+            UObject* texTopFrameRight{nullptr};
+            UObject* texMiddleFrame{nullptr};
+            UObject* texBottomLeft{nullptr};
+            UObject* texBottomRight{nullptr};
+            UObject* texSlotMarker[8]{};
+            float sizeTopL[2]{0,0}, sizeTopR[2]{0,0}, sizeMid[2]{0,0};
+            float sizeBotL[2]{0,0}, sizeBotR[2]{0,0};
+            float sizeMarker[2]{32, 16};
+            // Slot frame textures — pulled from the well-known names that
+            // the existing MC bar already locates by FindAllOf.
+            UObject* texSlotEmpty{nullptr};
+            UObject* texSlotFocus{nullptr};
+            UObject* texSlotDisabled{nullptr};
+            UObject* texSlotFrame{nullptr};
+            float sizeSlot[2]{96, 96};
+            // v0.4 — proper slot textures captured from the slot widget
+            // (UI_WBP_Inventory_ActionBar_Item_1 → nestedInventoryItem,
+            // a UUI_WBP_Inventory_Item_AB_C with emptyFullSlot /
+            // buttonFocused / FocusedCorners UImages). Way better visual
+            // match than the EpicAB textures we used as a stopgap.
+            UObject* texEmptyFullSlot{nullptr};
+            UObject* texButtonFocused{nullptr};
+            UObject* texFocusedCorners{nullptr};
+            float sizeEmptyFullSlot[2]{0,0};
+            float sizeButtonFocused[2]{0,0};
+            float sizeFocusedCorners[2]{0,0};
+        };
+
+        // v0.8 — Cached fast-path: if we already discovered textures
+        // earlier in this session, just hand back the cache. No re-scan,
+        // no re-spawn. Bar construction skips straight to layout.
+        bool nbbDiscoverAssetsCached(NbbDiscoveredAssets& out)
+        {
+            if (!m_nbbAssetsCached) return false;
+            out.texEmptyFullSlot   = m_nbbCachedSlotEmpty;
+            out.texButtonFocused   = m_nbbCachedSlotFocus;
+            out.texFocusedCorners  = m_nbbCachedSlotCorners;
+            out.texSlotFrame       = m_nbbCachedBarFrame;
+            out.texSlotEmpty       = m_nbbCachedSlotEmpty; // alias
+            out.texSlotFocus       = m_nbbCachedSlotFocus; // alias
+            VLOG(STR("[NewBuildingBar] discover: using CACHED textures (no scan)\n"));
+            return true;
+        }
+
+        bool nbbDiscoverAssets(NbbDiscoveredAssets& out)
+        {
+            if (nbbDiscoverAssetsCached(out)) return true;
+
+            // v0.7 — Read from a LIVE native HUD ActionBar instance
+            // (preferred), falling back to a fresh spawn if no live
+            // instance exists yet. The live HUD instance has its
+            // textures wired; the fresh spawn does not — but we still
+            // get layout + texture-by-name fallbacks from the global
+            // FindAllOf<Texture2D> pass below.
+            UObject* tmplt = nullptr;
+            {
+                std::vector<UObject*> instances;
+                try { UObjectGlobals::FindAllOf(STR("WBP_UI_ActionBar_C"), instances); } catch (...) {}
+                VLOG(STR("[NewBuildingBar] discover: found {} ActionBar instances\n"),
+                     (int)instances.size());
+                // Prefer one that ISN'T the CDO and has middleFrame with
+                // a wired texture; otherwise just pick the first live one.
+                UObject* anyLive = nullptr;
+                for (auto* w : instances) {
+                    if (!w || !isObjectAlive(w)) continue;
+                    // Skip CDO objects (their name starts with "Default__")
+                    std::wstring nm; try { nm = w->GetName(); } catch (...) {}
+                    if (nm.find(STR("Default__")) == 0) continue;
+                    if (!anyLive) anyLive = w;
+                    // Probe middleFrame for a wired brush texture.
+                    auto* mp = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("middleFrame"));
+                    UObject* mid = mp ? *mp : nullptr;
+                    if (mid && isObjectAlive(mid) && s_off_brush >= 0) {
+                        UObject* tex = *reinterpret_cast<UObject**>(
+                            reinterpret_cast<uint8_t*>(mid) + s_off_brush + brushResourceObj());
+                        if (tex) {
+                            tmplt = w;
+                            VLOG(STR("[NewBuildingBar] discover: using LIVE wired ActionBar {:p} '{}'\n"),
+                                 (void*)w, nm.c_str());
+                            break;
+                        }
+                    }
+                }
+                if (!tmplt && anyLive) {
+                    tmplt = anyLive;
+                    VLOG(STR("[NewBuildingBar] discover: no wired-texture instance — using {:p} (textures may be empty)\n"),
+                         (void*)tmplt);
+                }
+            }
+            // Last-resort fallback: spawn a fresh template if we couldn't
+            // find any live instance (e.g. discover ran before the HUD
+            // ActionBar was created).
+            if (!tmplt) {
+                UClass* abCls = nullptr;
+                for (const wchar_t* path : {
+                    STR("/Game/UI/HUD/ActionBar/WBP_UI_ActionBar.WBP_UI_ActionBar_C"),
+                    STR("WBP_UI_ActionBar_C"),
+                }) {
+                    try { abCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, path); }
+                    catch (...) {}
+                    if (abCls) break;
+                }
+                if (abCls) tmplt = jw_createGameWidget(abCls);
+                if (tmplt)
+                    VLOG(STR("[NewBuildingBar] discover: fallback fresh-spawn template {:p}\n"), (void*)tmplt);
+                else {
+                    VLOG(STR("[NewBuildingBar] discover: no live instance and fresh-spawn failed — aborting\n"));
+                    return false;
+                }
+            }
+
+            // Helper: read brush ResourceObject + ImageSize from a named
+            // UImage member of `parent`.
+            auto readImg = [&](UObject* parent, const wchar_t* name,
+                               UObject*& outTex, float* outSize)
+            {
+                if (!parent) return;
+                auto* pp = parent->GetValuePtrByPropertyNameInChain<UObject*>(name);
+                UObject* img = pp ? *pp : nullptr;
+                if (!img || !isObjectAlive(img)) return;
+                if (s_off_brush < 0) return;
+                uint8_t* base = reinterpret_cast<uint8_t*>(img);
+                outTex = *reinterpret_cast<UObject**>(base + s_off_brush + brushResourceObj());
+                outSize[0] = *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX());
+                outSize[1] = *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY());
+            };
+
+            readImg(tmplt, STR("topFrameLeft"),       out.texTopFrameLeft,  out.sizeTopL);
+            readImg(tmplt, STR("topFrameRight"),      out.texTopFrameRight, out.sizeTopR);
+            readImg(tmplt, STR("middleFrame"),        out.texMiddleFrame,   out.sizeMid);
+            readImg(tmplt, STR("bottomFrameRight"),   out.texBottomLeft,    out.sizeBotL);
+            readImg(tmplt, STR("bottomFrameRight_1"), out.texBottomRight,   out.sizeBotR);
+
+            for (int i = 0; i < 8; ++i)
+            {
+                wchar_t nm[32];
+                swprintf_s(nm, L"slotMarker%d", i + 1);
+                float sz[2]{0,0};
+                readImg(tmplt, nm, out.texSlotMarker[i], sz);
+                if (i == 0 && sz[0] > 0) { out.sizeMarker[0] = sz[0]; out.sizeMarker[1] = sz[1]; }
+            }
+
+            // Slot frame textures — find the well-known HUD textures by
+            // name (these are the same textures the native ActionBar
+            // uses internally). Also try to read a slot frame from one
+            // of the spawned slot's internal images for ImageSize.
+            {
+                std::vector<UObject*> textures;
+                try { UObjectGlobals::FindAllOf(STR("Texture2D"), textures); } catch (...) {}
+                for (auto* t : textures) {
+                    if (!t) continue;
+                    auto name = t->GetName();
+                    if      (name == STR("T_UI_Btn_HUD_EpicAB_Empty"))    out.texSlotEmpty   = t;
+                    else if (name == STR("T_UI_Btn_HUD_EpicAB_Focused")) out.texSlotFocus    = t;
+                    else if (name == STR("T_UI_Btn_HUD_EpicAB_Disabled")) out.texSlotDisabled = t;
+                    else if (name == STR("T_UI_Frame_HUD_AB_Active_BothHands")) out.texSlotFrame = t;
+                }
+            }
+
+            // v0.4 — Walk into one of the spawned numbered slot widgets
+            // (UI_WBP_Inventory_ActionBar_Item_1 → nestedInventoryItem,
+            // a UUI_WBP_Inventory_Item_AB_C). Capture the proper slot
+            // textures from there (emptyFullSlot / buttonFocused /
+            // FocusedCorners) — these are what the native ActionBar
+            // actually renders, not the EpicAB textures.
+            {
+                auto* slot1Ptr = tmplt->GetValuePtrByPropertyNameInChain<UObject*>(STR("UI_WBP_Inventory_ActionBar_Item_1"));
+                UObject* slot1 = slot1Ptr ? *slot1Ptr : nullptr;
+                UObject* nested = nullptr;
+                if (slot1 && isObjectAlive(slot1))
+                {
+                    auto* nPtr = slot1->GetValuePtrByPropertyNameInChain<UObject*>(STR("nestedInventoryItem"));
+                    nested = nPtr ? *nPtr : nullptr;
+                }
+                if (nested && isObjectAlive(nested))
+                {
+                    readImg(nested, STR("emptyFullSlot"), out.texEmptyFullSlot, out.sizeEmptyFullSlot);
+                    readImg(nested, STR("buttonFocused"), out.texButtonFocused, out.sizeButtonFocused);
+                    readImg(nested, STR("FocusedCorners"), out.texFocusedCorners, out.sizeFocusedCorners);
+                    VLOG(STR("[NewBuildingBar] discover: slot textures emptyFullSlot={:p}({},{}) buttonFocused={:p} FocusedCorners={:p}\n"),
+                         (void*)out.texEmptyFullSlot, out.sizeEmptyFullSlot[0], out.sizeEmptyFullSlot[1],
+                         (void*)out.texButtonFocused, (void*)out.texFocusedCorners);
+                }
+                else
+                {
+                    VLOG(STR("[NewBuildingBar] discover: nestedInventoryItem on slot 1 is null — slot textures will fall back\n"));
+                }
+            }
+
+            // Destroy the discovery spawn — never enters viewport.
+            // (jw_createGameWidget creates a UUserWidget that's not yet
+            // added to viewport. Just clearing references should be
+            // enough for GC. RemoveFromParent is a no-op when not added.)
+            VLOG(STR("[NewBuildingBar] discover: captured TopL={:p} TopR={:p} Mid={:p} BotL={:p} BotR={:p} SlotEmpty={:p} SlotFocus={:p}\n"),
+                 (void*)out.texTopFrameLeft, (void*)out.texTopFrameRight,
+                 (void*)out.texMiddleFrame, (void*)out.texBottomLeft,
+                 (void*)out.texBottomRight, (void*)out.texSlotEmpty,
+                 (void*)out.texSlotFocus);
+
+            // v0.5 — DEEP DIVE: walk the spawned ActionBar's WidgetTree
+            // and log every UImage we see, with its texture name + brush
+            // size + parent slot type + canvas-slot Position/Size if it
+            // lives in a CanvasPanel. Lets us understand exactly how the
+            // native chrome is composed without guessing.
+            auto* wtPtr = tmplt->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* wt = wtPtr ? *wtPtr : nullptr;
+            UObject* tRoot = nullptr;
+            if (wt) {
+                auto* rPtr = wt->GetValuePtrByPropertyNameInChain<UObject*>(STR("RootWidget"));
+                if (rPtr) tRoot = *rPtr;
+            }
+            std::function<void(UObject*, int)> dump = [&](UObject* w, int depth) {
+                if (!w || !isObjectAlive(w)) return;
+                std::wstring nm; try { nm = w->GetName(); } catch (...) {}
+                std::wstring cls = safeClassName(w);
+                std::wstring indent(depth * 2, L' ');
+
+                // For UImage, log brush texture + size.
+                if (cls == STR("Image"))
+                {
+                    UObject* tex = nullptr;
+                    float sx = 0, sy = 0;
+                    if (s_off_brush >= 0)
+                    {
+                        uint8_t* base = reinterpret_cast<uint8_t*>(w);
+                        tex = *reinterpret_cast<UObject**>(base + s_off_brush + brushResourceObj());
+                        sx  = *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX());
+                        sy  = *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY());
+                    }
+                    std::wstring tn; if (tex) try { tn = tex->GetName(); } catch (...) {}
+                    auto* visPtr = w->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility"));
+                    int vis = visPtr ? *visPtr : -1;
+                    VLOG(STR("[NBB-DUMP] {}Image '{}' tex='{}' size=({},{}) vis={}\n"),
+                         indent.c_str(), nm.c_str(), tn.c_str(), sx, sy, vis);
+                }
+                else
+                {
+                    auto* visPtr = w->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility"));
+                    int vis = visPtr ? *visPtr : -1;
+                    VLOG(STR("[NBB-DUMP] {}{} '{}' vis={}\n"),
+                         indent.c_str(), cls.c_str(), nm.c_str(), vis);
+                }
+
+                // For CanvasPanelSlot children, log slot Position/Size.
+                auto* slots = w->GetValuePtrByPropertyNameInChain<TArray<UObject*>>(STR("Slots"));
+                if (slots) {
+                    for (int i = 0; i < slots->Num(); ++i) {
+                        UObject* s = (*slots)[i];
+                        if (!s) continue;
+                        std::wstring scls = safeClassName(s);
+                        if (scls == STR("CanvasPanelSlot"))
+                        {
+                            // CanvasPanelSlot has LayoutData (FAnchorData) — Offsets, Anchors, Alignment, Size
+                            auto* lPtr = s->GetValuePtrByPropertyNameInChain<float>(STR("LayoutData"));
+                            if (lPtr) {
+                                VLOG(STR("[NBB-DUMP] {}  CPSlot Offsets=({},{},{},{}) Anchors=({},{}, {},{}) Align=({},{})\n"),
+                                     indent.c_str(),
+                                     lPtr[0], lPtr[1], lPtr[2], lPtr[3],
+                                     lPtr[4], lPtr[5], lPtr[6], lPtr[7],
+                                     lPtr[8], lPtr[9]);
+                            }
+                        }
+                        auto* c = s->GetValuePtrByPropertyNameInChain<UObject*>(STR("Content"));
+                        if (c && *c) dump(*c, depth + 1);
+                    }
+                }
+                auto* sc = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("Content"));
+                if (sc && *sc) dump(*sc, depth + 1);
+            };
+            VLOG(STR("[NBB-DUMP] === BEGIN dump of WBP_UI_ActionBar_C tree ===\n"));
+            if (tRoot) dump(tRoot, 0);
+            VLOG(STR("[NBB-DUMP] === END dump ===\n"));
+
+            // v0.8 — Populate the persistent texture cache so subsequent
+            // createNewBuildingBar calls (e.g. after destroyNewBuildingBar)
+            // skip the entire discovery + spawn + tree-walk path. This is
+            // the user's "remember and display them ourselves" — discover
+            // ONCE, then reuse forever within the session.
+            m_nbbCachedSlotEmpty   = out.texEmptyFullSlot ? out.texEmptyFullSlot : out.texSlotEmpty;
+            m_nbbCachedSlotFocus   = out.texButtonFocused ? out.texButtonFocused : out.texSlotFocus;
+            m_nbbCachedSlotCorners = out.texFocusedCorners;
+            m_nbbCachedBarFrame    = out.texSlotFrame;
+            // KeyBg texture lookup happens later in createNewBuildingBar
+            // (via FindAllOf for T_UI_Icon_Input_Blank_Rect); cache it
+            // there once we resolve it.
+            m_nbbAssetsCached = (m_nbbCachedSlotEmpty != nullptr);
+            VLOG(STR("[NewBuildingBar] discover: cached={} (slotEmpty={:p} slotFocus={:p} corners={:p} barFrame={:p})\n"),
+                 m_nbbAssetsCached ? L"YES" : L"no",
+                 (void*)m_nbbCachedSlotEmpty, (void*)m_nbbCachedSlotFocus,
+                 (void*)m_nbbCachedSlotCorners, (void*)m_nbbCachedBarFrame);
+            return true;
+        }
+
+        void createNewBuildingBar()
+        {
+            if (m_newBuildingBar && isObjectAlive(m_newBuildingBar))
+            {
+                VLOG(STR("[NewBuildingBar] already exists, skipping\n"));
+                return;
+            }
+
+            // ── Step 1: discover assets (textures + sizes). v0.8 caches
+            // results; if cache is populated we skip everything else.
+            NbbDiscoveredAssets a;
+            (void)nbbDiscoverAssets(a); // OK to fail — we'll fall through to FindAllOf below
+
+            // v0.10 — Use the PROPER numbered-slot textures we found via
+            // the [NBB-TEX] inventory dump. T_UI_Btn_HUD_AB_* (no Epic
+            // prefix) is what the native ActionBar uses for slots 1-8.
+            // Plus discovered the actual chrome assets:
+            //   T_UI_Frame_HUD_AB_Top       (top decorative)
+            //   T_UI_Frame_HUD_AB_Middle_0  (middle frame)
+            //   T_UI_Frame_HUD_AB_Bottom    (bottom decorative)
+            UObject* texChromeTop = nullptr;
+            UObject* texChromeMiddle = nullptr;
+            UObject* texChromeBottom = nullptr;
+            if (!a.texSlotEmpty || !a.texSlotFocus || !a.texSlotFrame ||
+                !texChromeTop || !texChromeMiddle || !texChromeBottom)
+            {
+                std::vector<UObject*> textures;
+                try { UObjectGlobals::FindAllOf(STR("Texture2D"), textures); } catch (...) {}
+                for (auto* t : textures) {
+                    if (!t) continue;
+                    auto name = t->GetName();
+                    // Slot textures — prefer non-Epic variants.
+                    if (!a.texSlotEmpty    && name == STR("T_UI_Btn_HUD_AB_Empty"))    a.texSlotEmpty = t;
+                    if (!a.texSlotFocus    && name == STR("T_UI_Btn_HUD_AB_Focused"))  a.texSlotFocus = t;
+                    if (!a.texSlotDisabled && name == STR("T_UI_Btn_HUD_AB_Disabled")) a.texSlotDisabled = t;
+                    // Chrome assets.
+                    if (!texChromeTop      && name == STR("T_UI_Frame_HUD_AB_Top"))    texChromeTop = t;
+                    if (!texChromeMiddle   && name == STR("T_UI_Frame_HUD_AB_Middle_0")) texChromeMiddle = t;
+                    if (!texChromeBottom   && name == STR("T_UI_Frame_HUD_AB_Bottom")) texChromeBottom = t;
+                    // Last-resort fallback for slot empty/focus.
+                    if (!a.texSlotEmpty    && name == STR("T_UI_Btn_HUD_EpicAB_Empty"))   a.texSlotEmpty = t;
+                    if (!a.texSlotFocus    && name == STR("T_UI_Btn_HUD_EpicAB_Focused")) a.texSlotFocus = t;
+                }
+                if (!m_nbbCachedSlotEmpty && a.texSlotEmpty) m_nbbCachedSlotEmpty = a.texSlotEmpty;
+                if (!m_nbbCachedSlotFocus && a.texSlotFocus) m_nbbCachedSlotFocus = a.texSlotFocus;
+                if (!m_nbbCachedTexChromeTop    && texChromeTop)    m_nbbCachedTexChromeTop    = texChromeTop;
+                if (!m_nbbCachedTexChromeMiddle && texChromeMiddle) m_nbbCachedTexChromeMiddle = texChromeMiddle;
+                if (!m_nbbCachedTexChromeBottom && texChromeBottom) m_nbbCachedTexChromeBottom = texChromeBottom;
+                if (m_nbbCachedSlotEmpty) m_nbbAssetsCached = true;
+                VLOG(STR("[NewBuildingBar] textures: slotEmpty={:p} slotFocus={:p} chromeTop={:p} chromeMid={:p} chromeBot={:p}\n"),
+                     (void*)m_nbbCachedSlotEmpty, (void*)m_nbbCachedSlotFocus,
+                     (void*)m_nbbCachedTexChromeTop, (void*)m_nbbCachedTexChromeMiddle,
+                     (void*)m_nbbCachedTexChromeBottom);
+            }
+            // Pull cached chrome regardless of how this call resolved.
+            if (!texChromeTop)    texChromeTop    = m_nbbCachedTexChromeTop;
+            if (!texChromeMiddle) texChromeMiddle = m_nbbCachedTexChromeMiddle;
+            if (!texChromeBottom) texChromeBottom = m_nbbCachedTexChromeBottom;
+            if (!a.texSlotEmpty)
+            {
+                VLOG(STR("[NewBuildingBar] aborting — no slot empty texture available even after fallback\n"));
+                return;
+            }
+
+            // ── Step 2: build a fresh UUserWidget with our own layout.
+            UClass* userWidgetCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
+            UClass* canvasCls     = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.CanvasPanel"));
+            UClass* hboxCls       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.HorizontalBox"));
+            UClass* vboxCls       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.VerticalBox"));
+            UClass* overlayCls    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Overlay"));
+            UClass* imageCls      = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Image"));
+            UClass* textCls       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+            UClass* buttonCls     = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Button"));
+            if (!userWidgetCls || !canvasCls || !hboxCls || !vboxCls || !overlayCls || !imageCls || !textCls)
+            {
+                VLOG(STR("[NewBuildingBar] missing UMG class — aborting\n"));
+                return;
+            }
+
+            UObject* userWidget = jw_createGameWidget(userWidgetCls);
+            if (!userWidget) return;
+            auto* wtPtr = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtPtr ? *wtPtr : nullptr;
+            UObject* outer = widgetTree ? widgetTree : userWidget;
+
+            UFunction* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
+            if (!setBrushFn)
+            {
+                VLOG(STR("[NewBuildingBar] SetBrushFromTexture missing — aborting\n"));
+                return;
+            }
+
+            // Root: HorizontalBox (the slot row). Decorative top/bottom
+            // frames are stacked vertically via a VBox containing
+            // [topFrame HBox, slot row HBox, bottomFrame HBox].
+            FStaticConstructObjectParameters rootP(vboxCls, outer);
+            UObject* root = UObjectGlobals::StaticConstructObject(rootP);
+            if (!root) return;
+            if (widgetTree) setRootWidget(widgetTree, root);
+
+            auto mkImg = [&](UObject* texture, float w, float h, float opacity = 1.0f) -> UObject*
+            {
+                if (!texture) return nullptr;
+                FStaticConstructObjectParameters p(imageCls, outer);
+                UObject* img = UObjectGlobals::StaticConstructObject(p);
+                if (!img) return nullptr;
+                umgSetBrush(img, texture, setBrushFn);
+                if (s_off_brush >= 0 && w > 0 && h > 0)
+                {
+                    uint8_t* base = reinterpret_cast<uint8_t*>(img);
+                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = w;
+                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = h;
+                }
+                umgSetOpacity(img, opacity);
+                return img;
+            };
+            auto mkOverlay = [&]() -> UObject* {
+                FStaticConstructObjectParameters p(overlayCls, outer);
+                return UObjectGlobals::StaticConstructObject(p);
+            };
+            auto mkVBox = [&]() -> UObject* {
+                FStaticConstructObjectParameters p(vboxCls, outer);
+                return UObjectGlobals::StaticConstructObject(p);
+            };
+            auto mkHBox = [&]() -> UObject* {
+                FStaticConstructObjectParameters p(hboxCls, outer);
+                return UObjectGlobals::StaticConstructObject(p);
+            };
+            auto mkText = [&](const std::wstring& s) -> UObject* {
+                FStaticConstructObjectParameters p(textCls, outer);
+                UObject* t = UObjectGlobals::StaticConstructObject(p);
+                if (!t) return nullptr;
+                umgSetText(t, s);
+                umgSetTextColor(t, 1.0f, 1.0f, 1.0f, 1.0f);
+                return t;
+            };
+
+            // v0.4 — bumped to 192×192 per user feedback (140 still too
+            // small). Marker scaled accordingly.
+            const float slotW   = 192.0f;
+            const float slotH   = 192.0f;
+            const float markerW = 128.0f;
+            const float markerH = 40.0f;
+
+            // v0.4 — prefer the proper slot textures captured from
+            // emptyFullSlot / buttonFocused / FocusedCorners over the
+            // EpicAB fallback textures.
+            UObject* useEmptyTex = a.texEmptyFullSlot ? a.texEmptyFullSlot : a.texSlotEmpty;
+            UObject* useFocusTex = a.texButtonFocused ? a.texButtonFocused : a.texSlotFocus;
+            UObject* useFocusCornersTex = a.texFocusedCorners; // optional extra layer
+
+            // ── Find the small grey "key rect" texture for F# labels —
+            // same texture the bottom MC bar uses.
+            UObject* texKeyBg = nullptr;
+            {
+                std::vector<UObject*> textures;
+                try { UObjectGlobals::FindAllOf(STR("Texture2D"), textures); } catch (...) {}
+                for (auto* t : textures) {
+                    if (!t) continue;
+                    if (t->GetName() == STR("T_UI_Icon_Input_Blank_Rect")) { texKeyBg = t; break; }
+                }
+            }
+
+            // v0.11 — Chrome backdrop REMOVED entirely per user request.
+            // The Top/Middle/Bottom textures we found ARE the right
+            // assets but their layout/scaling looked wrong without the
+            // exact native CanvasPanel positions, and the user prefers
+            // a plain bar to a wrong one. Just the slot row.
+            (void)texChromeTop; (void)texChromeMiddle; (void)texChromeBottom;
+            UObject* slotRow = mkHBox();
+            if (!slotRow) return;
+            UObject* slotRowSlot = addToVBox(root, slotRow);
+            if (slotRowSlot) umgSetHAlign(slotRowSlot, 2); // Center
+
+            // v0.9 — One-shot diagnostic: enumerate every Texture2D whose
+            // name contains "HUD" or "ActionBar" and log it. This gives
+            // us the inventory of HUD-related textures so we can
+            // identify the actual chrome assets (middleFrame, topFrame,
+            // bottomFrame textures) by name. Logged once per session.
+            if (!m_nbbHudTexturesDumped)
+            {
+                m_nbbHudTexturesDumped = true;
+                std::vector<UObject*> textures;
+                try { UObjectGlobals::FindAllOf(STR("Texture2D"), textures); } catch (...) {}
+                int count = 0;
+                VLOG(STR("[NBB-TEX] === HUD/ActionBar texture inventory ===\n"));
+                for (auto* t : textures) {
+                    if (!t) continue;
+                    std::wstring n; try { n = t->GetName(); } catch (...) { continue; }
+                    if (n.find(STR("HUD"))       != std::wstring::npos ||
+                        n.find(STR("ActionBar")) != std::wstring::npos ||
+                        n.find(STR("AB_"))       != std::wstring::npos ||
+                        n.find(STR("Frame"))     != std::wstring::npos)
+                    {
+                        VLOG(STR("[NBB-TEX]   {}\n"), n.c_str());
+                        ++count;
+                    }
+                }
+                VLOG(STR("[NBB-TEX] === total {} matching textures ===\n"), count);
+            }
+
+            for (int i = 0; i < 8; ++i)
+            {
+                UObject* slotVBox = mkVBox();
+                if (!slotVBox) continue;
+
+                // (1) Numbered marker on top.
+                if (a.texSlotMarker[i] || a.texSlotMarker[0])
+                {
+                    UObject* mTex = a.texSlotMarker[i] ? a.texSlotMarker[i] : a.texSlotMarker[0];
+                    UObject* mImg = mkImg(mTex, markerW, markerH);
+                    if (mImg)
+                    {
+                        UObject* ms = addToVBox(slotVBox, mImg);
+                        if (ms) umgSetHAlign(ms, 2);
+                        m_nbbSlotMarker[i] = mImg;
+                    }
+                }
+
+                // (2) Slot frame Overlay: empty + focus + icon + bottom-center key label.
+                UObject* slotOv = mkOverlay();
+                if (slotOv)
+                {
+                    // Empty texture (always visible) — proper slot tex
+                    // captured from the live ActionBar's slot widget.
+                    UObject* eImg = mkImg(useEmptyTex, slotW, slotH);
+                    if (eImg)
+                    {
+                        UObject* es = addToOverlay(slotOv, eImg);
+                        if (es) { umgSetHAlign(es, 2); umgSetVAlign(es, 2); }
+                        m_nbbSlotEmpty[i] = eImg;
+                    }
+                    // Focused texture (collapsed initially; toggled on highlight).
+                    if (useFocusTex)
+                    {
+                        UObject* fImg = mkImg(useFocusTex, slotW, slotH);
+                        if (fImg)
+                        {
+                            UObject* fs = addToOverlay(slotOv, fImg);
+                            if (fs) { umgSetHAlign(fs, 2); umgSetVAlign(fs, 2); }
+                            if (auto* visPtr = fImg->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility")))
+                                *visPtr = 1; // Collapsed
+                            setWidgetVisibility(fImg, 1);
+                            m_nbbSlotFocus[i] = fImg;
+                        }
+                    }
+                    // Focused corner glow — extra subtle highlight layer
+                    // that appears on top of buttonFocused. Only added
+                    // if we successfully captured it.
+                    if (useFocusCornersTex)
+                    {
+                        UObject* cImg = mkImg(useFocusCornersTex, slotW, slotH);
+                        if (cImg)
+                        {
+                            UObject* cs = addToOverlay(slotOv, cImg);
+                            if (cs) { umgSetHAlign(cs, 2); umgSetVAlign(cs, 2); }
+                            if (auto* visPtr = cImg->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility")))
+                                *visPtr = 1; // Collapsed by default
+                            setWidgetVisibility(cImg, 1);
+                            // Tracked alongside the focus image so
+                            // highlight toggles both together.
+                        }
+                    }
+                    // Icon placeholder (Phase 2 will populate with the
+                    // actual builder-piece texture).
+                    {
+                        FStaticConstructObjectParameters ip(imageCls, outer);
+                        UObject* iImg = UObjectGlobals::StaticConstructObject(ip);
+                        if (iImg)
+                        {
+                            UObject* is = addToOverlay(slotOv, iImg);
+                            if (is) { umgSetHAlign(is, 2); umgSetVAlign(is, 2); }
+                            if (auto* visPtr = iImg->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility")))
+                                *visPtr = 1;
+                            setWidgetVisibility(iImg, 1);
+                            m_nbbSlotIcon[i] = iImg;
+                        }
+                    }
+                    // (3) F# key label — bottom-center, with a small grey
+                    // rect background (matches the existing builder bar
+                    // style). Text is read from s_bindings[i].key so it
+                    // tracks the user's QuickBuild keymap.
+                    if (texKeyBg)
+                    {
+                        FStaticConstructObjectParameters kbP(imageCls, outer);
+                        UObject* kbImg = UObjectGlobals::StaticConstructObject(kbP);
+                        if (kbImg)
+                        {
+                            umgSetBrush(kbImg, texKeyBg, setBrushFn);
+                            if (s_off_brush >= 0) {
+                                uint8_t* base = reinterpret_cast<uint8_t*>(kbImg);
+                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 36.0f;
+                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 22.0f;
+                            }
+                            umgSetOpacity(kbImg, 0.8f);
+                            UObject* ks = addToOverlay(slotOv, kbImg);
+                            if (ks) {
+                                umgSetHAlign(ks, 2); // Center
+                                umgSetVAlign(ks, 3); // Bottom
+                                umgSetSlotPadding(ks, 0, 0, 0, 6);
+                            }
+                            m_nbbSlotKeyBg[i] = kbImg;
+                        }
+                    }
+                    {
+                        std::wstring kn = keyName(s_bindings[i].key);
+                        UObject* tb = mkText(kn);
+                        if (tb)
+                        {
+                            UObject* ts = addToOverlay(slotOv, tb);
+                            if (ts) {
+                                umgSetHAlign(ts, 2); // Center
+                                umgSetVAlign(ts, 3); // Bottom
+                                umgSetSlotPadding(ts, 0, 0, 0, 6);
+                            }
+                            m_nbbSlotKeyLbl[i] = tb;
+                        }
+                    }
+                }
+
+                if (slotOv)
+                {
+                    UObject* ovSlot = addToVBox(slotVBox, slotOv);
+                    if (ovSlot) umgSetHAlign(ovSlot, 2);
+                }
+
+                UObject* slotInRow = addToHBox(slotRow, slotVBox);
+                if (slotInRow) { umgSetVAlign(slotInRow, 0); umgSetSlotPadding(slotInRow, 4, 0, 4, 0); }
+            }
+
+            // v0.11 — bottom decorative strip removed per user request.
+
+            // ── Add to viewport at top-center.
+            auto* fnAdd = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
+            if (fnAdd)
+            {
+                std::vector<uint8_t> b(fnAdd->GetParmsSize(), 0);
+                if (auto* p = findParam(fnAdd, STR("ZOrder")))
+                    *reinterpret_cast<int32_t*>(b.data() + p->GetOffset_Internal()) = 50;
+                safeProcessEvent(userWidget, fnAdd, b.data());
+            }
+            if (auto* fnAlign = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport")))
+            {
+                std::vector<uint8_t> b(fnAlign->GetParmsSize(), 0);
+                if (auto* p = findParam(fnAlign, STR("Alignment")))
+                {
+                    float* xy = reinterpret_cast<float*>(b.data() + p->GetOffset_Internal());
+                    xy[0] = 0.5f; xy[1] = 0.0f;
+                }
+                safeProcessEvent(userWidget, fnAlign, b.data());
+            }
+            if (auto* fnPos = userWidget->GetFunctionByNameInChain(STR("SetPositionInViewport")))
+            {
+                m_screen.refresh(findPlayerController());
+                float centerX = static_cast<float>(m_screen.viewW) * 0.5f;
+                float topY    = 10.0f; // v0.12 — 10 px from top edge
+                std::vector<uint8_t> b(fnPos->GetParmsSize(), 0);
+                if (auto* p = findParam(fnPos, STR("Position")))
+                {
+                    float* xy = reinterpret_cast<float*>(b.data() + p->GetOffset_Internal());
+                    xy[0] = centerX; xy[1] = topY;
+                }
+                if (auto* p = findParam(fnPos, STR("bRemoveDPIScale")))
+                    *reinterpret_cast<bool*>(b.data() + p->GetOffset_Internal()) = true;
+                safeProcessEvent(userWidget, fnPos, b.data());
+                VLOG(STR("[NewBuildingBar] anchored top-center at ({}, {})\n"), centerX, topY);
+            }
+
+            m_newBuildingBar = userWidget;
+            VLOG(STR("[NewBuildingBar] === built from-scratch with discovered assets ===\n"));
+
+            // v0.10 — Pull QuickBuild icons from m_recipeSlots and apply
+            // to each slot icon image. Slots without an assignment stay
+            // empty.
+            populateNewBuildingBarIcons();
+
+            // v0.4 — visible proof that highlight toggling works: leave
+            // slot 0 highlighted ON at create time.
+            newBuildingBarHighlight(0, true);
+
+            showOnScreen(L"New Building Bar created (slot 1 highlighted as test)",
+                         3.0f, 0.4f, 0.9f, 1.0f);
+        }
+
 
         void toggleFontTestPanel()
         {

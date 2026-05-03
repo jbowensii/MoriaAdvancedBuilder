@@ -353,6 +353,37 @@ namespace MoriaMods
 
         static constexpr int MC_SLOTS = 9;
         UObject* m_mcBarWidget{nullptr};
+        // v6.10.0 — "New Building Bar": cloned WBP_UI_ActionBar_C instance,
+        // chrome only (look). Tame-spawned at top of HUD with the 4 special
+        // slots (Epic/HeavyCarry/MainHand/Offhand) and inventory wiring
+        // hidden/disabled. Phase 2 wires our 8 builder slots to its 8
+        // numbered slot widgets.
+        UObject* m_newBuildingBar{nullptr};
+        bool m_newBuildingBarSpawnAttempted{false};
+        // v6.10.0 — per-slot widget pointers for the New Building Bar.
+        // Set during createNewBuildingBar(); used for highlight + Phase 2
+        // icon/label updates. 8 slots = 8 indexed entries.
+        UObject* m_nbbSlotEmpty[8]{};   // empty-state UImage
+        UObject* m_nbbSlotFocus[8]{};   // focused-state UImage (visibility toggled for highlight)
+        UObject* m_nbbSlotIcon[8]{};    // icon UImage (Phase 2 — builder piece icon)
+        UObject* m_nbbSlotKeyLbl[8]{};  // F-key UTextBlock
+        UObject* m_nbbSlotMarker[8]{};  // numbered marker UImage above each slot
+        UObject* m_nbbSlotButton[8]{};  // UButton wrapper (Phase 2 — for clicks)
+        UObject* m_nbbSlotKeyBg[8]{};   // grey rect under the F# label
+        // v0.8 — Texture cache. Populated ONCE per session via
+        // nbbDiscoverAssets; subsequent createNewBuildingBar calls reuse
+        // these pointers without re-scanning. Resolved-texture ptrs are
+        // stable within a session.
+        bool      m_nbbAssetsCached{false};
+        UObject*  m_nbbCachedSlotEmpty{nullptr};
+        UObject*  m_nbbCachedSlotFocus{nullptr};
+        UObject*  m_nbbCachedSlotCorners{nullptr};
+        UObject*  m_nbbCachedBarFrame{nullptr};
+        UObject*  m_nbbCachedKeyBg{nullptr};
+        UObject*  m_nbbCachedTexChromeTop{nullptr};
+        UObject*  m_nbbCachedTexChromeMiddle{nullptr};
+        UObject*  m_nbbCachedTexChromeBottom{nullptr};
+        bool      m_nbbHudTexturesDumped{false};
         UObject* m_mcSlotButtons[MC_SLOTS]{};     // UButton wrappers for gamepad navigation
         UObject* m_mcStateImages[MC_SLOTS]{};
         UObject* m_mcIconImages[MC_SLOTS]{};
@@ -2022,44 +2053,59 @@ namespace MoriaMods
             if (!m_isDedicatedServer)
             {
                 bool justCreated = false;
-                if (m_characterLoaded && !m_mcBarWidget)
+                // v6.10.0 (v0.13) — Auto-creation of the three original
+                // toolbars (MC, Experimental QuickBuild, Advanced
+                // Builder) is DISABLED. The New Building Bar at the top
+                // of the screen replaces them. If any were created in
+                // a previous boot, destroy them now so they don't
+                // linger.
+                if (m_mcBarWidget) { destroyModControllerBar(); }
+                if (m_umgBarWidget) { destroyExperimentalBar(); }
+                if (m_abBarWidget) { destroyAdvancedBuilderBar(); }
+
+                if (false /* v0.13 disabled */ && m_characterLoaded && !m_mcBarWidget)
                 {
                     createModControllerBar();
                     justCreated = true;
                 }
-                if (m_characterLoaded && !m_umgBarWidget)
+                if (false /* v0.13 disabled */ && m_characterLoaded && !m_umgBarWidget)
                 {
                     createExperimentalBar();
                     justCreated = true;
                 }
-                if (m_characterLoaded && !m_abBarWidget)
+                if (false /* v0.13 disabled */ && m_characterLoaded && !m_abBarWidget)
                 {
                     createAdvancedBuilderBar();
                     justCreated = true;
+                }
 
-                    if (m_handleResolvePhase == HandleResolvePhase::None)
+                // v0.14 — CRITICAL: handle-resolution priming was nested
+                // inside the disabled AB-bar block, blocking F1-F8 USE,
+                // chord polling for SET, and every keybind that gates on
+                // HandleResolvePhase::Done. Move it out so it runs once
+                // per character-load regardless of toolbar state.
+                if (m_characterLoaded && m_handleResolvePhase == HandleResolvePhase::None)
+                {
+                    bool needsResolve = false;
+                    for (int i = 0; i < QUICK_BUILD_SLOTS; i++)
                     {
-                        bool needsResolve = false;
-                        for (int i = 0; i < QUICK_BUILD_SLOTS; i++)
+                        if (m_recipeSlots[i].used && !m_recipeSlots[i].hasHandle && !m_recipeSlots[i].rowName.empty())
                         {
-                            if (m_recipeSlots[i].used && !m_recipeSlots[i].hasHandle && !m_recipeSlots[i].rowName.empty())
-                            {
-                                needsResolve = true;
-                                break;
-                            }
+                            needsResolve = true;
+                            break;
                         }
-                        if (needsResolve)
-                        {
-                            QBLOG(STR("[MoriaCppMod] [HandleResolve] Toolbar created, starting eager handle resolution\n"));
-                            m_handleResolvePhase = HandleResolvePhase::Priming;
-                            m_handleResolveStartTime = GetTickCount64();
-                            m_buildTabAfterShowFired = false;
-                            activateBuildMode();
-                        }
-                        else
-                        {
-                            m_handleResolvePhase = HandleResolvePhase::Done;
-                        }
+                    }
+                    if (needsResolve)
+                    {
+                        QBLOG(STR("[MoriaCppMod] [HandleResolve] starting eager handle resolution (no toolbar)\n"));
+                        m_handleResolvePhase = HandleResolvePhase::Priming;
+                        m_handleResolveStartTime = GetTickCount64();
+                        m_buildTabAfterShowFired = false;
+                        activateBuildMode();
+                    }
+                    else
+                    {
+                        m_handleResolvePhase = HandleResolvePhase::Done;
                     }
                 }
                 if (m_characterLoaded && !m_targetInfoWidget)
@@ -2333,7 +2379,11 @@ namespace MoriaMods
             {
                 static bool s_lastAbKey = false;
                 uint8_t vk = s_bindings[BIND_AB_OPEN].key;
-                if (vk != 0 && s_bindings[BIND_AB_OPEN].enabled)
+                // v6.10.0 (v0.13) — NUM+ / Advanced Builder Open dispatch
+                // DISABLED. The 3 original toolbars no longer auto-spawn,
+                // so toggling them is meaningless. Replaced by the New
+                // Building Bar at the top of the screen.
+                if (false && vk != 0 && s_bindings[BIND_AB_OPEN].enabled)
                 {
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
                     if (nowDown && !s_lastAbKey && !m_ftVisible)
@@ -3989,6 +4039,14 @@ namespace MoriaMods
                         // v6.4.4+ — re-apply persisted Cheats + Tweaks state now that the
                         // player's ASC + DataTables + world are all ready. No-op if nothing saved.
                         applySavedCheatsAndTweaks();
+
+                        // v6.10.0 — auto-spawn the New Building Bar once the
+                        // player + world are ready. One attempt per session.
+                        if (!m_newBuildingBarSpawnAttempted)
+                        {
+                            m_newBuildingBarSpawnAttempted = true;
+                            createNewBuildingBar();
+                        }
                     }
                 }
                 return;
