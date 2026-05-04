@@ -641,6 +641,16 @@
         }
 
 
+        // v6.20.4 — Phase 4 fix: replaced home-rolled UMG dialog with the
+        // game's own WBP_UI_GenericPopup_C template (same one used by the
+        // session-history delete confirm in moria_session_history.inl). The
+        // home-rolled version had no font setup so text didn't render in
+        // certain conditions, and clicks went through cursor-rect math
+        // that was fragile against pause-menu input mode and DPI scaling.
+        // The GenericPopup uses real game UButtons whose OnButtonReleased
+        // delegates we hook in the existing PE post-hook chain.
+        FWeakObjectPtr m_pendingTrashPopup;
+
         void showTrashDialog()
         {
             if (m_trashDlgVisible) { VLOG(STR("[MoriaCppMod] [Trash] BLOCKED: already visible\n")); return; }
@@ -649,271 +659,124 @@
                 showOnScreen(Loc::get("msg.no_item_selected"), 3.0f, 1.0f, 0.4f, 0.4f);
                 return;
             }
-            VLOG(STR("[MoriaCppMod] [Trash] Starting dialog creation for {}...\n"), m_lastPickedUpItemName);
+            VLOG(STR("[MoriaCppMod] [Trash] Starting GenericPopup for {}...\n"), m_lastPickedUpItemName);
 
-            auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
-            auto* imageClass      = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Image"));
-            auto* overlayClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Overlay"));
-            auto* hboxClass       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.HorizontalBox"));
-            auto* vboxClass       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.VerticalBox"));
-            auto* textBlockClass  = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
-            if (!userWidgetClass || !imageClass || !overlayClass || !hboxClass || !vboxClass || !textBlockClass)
-            { showErrorBox(L"Trash: missing UMG classes"); return; }
-
-            auto* pc = findPlayerController();
-            if (!pc) { showErrorBox(L"Trash: no PlayerController"); return; }
-            auto* createFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
-            auto* wblClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
-            if (!createFn || !wblClass) { VLOG(STR("[MoriaCppMod] [Trash] FAIL: createFn={} wblClass={}\n"), (void*)createFn, (void*)wblClass); return; }
-
-            int sz = createFn->GetParmsSize();
-            std::vector<uint8_t> cp(sz, 0);
-            auto* pOwner = findParam(createFn, STR("WorldContextObject"));
-            auto* pClass = findParam(createFn, STR("WidgetType"));
-            auto* pRet   = findParam(createFn, STR("ReturnValue"));
-            if (!pOwner || !pClass || !pRet) { VLOG(STR("[MoriaCppMod] [Trash] FAIL: pOwner={} pClass={} pRet={}\n"), (void*)pOwner, (void*)pClass, (void*)pRet); return; }
-            *reinterpret_cast<UObject**>(cp.data() + pOwner->GetOffset_Internal()) = pc;
-            *reinterpret_cast<UObject**>(cp.data() + pClass->GetOffset_Internal()) = userWidgetClass;
-            safeProcessEvent(wblClass, createFn, cp.data());
-            UObject* userWidget = *reinterpret_cast<UObject**>(cp.data() + pRet->GetOffset_Internal());
-            if (!userWidget) { VLOG(STR("[MoriaCppMod] [Trash] FAIL: userWidget is null\n")); return; }
-            VLOG(STR("[MoriaCppMod] [Trash] CP1: userWidget created\n"));
-
-            UObject* outer = userWidget;
-            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
-            UObject* widgetTree = (wtSlot && *wtSlot) ? *wtSlot : nullptr;
-
-            auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
-
-
-            UObject* texBG = findTexture2DByName(L"T_UI_Pnl_Background_Base");
-            UObject* texSectionBg = findTexture2DByName(L"T_UI_Pnl_TabSelected");
-
-            VLOG(STR("[MoriaCppMod] [Trash] CP2: textures done\n"));
-
-            FStaticConstructObjectParameters olP(overlayClass, outer);
-            UObject* rootOl = UObjectGlobals::StaticConstructObject(olP);
-            if (!rootOl) { VLOG(STR("[MoriaCppMod] [Trash] FAIL: rootOl is null\n")); return; }
-            if (widgetTree) setRootWidget(widgetTree, rootOl);
-
-
+            // Resolve WBP_UI_GenericPopup_C class (same path as session-history).
+            static UClass* s_genericPopupCls = nullptr;
+            if (!s_genericPopupCls)
             {
-                auto* setClipFn = rootOl->GetFunctionByNameInChain(STR("SetClipping"));
-                if (setClipFn) { int sz2 = setClipFn->GetParmsSize(); std::vector<uint8_t> cp2(sz2, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp2.data() + p->GetOffset_Internal()) = 1; safeProcessEvent(rootOl, setClipFn, cp2.data()); }
+                try
+                {
+                    s_genericPopupCls = UObjectGlobals::StaticFindObject<UClass*>(
+                        nullptr, nullptr,
+                        STR("/Game/UI/PopUp/WBP_UI_GenericPopup.WBP_UI_GenericPopup_C"));
+                }
+                catch (...) {}
+            }
+            if (!s_genericPopupCls)
+            {
+                VLOG(STR("[MoriaCppMod] [Trash] WBP_UI_GenericPopup_C class not found\n"));
+                showOnScreen(L"Trash: popup template not loaded — open inventory once first", 3.0f, 1.0f, 0.4f, 0.4f);
+                return;
             }
 
-            VLOG(STR("[MoriaCppMod] [Trash] CP3: rootOl + clipping done\n"));
-            const float dlgW = 500.0f, dlgH = 180.0f;
+            UObject* popup = jw_createGameWidget(s_genericPopupCls);
+            if (!popup) { VLOG(STR("[MoriaCppMod] [Trash] popup spawn failed\n")); return; }
 
-
+            // AddToViewport at high ZOrder so it sits above pause menu (~100-200).
+            if (auto* fn = popup->GetFunctionByNameInChain(STR("AddToViewport")))
             {
-                FStaticConstructObjectParameters bfP(imageClass, outer);
-                UObject* bf = UObjectGlobals::StaticConstructObject(bfP);
-                if (bf) { umgSetBrushSize(bf, dlgW, dlgH); umgSetImageColor(bf, 0.08f, 0.14f, 0.32f, 1.0f); addToOverlay(rootOl, bf); }
+                std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+                auto* p = findParam(fn, STR("ZOrder"));
+                if (p) *reinterpret_cast<int32_t*>(b.data() + p->GetOffset_Internal()) = 500;
+                safeProcessEvent(popup, fn, b.data());
             }
 
-
-            if (texBG && setBrushFn)
+            // Build labelText (item name + count + container-marker).
+            int32_t stackCount = m_lastPickedUpCount > 0 ? m_lastPickedUpCount : 1;
+            bool isContainer = false;
             {
-                FStaticConstructObjectParameters bgP(imageClass, outer);
-                UObject* bg = UObjectGlobals::StaticConstructObject(bgP);
-                if (bg)
+                auto* ihfClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/FGK.ItemHandleFunctions"));
+                if (ihfClass)
                 {
-                    umgSetBrush(bg, texBG, setBrushFn);
-                    umgSetBrushSize(bg, dlgW - 2.0f, dlgH - 2.0f);
-                    umgSetOpacity(bg, 1.0f);
-                    UObject* s = addToOverlay(rootOl, bg);
-                    if (s) { umgSetHAlign(s, 2); umgSetVAlign(s, 2); }
-                }
-            }
-
-
-            FStaticConstructObjectParameters cvP(vboxClass, outer);
-            UObject* contentVBox = UObjectGlobals::StaticConstructObject(cvP);
-            if (contentVBox)
-            {
-                UObject* cvSlot = addToOverlay(rootOl, contentVBox);
-                if (cvSlot) umgSetSlotPadding(cvSlot, 20.0f, 10.0f, 20.0f, 10.0f);
-
-
-                if (texSectionBg && setBrushFn)
-                {
-                    FStaticConstructObjectParameters secOlP(overlayClass, outer);
-                    UObject* secOl = UObjectGlobals::StaticConstructObject(secOlP);
-                    if (secOl)
+                    UObject* ihfCDO = ihfClass->GetClassDefaultObject();
+                    if (ihfCDO)
                     {
-                        FStaticConstructObjectParameters secImgP(imageClass, outer);
-                        UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
-                        if (secImg) { umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn); umgSetBrushSize(secImg, dlgW - 40.0f, 50.0f); addToOverlay(secOl, secImg); }
-                        UObject* secLabel = createTextBlock(Loc::get("ui.trash_item_title"), 0.78f, 0.86f, 1.0f, 1.0f, 24);
-                        if (secLabel) { umgSetBold(secLabel); UObject* ts = addToOverlay(secOl, secLabel); if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); } }
-                        addToVBox(contentVBox, secOl);
-                    }
-                }
-
-                VLOG(STR("[MoriaCppMod] [Trash] CP4: header section done\n"));
-
-                {
-                    FStaticConstructObjectParameters itemHbP(hboxClass, outer);
-                    UObject* itemRow = UObjectGlobals::StaticConstructObject(itemHbP);
-                    if (itemRow)
-                    {
-
-                        UObject* cdo = nullptr;
-                        if (m_lastPickedUpItemClass && isObjectAlive(m_lastPickedUpItemClass))
-                            cdo = m_lastPickedUpItemClass->GetClassDefaultObject();
-                        UObject* iconTex = nullptr;
-                        if (cdo && isObjectAlive(cdo))
+                        auto* isContFn = ihfClass->GetFunctionByNameInChain(STR("IsContainer"));
+                        if (isContFn)
                         {
-                            auto* getIconFn = cdo->GetFunctionByNameInChain(STR("GetIcon"));
-                            if (getIconFn)
-                            {
-                                int isz = getIconFn->GetParmsSize();
-                                std::vector<uint8_t> ibuf(isz, 0);
-                                if (safeProcessEvent(cdo, getIconFn, ibuf.data()))
-                                {
-                                    auto* pIconRet = findParam(getIconFn, STR("ReturnValue"));
-                                    if (pIconRet)
-                                        iconTex = *reinterpret_cast<UObject**>(ibuf.data() + pIconRet->GetOffset_Internal());
-                                }
-                            }
-                            VLOG(STR("[MoriaCppMod] [Trash] GetIcon CDO={} iconTex={}\n"), (void*)cdo, (void*)iconTex);
+                            int csz = isContFn->GetParmsSize();
+                            std::vector<uint8_t> cbuf(csz, 0);
+                            auto* pH = findParam(isContFn, STR("Item"));
+                            auto* pR = findParam(isContFn, STR("ReturnValue"));
+                            if (pH) std::memcpy(cbuf.data() + pH->GetOffset_Internal(), m_lastItemHandle, 20);
+                            if (safeProcessEvent(ihfCDO, isContFn, cbuf.data()) && pR)
+                                isContainer = *reinterpret_cast<bool*>(cbuf.data() + pR->GetOffset_Internal());
                         }
-
-
-                        if (iconTex && setBrushFn)
-                        {
-                            FStaticConstructObjectParameters iconImgP(imageClass, outer);
-                            UObject* iconImg = UObjectGlobals::StaticConstructObject(iconImgP);
-                            if (iconImg)
-                            {
-                                umgSetBrushNoMatch(iconImg, iconTex, setBrushFn);
-                                umgSetBrushSize(iconImg, 64.0f, 64.0f);
-                                UObject* iconSlot = addToHBox(itemRow, iconImg);
-                                if (iconSlot) { umgSetSlotPadding(iconSlot, 0.0f, 5.0f, 10.0f, 5.0f); umgSetVAlign(iconSlot, 2); }
-                            }
-                        }
-
-
-                        bool isContainer = false;
-                        int32_t stackCount = m_lastPickedUpCount > 0 ? m_lastPickedUpCount : 1;
-                        {
-                            auto* ihfClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/FGK.ItemHandleFunctions"));
-                            if (ihfClass)
-                            {
-                                UObject* ihfCDO = ihfClass->GetClassDefaultObject();
-                                if (ihfCDO)
-                                {
-                                    auto* isContFn = ihfClass->GetFunctionByNameInChain(STR("IsContainer"));
-                                    if (isContFn)
-                                    {
-                                        int csz = isContFn->GetParmsSize();
-                                        std::vector<uint8_t> cbuf(csz, 0);
-                                        auto* pH = findParam(isContFn, STR("Item"));
-                                        auto* pR = findParam(isContFn, STR("ReturnValue"));
-                                        if (pH) std::memcpy(cbuf.data() + pH->GetOffset_Internal(), m_lastItemHandle, 20);
-                                        if (safeProcessEvent(ihfCDO, isContFn, cbuf.data()) && pR)
-                                            isContainer = *reinterpret_cast<bool*>(cbuf.data() + pR->GetOffset_Internal());
-                                    }
-
-                                }
-                            }
-                        }
-
-
-                        std::wstring labelText = m_lastPickedUpDisplayName;
-                        if (stackCount > 1) labelText += L" x" + std::to_wstring(stackCount);
-                        if (isContainer) labelText += L"  (+ contents)";
-
-
-                        UObject* nameLbl = createTextBlock(labelText, 0.9f, 0.75f, 0.2f, 1.0f, 22);
-                        if (nameLbl) { umgSetBold(nameLbl); UObject* ns = addToHBox(itemRow, nameLbl); if (ns) { umgSetSlotPadding(ns, 0.0f, 5.0f, 0.0f, 5.0f); umgSetVAlign(ns, 2); } }
-                        UObject* itemSlot = addToVBox(contentVBox, itemRow);
-                        if (itemSlot) umgSetSlotPadding(itemSlot, 0.0f, 5.0f, 0.0f, 5.0f);
-                    }
-                }
-
-                VLOG(STR("[MoriaCppMod] [Trash] CP5: item icon + name done\n"));
-
-                {
-                    FStaticConstructObjectParameters btnHbP(hboxClass, outer);
-                    UObject* btnRow = UObjectGlobals::StaticConstructObject(btnHbP);
-                    if (btnRow)
-                    {
-
-                        {
-                            FStaticConstructObjectParameters cOlP(overlayClass, outer);
-                            UObject* cancelOl = UObjectGlobals::StaticConstructObject(cOlP);
-                            if (cancelOl)
-                            {
-                                FStaticConstructObjectParameters cImgP(imageClass, outer);
-                                UObject* cImg = UObjectGlobals::StaticConstructObject(cImgP);
-                                if (cImg) { umgSetBrushSize(cImg, 200.0f, 50.0f); umgSetImageColor(cImg, 0.6f, 0.12f, 0.12f, 1.0f); addToOverlay(cancelOl, cImg); }
-                                UObject* cLbl = createTextBlock(Loc::get("ui.button_cancel"), 1.0f, 1.0f, 1.0f, 1.0f, 22);
-                                if (cLbl) { umgSetBold(cLbl); UObject* cs = addToOverlay(cancelOl, cLbl); if (cs) { umgSetHAlign(cs, 2); umgSetVAlign(cs, 2); } }
-                                UObject* cSlot = addToHBox(btnRow, cancelOl);
-                                if (cSlot) umgSetSlotPadding(cSlot, 20.0f, 0.0f, 30.0f, 0.0f);
-                            }
-                        }
-
-                        {
-                            FStaticConstructObjectParameters dOlP(overlayClass, outer);
-                            UObject* deleteOl = UObjectGlobals::StaticConstructObject(dOlP);
-                            if (deleteOl)
-                            {
-                                FStaticConstructObjectParameters dImgP(imageClass, outer);
-                                UObject* dImg = UObjectGlobals::StaticConstructObject(dImgP);
-                                if (dImg) { umgSetBrushSize(dImg, 200.0f, 50.0f); umgSetImageColor(dImg, 0.12f, 0.5f, 0.15f, 1.0f); addToOverlay(deleteOl, dImg); }
-                                UObject* dLbl = createTextBlock(Loc::get("ui.button_delete"), 1.0f, 1.0f, 1.0f, 1.0f, 22);
-                                if (dLbl) { umgSetBold(dLbl); UObject* ds = addToOverlay(deleteOl, dLbl); if (ds) { umgSetHAlign(ds, 2); umgSetVAlign(ds, 2); } }
-                                UObject* dSlot = addToHBox(btnRow, deleteOl);
-                                if (dSlot) umgSetSlotPadding(dSlot, 0.0f, 0.0f, 20.0f, 0.0f);
-                            }
-                        }
-                        UObject* btnSlot = addToVBox(contentVBox, btnRow);
-                        if (btnSlot) { umgSetHAlign(btnSlot, 2); }
                     }
                 }
             }
+            std::wstring itemDesc = m_lastPickedUpDisplayName;
+            if (stackCount > 1) itemDesc += L" x" + std::to_wstring(stackCount);
+            if (isContainer)    itemDesc += L"  (+ contents)";
 
-            VLOG(STR("[MoriaCppMod] [Trash] CP6: all widgets built, about to AddToViewport...\n"));
-
-            auto* addToViewportFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
-            if (addToViewportFn)
+            // Call OnShowWithTwoButtons(Title, Message, ConfirmButtonText, CancelButtonText).
+            if (auto* showFn = popup->GetFunctionByNameInChain(STR("OnShowWithTwoButtons")))
             {
-                auto* pZOrder = findParam(addToViewportFn, STR("ZOrder"));
-                int avSz = addToViewportFn->GetParmsSize();
-                std::vector<uint8_t> vp(avSz, 0);
-                if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 300;
-                safeProcessEvent(userWidget, addToViewportFn, vp.data());
+                std::vector<uint8_t> b(showFn->GetParmsSize(), 0);
+                auto setText = [&](const wchar_t* parmName, const wchar_t* val) {
+                    auto* p = findParam(showFn, parmName);
+                    if (!p) return;
+                    FText t(val);
+                    std::memcpy(b.data() + p->GetOffset_Internal(), &t, sizeof(FText));
+                };
+                std::wstring msg = L"Permanently delete:\n" + itemDesc;
+                setText(STR("Title"),             Loc::get("ui.trash_item_title").c_str());
+                setText(STR("Message"),           msg.c_str());
+                setText(STR("ConfirmButtonText"), Loc::get("ui.button_delete").c_str());
+                setText(STR("CancelButtonText"),  Loc::get("ui.button_cancel").c_str());
+                safeProcessEvent(popup, showFn, b.data());
             }
 
-
-            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
-            if (setDesiredSizeFn)
-            {
-                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
-                if (pSize) { int ssz = setDesiredSizeFn->GetParmsSize(); std::vector<uint8_t> sb(ssz, 0); auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal()); v[0] = dlgW; v[1] = dlgH; safeProcessEvent(userWidget, setDesiredSizeFn, sb.data()); }
-            }
-
-
-            auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
-            if (setAlignFn) { auto* pAlign = findParam(setAlignFn, STR("Alignment")); if (pAlign) { int asz = setAlignFn->GetParmsSize(); std::vector<uint8_t> ab(asz, 0); auto* a = reinterpret_cast<float*>(ab.data() + pAlign->GetOffset_Internal()); a[0] = 0.5f; a[1] = 0.5f; safeProcessEvent(userWidget, setAlignFn, ab.data()); } }
-
-
-            setWidgetPosition(userWidget, m_screen.fracToPixelX(0.5f), m_screen.fracToPixelY(0.5f), true);
-
-            VLOG(STR("[MoriaCppMod] [Trash] CP7: AddToViewport + sizing done\n"));
-            m_trashDlgWidget = userWidget;
-            m_trashDlgVisible = true;
-            m_trashDlgOpenTick = GetTickCount64();
-
+            m_trashDlgWidget    = popup;
+            m_pendingTrashPopup = FWeakObjectPtr(popup);
+            m_trashDlgVisible   = true;
+            m_trashDlgOpenTick  = GetTickCount64();
 
             m_trashCursorWasVisible = false;
             if (auto* pc2 = findPlayerController())
                 m_trashCursorWasVisible = getBoolProp(pc2, L"bShowMouseCursor");
-            setInputModeUI(userWidget);
-            VLOG(STR("[MoriaCppMod] [Trash] Dialog opened for {}\n"), m_lastPickedUpItemName);
+            setInputModeUI(popup);
+            VLOG(STR("[MoriaCppMod] [Trash] GenericPopup opened for {}\n"), m_lastPickedUpItemName);
+        }
+
+        // v6.20.4 — Called from the global ProcessEvent post-hook on
+        // OnButtonReleasedEvent / OnMenuButtonClicked. Compares the firing
+        // button to the trash popup's ConfirmButton/CancelButton members
+        // and dispatches confirmTrashItem() or hideTrashDialog().
+        void onTrashPopupButtonClicked(UObject* context)
+        {
+            UObject* popup = m_pendingTrashPopup.Get();
+            if (!popup || !isObjectAlive(popup) || !context) return;
+
+            auto* confirmPtr = popup->GetValuePtrByPropertyNameInChain<UObject*>(STR("ConfirmButton"));
+            auto* cancelPtr  = popup->GetValuePtrByPropertyNameInChain<UObject*>(STR("CancelButton"));
+            UObject* confirmBtn = confirmPtr ? *confirmPtr : nullptr;
+            UObject* cancelBtn  = cancelPtr  ? *cancelPtr  : nullptr;
+
+            bool isConfirm = (context == confirmBtn);
+            bool isCancel  = (context == cancelBtn);
+            if (!isConfirm && !isCancel) return;
+
+            VLOG(STR("[MoriaCppMod] [Trash] popup button: {}\n"),
+                 isConfirm ? STR("DELETE") : STR("CANCEL"));
+
+            // Clear pending state BEFORE calling confirmTrashItem so its
+            // call to hideTrashDialog → RemoveFromParent doesn't race.
+            m_pendingTrashPopup = FWeakObjectPtr();
+
+            if (isConfirm) confirmTrashItem(); // confirms + hides
+            else            hideTrashDialog();
         }
 
         void hideTrashDialog()
@@ -921,10 +784,19 @@
             if (!m_trashDlgVisible) return;
             if (m_trashDlgWidget)
             {
+                // v6.20.4 — popup is now WBP_UI_GenericPopup_C. Try its
+                // built-in Hide animation first (plays the Outro), then
+                // RemoveFromParent for cleanup.
+                if (auto* hideFn = m_trashDlgWidget->GetFunctionByNameInChain(STR("Hide")))
+                {
+                    std::vector<uint8_t> b(hideFn->GetParmsSize(), 0);
+                    try { safeProcessEvent(m_trashDlgWidget, hideFn, b.data()); } catch (...) {}
+                }
                 auto* removeFn = m_trashDlgWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
                 if (removeFn) safeProcessEvent(m_trashDlgWidget, removeFn, nullptr);
                 m_trashDlgWidget = nullptr;
             }
+            m_pendingTrashPopup = FWeakObjectPtr();
             m_trashDlgVisible = false;
 
             if (m_ftVisible && m_fontTestWidget)
