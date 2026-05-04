@@ -1,4 +1,4 @@
-// MoriaCppMod v6.11.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.12.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -590,14 +590,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.11.0");
+            ModVersion = STR("6.12.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.11.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.12.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -638,7 +638,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.11.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.12.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -1607,7 +1607,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.11.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.12.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -1665,7 +1665,7 @@ namespace MoriaMods
             for (auto* wname : wrapperClasses)
             {
                 std::vector<UObject*> instances;
-                findAllOfSafe(wname, instances); // v6.11.0 — SEH-wrapped
+                findAllOfSafe(wname, instances); // v6.12.0 — SEH-wrapped
                 if (instances.empty()) {
                     VLOG(STR("[FGKDiag] {}: no instances found\n"), wname);
                     continue;
@@ -1807,7 +1807,7 @@ namespace MoriaMods
             if (m_fgkInjectionTestDone) return;
             // Need wrapper instance first.
             std::vector<UObject*> wrappers;
-            findAllOfSafe(STR("MorConstructionsTable"), wrappers); // v6.11.0 — SEH-wrapped
+            findAllOfSafe(STR("MorConstructionsTable"), wrappers); // v6.12.0 — SEH-wrapped
             if (wrappers.empty()) return;
             UObject* wrapper = wrappers[0];
             if (!wrapper || !isObjectAlive(wrapper)) return;
@@ -1939,7 +1939,7 @@ namespace MoriaMods
         {
             if (m_actorLookupDiagDone) return;
             std::vector<UObject*> wrappers;
-            findAllOfSafe(STR("MorConstructionsTable"), wrappers); // v6.11.0 — SEH-wrapped
+            findAllOfSafe(STR("MorConstructionsTable"), wrappers); // v6.12.0 — SEH-wrapped
             if (wrappers.empty()) return;
             m_actorLookupDiagDone = true;
 
@@ -1999,7 +1999,7 @@ namespace MoriaMods
         {
             if (m_dmDiagDone) return;
             std::vector<UObject*> dms;
-            findAllOfSafe(STR("MorDiscoveryManager"), dms); // v6.11.0 — SEH-wrapped
+            findAllOfSafe(STR("MorDiscoveryManager"), dms); // v6.12.0 — SEH-wrapped
             if (dms.empty()) return; // not spawned yet
             m_dmDiagDone = true;
             VLOG(STR("[FGKDiag] === DiscoveryManager.Recipes (post-load) ===\n"));

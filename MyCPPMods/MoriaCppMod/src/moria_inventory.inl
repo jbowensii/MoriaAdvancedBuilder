@@ -52,23 +52,30 @@
             FProperty* effectsProp = invComp->GetPropertyByNameInChain(STR("Effects"));
             if (!effectsProp) return false;
 
+            // v6.12.0 — Reflective offsets via probeActiveItemEffectStruct.
+            // Helpers fall back to literals (0x110/0x0C/0x10/0x30) if the
+            // probe hasn't run yet. probeActiveItemEffectStruct is called
+            // from the local-pawn inventory scan and from
+            // OnInventoryChanged below, so by the time we get here it has
+            // typically populated the offset cache.
+            probeActiveItemEffectStruct(invComp);
             int effectsOff = effectsProp->GetOffset_Internal();
-            uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp) + effectsOff + 0x0110;
+            uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp) + effectsOff + aieaListOff();
             if (!isReadableMemory(listBase, 16)) return false;
 
             uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
             int32_t& arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
-            constexpr int kStride = 0x30;
+            const int kStride = aieSize();
 
             for (int32_t j = arrNum - 1; j >= 0; j--)
             {
                 uint8_t* e = arrData + j * kStride;
                 if (!isReadableMemory(e, kStride)) continue;
 
-                int32_t onItem = *reinterpret_cast<int32_t*>(e + 0x0C);
+                int32_t onItem = *reinterpret_cast<int32_t*>(e + aieOnItemOff());
                 if (onItem != itemID) continue;
 
-                UObject* effect = *reinterpret_cast<UObject**>(e + 0x10);
+                UObject* effect = *reinterpret_cast<UObject**>(e + aieEffectOff());
                 if (!effect || !isReadableMemory(reinterpret_cast<uint8_t*>(effect), 64)) continue;
 
                 std::wstring cls = safeClassName(effect);
@@ -171,9 +178,11 @@
             FProperty* effectsProp = invComp->GetPropertyByNameInChain(STR("Effects"));
             if (effectsProp)
             {
+                // v6.12.0 — Reflective offsets via probeActiveItemEffectStruct.
+                probeActiveItemEffectStruct(invComp);
                 int effectsOff = effectsProp->GetOffset_Internal();
 
-                uint8_t* effectsBase = reinterpret_cast<uint8_t*>(invComp) + effectsOff + 0x0110;
+                uint8_t* effectsBase = reinterpret_cast<uint8_t*>(invComp) + effectsOff + aieaListOff();
                 if (isReadableMemory(effectsBase, 16))
                 {
                     uint8_t* arrData = *reinterpret_cast<uint8_t**>(effectsBase);
@@ -181,16 +190,16 @@
                     VLOG(STR("[MoriaCppMod] [EffectDump] InvComp Effects.List count={} (effectsOff=0x{:X})\n"), arrNum, effectsOff);
 
 
-                    constexpr int kStride = 0x30;
+                    const int kStride = aieSize();
 
                     for (int32_t j = 0; j < arrNum && j < 50; j++)
                     {
                         uint8_t* e = arrData + j * kStride;
                         if (!isReadableMemory(e, kStride)) { VLOG(STR("[MoriaCppMod] [EffectDump]   [{}] <unreadable>\n"), j); continue; }
 
-                        int32_t onItem = *reinterpret_cast<int32_t*>(e + 0x0C);
-                        UObject* effect = *reinterpret_cast<UObject**>(e + 0x10);
-                        float endTime = *reinterpret_cast<float*>(e + 0x18);
+                        int32_t onItem = *reinterpret_cast<int32_t*>(e + aieOnItemOff());
+                        UObject* effect = *reinterpret_cast<UObject**>(e + aieEffectOff());
+                        float endTime = *reinterpret_cast<float*>(e + aieEndTimeOff());
 
                         std::wstring effectName = L"nullptr";
                         if (effect)
@@ -207,8 +216,8 @@
                         }
 
 
-                        uint32_t assetIdWord0 = *reinterpret_cast<uint32_t*>(e + 0x1C);
-                        uint32_t assetIdWord1 = *reinterpret_cast<uint32_t*>(e + 0x20);
+                        uint32_t assetIdWord0 = *reinterpret_cast<uint32_t*>(e + aieAssetIdOff());
+                        uint32_t assetIdWord1 = *reinterpret_cast<uint32_t*>(e + aieAssetIdOff() + 4);
 
                         bool isOurs = (onItem == itemID);
                         VLOG(STR("[MoriaCppMod] [EffectDump]   [{}] OnItem={}{} Effect=0x{:X} (class={}) EndTime={} AssetId=[0x{:X},0x{:X}]\n"),
@@ -245,6 +254,7 @@
                 if (op.Ret != pawn) continue;
 
                 probeItemInstanceStruct(comp);
+                probeActiveItemEffectStruct(comp); // v6.12.0 — populate s_off_aie*
 
                 FProperty* itemsProp = comp->GetPropertyByNameInChain(STR("Items"));
                 if (!itemsProp) continue;
@@ -369,6 +379,7 @@
 
 
             probeItemInstanceStruct(invComp);
+            probeActiveItemEffectStruct(invComp); // v6.12.0 — populate s_off_aie*
 
             FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
             if (!itemsProp) return;

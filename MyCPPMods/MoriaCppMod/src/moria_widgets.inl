@@ -23,6 +23,12 @@
             for (auto* w : m_pendingWidgetRemovals)
             {
                 if (!w) continue;
+                // v6.12.0 — alive-check before deref. Between deferRemoveWidget
+                // (this frame) and tickDeferredWidgetRemovals (next frame),
+                // the widget can be GC'd if a world transition / parent
+                // removal happened in between. The raw UObject* would then
+                // dangle and GetFunctionByNameInChain would AV.
+                if (!isObjectAlive(w)) continue;
                 auto* removeFn = w->GetFunctionByNameInChain(STR("RemoveFromParent"));
                 if (!removeFn) removeFn = w->GetFunctionByNameInChain(STR("RemoveFromViewport"));
                 if (removeFn) safeProcessEvent(w, removeFn, nullptr);

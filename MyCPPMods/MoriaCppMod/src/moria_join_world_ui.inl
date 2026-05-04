@@ -478,7 +478,7 @@
             // exact paths they are registered.
             try {
                 std::vector<UObject*> textures;
-                UObjectGlobals::FindAllOf(STR("Texture2D"), textures);
+                findAllOfSafe(STR("Texture2D"), textures); // v6.12.0 — SEH-wrapped
                 int found = 0;
                 for (auto* t : textures) {
                     if (!t || !isObjectAlive(t)) continue;

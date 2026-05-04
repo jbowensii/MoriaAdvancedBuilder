@@ -162,7 +162,7 @@
         {
             if (!fieldName || !fieldName[0]) return;
             std::vector<UObject*> dts;
-            UObjectGlobals::FindAllOf(STR("DataTable"), dts);
+            findAllOfSafe(STR("DataTable"), dts); // v6.12.0 — SEH-wrapped
 
             int totalRowsTouched = 0;
             int totalTablesTouched = 0;
@@ -268,7 +268,7 @@
         void applyNoCostRecipe(bool useDefault)
         {
             std::vector<UObject*> dts;
-            UObjectGlobals::FindAllOf(STR("DataTable"), dts);
+            findAllOfSafe(STR("DataTable"), dts); // v6.12.0 — SEH-wrapped
 
             int totalRows = 0;
             int totalTables = 0;
@@ -375,7 +375,7 @@
         void applyInstantCraft(bool useDefault)
         {
             std::vector<UObject*> dts;
-            UObjectGlobals::FindAllOf(STR("DataTable"), dts);
+            findAllOfSafe(STR("DataTable"), dts); // v6.12.0 — SEH-wrapped
 
             int totalRows = 0;
             int totalTables = 0;
@@ -813,7 +813,7 @@
         {
             // Locate the entitlement manager
             std::vector<UObject*> mgrs;
-            UObjectGlobals::FindAllOf(STR("MorEntitlementManager"), mgrs);
+            findAllOfSafe(STR("MorEntitlementManager"), mgrs); // v6.12.0 — SEH-wrapped
             if (mgrs.empty())
             {
                 VLOG(STR("[Unlock] EntitlementManager not found — skipping DLC filter (all recipes considered safe)\n"));
@@ -954,7 +954,7 @@
 
             // 1. Find the discovery manager
             std::vector<UObject*> mgrs;
-            UObjectGlobals::FindAllOf(STR("MorDiscoveryManager"), mgrs);
+            findAllOfSafe(STR("MorDiscoveryManager"), mgrs); // v6.12.0 — SEH-wrapped
             if (mgrs.empty())
             {
                 VLOG(STR("[Unlock] MorDiscoveryManager not found — load a world first\n"));
@@ -1038,7 +1038,7 @@
         {
             std::vector<UObject*> result;
             std::vector<UObject*> allDTs;
-            UObjectGlobals::FindAllOf(STR("DataTable"), allDTs);
+            findAllOfSafe(STR("DataTable"), allDTs); // v6.12.0 — SEH-wrapped
             for (auto* dt : allDTs)
             {
                 if (!dt || !isObjectAlive(dt)) continue;
@@ -1116,7 +1116,7 @@
         void togglePeaceMode()
         {
             std::vector<UObject*> mgrs;
-            UObjectGlobals::FindAllOf(STR("MorAISpawnManager"), mgrs);
+            findAllOfSafe(STR("MorAISpawnManager"), mgrs); // v6.12.0 — SEH-wrapped
             if (mgrs.empty())
             {
                 VLOG(STR("[PeaceMode] MorAISpawnManager not found — load a world first\n"));
@@ -1173,7 +1173,7 @@
             // Phase 1: Lore screen MarkAllRead (single-call path)
             {
                 std::vector<UObject*> screens;
-                UObjectGlobals::FindAllOf(STR("WBP_LoreScreen_v2_C"), screens);
+                findAllOfSafe(STR("WBP_LoreScreen_v2_C"), screens); // v6.12.0 — SEH-wrapped
                 if (!screens.empty() && isObjectAlive(screens[0]))
                 {
                     anyScreenFound = true;
@@ -1188,7 +1188,7 @@
             // Phase 2: Goals screen — per-entry mark via SetLoreEntryViewed / SetTutorialEntryViewed / SetTipEntryViewed
             {
                 std::vector<UObject*> screens;
-                UObjectGlobals::FindAllOf(STR("WBP_GoalsScreen_C"), screens);
+                findAllOfSafe(STR("WBP_GoalsScreen_C"), screens); // v6.12.0 — SEH-wrapped
                 if (!screens.empty() && isObjectAlive(screens[0]))
                 {
                     anyScreenFound = true;
@@ -1215,7 +1215,7 @@
             // sub-tables may not be covered by the Blueprint MarkAllRead above).
             {
                 std::vector<UObject*> screens;
-                UObjectGlobals::FindAllOf(STR("WBP_LoreScreen_v2_C"), screens);
+                findAllOfSafe(STR("WBP_LoreScreen_v2_C"), screens); // v6.12.0 — SEH-wrapped
                 if (!screens.empty() && isObjectAlive(screens[0]))
                 {
                     UObject* ls = screens[0];
@@ -1229,7 +1229,7 @@
             // This clears the "NEW!" badges on the construction build menu (the "4 unread building" count).
             {
                 std::vector<UObject*> tabs;
-                UObjectGlobals::FindAllOf(STR("UI_WBP_Build_Tab_C"), tabs);
+                findAllOfSafe(STR("UI_WBP_Build_Tab_C"), tabs); // v6.12.0 — SEH-wrapped
                 if (!tabs.empty() && isObjectAlive(tabs[0]))
                 {
                     anyScreenFound = true;
@@ -1253,7 +1253,7 @@
             // Same pattern as the build tab. Clears the "296 new" count on crafting stations.
             {
                 std::vector<UObject*> screens;
-                UObjectGlobals::FindAllOf(STR("UI_WBP_Crafting_Screen_C"), screens);
+                findAllOfSafe(STR("UI_WBP_Crafting_Screen_C"), screens); // v6.12.0 — SEH-wrapped
                 int invoked = 0;
                 for (UObject* screen : screens)
                 {
@@ -1277,7 +1277,7 @@
             // This is the pause-menu Crafting entry that opens a recipe compendium.
             {
                 std::vector<UObject*> viewers;
-                UObjectGlobals::FindAllOf(STR("UI_WBP_Recipe_Viewer_C"), viewers);
+                findAllOfSafe(STR("UI_WBP_Recipe_Viewer_C"), viewers); // v6.12.0 — SEH-wrapped
                 int invoked = 0;
                 for (UObject* viewer : viewers)
                 {
@@ -1302,7 +1302,7 @@
             // per-entry SetLoreEntryViewed because MarkAllAsRead may persist differently.
             {
                 std::vector<UObject*> screens;
-                UObjectGlobals::FindAllOf(STR("WBP_GoalsScreen_C"), screens);
+                findAllOfSafe(STR("WBP_GoalsScreen_C"), screens); // v6.12.0 — SEH-wrapped
                 int invoked = 0;
                 for (UObject* screen : screens)
                 {
@@ -1345,7 +1345,7 @@
             UObject* morDb = nullptr;
             {
                 std::vector<UObject*> dbs;
-                UObjectGlobals::FindAllOf(STR("MorDatabase"), dbs);
+                findAllOfSafe(STR("MorDatabase"), dbs); // v6.12.0 — SEH-wrapped
                 for (auto* d : dbs) { if (d && isObjectAlive(d)) { morDb = d; break; } }
             }
             if (!morDb) {
@@ -1367,7 +1367,7 @@
             {
                 UObject* mmMgr = nullptr;
                 std::vector<UObject*> mgrs;
-                UObjectGlobals::FindAllOf(STR("MorMinimapManager"), mgrs);
+                findAllOfSafe(STR("MorMinimapManager"), mgrs); // v6.12.0 — SEH-wrapped
                 for (auto* m : mgrs) { if (m && isObjectAlive(m)) { mmMgr = m; break; } }
 
                 if (mmMgr)
@@ -1410,7 +1410,7 @@
             int chaptersDiscovered = 0;
             {
                 std::vector<UObject*> widgets;
-                UObjectGlobals::FindAllOf(STR("MorGameMinimapWidget"), widgets);
+                findAllOfSafe(STR("MorGameMinimapWidget"), widgets); // v6.12.0 — SEH-wrapped
                 for (auto* w : widgets)
                 {
                     if (!w || !isObjectAlive(w)) continue;

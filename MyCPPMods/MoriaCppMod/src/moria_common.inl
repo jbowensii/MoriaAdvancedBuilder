@@ -214,6 +214,36 @@ static bool findAllOfSafe(const wchar_t* className, std::vector<UObject*>& out) 
     return seh_findAllOf(className, &out);
 }
 
+// v6.12.0 — UFunction cache. Hot UMG paths (SetVisibility, SetText,
+// SetFont, SetColorAndOpacity) re-resolve the UFunction via
+// GetFunctionByNameInChain on every call — that's a class-chain walk
+// per call. Cache by (class, name) so repeated lookups are O(1).
+//
+// Cache is per-class because UFunction* is per-class metadata; the
+// pointer is stable for the lifetime of the loaded module.
+//
+// Usage:
+//   if (UFunction* fn = cachedUFunction(widget->GetClassPrivate(), STR("SetVisibility"))) {
+//       std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+//       ...
+//       safeProcessEvent(widget, fn, b.data());
+//   }
+//
+// Falls back to GetFunctionByNameInChain on cache miss; the result is
+// then memoised. Returns nullptr if the function doesn't exist on the
+// class chain.
+inline UFunction* cachedUFunction(UClass* cls, const wchar_t* fnName)
+{
+    if (!cls || !fnName) return nullptr;
+    static std::unordered_map<UClass*, std::unordered_map<std::wstring, UFunction*>> s_cache;
+    auto& clsMap = s_cache[cls];
+    auto it = clsMap.find(fnName);
+    if (it != clsMap.end()) return it->second;
+    UFunction* fn = cls->GetFunctionByNameInChain(fnName);
+    clsMap[fnName] = fn; // memoise even if null — saves repeated misses
+    return fn;
+}
+
 UObject* findPlayerController()
 {
     std::vector<UObject*> pcs;
