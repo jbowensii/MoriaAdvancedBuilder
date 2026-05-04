@@ -1,4 +1,4 @@
-// MoriaCppMod v6.20.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.20.1 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -353,14 +353,14 @@ namespace MoriaMods
 
         static constexpr int MC_SLOTS = 9;
         UObject* m_mcBarWidget{nullptr};
-        // v6.20.0 — "New Building Bar": cloned WBP_UI_ActionBar_C instance,
+        // v6.20.1 — "New Building Bar": cloned WBP_UI_ActionBar_C instance,
         // chrome only (look). Tame-spawned at top of HUD with the 4 special
         // slots (Epic/HeavyCarry/MainHand/Offhand) and inventory wiring
         // hidden/disabled. Phase 2 wires our 8 builder slots to its 8
         // numbered slot widgets.
         UObject* m_newBuildingBar{nullptr};
         bool m_newBuildingBarSpawnAttempted{false};
-        // v6.20.0 — per-slot widget pointers for the New Building Bar.
+        // v6.20.1 — per-slot widget pointers for the New Building Bar.
         // Set during createNewBuildingBar(); used for highlight + Phase 2
         // icon/label updates. 8 slots = 8 indexed entries.
         UObject* m_nbbSlotEmpty[8]{};   // empty-state UImage
@@ -590,14 +590,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.20.0");
+            ModVersion = STR("6.20.1");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.20.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.20.1\n"));
         }
 
         ~MoriaCppMod() override
@@ -638,7 +638,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.20.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.20.1 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -1607,7 +1607,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.20.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.20.1: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -2053,7 +2053,7 @@ namespace MoriaMods
             if (!m_isDedicatedServer)
             {
                 bool justCreated = false;
-                // v6.20.0 — UMG QuickBuild bar (m_umgBarWidget) RE-ENABLED.
+                // v6.20.1 — UMG QuickBuild bar (m_umgBarWidget) RE-ENABLED.
                 // The from-scratch top-of-screen New Building Bar in
                 // v6.10.0 never reliably displayed icons or F-key labels,
                 // and several iterations of fix attempts (v6.19→v6.21-wip)
@@ -2384,7 +2384,7 @@ namespace MoriaMods
             {
                 static bool s_lastAbKey = false;
                 uint8_t vk = s_bindings[BIND_AB_OPEN].key;
-                // v6.20.0 (v0.13) — NUM+ / Advanced Builder Open dispatch
+                // v6.20.1 (v0.13) — NUM+ / Advanced Builder Open dispatch
                 // DISABLED. The 3 original toolbars no longer auto-spawn,
                 // so toggling them is meaningless. Replaced by the New
                 // Building Bar at the top of the screen.
@@ -4045,7 +4045,7 @@ namespace MoriaMods
                         // player's ASC + DataTables + world are all ready. No-op if nothing saved.
                         applySavedCheatsAndTweaks();
 
-                        // v6.20.0 — auto-spawn the New Building Bar once the
+                        // v6.20.1 — auto-spawn the New Building Bar once the
                         // player + world are ready. One attempt per session.
                         if (!m_newBuildingBarSpawnAttempted)
                         {
