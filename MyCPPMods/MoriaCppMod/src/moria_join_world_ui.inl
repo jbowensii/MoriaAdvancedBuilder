@@ -32,11 +32,14 @@
 // Asset paths centralised in moria_join_assets.h — included at top of
 // dllmain.cpp (cannot be #included from inside a class scope).
 //
-// Most of the helpers below (jw_setCanvasSlot, jw_addToCanvas, jw_setSizeBoxOverride,
-// font-capture buffers, m_jwTexBtn*) are LEGACY from the v6.6.0 spawn-duplicate
-// path and are no longer referenced. v6.14.0 audit confirmed they're write-only
-// (set during init, never read). Deletion deferred to v6.15.0+ to keep the
-// audit-fix diff reviewable; tracked in pending-todo.md.
+// v6.18.0 — All v6.6.0 spawn-duplicate state DELETED:
+//   font-capture buffers (m_jwFont*), texture caches (m_jwTexBtn*,
+//   m_jwIconTexSearch, m_jwBgGradientTex), input-style buffer
+//   (m_jwInputStyle), 7 unused class refs (m_jwCls_CraftBigButton, etc.),
+//   and 3 unused helper functions (jw_captureFontFromTextBlock,
+//   jw_applyCapturedFont, jw_applyFontByAssetPath, plus
+//   jw_setCanvasSlot/addToCanvas/setBorderColor in v6.15.0).
+// Only m_jwCls_FrontEndButton remains — used by jw_spawnFEButton.
 //
 // See `cpp-mod/docs/joinworld-ui-takeover.md` for the full methodology.
 
@@ -52,135 +55,31 @@
         //  legacy spawn-duplicate path; in-place modification doesn't need it.)
         ULONGLONG m_modJoinWorldShownAt{0};
 
-        // Cached UClass refs harvested from the native widget tree on first intercept.
-        // UClasses live forever once loaded — safe to cache as raw pointers.
+        // Cached UClass ref harvested from the native widget tree on first
+        // intercept. WBP_FrontEndButton_C is the only class we still
+        // instantiate via jw_spawnFEButton. UClass lives forever once
+        // loaded — safe to cache as raw pointer.
         UClass* m_jwCls_FrontEndButton{nullptr};       // WBP_FrontEndButton_C
-        UClass* m_jwCls_CraftBigButton{nullptr};       // UI_WBP_Craft_BigButton_C
-        UClass* m_jwCls_GameDataPanel{nullptr};        // WBP_JoinWorldScreen_GameDataPanel_C
-        UClass* m_jwCls_SessionHistoryList{nullptr};   // WBP_UI_SessionHistoryList_C
-        UClass* m_jwCls_AdvancedJoinPanel{nullptr};    // WBP_UI_AdvancedJoinOptions_C
-        UClass* m_jwCls_LowerThird{nullptr};           // UI_WBP_LowerThird_C
-        UClass* m_jwCls_NetworkAlert{nullptr};         // WBP_UI_NetworkAlert_C
-        UClass* m_jwCls_ControlPrompt{nullptr};        // UI_WBP_HUD_ControlPrompt_C
-        UClass* m_jwCls_TextHeader{nullptr};           // UI_WBP_Text_Header_C
 
-        // ---- Look-and-feel cloning: captured FSlateFontInfo struct bytes ----
-        // We memcpy the whole 88-byte FSlateFontInfo from native TextBlocks at
-        // intercept time, then apply via SetFont when constructing our duplicates.
-        // This preserves font asset, typeface, size, color, outline, shadows —
-        // everything the harvested JSON couldn't reach via reflection.
-        uint8_t m_jwFontTitle[FONT_STRUCT_SIZE]{};         // "JOIN OTHER WORLD"
-        uint8_t m_jwFontBreadcrumb[FONT_STRUCT_SIZE]{};    // "WORLD SELECTION"
-        uint8_t m_jwFontSubtitle[FONT_STRUCT_SIZE]{};      // "Enter Invite Code..."
-        uint8_t m_jwFontHistoryHeader[FONT_STRUCT_SIZE]{}; // "SESSION HISTORY"
-        bool m_jwFontTitleCaptured{false};
-        bool m_jwFontBreadcrumbCaptured{false};
-        bool m_jwFontSubtitleCaptured{false};
-        bool m_jwFontHistoryHeaderCaptured{false};
+        // v6.18.0 — DELETED legacy fields from the v6.6.0 spawn-duplicate
+        // path (replaced by in-place modification in v6.7.0):
+        //   m_jwCls_CraftBigButton/_GameDataPanel/_SessionHistoryList/
+        //   _AdvancedJoinPanel/_LowerThird/_NetworkAlert/_ControlPrompt/
+        //   _TextHeader (all write-only after v6.7.0)
+        //   m_jwFontTitle/Breadcrumb/Subtitle/HistoryHeader + *Captured
+        //     (88-byte FSlateFontInfo capture buffers, never read)
+        //   m_jwIconTexSearch, m_jwBgGradientTex, m_jwTexBtnP1Up/P2Up/
+        //     CTADisabled (texture caches for the duplicate, never read)
+        //   m_jwInputStyle, m_jwInputStyleCaptured + INPUT_STYLE_BYTES
+        //     (768-byte EditableText style buffer, never read)
 
-        // ---- Captured texture pointers from native widget tree ----
-        // UTexture2D assets live forever once loaded — safe to cache as raw pointers.
-        UObject* m_jwIconTexSearch{nullptr};   // magnifying-glass on SearchButton (WBP_FrontEndButton_C IconTexture)
-        UObject* m_jwBgGradientTex{nullptr};   // left-side dark gradient (BackgroundImg.Brush.ResourceObject)
-        // Shared button textures pre-cached when the native widget shows. Once
-        // we hold a UObject*, UE GC can't collect them. These are required for
-        // the duplicate's blue search button, Advanced Join button, history row
-        // background and divider line.
-        UObject* m_jwTexBtnP1Up{nullptr};
-        UObject* m_jwTexBtnP2Up{nullptr};
-        UObject* m_jwTexBtnCTADisabled{nullptr};
-        // Captured FEditableTextStyle struct bytes from native InviteCodeInput.
-        // Apply onto our created UEditableText so typed text renders correctly.
-        // Size 768 is over-allocated to cover any reasonable FEditableTextStyle.
-        static constexpr int INPUT_STYLE_BYTES = 768;
-        uint8_t m_jwInputStyle[INPUT_STYLE_BYTES]{};
-        bool m_jwInputStyleCaptured{false};
-
-        // ---------- Look-and-feel cloning helpers (PATTERN) ----------
-        // Capture the entire FSlateFontInfo struct from a TextBlock's Font property.
-        // The struct is plain-old-data + UObject pointers (font asset), no heap-owned
-        // members, so a memcpy is safe and fast.
-        bool jw_captureFontFromTextBlock(UObject* textBlock, uint8_t* outBuf)
-        {
-            if (!textBlock || !isObjectAlive(textBlock)) return false;
-            int fontOff = resolveOffset(textBlock, L"Font", s_off_font);
-            if (fontOff < 0) return false;
-            std::memcpy(outBuf, reinterpret_cast<uint8_t*>(textBlock) + fontOff, FONT_STRUCT_SIZE);
-            // Log the FontObject pointer's path so we know which UFont uasset the
-            // native widget references. FSlateFontInfo layout: FontObject* at +0,
-            // FontMaterial* at +8, OutlineSettings, TypefaceFontName(FName), Size(int32).
-            UObject* fontObj = *reinterpret_cast<UObject**>(outBuf);
-            int32_t  fontSz  = *reinterpret_cast<const int32_t*>(outBuf + fontSizeOff());
-            if (fontObj && isObjectAlive(fontObj))
-            {
-                std::wstring path;
-                try { path = fontObj->GetFullName(); } catch (...) {}
-                VLOG(STR("[JoinWorldUI] captured FSlateFontInfo: FontObject={} size={}\n"),
-                     path.c_str(), fontSz);
-            }
-            else
-            {
-                VLOG(STR("[JoinWorldUI] captured FSlateFontInfo: FontObject=null size={}\n"), fontSz);
-            }
-            return true;
-        }
-
-        // Apply a previously-captured FSlateFontInfo struct to a TextBlock via
-        // its SetFont UFunction. Optional sizeOverride lets you reuse the same
-        // captured font with a different size (e.g., title font @ 18pt for a label).
-        void jw_applyCapturedFont(UObject* textBlock, const uint8_t* fontBuf, int32_t sizeOverride = -1)
-        {
-            if (!textBlock || !isObjectAlive(textBlock)) return;
-            auto* fn = textBlock->GetFunctionByNameInChain(STR("SetFont"));
-            if (!fn) return;
-            auto* p = findParam(fn, STR("InFontInfo"));
-            if (!p) return;
-            uint8_t local[FONT_STRUCT_SIZE];
-            std::memcpy(local, fontBuf, FONT_STRUCT_SIZE);
-            if (sizeOverride > 0)
-                std::memcpy(local + fontSizeOff(), &sizeOverride, sizeof(int32_t));
-            std::vector<uint8_t> parmBuf(fn->GetParmsSize(), 0);
-            std::memcpy(parmBuf.data() + p->GetOffset_Internal(), local, FONT_STRUCT_SIZE);
-            safeProcessEvent(textBlock, fn, parmBuf.data());
-        }
-
-        // Build an FSlateFontInfo by loading a UFont composite directly from
-        // its asset path (e.g. "/Game/UI/Font/Leksa.Leksa") and apply it to
-        // a TextBlock. This is the capture-free path: works on first launch
-        // without needing the user to visit the native screen first.
-        // typefaceName is the name of the typeface within the composite
-        //   (e.g. STR("Default"), STR("Bold"), or empty for the first one).
-        bool jw_applyFontByAssetPath(UObject* textBlock, const wchar_t* assetPath,
-                                     int32_t fontSize, const wchar_t* typefaceName = STR(""))
-        {
-            if (!textBlock || !isObjectAlive(textBlock) || !assetPath) return false;
-            UObject* fontObj = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, assetPath);
-            if (!fontObj)
-            {
-                // Try LoadObject via KismetSystemLibrary if not already in memory.
-                // For standard /Game/UI/Font assets the engine usually has them
-                // resident at boot, so StaticFindObject normally succeeds.
-                VLOG(STR("[JoinWorldUI] jw_applyFontByAssetPath: '{}' not found in object table\n"), assetPath);
-                return false;
-            }
-            auto* fn = textBlock->GetFunctionByNameInChain(STR("SetFont"));
-            if (!fn) return false;
-            auto* p  = findParam(fn, STR("InFontInfo"));
-            if (!p) return false;
-
-            uint8_t local[FONT_STRUCT_SIZE];
-            std::memset(local, 0, FONT_STRUCT_SIZE);
-            // FontObject pointer at offset 0
-            *reinterpret_cast<UObject**>(local) = fontObj;
-            // Size at the resolved offset
-            std::memcpy(local + fontSizeOff(), &fontSize, sizeof(int32_t));
-            // TypefaceFontName(FName) — leaving zeroed picks the composite's default
-
-            std::vector<uint8_t> parmBuf(fn->GetParmsSize(), 0);
-            std::memcpy(parmBuf.data() + p->GetOffset_Internal(), local, FONT_STRUCT_SIZE);
-            safeProcessEvent(textBlock, fn, parmBuf.data());
-            return true;
-        }
+        // v6.18.0 — DELETED unused font helpers (~85 lines):
+        //   jw_captureFontFromTextBlock — only called from the v6.6.0
+        //     m_ao* font capture path (deleted in v6.18.0).
+        //   jw_applyCapturedFont — never called (was the symmetric apply
+        //     that consumed jw_captureFontFromTextBlock output).
+        //   jw_applyFontByAssetPath — never called (capture-free
+        //     alternative; obsolete since v6.7.0 in-place mod).
 
         // Apply texture + force brush.ImageSize via DIRECT memory write at the
         // known FSlateBrush offsets (resolved via reflection in moria_reflection.h).
@@ -304,17 +203,16 @@
 
         // ---------- Class cache + look-and-feel capture ----------
         // Walks the native WBP_UI_JoinWorldScreen_C widget tree once and:
-        //   1. caches UClass refs for game-styled child widgets we'll instantiate
-        //   2. captures FSlateFontInfo bytes from key TextBlocks for font cloning
-        // Both run in a single tree walk to avoid double iteration.
+        //   Cache only m_jwCls_FrontEndButton — that's the one class
+        //   we still spawn instances of (jw_spawnFEButton). Everything
+        //   else this function used to capture was for the v6.6.0
+        //   spawn-duplicate path, which v6.7.0 replaced with in-place
+        //   modification. Cleanup landed in v6.18.0.
         void cacheJoinWorldClassRefs(UObject* userWidget)
         {
             if (!userWidget) return;
-            // Already cached?
-            if (m_jwCls_FrontEndButton && m_jwCls_GameDataPanel) return;
+            if (m_jwCls_FrontEndButton) return; // already cached
 
-            // Native UserWidget itself has no children — content lives under
-            // WidgetTree.RootWidget. Walk down to that first.
             auto* wtPtr = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
             UObject* widgetTree = wtPtr ? *wtPtr : nullptr;
             UObject* root = nullptr;
@@ -329,202 +227,39 @@
                 return;
             }
 
-            // Recursive walker over the panel tree
+            // Recursive walker — early-exits as soon as the FrontEndButton
+            // class is captured so we don't iterate the whole tree.
             std::function<void(UObject*)> walk = [&](UObject* w) {
-                if (!w || !isObjectAlive(w)) return;
-
-                std::wstring cls = safeClassName(w);
-                std::wstring name;
-                try { name = w->GetName(); } catch (...) {}
-
-                UClass* c = w->GetClassPrivate();
-                if (c)
+                if (!w || !isObjectAlive(w) || m_jwCls_FrontEndButton) return;
+                if (safeClassName(w) == STR("WBP_FrontEndButton_C"))
                 {
-                    if (cls == STR("WBP_FrontEndButton_C") && !m_jwCls_FrontEndButton)
-                        m_jwCls_FrontEndButton = c;
-                    else if (cls == STR("UI_WBP_Craft_BigButton_C") && !m_jwCls_CraftBigButton)
-                        m_jwCls_CraftBigButton = c;
-                    else if (cls == STR("WBP_JoinWorldScreen_GameDataPanel_C") && !m_jwCls_GameDataPanel)
-                        m_jwCls_GameDataPanel = c;
-                    else if (cls == STR("WBP_UI_SessionHistoryList_C") && !m_jwCls_SessionHistoryList)
-                        m_jwCls_SessionHistoryList = c;
-                    else if (cls == STR("WBP_UI_AdvancedJoinOptions_C") && !m_jwCls_AdvancedJoinPanel)
-                        m_jwCls_AdvancedJoinPanel = c;
-                    else if (cls == STR("UI_WBP_LowerThird_C") && !m_jwCls_LowerThird)
-                        m_jwCls_LowerThird = c;
-                    else if (cls == STR("WBP_UI_NetworkAlert_C") && !m_jwCls_NetworkAlert)
-                        m_jwCls_NetworkAlert = c;
-                    else if (cls == STR("UI_WBP_HUD_ControlPrompt_C") && !m_jwCls_ControlPrompt)
-                        m_jwCls_ControlPrompt = c;
-                    else if (cls == STR("UI_WBP_Text_Header_C") && !m_jwCls_TextHeader)
-                        m_jwCls_TextHeader = c;
+                    if (UClass* c = w->GetClassPrivate()) m_jwCls_FrontEndButton = c;
+                    return;
                 }
-
-                // Look-and-feel capture: snapshot FSlateFontInfo bytes from
-                // specific named TextBlocks. Names from harvested JSON tree.
-                if (cls == STR("TextBlock"))
-                {
-                    if (name == STR("Title") && !m_jwFontTitleCaptured)
-                        m_jwFontTitleCaptured = jw_captureFontFromTextBlock(w, m_jwFontTitle);
-                    else if (name == STR("TextBlock_63") && !m_jwFontBreadcrumbCaptured)
-                        m_jwFontBreadcrumbCaptured = jw_captureFontFromTextBlock(w, m_jwFontBreadcrumb);
-                    else if (name == STR("InviteCodeLabel") && !m_jwFontSubtitleCaptured)
-                        m_jwFontSubtitleCaptured = jw_captureFontFromTextBlock(w, m_jwFontSubtitle);
-                }
-
-                // Capture WidgetStyle bytes from native InviteCodeInput.
-                // Our created UEditableText defaults to empty WidgetStyle (no
-                // Font, no Color), so typed text is invisible. Copying the
-                // master style verbatim ensures correct font + color.
-                if (cls == STR("EditableText") && name == STR("InviteCodeInput") && !m_jwInputStyleCaptured)
-                {
-                    auto* stylePtr = w->GetValuePtrByPropertyNameInChain<uint8_t>(STR("WidgetStyle"));
-                    if (stylePtr)
-                    {
-                        std::memcpy(m_jwInputStyle, stylePtr, INPUT_STYLE_BYTES);
-                        m_jwInputStyleCaptured = true;
-                        VLOG(STR("[JoinWorldUI] captured InviteCodeInput WidgetStyle ({} bytes)\n"), INPUT_STYLE_BYTES);
-                    }
-                }
-
-                // Capture the search button's IconTexture (magnifying glass).
-                // The native SearchButton instance has its IconTexture set at
-                // design time on WBP_UI_JoinWorldScreen — when we instantiate a
-                // fresh WBP_FrontEndButton_C ourselves, it's null. Read it here.
-                if (name == STR("SearchButton") && !m_jwIconTexSearch && cls == STR("WBP_FrontEndButton_C"))
-                {
-                    auto* iconTexPtr = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("IconTexture"));
-                    if (iconTexPtr && *iconTexPtr) m_jwIconTexSearch = *iconTexPtr;
-                }
-
-                // Capture the left-side dark gradient texture from BackgroundImg.
-                // It's a UImage; we read Brush.ResourceObject (Texture2D).
-                if (name == STR("BackgroundImg") && !m_jwBgGradientTex && cls == STR("Image"))
-                {
-                    ensureBrushOffset(w);
-                    if (s_off_brush >= 0)
-                    {
-                        uint8_t* base = reinterpret_cast<uint8_t*>(w);
-                        UObject* res = *reinterpret_cast<UObject**>(base + s_off_brush + brushResourceObj());
-                        if (res && isReadableMemory(res, 64))
-                        {
-                            // Accept Material OR Texture2D (per BP, BackgroundImg's
-                            // ResourceObject is Material 'M_GradientMask'). The Image
-                            // SetBrushFromMaterial path handles materials cleanly.
-                            std::wstring resCls = safeClassName(res);
-                            VLOG(STR("[JoinWorldUI] BackgroundImg.Brush.ResourceObject class={}\n"), resCls.c_str());
-                            m_jwBgGradientTex = res;
-                        }
-                    }
-                }
-
-                // Walk into UPanelWidget.Slots — each slot has a Content UWidget
                 auto* slotsAddr = w->GetValuePtrByPropertyNameInChain<TArray<UObject*>>(STR("Slots"));
                 if (slotsAddr)
                 {
                     int n = slotsAddr->Num();
-                    for (int i = 0; i < n; ++i)
+                    for (int i = 0; i < n && !m_jwCls_FrontEndButton; ++i)
                     {
                         UObject* slot = (*slotsAddr)[i];
                         if (!slot || !isObjectAlive(slot)) continue;
                         auto* contentPtr = slot->GetValuePtrByPropertyNameInChain<UObject*>(STR("Content"));
-                        if (contentPtr && *contentPtr)
-                            walk(*contentPtr);
+                        if (contentPtr && *contentPtr) walk(*contentPtr);
                     }
                 }
-                // Single-child via Content (UContentWidget like Border/SizeBox)
                 auto* singleContent = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("Content"));
-                if (singleContent && *singleContent)
-                    walk(*singleContent);
-
-                // For nested UUserWidget instances (e.g. WBP_UI_AdvancedJoinOptions_C),
-                // also recurse into THEIR WidgetTree.RootWidget so we can pick up classes
-                // they define internally.
+                if (singleContent && *singleContent && !m_jwCls_FrontEndButton) walk(*singleContent);
                 auto* nestedWt = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
-                if (nestedWt && *nestedWt)
+                if (nestedWt && *nestedWt && !m_jwCls_FrontEndButton)
                 {
                     auto* nestedRoot = (*nestedWt)->GetValuePtrByPropertyNameInChain<UObject*>(STR("RootWidget"));
-                    if (nestedRoot && *nestedRoot && *nestedRoot != w)
-                        walk(*nestedRoot);
+                    if (nestedRoot && *nestedRoot && *nestedRoot != w) walk(*nestedRoot);
                 }
             };
 
             walk(root);
-
-            VLOG(STR("[JoinWorldUI] class cache: feBtn={:p} bigBtn={:p} gameData={:p} sessHist={:p} advJoin={:p} lowerThird={:p} netAlert={:p} ctrlPrompt={:p} txtHdr={:p}\n"),
-                 (void*)m_jwCls_FrontEndButton, (void*)m_jwCls_CraftBigButton,
-                 (void*)m_jwCls_GameDataPanel, (void*)m_jwCls_SessionHistoryList,
-                 (void*)m_jwCls_AdvancedJoinPanel, (void*)m_jwCls_LowerThird,
-                 (void*)m_jwCls_NetworkAlert, (void*)m_jwCls_ControlPrompt,
-                 (void*)m_jwCls_TextHeader);
-            VLOG(STR("[JoinWorldUI] font capture: title={} breadcrumb={} subtitle={} histHeader={}\n"),
-                 m_jwFontTitleCaptured ? 1 : 0, m_jwFontBreadcrumbCaptured ? 1 : 0,
-                 m_jwFontSubtitleCaptured ? 1 : 0, m_jwFontHistoryHeaderCaptured ? 1 : 0);
-            VLOG(STR("[JoinWorldUI] tex capture: searchIcon={:p} bgGradient={:p}\n"),
-                 (void*)m_jwIconTexSearch, (void*)m_jwBgGradientTex);
-
-            // Log the search-icon's full UE path — that's a known-working
-            // texture, so its path format is the canonical one to mimic.
-            if (m_jwIconTexSearch && isObjectAlive(m_jwIconTexSearch))
-            {
-                std::wstring iconFull, iconPath;
-                try { iconFull = m_jwIconTexSearch->GetFullName(); } catch (...) {}
-                try { iconPath = m_jwIconTexSearch->GetPathName(); } catch (...) {}
-                VLOG(STR("[JoinWorldUI] searchIcon GetFullName={} GetPathName={}\n"),
-                     iconFull.c_str(), iconPath.c_str());
-            }
-
-            // Enumerate all loaded Texture2D and report any matching the names
-            // we want — tells us if textures are loaded at all and under what
-            // exact paths they are registered.
-            try {
-                std::vector<UObject*> textures;
-                findAllOfSafe(STR("Texture2D"), textures); // v6.12.0 — SEH-wrapped
-                int found = 0;
-                for (auto* t : textures) {
-                    if (!t || !isObjectAlive(t)) continue;
-                    std::wstring nm; try { nm = t->GetName(); } catch (...) { continue; }
-                    if (nm.find(L"T_UI_Btn_P1_Up") != std::wstring::npos ||
-                        nm.find(L"T_UI_Btn_P2_Up") != std::wstring::npos ||
-                        nm.find(L"T_UI_Btn_CTA_Disabled") != std::wstring::npos)
-                    {
-                        std::wstring path; try { path = t->GetPathName(); } catch (...) {}
-                        VLOG(STR("[JoinWorldUI] candidate Texture2D: name={} path={}\n"),
-                             nm.c_str(), path.c_str());
-                        ++found;
-                    }
-                }
-                VLOG(STR("[JoinWorldUI] enumerated {} loaded Texture2D objects, {} matched our names\n"),
-                     (int)textures.size(), found);
-            } catch (...) {
-                VLOG(STR("[JoinWorldUI] FindAllOf(Texture2D) threw\n"));
-            }
-
-            // Pre-cache shared button textures. By the time native JoinWorld
-            // shows, the WBP_FrontEndButton_C / SessionHistory_Item BPs that
-            // reference these textures have been loaded. Once we hold a raw
-            // UObject*, GC can't collect them.
-            //
-            // Use ONLY the canonical "/Path.AssetName" form. The ".0" first-export
-            // fallback caused UE4SS to throw "GetPackageNameFromLongName: Name
-            // wasn't long" which propagated up and removed our pre-hook entirely.
-            // Wrap each call in try/catch so a single bad path can't take down
-            // the whole intercept.
-            // Find first; if not in memory, force-load via LoadAsset_Blocking.
-            auto resolve = [&](const wchar_t* path) -> UObject* {
-                UObject* o = nullptr;
-                try { o = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, path); } catch (...) {}
-                if (o) return o;
-                return jw_loadAssetBlocking(path);
-            };
-            if (!m_jwTexBtnP1Up)
-                m_jwTexBtnP1Up = resolve(STR("/Game/UI/Textures/_Shared/T_UI_Btn_P1_Up.T_UI_Btn_P1_Up"));
-            if (!m_jwTexBtnP2Up)
-                m_jwTexBtnP2Up = resolve(STR("/Game/UI/Textures/_Shared/T_UI_Btn_P2_Up.T_UI_Btn_P2_Up"));
-            if (!m_jwTexBtnCTADisabled)
-                m_jwTexBtnCTADisabled = resolve(STR("/Game/UI/Textures/_Shared/T_UI_Btn_CTA_Disabled.T_UI_Btn_CTA_Disabled"));
-            VLOG(STR("[JoinWorldUI] btn-tex cache: P1Up={:p} P2Up={:p} CTADisabled={:p}\n"),
-                 (void*)m_jwTexBtnP1Up, (void*)m_jwTexBtnP2Up, (void*)m_jwTexBtnCTADisabled);
+            VLOG(STR("[JoinWorldUI] class cache: feBtn={:p}\n"), (void*)m_jwCls_FrontEndButton);
         }
 
         // Construct a game-styled widget by class. Returns nullptr if class isn't cached.
