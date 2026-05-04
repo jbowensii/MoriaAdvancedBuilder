@@ -561,7 +561,7 @@
                 UObject* worldCtx = nullptr;
                 {
                     std::vector<UObject*> pcs;
-                    UObjectGlobals::FindAllOf(STR("PlayerController"), pcs);
+                    findAllOfSafe(STR("PlayerController"), pcs); // v6.11.0 — SEH-wrapped
                     for (auto* pc : pcs)
                     {
                         if (pc)
@@ -941,7 +941,7 @@
         UObject* findBuildItemWidget(const std::wstring& recipeName)
         {
             std::vector<UObject*> widgets;
-            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
+            findAllOfSafe(STR("UserWidget"), widgets); // v6.11.0 — SEH-wrapped
             int mediumCount = 0;
             for (auto* w : widgets)
             {

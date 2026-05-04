@@ -1877,7 +1877,7 @@ void loadAndApplyDefinitions()
 
             {
                 std::vector<UObject*> fgkBases;
-                UObjectGlobals::FindAllOf(STR("FGKDataTableBase"), fgkBases);
+                findAllOfSafe(STR("FGKDataTableBase"), fgkBases); // v6.11.0 — SEH-wrapped
                 if (!fgkBases.empty())
                 {
                     RC::Output::send<RC::LogLevel::Warning>(

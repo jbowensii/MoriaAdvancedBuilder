@@ -34,7 +34,7 @@ struct DataTableUtil
         tableName = name;
 
         std::vector<UObject*> dataTables;
-        UObjectGlobals::FindAllOf(STR("DataTable"), dataTables);
+        findAllOfSafe(STR("DataTable"), dataTables); // v6.11.0 — SEH-wrapped
         for (auto* dt : dataTables)
         {
             if (!dt) continue;

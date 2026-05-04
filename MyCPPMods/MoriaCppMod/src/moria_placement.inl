@@ -9,7 +9,7 @@
             UObject* comp = m_cachedBuildComp.Get();
             if (comp) return comp;
             std::vector<UObject*> comps;
-            UObjectGlobals::FindAllOf(STR("MorBuildingComponent"), comps);
+            findAllOfSafe(STR("MorBuildingComponent"), comps); // v6.11.0 — SEH-wrapped
             if (!comps.empty() && comps[0])
             {
                 m_cachedBuildComp = RC::Unreal::FWeakObjectPtr(comps[0]);
@@ -852,7 +852,7 @@
 
             // FindAllOf the specific build item class — much smaller set than all UserWidgets
             std::vector<UObject*> widgets;
-            UObjectGlobals::FindAllOf(STR("UI_WBP_Build_Item_Medium_C"), widgets);
+            findAllOfSafe(STR("UI_WBP_Build_Item_Medium_C"), widgets); // v6.11.0 — SEH-wrapped
 
             UObject* matchedWidget = nullptr;
             int visibleCount = 0;
@@ -1049,7 +1049,7 @@
             }
 
             std::vector<UObject*> widgets;
-            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
+            findAllOfSafe(STR("UserWidget"), widgets); // v6.11.0 — SEH-wrapped
 
             UObject* matchedWidget = nullptr;
             std::wstring matchedName;

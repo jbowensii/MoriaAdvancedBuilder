@@ -201,7 +201,7 @@
 
 
             std::vector<UObject*> mgrs;
-            UObjectGlobals::FindAllOf(STR("CustomizationManager"), mgrs);
+            findAllOfSafe(STR("CustomizationManager"), mgrs); // v6.11.0 — SEH-wrapped
 
 
             UObject* pawn = getPawn();

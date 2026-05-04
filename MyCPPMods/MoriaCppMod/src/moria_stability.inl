@@ -311,7 +311,7 @@
             UObject* mgr = nullptr;
             {
                 std::vector<UObject*> mgrs;
-                UObjectGlobals::FindAllOf(STR("MorConstructionManager"), mgrs);
+                findAllOfSafe(STR("MorConstructionManager"), mgrs); // v6.11.0 — SEH-wrapped
                 for (auto* m : mgrs)
                 {
                     if (!m) continue;

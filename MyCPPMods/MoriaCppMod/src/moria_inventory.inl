@@ -6,7 +6,7 @@
         {
             if (!owner) return nullptr;
             std::vector<UObject*> allComps;
-            UObjectGlobals::FindAllOf(STR("ActorComponent"), allComps);
+            findAllOfSafe(STR("ActorComponent"), allComps); // v6.11.0 — SEH-wrapped against world-unload AV
             for (auto* c : allComps)
             {
                 if (!c) continue;
@@ -233,7 +233,7 @@
             if (!pawn) return;
 
             std::vector<UObject*> allComps;
-            UObjectGlobals::FindAllOf(STR("InventoryComponent"), allComps);
+            findAllOfSafe(STR("InventoryComponent"), allComps); // v6.11.0 — SEH-wrapped
 
             for (auto* comp : allComps)
             {
@@ -422,7 +422,10 @@
                     if (m_lastPickedUpDisplayName.empty())
                         m_lastPickedUpDisplayName = m_lastPickedUpItemName;
 
-                    m_lastPickedUpCount = *reinterpret_cast<int32_t*>(entry + 0x18);
+                    // v6.11.0 — reflectively-resolved Count offset (was hardcoded
+                    // +0x18). probeItemInstanceStruct populates s_off_iiCount via
+                    // FProperty::GetOffset_Internal so this survives DLC layout shifts.
+                    m_lastPickedUpCount = *reinterpret_cast<int32_t*>(entry + iiCountOff());
 
                     std::memcpy(m_lastItemHandle, parms, 20);
                     m_lastItemInvComp = RC::Unreal::FWeakObjectPtr(invComp);
@@ -998,7 +1001,7 @@
             {
 
                 std::vector<UObject*> preDropActors;
-                UObjectGlobals::FindAllOf(STR("MorDroppedItem"), preDropActors);
+                findAllOfSafe(STR("MorDroppedItem"), preDropActors); // v6.11.0 — SEH-wrapped
                 std::unordered_set<UObject*> preDropSet(preDropActors.begin(), preDropActors.end());
 
 
@@ -1021,7 +1024,7 @@
 
                 {
                     std::vector<UObject*> postDropActors;
-                    UObjectGlobals::FindAllOf(STR("MorDroppedItem"), postDropActors);
+                    findAllOfSafe(STR("MorDroppedItem"), postDropActors); // v6.11.0 — SEH-wrapped
                     for (auto* actor : postDropActors)
                     {
                         if (!actor || preDropSet.count(actor)) continue;
@@ -1051,7 +1054,7 @@
                                     uint8_t* e3 = ad3 + i * stride3;
                                     if (!isReadableMemory(e3, stride3)) continue;
                                     if (*reinterpret_cast<int32_t*>(e3 + idOff3) == origID)
-                                    { nowCount = *reinterpret_cast<int32_t*>(e3 + 0x18); break; }
+                                    { nowCount = *reinterpret_cast<int32_t*>(e3 + iiCountOff()); break; } // v6.11.0 — reflective
                                 }
                             }
                         }
@@ -1114,7 +1117,7 @@
                                 int32_t entryID = *reinterpret_cast<int32_t*>(entry2 + idOff2);
                                 if (entryID != originalID) continue;
 
-                                int32_t newCount = *reinterpret_cast<int32_t*>(entry2 + 0x18);
+                                int32_t newCount = *reinterpret_cast<int32_t*>(entry2 + iiCountOff()); // v6.11.0 — reflective
                                 if (newCount <= 0) break;
                                 m_lastPickedUpCount = newCount;
                                 m_lastItemInvComp = RC::Unreal::FWeakObjectPtr(invComp);

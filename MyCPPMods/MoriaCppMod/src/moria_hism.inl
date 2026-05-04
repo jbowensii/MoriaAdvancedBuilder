@@ -212,7 +212,7 @@
         {
             if (m_worldLayout) return;
             std::vector<UObject*> objs;
-            UObjectGlobals::FindAllOf(STR("WorldLayout"), objs);
+            findAllOfSafe(STR("WorldLayout"), objs); // v6.11.0 — SEH-wrapped
             UObject* prev = m_worldLayout;
             if (!objs.empty()) m_worldLayout = objs[0];
             if (m_worldLayout && m_worldLayout != prev)
@@ -547,8 +547,8 @@
             if (m_savedRemovals.empty() && m_typeRemovals.empty()) return;
 
             std::vector<UObject*> rawComps;
-            UObjectGlobals::FindAllOf(STR("GlobalHierarchicalInstancedStaticMeshComponent"), rawComps);
-            if (rawComps.empty()) UObjectGlobals::FindAllOf(STR("HierarchicalInstancedStaticMeshComponent"), rawComps);
+            findAllOfSafe(STR("GlobalHierarchicalInstancedStaticMeshComponent"), rawComps); // v6.11.0 — SEH-wrapped
+            if (rawComps.empty()) findAllOfSafe(STR("HierarchicalInstancedStaticMeshComponent"), rawComps); // v6.11.0 — SEH-wrapped
 
 
             m_replay.compQueue.reserve(rawComps.size());
@@ -719,7 +719,7 @@
             if (m_replay.active) return;
 
             std::vector<UObject*> comps;
-            UObjectGlobals::FindAllOf(STR("GlobalHierarchicalInstancedStaticMeshComponent"), comps);
+            findAllOfSafe(STR("GlobalHierarchicalInstancedStaticMeshComponent"), comps); // v6.11.0 — SEH-wrapped
 
             std::vector<RC::Unreal::FWeakObjectPtr> newComps;
             for (auto* comp : comps)
