@@ -46,9 +46,10 @@ namespace MoriaJoinAssets
     inline constexpr const wchar_t* TEX_BtnP1Up                = L"/Game/UI/Textures/_Shared/T_UI_Btn_P1_Up.T_UI_Btn_P1_Up";          // primary button (search, advanced)
     inline constexpr const wchar_t* TEX_BtnP2Up                = L"/Game/UI/Textures/_Shared/T_UI_Btn_P2_Up.T_UI_Btn_P2_Up";          // secondary (history row card)
     inline constexpr const wchar_t* TEX_BtnCTADisabled         = L"/Game/UI/Textures/_Shared/T_UI_Btn_CTA_Disabled.T_UI_Btn_CTA_Disabled"; // thin line / divider
-    // Note: search-icon (magnifying glass) and left-side gradient are still
-    // captured at runtime from the native widget — paths not yet documented.
-    // TODO: locate /Game/UI/textures/... entries for SearchIcon + JoinWorldBgGradient.
+    // Note: search-icon and left-side gradient were originally captured at
+    // runtime by the v6.6.0 spawn-duplicate path. v6.7.0 switched to
+    // in-place modification of the native widget, so those assets are no
+    // longer needed. (Stale TODO removed in v6.14.0.)
 
     // ── Rich text style data ────────────────────────────────────────────
     inline constexpr const wchar_t* DT_RichTextStyles          = L"/Game/UI/Font/DT_RichTextStyles.DT_RichTextStyles";

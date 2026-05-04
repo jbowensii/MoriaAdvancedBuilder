@@ -12,7 +12,7 @@
 // The capture state below (m_aoFontDescription / m_aoFontFieldLabel /
 // m_aoFieldStyle / m_aoDividerTex etc.) is LEGACY from the v6.6.0
 // spawn-duplicate attempt. It's still populated on intercept but never read.
-// Will be removed in v6.7.1 cleanup.
+// Deletion deferred to v6.15.0+ pass; tracked in pending-todo.md.
 //
 // Reference doc: docs/blueprint-reference/AdvancedJoinOptions.md
 // Runtime harvest: docs/widget-harvest/WBP_UI_AdvancedJoinOptions_C.json

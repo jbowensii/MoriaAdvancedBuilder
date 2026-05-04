@@ -1,4 +1,4 @@
-// MoriaCppMod v6.13.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.14.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -384,7 +384,7 @@ namespace MoriaMods
         UObject*  m_nbbCachedTexChromeMiddle{nullptr};
         UObject*  m_nbbCachedTexChromeBottom{nullptr};
         bool      m_nbbHudTexturesDumped{false};
-        // v6.13.0 — Phase 2 highlight state. Per-slot deadline
+        // v6.14.0 — Phase 2 highlight state. Per-slot deadline
         // (GetTickCount64 ms). When current tick > deadline, the slot's
         // focus overlay is hidden again. Zero means "not flashing".
         uint64_t  m_nbbHighlightUntil[8]{};
@@ -594,14 +594,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.13.0");
+            ModVersion = STR("6.14.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.13.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.14.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -642,7 +642,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.13.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.14.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -1611,7 +1611,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.13.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.14.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -1669,7 +1669,7 @@ namespace MoriaMods
             for (auto* wname : wrapperClasses)
             {
                 std::vector<UObject*> instances;
-                findAllOfSafe(wname, instances); // v6.13.0 — SEH-wrapped
+                findAllOfSafe(wname, instances); // v6.14.0 — SEH-wrapped
                 if (instances.empty()) {
                     VLOG(STR("[FGKDiag] {}: no instances found\n"), wname);
                     continue;
@@ -1797,153 +1797,19 @@ namespace MoriaMods
             return false;
         }
 
-        void tickFGKInjectionTest()
-        {
-            // Permanently disabled. Test results from prior runs:
-            //   - AddRowInternal succeeds (row added to underlying DataTable)
-            //   - HandleDataTableChanged is a no-op for FGK wrappers in
-            //     shipping (cache stays at 1132)
-            //   - Vtable probing crashed (one slot was FinishDestroy)
-            //   - AOB pattern is not unique enough — different runs match
-            //     different functions, causing access violations on call
-            // Conclusion documented in datatable-fgk-cache-revisit.md.
-            return;
-            if (m_fgkInjectionTestDone) return;
-            // Need wrapper instance first.
-            std::vector<UObject*> wrappers;
-            findAllOfSafe(STR("MorConstructionsTable"), wrappers); // v6.13.0 — SEH-wrapped
-            if (wrappers.empty()) return;
-            UObject* wrapper = wrappers[0];
-            if (!wrapper || !isObjectAlive(wrapper)) return;
-
-            // Bind m_dtConstructions to wrapper.TableAsset on demand.
-            // Project memory notes that DataTableUtil bind is lazy; we
-            // wire it here so addRow() works for our test.
-            if (!m_dtConstructions.isBound())
-            {
-                auto* taPtr = wrapper->GetValuePtrByPropertyNameInChain<UObject*>(STR("TableAsset"));
-                UObject* table = taPtr ? *taPtr : nullptr;
-                if (!table || !isObjectAlive(table)) return;
-                if (!m_dtConstructions.bindFromObject(table, STR("DT_Constructions"))) return;
-            }
-
-            // Resolve the engine function via AOB scan.
-            if (!resolveHandleDataTableChanged())
-            {
-                m_fgkInjectionTestDone = true; // don't retry
-                return;
-            }
-
-            m_fgkInjectionTestDone = true;
-            VLOG(STR("[FGKInject] === Begin runtime FGK injection test ===\n"));
-
-            auto* base = reinterpret_cast<uint8_t*>(wrapper);
-            // ActorRowNameLookup TSet header: Data*(8) Num(4) Max(4) ... at wrapper+0x110
-            int32_t numBefore = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
-            VLOG(STR("[FGKInject] ActorRowNameLookup BEFORE: Num={}\n"), numBefore);
-
-            // Get TableAsset (the underlying UDataTable wrapped by MorConstructionsTable).
-            auto* taPtr = wrapper->GetValuePtrByPropertyNameInChain<UObject*>(STR("TableAsset"));
-            UObject* table = taPtr ? *taPtr : nullptr;
-            if (!table || !isObjectAlive(table))
-            {
-                VLOG(STR("[FGKInject] TableAsset missing on wrapper, abort\n"));
-                return;
-            }
-
-            // Add a test row via the existing AddRowInternal vtable call.
-            const wchar_t* testRowName = L"TEST_FGKInjectionRow";
-            uint8_t* newRow = m_dtConstructions.addRow(testRowName);
-            VLOG(STR("[FGKInject] addRow('{}') returned {}\n"),
-                 testRowName, newRow ? STR("non-null") : STR("NULL"));
-
-            // Read count after addRow but BEFORE HandleDataTableChanged.
-            int32_t numAfterAdd = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
-            VLOG(STR("[FGKInject] ActorRowNameLookup AFTER addRow (no notify yet): Num={}\n"), numAfterAdd);
-
-            // Now trigger the engine notification path.
-            try
-            {
-                RC::Unreal::FName fname(testRowName, RC::Unreal::FNAME_Add);
-                VLOG(STR("[FGKInject] Calling HandleDataTableChanged(table={:p}, row='{}')\n"),
-                     (void*)table, testRowName);
-                m_pfHandleDataTableChanged(table, fname);
-                VLOG(STR("[FGKInject] HandleDataTableChanged returned (no crash)\n"));
-            }
-            catch (...)
-            {
-                VLOG(STR("[FGKInject] HandleDataTableChanged threw\n"));
-                return;
-            }
-
-            // Read count after HandleDataTableChanged.
-            int32_t numAfter = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
-            VLOG(STR("[FGKInject] ActorRowNameLookup AFTER HandleDataTableChanged: Num={}\n"), numAfter);
-
-            if (numAfter > numBefore)
-            {
-                VLOG(STR("[FGKInject] *** SUCCESS *** wrapper cache grew from {} to {} — runtime FGK injection works!\n"),
-                     numBefore, numAfter);
-                VLOG(STR("[FGKInject] === End runtime FGK injection test ===\n"));
-                return;
-            }
-
-            // ── Vtable probing was too dangerous (one slot was FinishDestroy
-            //    on a previous run, crashing the engine). Skipped. ──
-            VLOG(STR("[FGKInject] Path #11 (HandleDataTableChanged) was a no-op. Trying TableAsset pointer swap...\n"));
-
-            // ── Path #15 — Proxy TableAsset pointer swap ──
-            VLOG(STR("[FGKInject] Trying Path #15: swap TableAsset pointer to itself (canary test)\n"));
-            // Just write the same pointer back to wrapper.TableAsset.
-            // UFGKDataTableBase.TableAsset is at offset 0x028.
-            UObject** tableAssetSlot = reinterpret_cast<UObject**>(base + 0x028);
-            UObject* originalTable = *tableAssetSlot;
-            // No-op write to the slot. If wrapper subscribes to property
-            // change notifications (rare without UProperty notify), it'd
-            // see the same value; otherwise a no-op.
-            *tableAssetSlot = originalTable;
-            int32_t numAfterCanary = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
-            VLOG(STR("[FGKInject]   canary self-write done; ActorRowNameLookup Num={}\n"), numAfterCanary);
-
-            // Real swap: temporarily nullify TableAsset, read Num,
-            // then restore. If wrapper RE-CACHES on access of its lookup
-            // (rather than at TableAsset assign time), we'd see Num go to
-            // 0 then come back. Risky if game code reads TableAsset in
-            // parallel — gate behind a try/catch.
-            VLOG(STR("[FGKInject]   trying NULL TableAsset swap (briefly)...\n"));
-            try
-            {
-                *tableAssetSlot = nullptr;
-                int32_t numWithNull = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
-                VLOG(STR("[FGKInject]   ActorRowNameLookup with null TableAsset: Num={}\n"), numWithNull);
-                *tableAssetSlot = originalTable;  // restore IMMEDIATELY
-                int32_t numRestored = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
-                VLOG(STR("[FGKInject]   restored TableAsset; ActorRowNameLookup Num={}\n"), numRestored);
-                if (numWithNull != numAfterCanary)
-                {
-                    VLOG(STR("[FGKInject] *** wrapper RE-CACHES on TableAsset reads! ***\n"));
-                    VLOG(STR("[FGKInject] *** This means a proxy TableAsset with our row could work ***\n"));
-                }
-                else
-                {
-                    VLOG(STR("[FGKInject]   wrapper cache is statically built; pointer swap doesn't trigger rebuild\n"));
-                }
-            }
-            catch (...)
-            {
-                *tableAssetSlot = originalTable;  // ensure restore on exception
-                VLOG(STR("[FGKInject]   NULL swap raised exception; restored TableAsset\n"));
-            }
-
-            VLOG(STR("[FGKInject] === End runtime FGK injection test ===\n"));
-        }
+        // v6.14.0 — tickFGKInjectionTest body deleted (~140 lines).
+        // The full runtime FGK injection test was permanently disabled
+        // per datatable-fgk-cache-revisit.md (AddRow succeeds but FGK
+        // cache stays stale; vtable probe crashed; AOB ambiguous).
+        // Stub kept because gameThreadTick calls it.
+        void tickFGKInjectionTest() { /* permanently disabled */ }
 
         bool m_actorLookupDiagDone{false};
         void tickActorLookupDiag()
         {
             if (m_actorLookupDiagDone) return;
             std::vector<UObject*> wrappers;
-            findAllOfSafe(STR("MorConstructionsTable"), wrappers); // v6.13.0 — SEH-wrapped
+            findAllOfSafe(STR("MorConstructionsTable"), wrappers); // v6.14.0 — SEH-wrapped
             if (wrappers.empty()) return;
             m_actorLookupDiagDone = true;
 
@@ -2003,7 +1869,7 @@ namespace MoriaMods
         {
             if (m_dmDiagDone) return;
             std::vector<UObject*> dms;
-            findAllOfSafe(STR("MorDiscoveryManager"), dms); // v6.13.0 — SEH-wrapped
+            findAllOfSafe(STR("MorDiscoveryManager"), dms); // v6.14.0 — SEH-wrapped
             if (dms.empty()) return; // not spawned yet
             m_dmDiagDone = true;
             VLOG(STR("[FGKDiag] === DiscoveryManager.Recipes (post-load) ===\n"));
@@ -2131,7 +1997,7 @@ namespace MoriaMods
             {
                 refreshKeyLabels();
                 if (m_ftVisible) updateFontTestKeyLabels();
-                refreshNewBuildingBarKeyLabels(); // v6.13.0 — Phase 2 rebind hook
+                refreshNewBuildingBarKeyLabels(); // v6.14.0 — Phase 2 rebind hook
             }
 
 
@@ -3739,7 +3605,7 @@ namespace MoriaMods
             tickSettingsUI();     // v6.9.0 — Settings screen take-over (mod keybinds in keymap tab)
             tickReapplyModifierPrefixes(); // v6.9.0 — keep "L-SHIFT + F1" text on SET rows alive
             tickCaptureSpecialKeys();      // v6.9.0 — capture DEL/INS/HOME/etc the BP rejects
-            tickNewBuildingBarHighlight(); // v6.13.0 — clear expired Phase 2 slot flashes
+            tickNewBuildingBarHighlight(); // v6.14.0 — clear expired Phase 2 slot flashes
             tickReapplyCheatsContext();    // v6.9.0 — keep Cheats-tab visibility swap stable
             tickFGKDiscoveryDiag();        // v6.9.0 — one-shot probe of AMorDiscoveryManager.Recipes
             tickActorLookupDiag();         // v6.9.0 — Path #5 ActorRowNameLookup TMap byte-layout dump

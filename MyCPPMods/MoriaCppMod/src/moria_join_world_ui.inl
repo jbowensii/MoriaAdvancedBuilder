@@ -34,8 +34,9 @@
 //
 // Most of the helpers below (jw_setCanvasSlot, jw_addToCanvas, jw_setSizeBoxOverride,
 // font-capture buffers, m_jwTexBtn*) are LEGACY from the v6.6.0 spawn-duplicate
-// path and are no longer referenced. They will be swept in a v6.7.1 cleanup
-// commit so the v6.7.0 feature diff stays reviewable.
+// path and are no longer referenced. v6.14.0 audit confirmed they're write-only
+// (set during init, never read). Deletion deferred to v6.15.0+ to keep the
+// audit-fix diff reviewable; tracked in pending-todo.md.
 //
 // See `cpp-mod/docs/joinworld-ui-takeover.md` for the full methodology.
 

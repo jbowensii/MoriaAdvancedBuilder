@@ -3432,134 +3432,11 @@
                 }
             }
         }
-#if 0  // legacy v0.15 highlight code path — replaced by SetActiveWidget
-
-            // Patch currentTabName -> "Cheats".
-            auto* ctnPtr = context->GetValuePtrByPropertyNameInChain<FName>(STR("currentTabName"));
-            if (ctnPtr)
-            {
-                RC::Unreal::FName cheats(STR("Cheats"), RC::Unreal::FNAME_Add);
-                std::memcpy(ctnPtr, &cheats, sizeof(RC::Unreal::FName));
-            }
-
-            // Force navbar to update selection visuals. Walk the navbar
-            // child buttons (UI_WBP_NavBar_Build_C.UI_WBP_NavBar_Build_Tab_C
-            // entries) and update their selected state.
-            auto* navPtr = context->GetValuePtrByPropertyNameInChain<UObject*>(STR("UI_WBP_NavBar_Build"));
-            UObject* navbar = navPtr ? *navPtr : nullptr;
-            if (!navbar || !isObjectAlive(navbar)) return;
-
-            // Try to call SetTabFocus or similar update method.
-            // Common candidates: UpdateSelection, SelectTab, SetActiveTab.
-            for (const wchar_t* fnName : {
-                STR("UpdateNavBar"), STR("UpdateSelection"), STR("RefreshSelection"),
-                STR("SetActiveTab"), STR("SelectTab"), STR("SetSelectedTab"),
-            })
-            {
-                auto* updateFn = navbar->GetFunctionByNameInChain(fnName);
-                if (!updateFn) continue;
-                int sz = updateFn->GetParmsSize();
-                std::vector<uint8_t> b(sz, 0);
-                // If it takes an FName "Selection" or "TabName" param, fill it.
-                if (auto* p = findParam(updateFn, STR("Selection")))
-                {
-                    RC::Unreal::FName cheats(STR("Cheats"), RC::Unreal::FNAME_Add);
-                    std::memcpy(b.data() + p->GetOffset_Internal(), &cheats, sizeof(RC::Unreal::FName));
-                }
-                else if (auto* p = findParam(updateFn, STR("TabName")))
-                {
-                    RC::Unreal::FName cheats(STR("Cheats"), RC::Unreal::FNAME_Add);
-                    std::memcpy(b.data() + p->GetOffset_Internal(), &cheats, sizeof(RC::Unreal::FName));
-                }
-                safeProcessEvent(navbar, updateFn, b.data());
-                VLOG(STR("[SettingsUI] CP5 — called navbar.{} to refresh\n"), fnName);
-                break;
-            }
-
-            // As a fallback, walk all child buttons and force their
-            // "currentTabName" sync. Iterate the navbar's children.
-            walkAndUpdateNavButtonHighlight(navbar);
-        }
-#endif  // legacy v0.15 highlight code path
-
-        // Force navbar selection state to "Cheats". The navbar is
-        // UI_WBP_NavBar_Build_C which exposes:
-        //   - SelectThisTab(FName KeyName)  — proper API
-        //   - navBarButtons : TArray<UI_WBP_NavBar_Build_Tab_C*>
-        //   - SelectedKeyName : FName
-        //   - currentSelection : *Tab
-        // Each Tab has IsSelected + OnSelectedEvent/OnDeselectedEvent.
-        // We do all three: call SelectThisTab, write SelectedKeyName,
-        // and update each tab button manually as belt-and-suspenders.
-        void walkAndUpdateNavButtonHighlight(UObject* navbar)
-        {
-            if (!navbar || !isObjectAlive(navbar)) return;
-
-            // 1. Call SelectThisTab if available.
-            if (auto* fn = navbar->GetFunctionByNameInChain(STR("SelectThisTab")))
-            {
-                int sz = fn->GetParmsSize();
-                std::vector<uint8_t> b(sz, 0);
-                if (auto* p = findParam(fn, STR("KeyName")))
-                {
-                    RC::Unreal::FName cheats(STR("Cheats"), RC::Unreal::FNAME_Add);
-                    std::memcpy(b.data() + p->GetOffset_Internal(), &cheats, sizeof(RC::Unreal::FName));
-                    safeProcessEvent(navbar, fn, b.data());
-                    VLOG(STR("[SettingsUI] CP5 — called navbar.SelectThisTab('Cheats')\n"));
-                }
-            }
-
-            // 2. Write SelectedKeyName directly.
-            if (auto* skPtr = navbar->GetValuePtrByPropertyNameInChain<FName>(STR("SelectedKeyName")))
-            {
-                RC::Unreal::FName cheats(STR("Cheats"), RC::Unreal::FNAME_Add);
-                std::memcpy(skPtr, &cheats, sizeof(RC::Unreal::FName));
-            }
-
-            // 3. Iterate navBarButtons array and update each button.
-            auto* btns = navbar->GetValuePtrByPropertyNameInChain<TArray<UObject*>>(STR("navBarButtons"));
-            if (!btns) {
-                VLOG(STR("[SettingsUI] CP5 — navBarButtons array not found\n"));
-                return;
-            }
-            VLOG(STR("[SettingsUI] CP5 — iterating {} navbar buttons\n"), btns->Num());
-            UObject* cheatsButton = nullptr;
-            for (int i = 0; i < btns->Num(); ++i)
-            {
-                UObject* tab = (*btns)[i];
-                if (!tab || !isObjectAlive(tab)) continue;
-                auto* knPtr = tab->GetValuePtrByPropertyNameInChain<FName>(STR("KeyName"));
-                std::wstring kn;
-                if (knPtr) { try { kn = knPtr->ToString(); } catch (...) {} }
-                bool shouldBeSelected = (kn == L"Cheats");
-                if (shouldBeSelected) cheatsButton = tab;
-
-                auto* selPtr = tab->GetValuePtrByPropertyNameInChain<bool>(STR("IsSelected"));
-                bool wasSelected = selPtr ? *selPtr : false;
-                if (selPtr) *selPtr = shouldBeSelected;
-
-                if (shouldBeSelected != wasSelected)
-                {
-                    const wchar_t* evt = shouldBeSelected
-                        ? STR("OnSelectedEvent") : STR("OnDeselectedEvent");
-                    if (auto* uf = tab->GetFunctionByNameInChain(evt))
-                    {
-                        int sz = uf->GetParmsSize();
-                        std::vector<uint8_t> b(sz, 0);
-                        safeProcessEvent(tab, uf, b.data());
-                    }
-                    VLOG(STR("[SettingsUI] CP5 — navbar tab[{}] '{}' -> {}\n"),
-                         i, kn.c_str(), shouldBeSelected ? L"SELECTED" : L"deselected");
-                }
-            }
-
-            // 4. Write currentSelection pointer to the cheats button.
-            if (cheatsButton)
-            {
-                auto* csPtr = navbar->GetValuePtrByPropertyNameInChain<UObject*>(STR("currentSelection"));
-                if (csPtr) *csPtr = cheatsButton;
-            }
-        }
+        // v6.14.0 — DELETED: legacy v0.15 highlight #if 0 block + orphan
+        // helper `walkAndUpdateNavButtonHighlight`. Both were part of the
+        // Cheats-tab nav highlight path that was replaced by
+        // SetActiveWidget in v0.15 and superseded by Option C
+        // (Cheats merged into Gameplay tab) in v0.48. ~135 lines removed.
 
         // ─────────────────────────────────────────────────────────
         // v0.11 — single-instance dual-content state.
@@ -4441,119 +4318,20 @@
         // Idempotent: tracked by m_settingsScreenAppendedFor weak ref.
         // Append to a single named TArray<FFGKUITab>. Returns true on
         // success (tab appended or already present in this run).
-        bool appendCheatsTabToNamedArray(UObject* settingsScreen, const wchar_t* arrayName)
-        {
-            auto* tabArr = settingsScreen->GetValuePtrByPropertyNameInChain<TArray<uint8_t>>(arrayName);
-            if (!tabArr) {
-                VLOG(STR("[SettingsUI] CP5 — '{}' property not found\n"), arrayName);
-                return false;
-            }
-            int n = tabArr->Num();
-            int maxN = tabArr->Max();
-            uint8_t* base = tabArr->GetData();
-            if (!base || n <= 0) {
-                // Empty array (e.g. PS5 variants on PC) — skip silently.
-                return false;
-            }
-            constexpr int kStride = 0xE8;
-
-            // Skip if already has a Cheats entry (idempotent).
-            int gameplayIdx = -1;
-            int firstIdx = -1;
-            for (int i = 0; i < n && i < 16; ++i)
-            {
-                uint8_t* entry = base + (size_t)i * kStride;
-                FName* fn = reinterpret_cast<FName*>(entry + 0x00);
-                std::wstring name;
-                try { name = fn->ToString(); } catch (...) { continue; }
-                if (name == L"Cheats") {
-                    return true; // already appended
-                }
-                if (firstIdx < 0) firstIdx = i;
-                if (name == L"Gameplay") gameplayIdx = i;
-            }
-            // Clone from Gameplay (always present in both main and in-game
-            // tab arrays). Falls back to first entry if not found.
-            int templateIdx = gameplayIdx >= 0 ? gameplayIdx : firstIdx;
-            if (templateIdx < 0) {
-                VLOG(STR("[SettingsUI] CP5 — '{}' has no usable template entry\n"), arrayName);
-                return false;
-            }
-            const wchar_t* templateName = (templateIdx == gameplayIdx) ? L"Gameplay" : L"first";
-
-            // Capacity check: if Num == Max, reallocate the buffer using
-            // UE's allocator (FMemory::Malloc/Free — same allocator the
-            // engine used to allocate the original buffer).
-            uint8_t* writeBase = base;
-            int writeMax = maxN;
-            if (n >= maxN)
-            {
-                int newCapacity = maxN < 8 ? 8 : maxN * 2;
-                size_t newBytes = (size_t)newCapacity * kStride;
-                uint8_t* newBuf = static_cast<uint8_t*>(FMemory::Malloc(newBytes, 8));
-                if (!newBuf)
-                {
-                    VLOG(STR("[SettingsUI] CP5 — FMemory::Malloc({} bytes) failed\n"), newBytes);
-                    return false;
-                }
-                std::memset(newBuf, 0, newBytes);
-                // Copy existing entries.
-                std::memcpy(newBuf, base, (size_t)n * kStride);
-                // Swap the TArray's internal pointer + Max via the bytes
-                // we know its layout (Data*, Num, Max — 16 bytes header).
-                // tabArr->GetData() returns the live Data field, so we
-                // write directly to the underlying memory.
-                struct TAH { uint8_t* Data; int32_t Num; int32_t Max; };
-                TAH* hdr = reinterpret_cast<TAH*>(tabArr);
-                uint8_t* oldBuf = hdr->Data;
-                hdr->Data = newBuf;
-                hdr->Max = newCapacity;
-                // (Num stays the same for now; we'll bump after writing entry.)
-                // Free old buffer — engine allocated it via the same FMemory.
-                if (oldBuf) FMemory::Free(oldBuf);
-                writeBase = newBuf;
-                writeMax = newCapacity;
-                VLOG(STR("[SettingsUI] CP5 — reallocated tabArray buffer: {}->{} capacity\n"),
-                     maxN, newCapacity);
-            }
-
-            // Clone legal entry into slot n (in the new or existing buffer).
-            uint8_t* dst = writeBase + (size_t)n * kStride;
-            uint8_t* src = writeBase + (size_t)templateIdx * kStride; // template index in same buffer post-realloc
-            std::memcpy(dst, src, kStride);
-
-            // Overwrite Name + DisplayName.
-            RC::Unreal::FName cheatsName(STR("Cheats"), RC::Unreal::FNAME_Add);
-            std::memcpy(dst + 0x00, &cheatsName, sizeof(RC::Unreal::FName));
-            FText cheatsDisplay(L"Cheats");
-            std::memcpy(dst + 0x08, &cheatsDisplay, sizeof(FText));
-
-            // Bump Num to include our new entry.
-            tabArr->SetNum(n + 1, false);
-
-            VLOG(STR("[SettingsUI] CP5 — appended Cheats to '{}' at index {} (cloned from {}[{}])\n"),
-                 arrayName, n, templateName, templateIdx);
-            return true;
-        }
+        // v6.14.0 — DELETED: appendCheatsTabToNamedArray (~95 lines).
+        // Was the worker function for appendCheatsTabToArray's tabArray
+        // injection. Both removed when Cheats merged into Gameplay tab
+        // (v0.48 / Option C). The function has had no live callers since.
 
         void appendCheatsTabToArray(UObject* settingsScreen)
         {
-            // v0.48 — Option C: Cheats tab removed entirely. All cheat
-            // settings merged into the Gameplay tab. No tabArray
-            // modification needed.
+            // v6.14.0 — Stub. Cheats tab removed in v0.48 (Option C —
+            // merged into Gameplay tab). The two callers in dllmain.cpp
+            // are now no-ops; left in place because removing them would
+            // require touching the global PE pre-hook switch which has
+            // its own audit risk. See pending-todo.md v6.15.0+ for
+            // full callsite removal.
             (void)settingsScreen;
-            return;
-
-            if (!settingsScreen) return;
-            if (m_settingsScreenAppendedFor.Get() == settingsScreen) return;
-            int successCount = 0;
-            if (appendCheatsTabToNamedArray(settingsScreen, STR("inGameTabArray")))   successCount++;
-            if (appendCheatsTabToNamedArray(settingsScreen, STR("inGameTabArray_PS5")))successCount++;
-            if (successCount > 0)
-            {
-                m_settingsScreenAppendedFor = FWeakObjectPtr(settingsScreen);
-                VLOG(STR("[SettingsUI] CP5 — Cheats tab appended to {} of 4 tab arrays\n"), successCount);
-            }
         }
 
         // Inject Cheats content into the legal tab's widget tree.

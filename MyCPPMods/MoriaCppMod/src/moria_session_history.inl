@@ -56,7 +56,7 @@
             std::string name;        // user-visible label e.g. "Mereaks 1st World"
             std::string domain;      // hostname or IP
             std::string port;        // string so leading zeroes / IPv6 don't mangle
-            std::string password;    // plaintext for now (TODO: obfuscate)
+            std::string password;    // obfuscated on disk via "enc:" prefix; see read/write paths
             std::string lastJoined;  // ISO-8601 timestamp at last successful join
         };
 
