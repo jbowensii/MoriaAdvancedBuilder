@@ -1914,15 +1914,10 @@
                 VLOG(STR("[MoriaCppMod] Target info copied to clipboard\n"));
             }
 
-            // v6.20.4 — Phase 4 follow-up: also fire a brief game-native
-            // notification so the user gets clear visual confirmation
-            // without having to look at the home-rolled panel. Full info
-            // remains on the clipboard above; the notification is a
-            // 1-2 line summary that auto-dismisses.
-            std::wstring notifTitle = L"Inspect: " + (display.empty() ? name : display);
-            std::wstring notifBody  = L"Class: " + cls;
-            if (!recipeDisplay.empty()) notifBody += L"\nRecipe: " + recipeDisplay;
-            showGameNotification(notifTitle, notifBody, 6.0f);
+            // v6.20.6 — Reverted inspect-notification add. The home-rolled
+            // panel already shows the data the user wants; doubling up
+            // with a transient notification was redundant and the
+            // fallback (red box) appeared on top of the panel.
 
             m_tiShowTick = GetTickCount64();
         }
@@ -2190,7 +2185,10 @@
                 auto* pZOrder = findParam(addToViewportFn, STR("ZOrder"));
                 int vsz = addToViewportFn->GetParmsSize();
                 std::vector<uint8_t> vp(vsz, 0);
-                if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 110;
+                // v6.20.6 — raised from 110 to 800 so the error-box (used
+                // as the fallback when UI_WBP_NotificationFeed isn't found)
+                // appears ABOVE the pause menu blur (~ZOrder 100-200).
+                if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 800;
                 safeProcessEvent(userWidget, addToViewportFn, vp.data());
             }
 
@@ -5394,11 +5392,43 @@
         bool m_inNotifFallback{false};
         UObject* resolveNotificationFeed()
         {
+            // v6.20.6 — diagnostic: log how many feeds we find of each
+            // candidate name. The first attempt searches the BP class
+            // name. If FindAllOf returns 0, the feed instance simply
+            // isn't alive (rare — only when the player is at the main
+            // menu / pre-character) OR the class name is wrong.
             std::vector<UObject*> feeds;
             try { UObjectGlobals::FindAllOf(STR("UI_WBP_NotificationFeed_C"), feeds); } catch (...) {}
+            int aliveCount = 0;
+            for (UObject* f : feeds) if (f && isObjectAlive(f)) ++aliveCount;
+            VLOG(STR("[Notif] FindAllOf<UI_WBP_NotificationFeed_C>: total={} alive={}\n"),
+                 (int)feeds.size(), aliveCount);
+
             for (UObject* f : feeds) {
                 if (f && isObjectAlive(f)) return f;
             }
+
+            // Fallback class names — try without the _C suffix or with
+            // a different name in case the BP class was renamed.
+            static const wchar_t* alts[] = {
+                STR("UI_WBP_NotificationFeed"),
+                STR("UI_WBP_NotificationOverlay_C"),
+                STR("UI_WBP_NotificationOverlay"),
+            };
+            for (const wchar_t* alt : alts)
+            {
+                feeds.clear();
+                try { UObjectGlobals::FindAllOf(alt, feeds); } catch (...) {}
+                if (!feeds.empty())
+                {
+                    VLOG(STR("[Notif] Found {} instance(s) under name '{}'\n"),
+                         (int)feeds.size(), alt);
+                    for (UObject* f : feeds) {
+                        if (f && isObjectAlive(f)) return f;
+                    }
+                }
+            }
+            VLOG(STR("[Notif] No NotificationFeed found under any candidate name; falling back to error-box\n"));
             return nullptr;
         }
         void showGameNotification(const std::wstring& title,
