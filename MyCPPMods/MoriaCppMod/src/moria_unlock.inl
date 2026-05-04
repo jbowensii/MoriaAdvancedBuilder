@@ -308,6 +308,13 @@
                 DataTableUtil util;
                 if (!util.bind(tName.c_str())) continue;
 
+                // v6.13.0 — Reflective field offsets via DataTableUtil cache.
+                // Falls back to historic literals if reflection misses.
+                int drmOff   = util.getFieldOffset(L"DefaultRequiredMaterials");
+                if (drmOff < 0) drmOff = 0x40;
+                int refundsOff = util.getFieldOffset(L"bAllowRefunds");
+                if (refundsOff < 0) refundsOff = 0xF2;
+
                 auto rowNames = util.getRowNames();
                 int rows = 0;
                 for (const auto& rn : rowNames)
@@ -315,8 +322,7 @@
                     uint8_t* rowData = util.findRowData(rn.c_str());
                     if (!rowData) continue;
 
-                    // DefaultRequiredMaterials is at offset 0x40 in FMorRecipeDefinition (base)
-                    uint8_t* arrBase = rowData + 0x40;
+                    uint8_t* arrBase = rowData + drmOff;
                     if (!isReadableMemory(arrBase, 16)) continue;
 
                     uint8_t* arrData = *reinterpret_cast<uint8_t**>(arrBase);
@@ -344,10 +350,10 @@
                         }
                     }
 
-                    // bAllowRefunds at offset 0xF2 (bool, 1 byte) — construction recipes only
+                    // bAllowRefunds — reflective offset (was 0xF2 literal).
                     if (isConstructionRecipe)
                     {
-                        uint8_t* flagAddr = rowData + 0xF2;
+                        uint8_t* flagAddr = rowData + refundsOff;
                         if (isReadableMemory(flagAddr, 1))
                         {
                             wchar_t kbuf[96];
@@ -883,14 +889,19 @@
                  blockedTotal, (int)blockedItems.size(), (int)blockedConstructions.size(), (int)blockedRunes.size());
         }
 
-        // Read the ResultItemHandle / ResultConstructionHandle FName at offset 0xD8
-        // inside a FMor{Item,Construction}RecipeDefinition row. The handle itself is at
-        // rowData + 0xD8, and its FName sits at +0x08 within that handle (0xD8 + 0x08 = 0xE0).
-        FName unlock_readRecipeResultName(uint8_t* rowData)
+        // v6.13.0 — Read the ResultItemHandle / ResultConstructionHandle
+        // FName from a FMor{Item,Construction}RecipeDefinition row.
+        // `handleOff` is the row-struct offset of the handle property
+        // (resolved by caller via DataTableUtil::getFieldOffset). The
+        // FName sits at +0x08 within FDataTableRowHandle (engine-stable
+        // per MEMORY.md). Caller passes 0xD8 as fallback if reflection
+        // misses.
+        FName unlock_readRecipeResultName(uint8_t* rowData, int handleOff = 0xD8)
         {
-            if (!isReadableMemory(rowData + 0xD8, 0x10)) return FName();
+            if (handleOff < 0) handleOff = 0xD8;
+            if (!isReadableMemory(rowData + handleOff, 0x10)) return FName();
             FName out;
-            std::memcpy(&out, rowData + 0xD8 + 0x08, sizeof(FName));
+            std::memcpy(&out, rowData + handleOff + 0x08, sizeof(FName));
             return out;
         }
 
@@ -909,6 +920,14 @@
 
             auto rowNames = dt.getRowNames();
             int before = (int)outQueue.size();
+            // v6.13.0 — reflective EnabledState offset (was 0x10 literal).
+            int enabledOff = dt.getFieldOffset(L"EnabledState");
+            if (enabledOff < 0) enabledOff = 0x10;
+            // ResultItemHandle / ResultConstructionHandle live on different
+            // row struct names depending on the table. Try both.
+            int handleOff = dt.getFieldOffset(L"ResultItemHandle");
+            if (handleOff < 0) handleOff = dt.getFieldOffset(L"ResultConstructionHandle");
+            if (handleOff < 0) handleOff = 0xD8;
             for (const auto& rowName : rowNames)
             {
                 // Filter 1: hidden-prefix names
@@ -918,13 +937,13 @@
                 uint8_t* rowData = dt.findRowData(rowName.c_str());
                 if (!rowData) continue;
                 if (!isReadableMemory(rowData, 0x20)) continue;
-                uint8_t enabledState = *reinterpret_cast<uint8_t*>(rowData + 0x10);
+                uint8_t enabledState = *reinterpret_cast<uint8_t*>(rowData + enabledOff);
                 if (enabledState != 0) continue;  // Disabled == 1
 
                 // Filter 3: DLC-gated (check the result handle's RowName against block set)
                 if (checkResultHandle)
                 {
-                    FName resultName = unlock_readRecipeResultName(rowData);
+                    FName resultName = unlock_readRecipeResultName(rowData, handleOff);
                     try {
                         std::wstring resultStr = resultName.ToString();
                         if (!resultStr.empty() && blockedByDLC.count(resultStr) > 0) continue;

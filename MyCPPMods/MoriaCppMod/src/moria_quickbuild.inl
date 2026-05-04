@@ -1046,6 +1046,7 @@
                     saveQuickBuildSlots();
                     updateOverlaySlots();
                     updateBuildersBar();
+                    populateNewBuildingBarIcons(); // v6.13.0 — Phase 2: clear top-bar icon
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] CLEARED F{}\n"), slot + 1);
                     std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" cleared";
                     showErrorBox(msg);
@@ -1130,6 +1131,7 @@
             saveQuickBuildSlots();
             updateOverlaySlots();
             updateBuildersBar();
+            populateNewBuildingBarIcons(); // v6.13.0 — Phase 2: refresh top-bar icon for the just-set slot
 
             QBLOG(STR("[MoriaCppMod] [QB] ASSIGN F{} = '{}' tex='{}'\n"),
                   slot + 1, m_lastCapturedName, m_recipeSlots[slot].textureName);
@@ -1163,6 +1165,10 @@
         void quickBuildSlot(int slot)
         {
             if (slot < 0 || slot >= OVERLAY_BUILD_SLOTS) return;
+            // v6.13.0 — Phase 2: flash the New Building Bar slot to give
+            // visual feedback that the F-key was received. Auto-clears
+            // after ~150 ms via tickNewBuildingBarHighlight.
+            if (slot < 8) flashNewBuildingBarSlot(slot);
             logGameState(STR("QB-pre"));
 
             if (!m_recipeSlots[slot].used)

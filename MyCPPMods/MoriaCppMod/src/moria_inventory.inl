@@ -325,9 +325,28 @@
                                 FProperty* sp = cdo->GetPropertyByNameInChain(STR("Storage"));
                                 if (sp)
                                 {
+                                    // v6.13.0 — Reflectively resolve MaxSize offset
+                                    // within FStorage struct. Cached per-process
+                                    // since the struct layout is class-stable for
+                                    // the duration of the loaded module.
+                                    static int s_off_storageMaxSize = -2;
+                                    if (s_off_storageMaxSize == -2) {
+                                        s_off_storageMaxSize = -1;
+                                        if (auto* spStruct = static_cast<FStructProperty*>(sp)) {
+                                            if (UScriptStruct* sStruct = spStruct->GetStruct()) {
+                                                for (auto* p : sStruct->ForEachProperty()) {
+                                                    if (p->GetName() == std::wstring_view(L"MaxSize")) {
+                                                        s_off_storageMaxSize = p->GetOffset_Internal();
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    int maxOff = (s_off_storageMaxSize >= 0) ? s_off_storageMaxSize : 0x38;
                                     uint8_t* sPtr = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(cdo) + sp->GetOffset_Internal());
-                                    if (sPtr && isReadableMemory(sPtr, 0x44))
-                                        cMax = *reinterpret_cast<int32_t*>(sPtr + 0x38);
+                                    if (sPtr && isReadableMemory(sPtr, maxOff + 4))
+                                        cMax = *reinterpret_cast<int32_t*>(sPtr + maxOff);
                                 }
                             }
                         }

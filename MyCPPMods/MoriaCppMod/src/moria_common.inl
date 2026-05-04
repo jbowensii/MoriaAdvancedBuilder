@@ -312,8 +312,12 @@ FVec3f getPawnLocation()
 
 void setWidgetVisibility(UObject* widget, uint8_t vis)
 {
+    // v6.13.0 — UFunction lookup is cached per-class via cachedUFunction.
+    // Settings UI / inventory tabs hammer this every frame; the chain walk
+    // was a measurable cost. The cache map lives in cachedUFunction's
+    // static storage.
     if (!widget || !isObjectAlive(widget)) return;
-    auto* fn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
+    auto* fn = cachedUFunction(static_cast<UClass*>(widget->GetClassPrivate()), STR("SetVisibility"));
     if (!fn) return;
     uint8_t parms[8]{};
     parms[0] = vis;

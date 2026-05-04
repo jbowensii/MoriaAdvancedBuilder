@@ -3002,6 +3002,35 @@
             VLOG(STR("[NewBuildingBar] populated {} slot icons from m_recipeSlots\n"), filled);
         }
 
+        // v6.13.0 — Phase 2: trigger a 150ms highlight flash on the
+        // given slot. tickNewBuildingBarHighlight checks every game-
+        // thread tick whether to clear the highlight when the deadline
+        // has passed. Called from quickBuildSlot + dispatchMcSlot.
+        void flashNewBuildingBarSlot(int slot)
+        {
+            if (slot < 0 || slot >= 8) return;
+            if (!m_newBuildingBar || !isObjectAlive(m_newBuildingBar)) return;
+            newBuildingBarHighlight(slot, true);
+            m_nbbHighlightUntil[slot] = GetTickCount64() + 150ull;
+        }
+
+        // v6.13.0 — Called once per game-thread tick. Clears any
+        // expired highlight flashes. Cheap: just compares 8 uint64s.
+        void tickNewBuildingBarHighlight()
+        {
+            if (!m_newBuildingBar || !isObjectAlive(m_newBuildingBar)) return;
+            uint64_t now = GetTickCount64();
+            for (int i = 0; i < 8; ++i)
+            {
+                if (m_nbbHighlightUntil[i] == 0) continue;
+                if (now >= m_nbbHighlightUntil[i])
+                {
+                    newBuildingBarHighlight(i, false);
+                    m_nbbHighlightUntil[i] = 0;
+                }
+            }
+        }
+
         // v6.10.0 — Re-read s_bindings[0..7].key and update each slot's
         // F# label. Call this after the user rebinds a QuickBuild key
         // in Settings → Key Mapping so the bar reflects the new chord.

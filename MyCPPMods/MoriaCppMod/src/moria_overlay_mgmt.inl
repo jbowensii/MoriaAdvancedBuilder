@@ -250,9 +250,14 @@
 
         void destroyRepositionMessage()
         {
+            // v6.13.0 — alive-check before deref. The widget could be
+            // GC'd if reposition mode crossed a world transition before
+            // the user dismissed it.
             if (!m_repositionMsgWidget) return;
-            auto* removeFn = m_repositionMsgWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
-            if (removeFn) safeProcessEvent(m_repositionMsgWidget, removeFn, nullptr);
+            if (isObjectAlive(m_repositionMsgWidget)) {
+                auto* removeFn = m_repositionMsgWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
+                if (removeFn) safeProcessEvent(m_repositionMsgWidget, removeFn, nullptr);
+            }
             m_repositionMsgWidget = nullptr;
         }
 
@@ -456,9 +461,13 @@
 
         void destroyPlaceholderInfoBox()
         {
+            // v6.13.0 — alive-check before deref (same rationale as
+            // destroyRepositionMessage).
             if (!m_repositionInfoBoxWidget) return;
-            auto* removeFn = m_repositionInfoBoxWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
-            if (removeFn) safeProcessEvent(m_repositionInfoBoxWidget, removeFn, nullptr);
+            if (isObjectAlive(m_repositionInfoBoxWidget)) {
+                auto* removeFn = m_repositionInfoBoxWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
+                if (removeFn) safeProcessEvent(m_repositionInfoBoxWidget, removeFn, nullptr);
+            }
             m_repositionInfoBoxWidget = nullptr;
         }
 
