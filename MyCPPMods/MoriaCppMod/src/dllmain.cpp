@@ -1,4 +1,4 @@
-// MoriaCppMod v6.18.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.21.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -604,14 +604,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.18.0");
+            ModVersion = STR("6.21.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.18.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -652,7 +652,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.18.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -1615,7 +1615,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.18.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.21.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -2278,6 +2278,37 @@ namespace MoriaMods
                 }
             }
 
+
+            // v6.21.0 — Restore Mod Controller bindings (8-16) keypress dispatch.
+            // The v6.4.5 polling loop was wrapped in `if (m_mcBarWidget)`,
+            // and v6.10.0 disabled MC bar auto-creation, leaving Set Rotation /
+            // Snap / Integrity / Invisible Dwarf / Target / Remove Single /
+            // Undo Last / Remove All silent. This block restores dispatch
+            // without depending on m_mcBarWidget. Slot 5 (= BIND_CONFIG, F12)
+            // is skipped — its dispatch is via register_keydown_event elsewhere.
+            // Suppressed entirely while Settings UI is open so the user's
+            // keypresses during rebinding don't trigger gameplay (fix #6).
+            if (m_characterLoaded && !m_ftVisible && !m_repositionMode &&
+                !m_trashDlgVisible && !m_ftRenameVisible && !isSettingsScreenOpen())
+            {
+                static bool s_mcKeyDown[MC_SLOTS]{};
+                const bool mcShiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+                for (int i = 0; i < MC_SLOTS; ++i)
+                {
+                    if (i == 5) { s_mcKeyDown[i] = false; continue; }
+                    uint8_t vk = s_bindings[MC_BIND_BASE + i].key;
+                    if (vk == 0) { s_mcKeyDown[i] = false; continue; }
+                    if (!s_bindings[MC_BIND_BASE + i].enabled) { s_mcKeyDown[i] = false; continue; }
+                    bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
+                    if (!nowDown && mcShiftHeld)
+                    {
+                        uint8_t alt = numpadShiftAlternate(vk);
+                        if (alt) nowDown = (GetAsyncKeyState(alt) & 0x8000) != 0;
+                    }
+                    if (nowDown && !s_mcKeyDown[i]) dispatchMcSlot(i);
+                    s_mcKeyDown[i] = nowDown;
+                }
+            }
 
             // v6.4.1 — skip single-key action binds (trash/replenish/remove-attrs) when ANY modifier
             // is held. Prevents Ctrl+Shift+L etc. from accidentally triggering the trash dialog when

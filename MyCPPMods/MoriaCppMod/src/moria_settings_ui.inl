@@ -1358,6 +1358,15 @@
 
                 UObject* glyph = r.modGlyphImg.Get();
 
+                // v6.19.0 — fix #2 (white squares on Trash/Replenish/RemoveAttrs
+                // rows). Skip lazy-create for rows with no modifier (modBits=0).
+                // The previous code always created the ScaleBox+Image scaffold
+                // and relied on Collapsed visibility to hide it, but the Image
+                // had no Brush.ResourceObject and UE rendered the 1×1 white
+                // default — visible as a small white square between the row
+                // label and key text on plain-key binds.
+                if (!glyph && r.modBits == 0) continue;
+
                 // Lazy-create glyph: ScaleBox > Image, mirroring the
                 // native KeyGlyph layout. Capture the native ScaleBox_1's
                 // Stretch byte AND KeyGlyph.Brush.ImageSize so our glyph
@@ -1530,6 +1539,39 @@
                 VLOG(STR("[SettingsUI] rebind '{}' -> Key='{}' Shift={}\n"),
                      utf8ToWide(r.iniKey).c_str(),
                      keyStr.c_str(), isShift ? STR("Y") : STR("N"));
+
+                // v6.19.0 — fix #3 (bare-modifier capture). The BP's
+                // UInputKeySelector captures bare Shift/Ctrl/Alt instantly,
+                // exits selecting mode, and fires OnKeySelectedBP with key
+                // = "Shift" alone. The user expected to press Shift+F1 as a
+                // chord but the BP grabbed Shift before the F1 press landed.
+                // Detect modifier-name captures, restore the previous chord
+                // display, and re-arm bIsSelectingKey so the BP keeps
+                // listening — the user's subsequent key press completes the
+                // chord with current modifier state.
+                bool isModifierAlone =
+                    keyStr == L"LeftShift"   || keyStr == L"RightShift"   || keyStr == L"Shift" ||
+                    keyStr == L"LeftControl" || keyStr == L"RightControl" || keyStr == L"Control" ||
+                    keyStr == L"LeftAlt"     || keyStr == L"RightAlt"     || keyStr == L"Alt" ||
+                    keyStr == L"LeftCommand" || keyStr == L"RightCommand" || keyStr == L"Command";
+                if (isModifierAlone)
+                {
+                    VLOG(STR("[SettingsUI] rebind: bare modifier '{}' rejected, re-arming\n"),
+                         keyStr.c_str());
+                    // Restore previous visible chord so the row doesn't
+                    // show "Shift" alone.
+                    applyDefaultChordToSelector(selector, r.vk, (r.modBits & 0x01) != 0);
+                    if (auto* innerPtr = selector->GetValuePtrByPropertyNameInChain<UObject*>(STR("OptionKeySelector")))
+                    {
+                        if (UObject* inner = *innerPtr)
+                        {
+                            if (auto* sel2 = inner->GetValuePtrByPropertyNameInChain<uint8_t>(STR("bIsSelectingKey")))
+                                *sel2 = 1;
+                        }
+                    }
+                    return;
+                }
+
                 // Map FName back to VK (for s_bindings storage).
                 uint8_t vk = fkeyNameToVK(keyStr);
 
