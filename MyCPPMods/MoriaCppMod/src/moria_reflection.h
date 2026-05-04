@@ -43,21 +43,6 @@ namespace MoriaMods
 
     inline int s_off_iiaList = -2;
 
-    // v6.12.0 — FActiveItemEffect (entry inside FActiveItemEffectArray.List)
-    // and FActiveItemEffectArray.List offset. Each entry is 0x30 bytes:
-    //   +0x0C int32 OnItem (item ID)
-    //   +0x10 UObject* Effect (effect class)
-    //   +0x18 float EndTime
-    //   +0x1C int32 AssetId (low)
-    //   +0x20 int32 AssetId (hi)  — 8-byte total
-    // Resolved by probeActiveItemEffectStruct via FProperty offsets.
-    inline int s_off_aieaList   = -2;
-    inline int s_off_aieOnItem  = -2;
-    inline int s_off_aieEffect  = -2;
-    inline int s_off_aieEndTime = -2;
-    inline int s_off_aieAssetId = -2;
-    inline int s_off_aieSize    = -2;
-
 
     inline int brushImageSizeX() { return (s_off_brushImageSize >= 0) ? s_off_brushImageSize     : BRUSH_IMAGE_SIZE_X; }
     inline int brushImageSizeY() { return (s_off_brushImageSize >= 0) ? s_off_brushImageSize + 4 : BRUSH_IMAGE_SIZE_Y; }
@@ -92,15 +77,6 @@ namespace MoriaMods
 
 
     inline int iiaListOff() { return (s_off_iiaList >= 0) ? s_off_iiaList : 0x110; }
-
-    // v6.12.0 — FActiveItemEffect accessors. Each falls back to the
-    // observed-as-stable literal if reflection hasn't run / fails.
-    inline int aieaListOff()   { return (s_off_aieaList   >= 0) ? s_off_aieaList   : 0x110; }
-    inline int aieOnItemOff()  { return (s_off_aieOnItem  >= 0) ? s_off_aieOnItem  : 0x0C; }
-    inline int aieEffectOff()  { return (s_off_aieEffect  >= 0) ? s_off_aieEffect  : 0x10; }
-    inline int aieEndTimeOff() { return (s_off_aieEndTime >= 0) ? s_off_aieEndTime : 0x18; }
-    inline int aieAssetIdOff() { return (s_off_aieAssetId >= 0) ? s_off_aieAssetId : 0x1C; }
-    inline int aieSize()       { return (s_off_aieSize    >= 0) ? s_off_aieSize    : 0x30; }
 
 
     inline int resolveOffset(UObject* obj, const wchar_t* propName, int& cache)
@@ -423,67 +399,6 @@ namespace MoriaMods
                 resolveStructFieldOffset(iiStruct, L"Durability", s_off_iiDur);
                 VLOG(STR("[MoriaCppMod] [Validate] FItemInstance: size=0x{:02X} Item@0x{:02X} Count@0x{:02X} ID@0x{:02X} Dur@0x{:02X}\n"),
                      s_off_iiSize, s_off_iiItem >= 0 ? s_off_iiItem : 0x10, s_off_iiCount >= 0 ? s_off_iiCount : 0x18, s_off_iiID >= 0 ? s_off_iiID : 0x20, s_off_iiDur >= 0 ? s_off_iiDur : 0x24);
-                break;
-            }
-        }
-    }
-
-
-    // v6.12.0 — Probe FActiveItemEffectArray (Effects property on
-    // InventoryComponent) and the FActiveItemEffect entry struct via
-    // reflection. Mirrors probeItemInstanceStruct exactly. Idempotent
-    // via the s_off_aie* sentinels (-2 unprobed).
-    inline void probeActiveItemEffectStruct(UObject* invComp)
-    {
-        if (s_off_aieSize != -2) return;
-        s_off_aieaList   = -1;
-        s_off_aieOnItem  = -1;
-        s_off_aieEffect  = -1;
-        s_off_aieEndTime = -1;
-        s_off_aieAssetId = -1;
-        s_off_aieSize    = -1;
-
-        if (!invComp) return;
-        FProperty* effectsProp = invComp->GetPropertyByNameInChain(STR("Effects"));
-        if (!effectsProp)
-        {
-            VLOG(STR("[MoriaCppMod] [Validate] probeActiveItemEffectStruct: Effects property not found\n"));
-            return;
-        }
-        auto* effectsStructProp = static_cast<FStructProperty*>(effectsProp);
-        UScriptStruct* aieaStruct = effectsStructProp->GetStruct();
-        if (!aieaStruct)
-        {
-            VLOG(STR("[MoriaCppMod] [Validate] probeActiveItemEffectStruct: FActiveItemEffectArray struct null\n"));
-            return;
-        }
-
-        resolveStructFieldOffset(aieaStruct, L"List", s_off_aieaList);
-        VLOG(STR("[MoriaCppMod] [Validate] FActiveItemEffectArray: List@0x{:02X} (expected @0x110)\n"),
-             s_off_aieaList >= 0 ? s_off_aieaList : 0x110);
-
-        for (auto* prop : aieaStruct->ForEachProperty())
-        {
-            if (prop->GetName() == std::wstring_view(L"List"))
-            {
-                auto* arrProp = static_cast<FArrayProperty*>(prop);
-                FProperty* inner = arrProp->GetInner();
-                if (!inner) break;
-                auto* innerStructProp = static_cast<FStructProperty*>(inner);
-                UScriptStruct* aieStruct = innerStructProp->GetStruct();
-                if (!aieStruct) break;
-
-                s_off_aieSize = aieStruct->GetPropertiesSize();
-                resolveStructFieldOffset(aieStruct, L"OnItem",  s_off_aieOnItem);
-                resolveStructFieldOffset(aieStruct, L"Effect",  s_off_aieEffect);
-                resolveStructFieldOffset(aieStruct, L"EndTime", s_off_aieEndTime);
-                resolveStructFieldOffset(aieStruct, L"AssetId", s_off_aieAssetId);
-                VLOG(STR("[MoriaCppMod] [Validate] FActiveItemEffect: size=0x{:02X} OnItem@0x{:02X} Effect@0x{:02X} EndTime@0x{:02X} AssetId@0x{:02X}\n"),
-                     s_off_aieSize,
-                     s_off_aieOnItem  >= 0 ? s_off_aieOnItem  : 0x0C,
-                     s_off_aieEffect  >= 0 ? s_off_aieEffect  : 0x10,
-                     s_off_aieEndTime >= 0 ? s_off_aieEndTime : 0x18,
-                     s_off_aieAssetId >= 0 ? s_off_aieAssetId : 0x1C);
                 break;
             }
         }

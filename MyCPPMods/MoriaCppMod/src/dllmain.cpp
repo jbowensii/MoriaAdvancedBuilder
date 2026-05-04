@@ -1,4 +1,4 @@
-// MoriaCppMod v6.21.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.20.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -149,9 +149,9 @@ namespace MoriaMods
             {
                 auto& sr = m_savedRemovals[i];
                 VLOG(STR("[MoriaCppMod] [Saved-Diag] [{}] mesh='{}' pos=({},{},{}) bubble='{}'\n"),
-                     i, utf8ToWide(sr.meshName),
+                     i, std::wstring(sr.meshName.begin(), sr.meshName.end()),
                      sr.posX, sr.posY, sr.posZ,
-                     utf8ToWide(sr.bubbleId));
+                     std::wstring(sr.bubbleId.begin(), sr.bubbleId.end()));
             }
         }
 
@@ -195,10 +195,10 @@ namespace MoriaMods
                         entry.isTypeRule = true;
                         entry.meshName = tr->meshName;
                         entry.friendlyName = extractFriendlyName(entry.meshName);
-                        entry.fullPathW = utf8ToWide(entry.meshName);
+                        entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
                         // JSON-tagged display for type rules
                         std::string json = formatTypeRuleJson(entry.meshName);
-                        entry.coordsW = utf8ToWide(json);
+                        entry.coordsW = std::wstring(json.begin(), json.end());
                     }
                     else if (auto* pos = std::get_if<ParsedRemovalPosition>(&parsed))
                     {
@@ -209,7 +209,7 @@ namespace MoriaMods
                         entry.bubbleId = pos->bubbleId;
                         entry.bubbleName = pos->bubbleName;
                         entry.friendlyName = extractFriendlyName(entry.meshName);
-                        entry.fullPathW = utf8ToWide(entry.meshName);
+                        entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
                         // JSON-tagged display: compact one-line object showing bubble id + name + world + local coords
                         char buf[512];
                         std::snprintf(buf, sizeof(buf),
@@ -219,7 +219,7 @@ namespace MoriaMods
                             entry.posX, entry.posY, entry.posZ,
                             entry.localX, entry.localY, entry.localZ);
                         std::string s(buf);
-                        entry.coordsW = utf8ToWide(s);
+                        entry.coordsW = std::wstring(s.begin(), s.end());
                     }
                     else
                     {
@@ -353,14 +353,14 @@ namespace MoriaMods
 
         static constexpr int MC_SLOTS = 9;
         UObject* m_mcBarWidget{nullptr};
-        // v6.10.0 — "New Building Bar": cloned WBP_UI_ActionBar_C instance,
+        // v6.20.0 — "New Building Bar": cloned WBP_UI_ActionBar_C instance,
         // chrome only (look). Tame-spawned at top of HUD with the 4 special
         // slots (Epic/HeavyCarry/MainHand/Offhand) and inventory wiring
         // hidden/disabled. Phase 2 wires our 8 builder slots to its 8
         // numbered slot widgets.
         UObject* m_newBuildingBar{nullptr};
         bool m_newBuildingBarSpawnAttempted{false};
-        // v6.10.0 — per-slot widget pointers for the New Building Bar.
+        // v6.20.0 — per-slot widget pointers for the New Building Bar.
         // Set during createNewBuildingBar(); used for highlight + Phase 2
         // icon/label updates. 8 slots = 8 indexed entries.
         UObject* m_nbbSlotEmpty[8]{};   // empty-state UImage
@@ -384,10 +384,6 @@ namespace MoriaMods
         UObject*  m_nbbCachedTexChromeMiddle{nullptr};
         UObject*  m_nbbCachedTexChromeBottom{nullptr};
         bool      m_nbbHudTexturesDumped{false};
-        // v6.14.0 — Phase 2 highlight state. Per-slot deadline
-        // (GetTickCount64 ms). When current tick > deadline, the slot's
-        // focus overlay is hidden again. Zero means "not flashing".
-        uint64_t  m_nbbHighlightUntil[8]{};
         UObject* m_mcSlotButtons[MC_SLOTS]{};     // UButton wrappers for gamepad navigation
         UObject* m_mcStateImages[MC_SLOTS]{};
         UObject* m_mcIconImages[MC_SLOTS]{};
@@ -431,10 +427,7 @@ namespace MoriaMods
         UObject* m_ftTabActiveTexture{nullptr};
         UObject* m_ftTabInactiveTexture{nullptr};
         int m_ftSelectedTab{0};
-        // v6.17.0 — FWeakObjectPtr migration. Settings panel rebuilds and
-        // language changes destroy the underlying scrollbox; weak ref
-        // returns nullptr automatically post-GC.
-        FWeakObjectPtr m_ftScrollBox;
+        UObject* m_ftScrollBox{nullptr};
         UObject* m_ftTabContent[6]{};
 
         // v6.4.1 Cheats tab — widget refs for action buttons and toggle state
@@ -468,9 +461,7 @@ namespace MoriaMods
         // Used to restore DEFAULT and to compute multipliers from the original baseline.
         std::unordered_map<std::wstring, double> m_tweakOriginals;
         UObject* m_ftKeyBoxLabels[BIND_COUNT]{};
-        // v6.17.0 — FWeakObjectPtr migration. Settings panel rebuild can
-        // GC these checkbox images.
-        FWeakObjectPtr m_ftCheckImages[BIND_COUNT];
+        UObject* m_ftCheckImages[BIND_COUNT]{};
         UObject* m_ftModBoxLabel{nullptr};
 
         UObject* m_ftControllerCheckImg{nullptr};
@@ -496,8 +487,7 @@ namespace MoriaMods
         int m_ftLastRemovalCount{-1};
 
         static constexpr int MAX_GAME_MODS = 16;
-        // v6.17.0 — FWeakObjectPtr migration; settings panel rebuild.
-        FWeakObjectPtr m_ftGameModCheckImages[MAX_GAME_MODS];
+        UObject* m_ftGameModCheckImages[MAX_GAME_MODS]{};
         std::vector<GameModEntry> m_ftGameModEntries;
 
 
@@ -527,12 +517,8 @@ namespace MoriaMods
         int  m_dragToolbar{-1};
         float m_dragOffsetX{0}, m_dragOffsetY{0};
         UClass* m_wllClass{nullptr};
-        // v6.17.0 — FWeakObjectPtr migration. These widgets can outlive
-        // their parent across world transitions / panel rebuilds; the
-        // weak ref returns nullptr automatically when the underlying
-        // UObject is GC'd, eliminating the stale-pointer crash class.
-        FWeakObjectPtr m_repositionMsgWidget;
-        FWeakObjectPtr m_repositionInfoBoxWidget;
+        UObject* m_repositionMsgWidget{nullptr};
+        UObject* m_repositionInfoBoxWidget{nullptr};
 
         static constexpr int TB_COUNT = 4;
         float m_toolbarPosX[TB_COUNT]{-1, -1, -1, -1};
@@ -604,14 +590,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.21.0");
+            ModVersion = STR("6.20.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.20.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -652,7 +638,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.20.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -809,11 +795,16 @@ namespace MoriaMods
                 // Construct or OnInitialized. Append Cheats to tabArray
                 // BEFORE the navbar's Construct runs (navbar reads tabArray
                 // directly during its own Construct).
-                // v6.16.0 — Removed: PE pre-hook on PreConstruct/Construct/
-                // OnInitialized of WBP_SettingsScreen_C used to call
-                // appendCheatsTabToArray here. The function was stubbed in
-                // v6.14.0 (Cheats merged into Gameplay tab in v0.48), so
-                // the entire pre-hook branch was a no-op.
+                if (context && (wcscmp(fnStr, STR("PreConstruct")) == 0 ||
+                                wcscmp(fnStr, STR("Construct")) == 0 ||
+                                wcscmp(fnStr, STR("OnInitialized")) == 0))
+                {
+                    std::wstring cls = safeClassName(context);
+                    if (cls == STR("WBP_SettingsScreen_C"))
+                    {
+                        s_instance->appendCheatsTabToArray(context);
+                    }
+                }
                 // CP5 v0.7 — when user clicks the Cheats tab in the navbar,
                 // redirect the tab name to "Gameplay" so the framework
                 // displays the Gameplay tab content. Set a flag so the
@@ -823,10 +814,12 @@ namespace MoriaMods
                 {
                     s_instance->onNavTabPressedPre(context, func, parms);
                 }
-                // v6.16.0 — Removed: legacy v0.4 NavBar pre-hook for
-                // onInitializeNavBarPre (Cheats-tab insertion path that
-                // was superseded by Option C in v0.48). Function deleted
-                // in this same version.
+                // Legacy v0.4 hook — keep in case some path still calls it.
+                if (wcscmp(fnStr, STR("Initialize NavBar")) == 0 ||
+                    wcscmp(fnStr, STR("InitializeNavBar")) == 0)
+                {
+                    s_instance->onInitializeNavBarPre(context, func, parms);
+                }
                 // Diagnostic: log all UFunctions called on the navbar class
                 // (one-shot per name) so we can find the function that
                 // populates tabs even if its name differs from expected.
@@ -1167,9 +1160,9 @@ namespace MoriaMods
                         entry.lastJoined = "";
                         s_instance->addOrUpdateSessionHistory(entry);
                         VLOG(STR("[SessionHistory] saved (history-item) name='{}' host='{}' port='{}'\n"),
-                             utf8ToWide(entry.name).c_str(),
-                             utf8ToWide(entry.domain).c_str(),
-                             utf8ToWide(entry.port).c_str());
+                             std::wstring(entry.name.begin(), entry.name.end()).c_str(),
+                             std::wstring(entry.domain.begin(), entry.domain.end()).c_str(),
+                             std::wstring(entry.port.begin(), entry.port.end()).c_str());
                     }
                 }
 
@@ -1295,10 +1288,9 @@ namespace MoriaMods
                     {
                         s_instance->onNativeSettingsScreenShown(context);
                         s_instance->onSettingsRelatedShown(context, fnStr2);
-                        // v6.16.0 — Removed: appendCheatsTabToArray call
-                        // (function was a v6.14.0 stub since v0.48 merged
-                        // Cheats into Gameplay tab). Function itself deleted
-                        // in this version.
+                        // CP5 — append a NEW "Cheats" tab to tabArray (don't replace legal).
+                        if (cls == STR("WBP_SettingsScreen_C"))
+                            s_instance->appendCheatsTabToArray(context);
                         // v0.50 — inject mod action buttons (Rename/Save/Unlock/
                         // Read All/Clear All Buffs) into the pause menu's
                         // VerticalBox_0 right above LeaveButton.
@@ -1615,7 +1607,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.21.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.20.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -1673,7 +1665,7 @@ namespace MoriaMods
             for (auto* wname : wrapperClasses)
             {
                 std::vector<UObject*> instances;
-                findAllOfSafe(wname, instances); // v6.14.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(wname, instances);
                 if (instances.empty()) {
                     VLOG(STR("[FGKDiag] {}: no instances found\n"), wname);
                     continue;
@@ -1801,13 +1793,153 @@ namespace MoriaMods
             return false;
         }
 
+        void tickFGKInjectionTest()
+        {
+            // Permanently disabled. Test results from prior runs:
+            //   - AddRowInternal succeeds (row added to underlying DataTable)
+            //   - HandleDataTableChanged is a no-op for FGK wrappers in
+            //     shipping (cache stays at 1132)
+            //   - Vtable probing crashed (one slot was FinishDestroy)
+            //   - AOB pattern is not unique enough — different runs match
+            //     different functions, causing access violations on call
+            // Conclusion documented in datatable-fgk-cache-revisit.md.
+            return;
+            if (m_fgkInjectionTestDone) return;
+            // Need wrapper instance first.
+            std::vector<UObject*> wrappers;
+            UObjectGlobals::FindAllOf(STR("MorConstructionsTable"), wrappers);
+            if (wrappers.empty()) return;
+            UObject* wrapper = wrappers[0];
+            if (!wrapper || !isObjectAlive(wrapper)) return;
+
+            // Bind m_dtConstructions to wrapper.TableAsset on demand.
+            // Project memory notes that DataTableUtil bind is lazy; we
+            // wire it here so addRow() works for our test.
+            if (!m_dtConstructions.isBound())
+            {
+                auto* taPtr = wrapper->GetValuePtrByPropertyNameInChain<UObject*>(STR("TableAsset"));
+                UObject* table = taPtr ? *taPtr : nullptr;
+                if (!table || !isObjectAlive(table)) return;
+                if (!m_dtConstructions.bindFromObject(table, STR("DT_Constructions"))) return;
+            }
+
+            // Resolve the engine function via AOB scan.
+            if (!resolveHandleDataTableChanged())
+            {
+                m_fgkInjectionTestDone = true; // don't retry
+                return;
+            }
+
+            m_fgkInjectionTestDone = true;
+            VLOG(STR("[FGKInject] === Begin runtime FGK injection test ===\n"));
+
+            auto* base = reinterpret_cast<uint8_t*>(wrapper);
+            // ActorRowNameLookup TSet header: Data*(8) Num(4) Max(4) ... at wrapper+0x110
+            int32_t numBefore = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
+            VLOG(STR("[FGKInject] ActorRowNameLookup BEFORE: Num={}\n"), numBefore);
+
+            // Get TableAsset (the underlying UDataTable wrapped by MorConstructionsTable).
+            auto* taPtr = wrapper->GetValuePtrByPropertyNameInChain<UObject*>(STR("TableAsset"));
+            UObject* table = taPtr ? *taPtr : nullptr;
+            if (!table || !isObjectAlive(table))
+            {
+                VLOG(STR("[FGKInject] TableAsset missing on wrapper, abort\n"));
+                return;
+            }
+
+            // Add a test row via the existing AddRowInternal vtable call.
+            const wchar_t* testRowName = L"TEST_FGKInjectionRow";
+            uint8_t* newRow = m_dtConstructions.addRow(testRowName);
+            VLOG(STR("[FGKInject] addRow('{}') returned {}\n"),
+                 testRowName, newRow ? STR("non-null") : STR("NULL"));
+
+            // Read count after addRow but BEFORE HandleDataTableChanged.
+            int32_t numAfterAdd = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
+            VLOG(STR("[FGKInject] ActorRowNameLookup AFTER addRow (no notify yet): Num={}\n"), numAfterAdd);
+
+            // Now trigger the engine notification path.
+            try
+            {
+                RC::Unreal::FName fname(testRowName, RC::Unreal::FNAME_Add);
+                VLOG(STR("[FGKInject] Calling HandleDataTableChanged(table={:p}, row='{}')\n"),
+                     (void*)table, testRowName);
+                m_pfHandleDataTableChanged(table, fname);
+                VLOG(STR("[FGKInject] HandleDataTableChanged returned (no crash)\n"));
+            }
+            catch (...)
+            {
+                VLOG(STR("[FGKInject] HandleDataTableChanged threw\n"));
+                return;
+            }
+
+            // Read count after HandleDataTableChanged.
+            int32_t numAfter = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
+            VLOG(STR("[FGKInject] ActorRowNameLookup AFTER HandleDataTableChanged: Num={}\n"), numAfter);
+
+            if (numAfter > numBefore)
+            {
+                VLOG(STR("[FGKInject] *** SUCCESS *** wrapper cache grew from {} to {} — runtime FGK injection works!\n"),
+                     numBefore, numAfter);
+                VLOG(STR("[FGKInject] === End runtime FGK injection test ===\n"));
+                return;
+            }
+
+            // ── Vtable probing was too dangerous (one slot was FinishDestroy
+            //    on a previous run, crashing the engine). Skipped. ──
+            VLOG(STR("[FGKInject] Path #11 (HandleDataTableChanged) was a no-op. Trying TableAsset pointer swap...\n"));
+
+            // ── Path #15 — Proxy TableAsset pointer swap ──
+            VLOG(STR("[FGKInject] Trying Path #15: swap TableAsset pointer to itself (canary test)\n"));
+            // Just write the same pointer back to wrapper.TableAsset.
+            // UFGKDataTableBase.TableAsset is at offset 0x028.
+            UObject** tableAssetSlot = reinterpret_cast<UObject**>(base + 0x028);
+            UObject* originalTable = *tableAssetSlot;
+            // No-op write to the slot. If wrapper subscribes to property
+            // change notifications (rare without UProperty notify), it'd
+            // see the same value; otherwise a no-op.
+            *tableAssetSlot = originalTable;
+            int32_t numAfterCanary = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
+            VLOG(STR("[FGKInject]   canary self-write done; ActorRowNameLookup Num={}\n"), numAfterCanary);
+
+            // Real swap: temporarily nullify TableAsset, read Num,
+            // then restore. If wrapper RE-CACHES on access of its lookup
+            // (rather than at TableAsset assign time), we'd see Num go to
+            // 0 then come back. Risky if game code reads TableAsset in
+            // parallel — gate behind a try/catch.
+            VLOG(STR("[FGKInject]   trying NULL TableAsset swap (briefly)...\n"));
+            try
+            {
+                *tableAssetSlot = nullptr;
+                int32_t numWithNull = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
+                VLOG(STR("[FGKInject]   ActorRowNameLookup with null TableAsset: Num={}\n"), numWithNull);
+                *tableAssetSlot = originalTable;  // restore IMMEDIATELY
+                int32_t numRestored = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
+                VLOG(STR("[FGKInject]   restored TableAsset; ActorRowNameLookup Num={}\n"), numRestored);
+                if (numWithNull != numAfterCanary)
+                {
+                    VLOG(STR("[FGKInject] *** wrapper RE-CACHES on TableAsset reads! ***\n"));
+                    VLOG(STR("[FGKInject] *** This means a proxy TableAsset with our row could work ***\n"));
+                }
+                else
+                {
+                    VLOG(STR("[FGKInject]   wrapper cache is statically built; pointer swap doesn't trigger rebuild\n"));
+                }
+            }
+            catch (...)
+            {
+                *tableAssetSlot = originalTable;  // ensure restore on exception
+                VLOG(STR("[FGKInject]   NULL swap raised exception; restored TableAsset\n"));
+            }
+
+            VLOG(STR("[FGKInject] === End runtime FGK injection test ===\n"));
+        }
 
         bool m_actorLookupDiagDone{false};
         void tickActorLookupDiag()
         {
             if (m_actorLookupDiagDone) return;
             std::vector<UObject*> wrappers;
-            findAllOfSafe(STR("MorConstructionsTable"), wrappers); // v6.14.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("MorConstructionsTable"), wrappers);
             if (wrappers.empty()) return;
             m_actorLookupDiagDone = true;
 
@@ -1867,7 +1999,7 @@ namespace MoriaMods
         {
             if (m_dmDiagDone) return;
             std::vector<UObject*> dms;
-            findAllOfSafe(STR("MorDiscoveryManager"), dms); // v6.14.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("MorDiscoveryManager"), dms);
             if (dms.empty()) return; // not spawned yet
             m_dmDiagDone = true;
             VLOG(STR("[FGKDiag] === DiscoveryManager.Recipes (post-load) ===\n"));
@@ -1921,14 +2053,19 @@ namespace MoriaMods
             if (!m_isDedicatedServer)
             {
                 bool justCreated = false;
-                // v6.10.0 (v0.13) — Auto-creation of the three original
-                // toolbars (MC, Experimental QuickBuild, Advanced
-                // Builder) is DISABLED. The New Building Bar at the top
-                // of the screen replaces them. If any were created in
-                // a previous boot, destroy them now so they don't
-                // linger.
+                // v6.20.0 — UMG QuickBuild bar (m_umgBarWidget) RE-ENABLED.
+                // The from-scratch top-of-screen New Building Bar in
+                // v6.10.0 never reliably displayed icons or F-key labels,
+                // and several iterations of fix attempts (v6.19→v6.21-wip)
+                // failed to converge. Restoring the OLD UMG bar (which
+                // had icons + labels working since v2.x) lets the user
+                // play again while we iterate on the New Building Bar
+                // separately.
+                //
+                // MC bar (m_mcBarWidget) and Advanced Builder (m_abBarWidget)
+                // remain disabled — their dispatch is restored separately
+                // via the gameThreadTick MC polling block (planned fix #1).
                 if (m_mcBarWidget) { destroyModControllerBar(); }
-                if (m_umgBarWidget) { destroyExperimentalBar(); }
                 if (m_abBarWidget) { destroyAdvancedBuilderBar(); }
 
                 if (false /* v0.13 disabled */ && m_characterLoaded && !m_mcBarWidget)
@@ -1936,7 +2073,7 @@ namespace MoriaMods
                     createModControllerBar();
                     justCreated = true;
                 }
-                if (false /* v0.13 disabled */ && m_characterLoaded && !m_umgBarWidget)
+                if (m_characterLoaded && !m_umgBarWidget)
                 {
                     createExperimentalBar();
                     justCreated = true;
@@ -1995,7 +2132,6 @@ namespace MoriaMods
             {
                 refreshKeyLabels();
                 if (m_ftVisible) updateFontTestKeyLabels();
-                refreshNewBuildingBarKeyLabels(); // v6.14.0 — Phase 2 rebind hook
             }
 
 
@@ -2199,7 +2335,7 @@ namespace MoriaMods
                     constexpr float kHitRadY = 0.25f;
                     float bestDist = 1e9f;
                     int   bestIdx  = -1;
-                    UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget, m_repositionInfoBoxWidget.Get()}; // v6.17.0 weakptr
+                    UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget, m_repositionInfoBoxWidget};
                     for (int i = 0; i < TB_COUNT; i++)
                     {
                         if (!widgets[i]) continue;
@@ -2229,7 +2365,7 @@ namespace MoriaMods
                     float fy = std::clamp(curFracY - m_dragOffsetY, 0.01f, 0.99f);
                     m_toolbarPosX[m_dragToolbar] = fx;
                     m_toolbarPosY[m_dragToolbar] = fy;
-                    UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget, m_repositionInfoBoxWidget.Get()}; // v6.17.0 weakptr
+                    UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget, m_repositionInfoBoxWidget};
                     float px = m_screen.fracToPixelX(fx);
                     float py = m_screen.fracToPixelY(fy);
                     static int s_dragLog = 0;
@@ -2248,7 +2384,7 @@ namespace MoriaMods
             {
                 static bool s_lastAbKey = false;
                 uint8_t vk = s_bindings[BIND_AB_OPEN].key;
-                // v6.10.0 (v0.13) — NUM+ / Advanced Builder Open dispatch
+                // v6.20.0 (v0.13) — NUM+ / Advanced Builder Open dispatch
                 // DISABLED. The 3 original toolbars no longer auto-spawn,
                 // so toggling them is meaningless. Replaced by the New
                 // Building Bar at the top of the screen.
@@ -2278,37 +2414,6 @@ namespace MoriaMods
                 }
             }
 
-
-            // v6.21.0 — Restore Mod Controller bindings (8-16) keypress dispatch.
-            // The v6.4.5 polling loop was wrapped in `if (m_mcBarWidget)`,
-            // and v6.10.0 disabled MC bar auto-creation, leaving Set Rotation /
-            // Snap / Integrity / Invisible Dwarf / Target / Remove Single /
-            // Undo Last / Remove All silent. This block restores dispatch
-            // without depending on m_mcBarWidget. Slot 5 (= BIND_CONFIG, F12)
-            // is skipped — its dispatch is via register_keydown_event elsewhere.
-            // Suppressed entirely while Settings UI is open so the user's
-            // keypresses during rebinding don't trigger gameplay (fix #6).
-            if (m_characterLoaded && !m_ftVisible && !m_repositionMode &&
-                !m_trashDlgVisible && !m_ftRenameVisible && !isSettingsScreenOpen())
-            {
-                static bool s_mcKeyDown[MC_SLOTS]{};
-                const bool mcShiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-                for (int i = 0; i < MC_SLOTS; ++i)
-                {
-                    if (i == 5) { s_mcKeyDown[i] = false; continue; }
-                    uint8_t vk = s_bindings[MC_BIND_BASE + i].key;
-                    if (vk == 0) { s_mcKeyDown[i] = false; continue; }
-                    if (!s_bindings[MC_BIND_BASE + i].enabled) { s_mcKeyDown[i] = false; continue; }
-                    bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                    if (!nowDown && mcShiftHeld)
-                    {
-                        uint8_t alt = numpadShiftAlternate(vk);
-                        if (alt) nowDown = (GetAsyncKeyState(alt) & 0x8000) != 0;
-                    }
-                    if (nowDown && !s_mcKeyDown[i]) dispatchMcSlot(i);
-                    s_mcKeyDown[i] = nowDown;
-                }
-            }
 
             // v6.4.1 — skip single-key action binds (trash/replenish/remove-attrs) when ANY modifier
             // is held. Prevents Ctrl+Shift+L etc. from accidentally triggering the trash dialog when
@@ -2930,14 +3035,14 @@ namespace MoriaMods
                             int sectionHeight = static_cast<int>(80.0f * s2p);
 
                             float scrollOff = 0.0f;
-                            if (UObject* sb = m_ftScrollBox.Get())
+                            if (m_ftScrollBox)
                             {
-                                auto* getScrollFn = sb->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
                                 {
                                     int sz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(sz, 0);
-                                    safeProcessEvent(sb, getScrollFn, sp.data());
+                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= sz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -2968,10 +3073,10 @@ namespace MoriaMods
                                             {
 
                                                 s_bindings[b].enabled = !s_bindings[b].enabled;
-                                                if (UObject* chk = m_ftCheckImages[b].Get()) // v6.17.0 weakptr
+                                                if (m_ftCheckImages[b])
                                                 {
-                                                    auto* visFn = chk->GetFunctionByNameInChain(STR("SetVisibility"));
-                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = s_bindings[b].enabled ? 0 : 2; safeProcessEvent(chk, visFn, vp); }
+                                                    auto* visFn = m_ftCheckImages[b]->GetFunctionByNameInChain(STR("SetVisibility"));
+                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = s_bindings[b].enabled ? 0 : 2; safeProcessEvent(m_ftCheckImages[b], visFn, vp); }
                                                 }
                                                 saveConfig();
                                                 VLOG(STR("[MoriaCppMod] [Settings] Bind {} enabled={}\n"), b, s_bindings[b].enabled);
@@ -3020,14 +3125,14 @@ namespace MoriaMods
 
 
                             float scrollOff = 0.0f;
-                            if (UObject* sb = m_ftScrollBox.Get())
+                            if (m_ftScrollBox)
                             {
-                                auto* getScrollFn = sb->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
                                 {
                                     int gsz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(gsz, 0);
-                                    safeProcessEvent(sb, getScrollFn, sp.data());
+                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -3167,14 +3272,14 @@ namespace MoriaMods
                                  curX, curY, iconX0, iconX1, entryStart, s_config.removalCount.load());
 
                             float scrollOff = 0.0f;
-                            if (UObject* sb = m_ftScrollBox.Get())
+                            if (m_ftScrollBox)
                             {
-                                auto* getScrollFn = sb->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
                                 {
                                     int sz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(sz, 0);
-                                    safeProcessEvent(sb, getScrollFn, sp.data());
+                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= sz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -3204,14 +3309,14 @@ namespace MoriaMods
                             int rowH = static_cast<int>(128.0f * s2p);
 
                             float scrollOff = 0.0f;
-                            if (UObject* sb = m_ftScrollBox.Get())
+                            if (m_ftScrollBox)
                             {
-                                auto* getScrollFn = sb->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
                                 {
                                     int gsz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(gsz, 0);
-                                    safeProcessEvent(sb, getScrollFn, sp.data());
+                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -3229,15 +3334,15 @@ namespace MoriaMods
                                     if (idx >= 0 && idx < static_cast<int>(m_ftGameModEntries.size()) && idx < MAX_GAME_MODS)
                                     {
                                         m_ftGameModEntries[idx].enabled = !m_ftGameModEntries[idx].enabled;
-                                        if (UObject* chk = m_ftGameModCheckImages[idx].Get()) // v6.17.0 weakptr
+                                        if (m_ftGameModCheckImages[idx])
                                         {
-                                            auto* visFn = chk->GetFunctionByNameInChain(STR("SetVisibility"));
-                                            if (visFn) { uint8_t vp[8]{}; vp[0] = m_ftGameModEntries[idx].enabled ? 0 : 2; safeProcessEvent(chk, visFn, vp); }
+                                            auto* visFn = m_ftGameModCheckImages[idx]->GetFunctionByNameInChain(STR("SetVisibility"));
+                                            if (visFn) { uint8_t vp[8]{}; vp[0] = m_ftGameModEntries[idx].enabled ? 0 : 2; safeProcessEvent(m_ftGameModCheckImages[idx], visFn, vp); }
                                         }
 
                                         saveGameMods(m_ftGameModEntries);
                                         VLOG(STR("[MoriaCppMod] [Settings] Game Mod '{}' = {}\n"),
-                                            utf8ToWide(m_ftGameModEntries[idx].name),
+                                            std::wstring(m_ftGameModEntries[idx].name.begin(), m_ftGameModEntries[idx].name.end()),
                                             m_ftGameModEntries[idx].enabled ? 1 : 0);
                                     }
                                 }
@@ -3253,14 +3358,14 @@ namespace MoriaMods
                         {
                             // Read current scroll offset (scrollbox moves tab content upward)
                             float scrollOff = 0.0f;
-                            if (UObject* sb = m_ftScrollBox.Get())
+                            if (m_ftScrollBox)
                             {
-                                auto* getScrollFn = sb->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
                                 {
                                     int gsz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(gsz, 0);
-                                    safeProcessEvent(sb, getScrollFn, sp.data());
+                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -3347,14 +3452,14 @@ namespace MoriaMods
                         {
                             // Read scroll offset (same pattern as tab 4)
                             float scrollOff = 0.0f;
-                            if (UObject* sb = m_ftScrollBox.Get())
+                            if (m_ftScrollBox)
                             {
-                                auto* getScrollFn = sb->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
                                 {
                                     int gsz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(gsz, 0);
-                                    safeProcessEvent(sb, getScrollFn, sp.data());
+                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -3634,14 +3739,10 @@ namespace MoriaMods
             tickSettingsUI();     // v6.9.0 — Settings screen take-over (mod keybinds in keymap tab)
             tickReapplyModifierPrefixes(); // v6.9.0 — keep "L-SHIFT + F1" text on SET rows alive
             tickCaptureSpecialKeys();      // v6.9.0 — capture DEL/INS/HOME/etc the BP rejects
-            tickNewBuildingBarHighlight(); // v6.14.0 — clear expired Phase 2 slot flashes
             tickReapplyCheatsContext();    // v6.9.0 — keep Cheats-tab visibility swap stable
             tickFGKDiscoveryDiag();        // v6.9.0 — one-shot probe of AMorDiscoveryManager.Recipes
             tickActorLookupDiag();         // v6.9.0 — Path #5 ActorRowNameLookup TMap byte-layout dump
-            // v6.16.0 — Removed: tickFGKInjectionTest call. Function was
-            // permanently disabled (datatable-fgk-cache-revisit.md) and
-            // its body stripped in v6.14.0; the function itself is also
-            // deleted in this version.
+            tickFGKInjectionTest();        // v6.9.0 — runtime AddRow + HandleDataTableChanged test
 
             // v6.9.0 CP3 — Quick Build chord-aware dispatch.
             //   USE (s_bindings[i].key, no modifiers): user-rebound USE
@@ -3832,10 +3933,10 @@ namespace MoriaMods
                     m_ftTabActiveTexture = nullptr;
                     m_ftTabInactiveTexture = nullptr;
                     m_ftSelectedTab = 0;
-                    m_ftScrollBox = FWeakObjectPtr(); // v6.17.0 weakptr
+                    m_ftScrollBox = nullptr;
                     for (auto& c : m_ftTabContent) c = nullptr;
                     for (auto& l : m_ftKeyBoxLabels) l = nullptr;
-                    for (auto& c : m_ftCheckImages) c = FWeakObjectPtr(); // v6.17.0 weakptr reset
+                    for (auto& c : m_ftCheckImages) c = nullptr;
                     m_ftModBoxLabel = nullptr;
                     m_ftControllerCheckImg = nullptr;
                     m_ftControllerProfileLabel = nullptr;
@@ -3845,7 +3946,7 @@ namespace MoriaMods
                     m_ftRemovalVBox = nullptr;
                     m_ftRemovalHeader = nullptr;
                     m_ftLastRemovalCount = -1;
-                    for (auto& c : m_ftGameModCheckImages) c = FWeakObjectPtr(); // v6.17.0 weakptr reset
+                    for (auto& c : m_ftGameModCheckImages) c = nullptr;
                     m_ftGameModEntries.clear();
                     m_ftRenameWidget = nullptr;
                     m_ftRenameInput = nullptr;
@@ -3880,8 +3981,8 @@ namespace MoriaMods
 
                     m_repositionMode = false;
                     m_dragToolbar = -1;
-                    m_repositionMsgWidget = FWeakObjectPtr(); // v6.17.0 weakptr reset
-                    m_repositionInfoBoxWidget = FWeakObjectPtr(); // v6.17.0 weakptr reset
+                    m_repositionMsgWidget = nullptr;
+                    m_repositionInfoBoxWidget = nullptr;
 
                     m_targetInfoWidget = nullptr;
                     m_tiTitleLabel = nullptr;
@@ -3944,7 +4045,7 @@ namespace MoriaMods
                         // player's ASC + DataTables + world are all ready. No-op if nothing saved.
                         applySavedCheatsAndTweaks();
 
-                        // v6.10.0 — auto-spawn the New Building Bar once the
+                        // v6.20.0 — auto-spawn the New Building Bar once the
                         // player + world are ready. One attempt per session.
                         if (!m_newBuildingBarSpawnAttempted)
                         {

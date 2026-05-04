@@ -310,7 +310,7 @@ static std::vector<std::string> listFiles(const std::string& dir, const std::str
     {
         DWORD err = GetLastError();
         VLOG(STR("[MoriaCppMod] [Def] listFiles '{}' FindFirstFileW failed (GLE={})\n"),
-             utf8ToWide(searchPathUtf8), err);
+             std::wstring(searchPathUtf8.begin(), searchPathUtf8.end()), err);
         return files;
     }
     do
@@ -404,7 +404,7 @@ DefDefinition parseDef(const std::string& defPath)
     std::string xml = readFileToString(defPath);
     if (xml.empty())
     {
-        VLOG(STR("[MoriaCppMod] [Def] Failed to read: {}\n"), utf8ToWide(defPath));
+        VLOG(STR("[MoriaCppMod] [Def] Failed to read: {}\n"), std::wstring(defPath.begin(), defPath.end()));
         return def;
     }
 
@@ -458,7 +458,7 @@ DefDefinition parseDef(const std::string& defPath)
 
 
         VLOG(STR("[MoriaCppMod] [Def] Skipping manifest file (build-time only): {}\n"),
-             utf8ToWide(defPath));
+             std::wstring(defPath.begin(), defPath.end()));
     }
 
     return def;
@@ -633,7 +633,7 @@ bool writeValueToField(uint8_t* fieldData, FProperty* prop, const std::string& v
     } catch (...) {}
 
     VLOG(STR("[MoriaCppMod] [Def] ImportText_Direct failed for value '{}'\n"),
-         utf8ToWide(value));
+         std::wstring(value.begin(), value.end()));
     return false;
 }
 
@@ -786,7 +786,7 @@ int64_t findEnumValueByName(UEnum* uenum, const std::string& val)
     if (colonPos != std::string::npos)
     {
         std::string shortVal = val.substr(colonPos + 2);
-        wShort = utf8ToWide(shortVal);
+        wShort = std::wstring(shortVal.begin(), shortVal.end());
     }
     for (auto& pair : uenum->ForEachName())
     {
@@ -1717,8 +1717,8 @@ void loadAndApplyDefinitions()
         {
             RC::Output::send<RC::LogLevel::Warning>(
                 STR("[MoriaCppMod] [Def] Manifest '{}' not found at {}\n"),
-                utf8ToWide(modName),
-                utf8ToWide(iniPath));
+                std::wstring(modName.begin(), modName.end()),
+                std::wstring(iniPath.begin(), iniPath.end()));
             continue;
         }
         testFile.close();
@@ -1727,14 +1727,14 @@ void loadAndApplyDefinitions()
         if (manifest.defPaths.empty())
         {
             VLOG(STR("[MoriaCppMod] [Def] Manifest '{}' has no .def paths, skipping\n"),
-                 utf8ToWide(modName));
+                 std::wstring(modName.begin(), modName.end()));
             continue;
         }
 
         totalManifests++;
         std::string displayName = manifest.title.empty() ? modName : manifest.title;
         RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Loading '{}' ({} defs)\n"),
-            utf8ToWide(displayName),
+            std::wstring(displayName.begin(), displayName.end()),
             manifest.defPaths.size());
 
         for (auto& defPath : manifest.defPaths)
@@ -1748,7 +1748,7 @@ void loadAndApplyDefinitions()
                 if (dtName.empty())
                 {
                     VLOG(STR("[MoriaCppMod] [Def] Cannot extract DT name from '{}'\n"),
-                         utf8ToWide(mod.filePath));
+                         std::wstring(mod.filePath.begin(), mod.filePath.end()));
                     continue;
                 }
 
@@ -1756,7 +1756,7 @@ void loadAndApplyDefinitions()
                 if (!dt.isBound())
                 {
                     VLOG(STR("[MoriaCppMod] [Def] DataTable '{}' not found in game — skipping\n"),
-                         utf8ToWide(dtName));
+                         std::wstring(dtName.begin(), dtName.end()));
                     continue;
                 }
 
@@ -1877,7 +1877,7 @@ void loadAndApplyDefinitions()
 
             {
                 std::vector<UObject*> fgkBases;
-                findAllOfSafe(STR("FGKDataTableBase"), fgkBases); // v6.11.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(STR("FGKDataTableBase"), fgkBases);
                 if (!fgkBases.empty())
                 {
                     RC::Output::send<RC::LogLevel::Warning>(

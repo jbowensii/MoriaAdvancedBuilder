@@ -23,12 +23,6 @@
             for (auto* w : m_pendingWidgetRemovals)
             {
                 if (!w) continue;
-                // v6.12.0 — alive-check before deref. Between deferRemoveWidget
-                // (this frame) and tickDeferredWidgetRemovals (next frame),
-                // the widget can be GC'd if a world transition / parent
-                // removal happened in between. The raw UObject* would then
-                // dangle and GetFunctionByNameInChain would AV.
-                if (!isObjectAlive(w)) continue;
                 auto* removeFn = w->GetFunctionByNameInChain(STR("RemoveFromParent"));
                 if (!removeFn) removeFn = w->GetFunctionByNameInChain(STR("RemoveFromViewport"));
                 if (removeFn) safeProcessEvent(w, removeFn, nullptr);
@@ -269,9 +263,8 @@
 
         void umgSetText(UObject* textBlock, const std::wstring& text)
         {
-            // v6.15.0 — UFunction lookup is cached per-class via cachedUFunction.
             if (!textBlock || !isObjectAlive(textBlock)) return;
-            auto* fn = cachedUFunction(static_cast<UClass*>(textBlock->GetClassPrivate()), STR("SetText"));
+            auto* fn = textBlock->GetFunctionByNameInChain(STR("SetText"));
             if (!fn) return;
             auto* pInText = findParam(fn, STR("InText"));
             if (!pInText) return;
@@ -285,9 +278,8 @@
 
         void umgSetTextColor(UObject* textBlock, float r, float g, float b, float a)
         {
-            // v6.15.0 — UFunction lookup is cached per-class via cachedUFunction.
             if (!textBlock || !isObjectAlive(textBlock)) return;
-            auto* fn = cachedUFunction(static_cast<UClass*>(textBlock->GetClassPrivate()), STR("SetColorAndOpacity"));
+            auto* fn = textBlock->GetFunctionByNameInChain(STR("SetColorAndOpacity"));
             if (!fn) return;
             auto* p = findParam(fn, STR("InColorAndOpacity"));
             if (!p) return;
@@ -380,23 +372,7 @@
             if (!tb) return nullptr;
             umgSetText(tb, text);
             umgSetTextColor(tb, r, g, b, a);
-
-            // v6.20.0 — fix #5: use umgSetFontAndSize (the proven helper) to
-            // call SetFont UFunction with FontObject + size. Direct property
-            // write doesn't trigger UE to re-rasterize the text glyph atlas.
-            static UObject* s_dialogFont = nullptr;
-            if (!s_dialogFont)
-            {
-                std::vector<UObject*> fonts;
-                try { UObjectGlobals::FindAllOf(STR("Font"), fonts); } catch (...) {}
-                for (auto* f : fonts) {
-                    if (f && std::wstring(f->GetName()) == L"DefaultRegularFont") {
-                        s_dialogFont = f; break;
-                    }
-                }
-            }
-            if (s_dialogFont) umgSetFontAndSize(tb, s_dialogFont, fontSize);
-            else              umgSetFontSize(tb, fontSize);
+            umgSetFontSize(tb, fontSize);
             return tb;
         }
 
@@ -1778,28 +1754,12 @@
             auto* vbC = findParam(addToVBoxFn, STR("Content"));
             auto* vbR = findParam(addToVBoxFn, STR("ReturnValue"));
 
-            // v6.20.0 — Resolve DefaultRegularFont once for inspect labels.
-            static UObject* s_tiFont = nullptr;
-            if (!s_tiFont)
-            {
-                std::vector<UObject*> fonts;
-                try { UObjectGlobals::FindAllOf(STR("Font"), fonts); } catch (...) {}
-                for (auto* f : fonts) {
-                    if (f && std::wstring(f->GetName()) == L"DefaultRegularFont") {
-                        s_tiFont = f; break;
-                    }
-                }
-            }
             auto makeTextBlock = [&](const std::wstring& text, float r, float g, float b, float a) -> UObject* {
                 FStaticConstructObjectParameters tbP(textBlockClass, outer);
                 UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
                 if (!tb) return nullptr;
                 umgSetText(tb, text);
                 umgSetTextColor(tb, r, g, b, a);
-
-                // v6.20.0 — proper SetFont UFunction call (not direct memory write).
-                if (s_tiFont) umgSetFontAndSize(tb, s_tiFont, 18);
-                else          umgSetFontSize(tb, 18);
 
                 auto* wrapAtFn = tb->GetFunctionByNameInChain(STR("SetWrapTextAt"));
                 if (wrapAtFn) { int ws = wrapAtFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapAtFn, STR("InWrapTextAt")); if (pw) *reinterpret_cast<float*>(wp.data() + pw->GetOffset_Internal()) = 790.0f; safeProcessEvent(tb, wrapAtFn, wp.data()); }
@@ -2994,41 +2954,14 @@
                 nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
             if (!setBrushFn) return;
 
-            // v6.19.0 — fix #4 (icons not loading at character-load).
-            // Previous code walked FindAllOf<Texture2D> looking for a name
-            // match, but recipe textures aren't in the global texture set
-            // until the build menu is opened. Read the texture directly
-            // from the construction DataTable using the saved rowName —
-            // the DataTable loads with the world, so icons populate
-            // immediately at character-load. Falls back to the old name
-            // scan if rowName lookup fails.
-            if (!m_dtConstructions.isBound())       m_dtConstructions.bind(L"DT_Constructions");
-            if (!m_dtConstructionRecipes.isBound()) m_dtConstructionRecipes.bind(L"DT_ConstructionRecipes");
-
+            // Resolve all needed textures by name in one pass.
             std::vector<UObject*> textures;
+            try { UObjectGlobals::FindAllOf(STR("Texture2D"), textures); } catch (...) {}
             UObject* slotTex[QUICK_BUILD_SLOTS]{};
             int filled = 0;
             for (int i = 0; i < QUICK_BUILD_SLOTS; ++i)
             {
-                if (!m_recipeSlots[i].used) continue;
-                // 1. Preferred: DataTable lookup by rowName.
-                if (!m_recipeSlots[i].rowName.empty())
-                {
-                    UObject* tex = lookupRecipeIcon(m_recipeSlots[i].rowName.c_str());
-                    if (tex && isReadableMemory(tex, 64))
-                    {
-                        slotTex[i] = tex;
-                        if (m_recipeSlots[i].textureName.empty())
-                        {
-                            try { m_recipeSlots[i].textureName = tex->GetName(); } catch (...) {}
-                        }
-                        continue;
-                    }
-                }
-                // 2. Fallback: name scan on FindAllOf<Texture2D>.
-                if (m_recipeSlots[i].textureName.empty()) continue;
-                if (textures.empty())
-                    try { UObjectGlobals::FindAllOf(STR("Texture2D"), textures); } catch (...) {}
+                if (!m_recipeSlots[i].used || m_recipeSlots[i].textureName.empty()) continue;
                 const std::wstring& want = m_recipeSlots[i].textureName;
                 for (auto* t : textures) {
                     if (!t) continue;
@@ -3036,83 +2969,31 @@
                 }
             }
 
-            // v6.21.0 — Apply icons using the SAME pattern the OLD UMG bar
-            // used (setUmgSlotIcon, line ~473). That pattern WORKED for
-            // years; the from-scratch new-bar code did direct memory writes
-            // that don't trigger UE re-render. Now:
-            //   1. umgSetBrush — set brush texture (UFunction call)
-            //   2. Read texture native size from brush.ImageSize
-            //   3. Compute scale-to-fit into the slot's container
-            //   4. umgSetBrushSize UFunction — apply final size
-            //   5. umgSetOpacity(1.0f) — make visible (NOT visibility=Visible)
-            const float containerW = 128.0f;
-            const float containerH = 128.0f;
+            // Apply to each slot icon image.
             for (int i = 0; i < 8; ++i)
             {
                 UObject* iImg = m_nbbSlotIcon[i];
                 if (!iImg || !isObjectAlive(iImg)) continue;
                 if (!slotTex[i])
                 {
-                    umgSetOpacity(iImg, 0.0f);
+                    // No texture assigned — keep the slot empty.
+                    if (auto* visPtr = iImg->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility")))
+                        *visPtr = 1;
+                    setWidgetVisibility(iImg, 1);
                     continue;
                 }
                 umgSetBrush(iImg, slotTex[i], setBrushFn);
-                // Read texture's native ImageSize that umgSetBrush just wrote.
-                float texW = containerW, texH = containerH;
-                if (s_off_brush >= 0)
-                {
+                if (s_off_brush >= 0) {
                     uint8_t* base = reinterpret_cast<uint8_t*>(iImg);
-                    texW = *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX());
-                    texH = *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY());
+                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 128.0f;
+                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 128.0f;
                 }
-                // Scale-to-fit container with 24% padding (matches old bar).
-                float iconW = containerW, iconH = containerH;
-                if (texW > 0.0f && texH > 0.0f)
-                {
-                    float scale = (containerW / texW < containerH / texH) ? (containerW / texW) : (containerH / texH);
-                    scale *= 0.76f;
-                    iconW = texW * scale;
-                    iconH = texH * scale;
-                }
-                umgSetBrushSize(iImg, iconW, iconH);
-                umgSetOpacity(iImg, 1.0f);
-                // Also flip Visibility to Visible — the icon image was
-                // created with Visibility=Collapsed at line ~3714.
                 if (auto* visPtr = iImg->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility")))
-                    *visPtr = 0;
+                    *visPtr = 0; // Visible
                 setWidgetVisibility(iImg, 0);
                 ++filled;
             }
             VLOG(STR("[NewBuildingBar] populated {} slot icons from m_recipeSlots\n"), filled);
-        }
-
-        // v6.13.0 — Phase 2: trigger a 150ms highlight flash on the
-        // given slot. tickNewBuildingBarHighlight checks every game-
-        // thread tick whether to clear the highlight when the deadline
-        // has passed. Called from quickBuildSlot + dispatchMcSlot.
-        void flashNewBuildingBarSlot(int slot)
-        {
-            if (slot < 0 || slot >= 8) return;
-            if (!m_newBuildingBar || !isObjectAlive(m_newBuildingBar)) return;
-            newBuildingBarHighlight(slot, true);
-            m_nbbHighlightUntil[slot] = GetTickCount64() + 150ull;
-        }
-
-        // v6.13.0 — Called once per game-thread tick. Clears any
-        // expired highlight flashes. Cheap: just compares 8 uint64s.
-        void tickNewBuildingBarHighlight()
-        {
-            if (!m_newBuildingBar || !isObjectAlive(m_newBuildingBar)) return;
-            uint64_t now = GetTickCount64();
-            for (int i = 0; i < 8; ++i)
-            {
-                if (m_nbbHighlightUntil[i] == 0) continue;
-                if (now >= m_nbbHighlightUntil[i])
-                {
-                    newBuildingBarHighlight(i, false);
-                    m_nbbHighlightUntil[i] = 0;
-                }
-            }
         }
 
         // v6.10.0 — Re-read s_bindings[0..7].key and update each slot's
@@ -3572,30 +3453,12 @@
                 FStaticConstructObjectParameters p(hboxCls, outer);
                 return UObjectGlobals::StaticConstructObject(p);
             };
-            // v6.20.0 — Resolve DefaultRegularFont once, then use the proven
-            // umgSetFontAndSize helper (fires SetFont UFunction → triggers
-            // glyph atlas / re-rasterize). Direct property write doesn't
-            // trigger a render update so the labels stayed invisible.
-            static UObject* s_nbbFont = nullptr;
-            if (!s_nbbFont)
-            {
-                std::vector<UObject*> fonts;
-                try { UObjectGlobals::FindAllOf(STR("Font"), fonts); } catch (...) {}
-                for (auto* f : fonts) {
-                    if (f && std::wstring(f->GetName()) == L"DefaultRegularFont") {
-                        s_nbbFont = f; break;
-                    }
-                }
-                VLOG(STR("[NewBuildingBar] DefaultRegularFont = {:p}\n"), (void*)s_nbbFont);
-            }
             auto mkText = [&](const std::wstring& s) -> UObject* {
                 FStaticConstructObjectParameters p(textCls, outer);
                 UObject* t = UObjectGlobals::StaticConstructObject(p);
                 if (!t) return nullptr;
                 umgSetText(t, s);
                 umgSetTextColor(t, 1.0f, 1.0f, 1.0f, 1.0f);
-                if (s_nbbFont) umgSetFontAndSize(t, s_nbbFont, 22);
-                else           umgSetFontSize(t, 22);
                 return t;
             };
 
@@ -3860,10 +3723,10 @@
                 m_ftTabActiveTexture = nullptr;
                 m_ftTabInactiveTexture = nullptr;
                 m_ftSelectedTab = 0;
-                m_ftScrollBox = FWeakObjectPtr(); // v6.17.0 weakptr
+                m_ftScrollBox = nullptr;
                 for (auto& c : m_ftTabContent) c = nullptr;
                 for (auto& l : m_ftKeyBoxLabels) l = nullptr;
-                for (auto& c : m_ftCheckImages) c = FWeakObjectPtr(); // v6.17.0 weakptr reset
+                for (auto& c : m_ftCheckImages) c = nullptr;
                 m_ftModBoxLabel = nullptr;
                 m_ftNoCollisionCheckImg = nullptr;
                 m_ftNoCollisionLabel = nullptr;
@@ -3871,7 +3734,7 @@
                 m_ftRemovalVBox = nullptr;
                 m_ftRemovalHeader = nullptr;
                 m_ftLastRemovalCount = -1;
-                for (auto& c : m_ftGameModCheckImages) c = FWeakObjectPtr(); // v6.17.0 weakptr reset
+                for (auto& c : m_ftGameModCheckImages) c = nullptr;
                 m_ftGameModEntries.clear();
                 if (s_capturingBind >= 0) { s_capturingBind = -1; }
                 setInputModeGame();
@@ -4153,7 +4016,7 @@
                     UObject* scrollBox = UObjectGlobals::StaticConstructObject(sbP);
                     if (rightSizeBox && scrollBox)
                     {
-                        m_ftScrollBox = FWeakObjectPtr(scrollBox); // v6.17.0 weakptr
+                        m_ftScrollBox = scrollBox;
 
                         auto* setHOvFn = rightSizeBox->GetFunctionByNameInChain(STR("SetHeightOverride"));
                         if (setHOvFn) { int sz = setHOvFn->GetParmsSize(); std::vector<uint8_t> hp(sz, 0); auto* p = findParam(setHOvFn, STR("InHeightOverride")); if (p) *reinterpret_cast<float*>(hp.data() + p->GetOffset_Internal()) = 815.0f; safeProcessEvent(rightSizeBox, setHOvFn, hp.data()); }
@@ -4579,7 +4442,7 @@
                                                     umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
                                                     umgSetBrushSize(chkImg, 80.0f, 80.0f);
                                                     addToOverlay(cbOl, chkImg);
-                                                    m_ftGameModCheckImages[gi] = FWeakObjectPtr(chkImg); // v6.17.0 weakptr
+                                                    m_ftGameModCheckImages[gi] = chkImg;
 
                                                     if (!gm.enabled)
                                                     {
@@ -5147,7 +5010,7 @@
                                             umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
                                             umgSetBrushSize(chkImg, 80.0f, 80.0f);
                                             addToOverlay(cbOl, chkImg);
-                                            m_ftCheckImages[b] = FWeakObjectPtr(chkImg); // v6.17.0 weakptr
+                                            m_ftCheckImages[b] = chkImg;
 
                                             if (!s_bindings[b].enabled)
                                             {
@@ -5349,13 +5212,13 @@
                     setWidgetVisibility(m_ftTabContent[i], (i == tab) ? 0 : 1); // 0=Visible, 1=Collapsed
             }
 
-            if (UObject* sb = m_ftScrollBox.Get())
+            if (m_ftScrollBox)
             {
-                auto* setScrollFn = sb->GetFunctionByNameInChain(STR("SetScrollOffset"));
+                auto* setScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("SetScrollOffset"));
                 if (setScrollFn)
                 {
                     auto* pOff = findParam(setScrollFn, STR("NewScrollOffset"));
-                    if (pOff) { int sz = setScrollFn->GetParmsSize(); std::vector<uint8_t> sp(sz, 0); *reinterpret_cast<float*>(sp.data() + pOff->GetOffset_Internal()) = 0.0f; safeProcessEvent(sb, setScrollFn, sp.data()); }
+                    if (pOff) { int sz = setScrollFn->GetParmsSize(); std::vector<uint8_t> sp(sz, 0); *reinterpret_cast<float*>(sp.data() + pOff->GetOffset_Internal()) = 0.0f; safeProcessEvent(m_ftScrollBox, setScrollFn, sp.data()); }
                 }
             }
 

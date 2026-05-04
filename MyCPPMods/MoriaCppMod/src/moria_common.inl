@@ -117,49 +117,12 @@ struct ScreenCoords
 };
 
 
-// v6.11.0 — SEH-wrapped helper. `safeClassName` is called from EVERY
-// ProcessEvent pre-hook in the mod, which fires once per UFunction call
-// in the entire game. Some of those calls happen on objects mid-
-// destruction whose vtables are garbage; the virtual dispatches through
-// `obj->GetClassPrivate()` and `cls->GetName()` access-violate without
-// SEH protection. This is the single highest-leverage stability fix
-// per the 2026-05-03 audit (memory/code-review-2026-05-03.md).
-//
-// Implementation note: SEH (`__try`) is incompatible with object
-// unwinding (`std::wstring` destructors), so we split the work:
-//   1. `seh_classNameToBuf` — `noexcept`, no C++ locals, just a fixed
-//      wchar_t buffer. Calls the dispatch helper inside __try.
-//   2. `dispatchClassName` — does the virtual dispatch and copies into
-//      the buffer. Has a local `std::wstring` from `GetName()` which
-//      needs unwinding — that's fine here, the SEH is in the caller.
-//   3. `safeClassName` — turns the buffer into a `std::wstring` only
-//      AFTER SEH protection is no longer needed.
-static void dispatchClassNameToBuf(UObject* obj, wchar_t* buf, size_t bufLen)
-{
-    if (!obj || bufLen == 0) { if (buf && bufLen) buf[0] = L'\0'; return; }
-    UClass* cls = obj->GetClassPrivate();
-    if (!cls) { buf[0] = L'\0'; return; }
-    auto name = cls->GetName();
-    wcsncpy_s(buf, bufLen, name.c_str(), _TRUNCATE);
-}
-
-static bool seh_classNameToBuf(UObject* obj, wchar_t* buf, size_t bufLen) noexcept
-{
-    __try {
-        dispatchClassNameToBuf(obj, buf, bufLen);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        if (buf && bufLen) buf[0] = L'\0';
-        return false;
-    }
-}
-
 static std::wstring safeClassName(UObject* obj)
 {
     if (!obj) return L"";
-    wchar_t buf[256] = {};
-    if (!seh_classNameToBuf(obj, buf, sizeof(buf) / sizeof(buf[0]))) return L"";
-    return std::wstring(buf);
+    auto* cls = obj->GetClassPrivate();
+    if (!cls) return L"";
+    return std::wstring(cls->GetName());
 }
 
 
@@ -193,55 +156,6 @@ static bool seh_findAllOf(const wchar_t* className, std::vector<UObject*>* out) 
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
-}
-
-// v6.11.0 — Convenience wrapper. Accepts an output vector (any UObject*-
-// derived element type) and the class name. Use this in place of the
-// raw `UObjectGlobals::FindAllOf` so we get SEH protection against
-// vtable-AV during world-unload (when GUObjectArray entries are mid-
-// destruction with garbage vtables).
-//
-// Example:
-//   std::vector<UObject*> dwarves;
-//   if (!findAllOfSafe(STR("BP_FGKDwarf_C"), dwarves)) return;
-//   for (auto* d : dwarves) { if (isObjectAlive(d)) ... }
-//
-// IMPORTANT: even with this wrapper, ALWAYS run `isObjectAlive()` on
-// each returned pointer before dereferencing — pointers can be valid
-// but flagged for GC.
-static bool findAllOfSafe(const wchar_t* className, std::vector<UObject*>& out) noexcept
-{
-    return seh_findAllOf(className, &out);
-}
-
-// v6.12.0 — UFunction cache. Hot UMG paths (SetVisibility, SetText,
-// SetFont, SetColorAndOpacity) re-resolve the UFunction via
-// GetFunctionByNameInChain on every call — that's a class-chain walk
-// per call. Cache by (class, name) so repeated lookups are O(1).
-//
-// Cache is per-class because UFunction* is per-class metadata; the
-// pointer is stable for the lifetime of the loaded module.
-//
-// Usage:
-//   if (UFunction* fn = cachedUFunction(widget->GetClassPrivate(), STR("SetVisibility"))) {
-//       std::vector<uint8_t> b(fn->GetParmsSize(), 0);
-//       ...
-//       safeProcessEvent(widget, fn, b.data());
-//   }
-//
-// Falls back to GetFunctionByNameInChain on cache miss; the result is
-// then memoised. Returns nullptr if the function doesn't exist on the
-// class chain.
-inline UFunction* cachedUFunction(UClass* cls, const wchar_t* fnName)
-{
-    if (!cls || !fnName) return nullptr;
-    static std::unordered_map<UClass*, std::unordered_map<std::wstring, UFunction*>> s_cache;
-    auto& clsMap = s_cache[cls];
-    auto it = clsMap.find(fnName);
-    if (it != clsMap.end()) return it->second;
-    UFunction* fn = cls->GetFunctionByNameInChain(fnName);
-    clsMap[fnName] = fn; // memoise even if null — saves repeated misses
-    return fn;
 }
 
 UObject* findPlayerController()
@@ -312,12 +226,8 @@ FVec3f getPawnLocation()
 
 void setWidgetVisibility(UObject* widget, uint8_t vis)
 {
-    // v6.13.0 — UFunction lookup is cached per-class via cachedUFunction.
-    // Settings UI / inventory tabs hammer this every frame; the chain walk
-    // was a measurable cost. The cache map lives in cachedUFunction's
-    // static storage.
     if (!widget || !isObjectAlive(widget)) return;
-    auto* fn = cachedUFunction(static_cast<UClass*>(widget->GetClassPrivate()), STR("SetVisibility"));
+    auto* fn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
     if (!fn) return;
     uint8_t parms[8]{};
     parms[0] = vis;

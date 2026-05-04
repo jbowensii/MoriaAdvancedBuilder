@@ -157,7 +157,7 @@
 
         void createRepositionMessage()
         {
-            if (m_repositionMsgWidget.Get()) return; // v6.17.0 — was raw pointer truthy-check
+            if (m_repositionMsgWidget) return;
 
 
             auto* uwClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
@@ -245,24 +245,21 @@
             }
             setWidgetPosition(userWidget, m_screen.fracToPixelX(0.5f), m_screen.fracToPixelY(0.5f), true);
 
-            m_repositionMsgWidget = FWeakObjectPtr(userWidget); // v6.17.0 weakptr
+            m_repositionMsgWidget = userWidget;
         }
 
         void destroyRepositionMessage()
         {
-            // v6.17.0 — FWeakObjectPtr handles the alive-check implicitly:
-            // .Get() returns nullptr automatically if the widget was GC'd.
-            UObject* w = m_repositionMsgWidget.Get();
-            if (!w) return;
-            auto* removeFn = w->GetFunctionByNameInChain(STR("RemoveFromParent"));
-            if (removeFn) safeProcessEvent(w, removeFn, nullptr);
-            m_repositionMsgWidget = FWeakObjectPtr();
+            if (!m_repositionMsgWidget) return;
+            auto* removeFn = m_repositionMsgWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
+            if (removeFn) safeProcessEvent(m_repositionMsgWidget, removeFn, nullptr);
+            m_repositionMsgWidget = nullptr;
         }
 
 
         void createPlaceholderInfoBox()
         {
-            if (m_repositionInfoBoxWidget.Get()) return; // v6.17.0 weakptr
+            if (m_repositionInfoBoxWidget) return;
 
             auto* uwClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
             auto* borderClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Border"));
@@ -453,19 +450,16 @@
             m_toolbarSizeW[3] = m_screen.slateToFracX(1100.0f * uiScale);
             m_toolbarSizeH[3] = m_screen.slateToFracY(320.0f * uiScale);
 
-            m_repositionInfoBoxWidget = FWeakObjectPtr(userWidget); // v6.17.0 weakptr
+            m_repositionInfoBoxWidget = userWidget;
             VLOG(STR("[MoriaCppMod] Created placeholder Info Box for repositioning\n"));
         }
 
         void destroyPlaceholderInfoBox()
         {
-            // v6.17.0 — FWeakObjectPtr handles the alive-check implicitly:
-            // .Get() returns nullptr if the widget was GC'd.
-            UObject* w = m_repositionInfoBoxWidget.Get();
-            if (!w) return;
-            auto* removeFn = w->GetFunctionByNameInChain(STR("RemoveFromParent"));
-            if (removeFn) safeProcessEvent(w, removeFn, nullptr);
-            m_repositionInfoBoxWidget = FWeakObjectPtr();
+            if (!m_repositionInfoBoxWidget) return;
+            auto* removeFn = m_repositionInfoBoxWidget->GetFunctionByNameInChain(STR("RemoveFromParent"));
+            if (removeFn) safeProcessEvent(m_repositionInfoBoxWidget, removeFn, nullptr);
+            m_repositionInfoBoxWidget = nullptr;
         }
 
         void toggleRepositionMode()
@@ -489,7 +483,7 @@
                 createRepositionMessage();
                 createPlaceholderInfoBox();
 
-                UObject* focusW = m_repositionMsgWidget.Get() ? m_repositionMsgWidget.Get() // v6.17.0 weakptr
+                UObject* focusW = m_repositionMsgWidget ? m_repositionMsgWidget
                                 : m_umgBarWidget ? m_umgBarWidget
                                 : m_abBarWidget;
                 setInputModeUI(focusW);

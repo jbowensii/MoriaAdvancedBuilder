@@ -212,7 +212,7 @@
         {
             if (m_worldLayout) return;
             std::vector<UObject*> objs;
-            findAllOfSafe(STR("WorldLayout"), objs); // v6.11.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("WorldLayout"), objs);
             UObject* prev = m_worldLayout;
             if (!objs.empty()) m_worldLayout = objs[0];
             if (m_worldLayout && m_worldLayout != prev)
@@ -259,7 +259,7 @@
                 m_currentBubbleId = newId;
                 m_currentBubble = bubble;  // v6.4.2 cache for local-coord math
                 VLOG(STR("[MoriaCppMod] [Bubble] Entered: '{}' (id={})\n"),
-                     newName, utf8ToWide(newId));
+                     newName, std::wstring(newId.begin(), newId.end()));
                 return true;
             }
             m_currentBubble = bubble;  // always refresh pointer even on same id (bubble reload)
@@ -281,7 +281,7 @@
                 m_currentBubbleId = newId;
                 m_currentBubble = bubble;  // v6.4.2 cache
                 VLOG(STR("[MoriaCppMod] [Bubble] Event: entered '{}' (id={})\n"),
-                     newName, utf8ToWide(newId));
+                     newName, std::wstring(newId.begin(), newId.end()));
                 m_processedComps.clear();
             }
             else
@@ -547,8 +547,8 @@
             if (m_savedRemovals.empty() && m_typeRemovals.empty()) return;
 
             std::vector<UObject*> rawComps;
-            findAllOfSafe(STR("GlobalHierarchicalInstancedStaticMeshComponent"), rawComps); // v6.11.0 — SEH-wrapped
-            if (rawComps.empty()) findAllOfSafe(STR("HierarchicalInstancedStaticMeshComponent"), rawComps); // v6.11.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("GlobalHierarchicalInstancedStaticMeshComponent"), rawComps);
+            if (rawComps.empty()) UObjectGlobals::FindAllOf(STR("HierarchicalInstancedStaticMeshComponent"), rawComps);
 
 
             m_replay.compQueue.reserve(rawComps.size());
@@ -602,7 +602,7 @@
                         for (auto& sr : m_savedRemovals)
                             if (sr.meshName == meshId) { inSaved = true; break; }
                         VLOG(STR("[MoriaCppMod] [Replay-Diag] meshId='{}' inSaved={}\n"),
-                             utf8ToWide(meshId), inSaved ? 1 : 0);
+                             std::wstring(meshId.begin(), meshId.end()), inSaved ? 1 : 0);
                     }
                 }
 
@@ -719,7 +719,7 @@
             if (m_replay.active) return;
 
             std::vector<UObject*> comps;
-            findAllOfSafe(STR("GlobalHierarchicalInstancedStaticMeshComponent"), comps); // v6.11.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("GlobalHierarchicalInstancedStaticMeshComponent"), comps);
 
             std::vector<RC::Unreal::FWeakObjectPtr> newComps;
             for (auto* comp : comps)

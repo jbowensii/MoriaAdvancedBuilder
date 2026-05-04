@@ -65,9 +65,9 @@
                 auto parsed = parseSlotLine(line);
                 if (auto* slot = std::get_if<ParsedSlot>(&parsed))
                 {
-                    m_recipeSlots[slot->slotIndex].displayName = utf8ToWide(slot->displayName);
-                    m_recipeSlots[slot->slotIndex].textureName = utf8ToWide(slot->textureName);
-                    m_recipeSlots[slot->slotIndex].rowName = utf8ToWide(slot->rowName);
+                    m_recipeSlots[slot->slotIndex].displayName = std::wstring(slot->displayName.begin(), slot->displayName.end());
+                    m_recipeSlots[slot->slotIndex].textureName = std::wstring(slot->textureName.begin(), slot->textureName.end());
+                    m_recipeSlots[slot->slotIndex].rowName = std::wstring(slot->rowName.begin(), slot->rowName.end());
                     m_recipeSlots[slot->slotIndex].used = true;
                     loaded++;
                 }
@@ -266,8 +266,8 @@
                                         else
                                         {
                                             VLOG(STR("[MoriaCppMod] INI: unrecognized key '{}' for {}\n"),
-                                                 utf8ToWide(kv->value),
-                                                 utf8ToWide(kv->key));
+                                                 std::wstring(kv->value.begin(), kv->value.end()),
+                                                 std::wstring(kv->key.begin(), kv->key.end()));
                                         }
                                     }
                                 }
@@ -561,7 +561,7 @@
                 UObject* worldCtx = nullptr;
                 {
                     std::vector<UObject*> pcs;
-                    findAllOfSafe(STR("PlayerController"), pcs); // v6.11.0 — SEH-wrapped
+                    UObjectGlobals::FindAllOf(STR("PlayerController"), pcs);
                     for (auto* pc : pcs)
                     {
                         if (pc)
@@ -941,7 +941,7 @@
         UObject* findBuildItemWidget(const std::wstring& recipeName)
         {
             std::vector<UObject*> widgets;
-            findAllOfSafe(STR("UserWidget"), widgets); // v6.11.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
             int mediumCount = 0;
             for (auto* w : widgets)
             {
@@ -1046,7 +1046,6 @@
                     saveQuickBuildSlots();
                     updateOverlaySlots();
                     updateBuildersBar();
-                    populateNewBuildingBarIcons(); // v6.13.0 — Phase 2: clear top-bar icon
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] CLEARED F{}\n"), slot + 1);
                     std::wstring msg = L"F" + std::to_wstring(slot + 1) + L" cleared";
                     showErrorBox(msg);
@@ -1131,7 +1130,6 @@
             saveQuickBuildSlots();
             updateOverlaySlots();
             updateBuildersBar();
-            populateNewBuildingBarIcons(); // v6.13.0 — Phase 2: refresh top-bar icon for the just-set slot
 
             QBLOG(STR("[MoriaCppMod] [QB] ASSIGN F{} = '{}' tex='{}'\n"),
                   slot + 1, m_lastCapturedName, m_recipeSlots[slot].textureName);
@@ -1165,10 +1163,6 @@
         void quickBuildSlot(int slot)
         {
             if (slot < 0 || slot >= OVERLAY_BUILD_SLOTS) return;
-            // v6.13.0 — Phase 2: flash the New Building Bar slot to give
-            // visual feedback that the F-key was received. Auto-clears
-            // after ~150 ms via tickNewBuildingBarHighlight.
-            if (slot < 8) flashNewBuildingBarSlot(slot);
             logGameState(STR("QB-pre"));
 
             if (!m_recipeSlots[slot].used)

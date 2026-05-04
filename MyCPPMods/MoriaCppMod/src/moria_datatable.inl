@@ -34,7 +34,7 @@ struct DataTableUtil
         tableName = name;
 
         std::vector<UObject*> dataTables;
-        findAllOfSafe(STR("DataTable"), dataTables); // v6.11.0 — SEH-wrapped
+        UObjectGlobals::FindAllOf(STR("DataTable"), dataTables);
         for (auto* dt : dataTables)
         {
             if (!dt) continue;
@@ -95,34 +95,6 @@ struct DataTableUtil
         table = nullptr; rowStruct = nullptr; rowSize = 0;
         propOffsetCache.clear(); rowStructOff = -2;
         tableName.clear();
-    }
-
-    // v6.13.0 — Resolve a field's byte offset within the bound row
-    // struct (FMorRecipeDefinition, etc.) via UStruct::ForEachProperty,
-    // memoised in propOffsetCache. Replaces hardcoded `rowData + 0xNN`
-    // literals so DLC layout shifts don't break us. Returns -1 if the
-    // field isn't found (caller should fall back to a literal).
-    //
-    // Example:
-    //   int off = util.getFieldOffset(L"DefaultRequiredMaterials");
-    //   if (off < 0) off = 0x40; // safe-fallback
-    //   uint8_t* arrBase = rowData + off;
-    int getFieldOffset(const wchar_t* fieldName)
-    {
-        if (!fieldName || !rowStruct) return -1;
-        auto it = propOffsetCache.find(fieldName);
-        if (it != propOffsetCache.end()) return it->second;
-        int off = -1;
-        for (auto* prop : rowStruct->ForEachProperty())
-        {
-            if (prop->GetName() == std::wstring_view(fieldName))
-            {
-                off = prop->GetOffset_Internal();
-                break;
-            }
-        }
-        propOffsetCache[fieldName] = off;
-        return off;
     }
 
     bool isBound() const { return table != nullptr; }
@@ -339,7 +311,7 @@ struct DataTableUtil
             RC::Output::send<RC::LogLevel::Warning>(
                 STR("[MoriaCppMod] [DT] callAddRowInternal EXCEPTION for '{}': {}\n"),
                 std::wstring(rowName),
-                utf8ToWide(std::string(e.what()))); // v6.16.0 — UTF-8 antipattern fixed
+                std::wstring(std::string(e.what()).begin(), std::string(e.what()).end()));
             return false;
         } catch (...) {
             RC::Output::send<RC::LogLevel::Warning>(

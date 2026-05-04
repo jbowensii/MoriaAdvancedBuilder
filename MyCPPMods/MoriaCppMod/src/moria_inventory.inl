@@ -6,7 +6,7 @@
         {
             if (!owner) return nullptr;
             std::vector<UObject*> allComps;
-            findAllOfSafe(STR("ActorComponent"), allComps); // v6.11.0 — SEH-wrapped against world-unload AV
+            UObjectGlobals::FindAllOf(STR("ActorComponent"), allComps);
             for (auto* c : allComps)
             {
                 if (!c) continue;
@@ -52,30 +52,23 @@
             FProperty* effectsProp = invComp->GetPropertyByNameInChain(STR("Effects"));
             if (!effectsProp) return false;
 
-            // v6.12.0 — Reflective offsets via probeActiveItemEffectStruct.
-            // Helpers fall back to literals (0x110/0x0C/0x10/0x30) if the
-            // probe hasn't run yet. probeActiveItemEffectStruct is called
-            // from the local-pawn inventory scan and from
-            // OnInventoryChanged below, so by the time we get here it has
-            // typically populated the offset cache.
-            probeActiveItemEffectStruct(invComp);
             int effectsOff = effectsProp->GetOffset_Internal();
-            uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp) + effectsOff + aieaListOff();
+            uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp) + effectsOff + 0x0110;
             if (!isReadableMemory(listBase, 16)) return false;
 
             uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
             int32_t& arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
-            const int kStride = aieSize();
+            constexpr int kStride = 0x30;
 
             for (int32_t j = arrNum - 1; j >= 0; j--)
             {
                 uint8_t* e = arrData + j * kStride;
                 if (!isReadableMemory(e, kStride)) continue;
 
-                int32_t onItem = *reinterpret_cast<int32_t*>(e + aieOnItemOff());
+                int32_t onItem = *reinterpret_cast<int32_t*>(e + 0x0C);
                 if (onItem != itemID) continue;
 
-                UObject* effect = *reinterpret_cast<UObject**>(e + aieEffectOff());
+                UObject* effect = *reinterpret_cast<UObject**>(e + 0x10);
                 if (!effect || !isReadableMemory(reinterpret_cast<uint8_t*>(effect), 64)) continue;
 
                 std::wstring cls = safeClassName(effect);
@@ -178,11 +171,9 @@
             FProperty* effectsProp = invComp->GetPropertyByNameInChain(STR("Effects"));
             if (effectsProp)
             {
-                // v6.12.0 — Reflective offsets via probeActiveItemEffectStruct.
-                probeActiveItemEffectStruct(invComp);
                 int effectsOff = effectsProp->GetOffset_Internal();
 
-                uint8_t* effectsBase = reinterpret_cast<uint8_t*>(invComp) + effectsOff + aieaListOff();
+                uint8_t* effectsBase = reinterpret_cast<uint8_t*>(invComp) + effectsOff + 0x0110;
                 if (isReadableMemory(effectsBase, 16))
                 {
                     uint8_t* arrData = *reinterpret_cast<uint8_t**>(effectsBase);
@@ -190,16 +181,16 @@
                     VLOG(STR("[MoriaCppMod] [EffectDump] InvComp Effects.List count={} (effectsOff=0x{:X})\n"), arrNum, effectsOff);
 
 
-                    const int kStride = aieSize();
+                    constexpr int kStride = 0x30;
 
                     for (int32_t j = 0; j < arrNum && j < 50; j++)
                     {
                         uint8_t* e = arrData + j * kStride;
                         if (!isReadableMemory(e, kStride)) { VLOG(STR("[MoriaCppMod] [EffectDump]   [{}] <unreadable>\n"), j); continue; }
 
-                        int32_t onItem = *reinterpret_cast<int32_t*>(e + aieOnItemOff());
-                        UObject* effect = *reinterpret_cast<UObject**>(e + aieEffectOff());
-                        float endTime = *reinterpret_cast<float*>(e + aieEndTimeOff());
+                        int32_t onItem = *reinterpret_cast<int32_t*>(e + 0x0C);
+                        UObject* effect = *reinterpret_cast<UObject**>(e + 0x10);
+                        float endTime = *reinterpret_cast<float*>(e + 0x18);
 
                         std::wstring effectName = L"nullptr";
                         if (effect)
@@ -216,8 +207,8 @@
                         }
 
 
-                        uint32_t assetIdWord0 = *reinterpret_cast<uint32_t*>(e + aieAssetIdOff());
-                        uint32_t assetIdWord1 = *reinterpret_cast<uint32_t*>(e + aieAssetIdOff() + 4);
+                        uint32_t assetIdWord0 = *reinterpret_cast<uint32_t*>(e + 0x1C);
+                        uint32_t assetIdWord1 = *reinterpret_cast<uint32_t*>(e + 0x20);
 
                         bool isOurs = (onItem == itemID);
                         VLOG(STR("[MoriaCppMod] [EffectDump]   [{}] OnItem={}{} Effect=0x{:X} (class={}) EndTime={} AssetId=[0x{:X},0x{:X}]\n"),
@@ -242,7 +233,7 @@
             if (!pawn) return;
 
             std::vector<UObject*> allComps;
-            findAllOfSafe(STR("InventoryComponent"), allComps); // v6.11.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("InventoryComponent"), allComps);
 
             for (auto* comp : allComps)
             {
@@ -254,7 +245,6 @@
                 if (op.Ret != pawn) continue;
 
                 probeItemInstanceStruct(comp);
-                probeActiveItemEffectStruct(comp); // v6.12.0 — populate s_off_aie*
 
                 FProperty* itemsProp = comp->GetPropertyByNameInChain(STR("Items"));
                 if (!itemsProp) continue;
@@ -325,28 +315,9 @@
                                 FProperty* sp = cdo->GetPropertyByNameInChain(STR("Storage"));
                                 if (sp)
                                 {
-                                    // v6.13.0 — Reflectively resolve MaxSize offset
-                                    // within FStorage struct. Cached per-process
-                                    // since the struct layout is class-stable for
-                                    // the duration of the loaded module.
-                                    static int s_off_storageMaxSize = -2;
-                                    if (s_off_storageMaxSize == -2) {
-                                        s_off_storageMaxSize = -1;
-                                        if (auto* spStruct = static_cast<FStructProperty*>(sp)) {
-                                            if (UScriptStruct* sStruct = spStruct->GetStruct()) {
-                                                for (auto* p : sStruct->ForEachProperty()) {
-                                                    if (p->GetName() == std::wstring_view(L"MaxSize")) {
-                                                        s_off_storageMaxSize = p->GetOffset_Internal();
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    int maxOff = (s_off_storageMaxSize >= 0) ? s_off_storageMaxSize : 0x38;
                                     uint8_t* sPtr = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(cdo) + sp->GetOffset_Internal());
-                                    if (sPtr && isReadableMemory(sPtr, maxOff + 4))
-                                        cMax = *reinterpret_cast<int32_t*>(sPtr + maxOff);
+                                    if (sPtr && isReadableMemory(sPtr, 0x44))
+                                        cMax = *reinterpret_cast<int32_t*>(sPtr + 0x38);
                                 }
                             }
                         }
@@ -398,7 +369,6 @@
 
 
             probeItemInstanceStruct(invComp);
-            probeActiveItemEffectStruct(invComp); // v6.12.0 — populate s_off_aie*
 
             FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
             if (!itemsProp) return;
@@ -452,10 +422,7 @@
                     if (m_lastPickedUpDisplayName.empty())
                         m_lastPickedUpDisplayName = m_lastPickedUpItemName;
 
-                    // v6.11.0 — reflectively-resolved Count offset (was hardcoded
-                    // +0x18). probeItemInstanceStruct populates s_off_iiCount via
-                    // FProperty::GetOffset_Internal so this survives DLC layout shifts.
-                    m_lastPickedUpCount = *reinterpret_cast<int32_t*>(entry + iiCountOff());
+                    m_lastPickedUpCount = *reinterpret_cast<int32_t*>(entry + 0x18);
 
                     std::memcpy(m_lastItemHandle, parms, 20);
                     m_lastItemInvComp = RC::Unreal::FWeakObjectPtr(invComp);
@@ -1031,7 +998,7 @@
             {
 
                 std::vector<UObject*> preDropActors;
-                findAllOfSafe(STR("MorDroppedItem"), preDropActors); // v6.11.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(STR("MorDroppedItem"), preDropActors);
                 std::unordered_set<UObject*> preDropSet(preDropActors.begin(), preDropActors.end());
 
 
@@ -1054,7 +1021,7 @@
 
                 {
                     std::vector<UObject*> postDropActors;
-                    findAllOfSafe(STR("MorDroppedItem"), postDropActors); // v6.11.0 — SEH-wrapped
+                    UObjectGlobals::FindAllOf(STR("MorDroppedItem"), postDropActors);
                     for (auto* actor : postDropActors)
                     {
                         if (!actor || preDropSet.count(actor)) continue;
@@ -1084,7 +1051,7 @@
                                     uint8_t* e3 = ad3 + i * stride3;
                                     if (!isReadableMemory(e3, stride3)) continue;
                                     if (*reinterpret_cast<int32_t*>(e3 + idOff3) == origID)
-                                    { nowCount = *reinterpret_cast<int32_t*>(e3 + iiCountOff()); break; } // v6.11.0 — reflective
+                                    { nowCount = *reinterpret_cast<int32_t*>(e3 + 0x18); break; }
                                 }
                             }
                         }
@@ -1147,7 +1114,7 @@
                                 int32_t entryID = *reinterpret_cast<int32_t*>(entry2 + idOff2);
                                 if (entryID != originalID) continue;
 
-                                int32_t newCount = *reinterpret_cast<int32_t*>(entry2 + iiCountOff()); // v6.11.0 — reflective
+                                int32_t newCount = *reinterpret_cast<int32_t*>(entry2 + 0x18);
                                 if (newCount <= 0) break;
                                 m_lastPickedUpCount = newCount;
                                 m_lastItemInvComp = RC::Unreal::FWeakObjectPtr(invComp);

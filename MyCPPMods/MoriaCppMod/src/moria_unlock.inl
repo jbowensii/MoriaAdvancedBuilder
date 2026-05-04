@@ -162,7 +162,7 @@
         {
             if (!fieldName || !fieldName[0]) return;
             std::vector<UObject*> dts;
-            findAllOfSafe(STR("DataTable"), dts); // v6.12.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("DataTable"), dts);
 
             int totalRowsTouched = 0;
             int totalTablesTouched = 0;
@@ -268,7 +268,7 @@
         void applyNoCostRecipe(bool useDefault)
         {
             std::vector<UObject*> dts;
-            findAllOfSafe(STR("DataTable"), dts); // v6.12.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("DataTable"), dts);
 
             int totalRows = 0;
             int totalTables = 0;
@@ -308,42 +308,6 @@
                 DataTableUtil util;
                 if (!util.bind(tName.c_str())) continue;
 
-                // v6.13.0 — Reflective field offsets via DataTableUtil cache.
-                // Falls back to historic literals if reflection misses.
-                int drmOff   = util.getFieldOffset(L"DefaultRequiredMaterials");
-                if (drmOff < 0) drmOff = 0x40;
-                int refundsOff = util.getFieldOffset(L"bAllowRefunds");
-                if (refundsOff < 0) refundsOff = 0xF2;
-                // v6.15.0 — Reflectively resolve inner FMorRequiredRecipeMaterial
-                // layout (Count offset + struct stride). Walks
-                // DefaultRequiredMaterials FArrayProperty -> Inner
-                // FStructProperty -> Struct -> ForEachProperty.
-                int innerCountOff = 0x20; // fallback
-                int innerStride   = 0x28; // fallback
-                if (util.rowStruct)
-                {
-                    for (auto* prop : util.rowStruct->ForEachProperty())
-                    {
-                        if (prop->GetName() != std::wstring_view(L"DefaultRequiredMaterials")) continue;
-                        auto* arrProp = static_cast<FArrayProperty*>(prop);
-                        FProperty* inner = arrProp->GetInner();
-                        if (!inner) break;
-                        auto* innerStructProp = static_cast<FStructProperty*>(inner);
-                        UScriptStruct* innerStruct = innerStructProp->GetStruct();
-                        if (!innerStruct) break;
-                        innerStride = innerStruct->GetPropertiesSize();
-                        for (auto* p : innerStruct->ForEachProperty())
-                        {
-                            if (p->GetName() == std::wstring_view(L"Count"))
-                            {
-                                innerCountOff = p->GetOffset_Internal();
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                }
-
                 auto rowNames = util.getRowNames();
                 int rows = 0;
                 for (const auto& rn : rowNames)
@@ -351,7 +315,8 @@
                     uint8_t* rowData = util.findRowData(rn.c_str());
                     if (!rowData) continue;
 
-                    uint8_t* arrBase = rowData + drmOff;
+                    // DefaultRequiredMaterials is at offset 0x40 in FMorRecipeDefinition (base)
+                    uint8_t* arrBase = rowData + 0x40;
                     if (!isReadableMemory(arrBase, 16)) continue;
 
                     uint8_t* arrData = *reinterpret_cast<uint8_t**>(arrBase);
@@ -359,13 +324,13 @@
                     if (!arrData || arrNum <= 0 || arrNum > 100) { /* still continue to bAllowRefunds */ }
                     else
                     {
-                        // v6.15.0 — Reflective stride + Count offset.
-                        const int kStride = innerStride;
+                        // Each element is FMorRequiredRecipeMaterial (0x28 bytes), Count at +0x20 (int32)
+                        constexpr int kStride = 0x28;
                         for (int32_t i = 0; i < arrNum; ++i)
                         {
                             uint8_t* elem = arrData + i * kStride;
                             if (!isReadableMemory(elem, kStride)) continue;
-                            int32_t* countAddr = reinterpret_cast<int32_t*>(elem + innerCountOff);
+                            int32_t* countAddr = reinterpret_cast<int32_t*>(elem + 0x20);
 
                             wchar_t kbuf[96];
                             swprintf(kbuf, 96, L"%p|DRM[%d].Count", (void*)rowData, i);
@@ -379,10 +344,10 @@
                         }
                     }
 
-                    // bAllowRefunds — reflective offset (was 0xF2 literal).
+                    // bAllowRefunds at offset 0xF2 (bool, 1 byte) — construction recipes only
                     if (isConstructionRecipe)
                     {
-                        uint8_t* flagAddr = rowData + refundsOff;
+                        uint8_t* flagAddr = rowData + 0xF2;
                         if (isReadableMemory(flagAddr, 1))
                         {
                             wchar_t kbuf[96];
@@ -410,7 +375,7 @@
         void applyInstantCraft(bool useDefault)
         {
             std::vector<UObject*> dts;
-            findAllOfSafe(STR("DataTable"), dts); // v6.12.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("DataTable"), dts);
 
             int totalRows = 0;
             int totalTables = 0;
@@ -848,7 +813,7 @@
         {
             // Locate the entitlement manager
             std::vector<UObject*> mgrs;
-            findAllOfSafe(STR("MorEntitlementManager"), mgrs); // v6.12.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("MorEntitlementManager"), mgrs);
             if (mgrs.empty())
             {
                 VLOG(STR("[Unlock] EntitlementManager not found — skipping DLC filter (all recipes considered safe)\n"));
@@ -918,19 +883,14 @@
                  blockedTotal, (int)blockedItems.size(), (int)blockedConstructions.size(), (int)blockedRunes.size());
         }
 
-        // v6.13.0 — Read the ResultItemHandle / ResultConstructionHandle
-        // FName from a FMor{Item,Construction}RecipeDefinition row.
-        // `handleOff` is the row-struct offset of the handle property
-        // (resolved by caller via DataTableUtil::getFieldOffset). The
-        // FName sits at +0x08 within FDataTableRowHandle (engine-stable
-        // per MEMORY.md). Caller passes 0xD8 as fallback if reflection
-        // misses.
-        FName unlock_readRecipeResultName(uint8_t* rowData, int handleOff = 0xD8)
+        // Read the ResultItemHandle / ResultConstructionHandle FName at offset 0xD8
+        // inside a FMor{Item,Construction}RecipeDefinition row. The handle itself is at
+        // rowData + 0xD8, and its FName sits at +0x08 within that handle (0xD8 + 0x08 = 0xE0).
+        FName unlock_readRecipeResultName(uint8_t* rowData)
         {
-            if (handleOff < 0) handleOff = 0xD8;
-            if (!isReadableMemory(rowData + handleOff, 0x10)) return FName();
+            if (!isReadableMemory(rowData + 0xD8, 0x10)) return FName();
             FName out;
-            std::memcpy(&out, rowData + handleOff + 0x08, sizeof(FName));
+            std::memcpy(&out, rowData + 0xD8 + 0x08, sizeof(FName));
             return out;
         }
 
@@ -949,14 +909,6 @@
 
             auto rowNames = dt.getRowNames();
             int before = (int)outQueue.size();
-            // v6.13.0 — reflective EnabledState offset (was 0x10 literal).
-            int enabledOff = dt.getFieldOffset(L"EnabledState");
-            if (enabledOff < 0) enabledOff = 0x10;
-            // ResultItemHandle / ResultConstructionHandle live on different
-            // row struct names depending on the table. Try both.
-            int handleOff = dt.getFieldOffset(L"ResultItemHandle");
-            if (handleOff < 0) handleOff = dt.getFieldOffset(L"ResultConstructionHandle");
-            if (handleOff < 0) handleOff = 0xD8;
             for (const auto& rowName : rowNames)
             {
                 // Filter 1: hidden-prefix names
@@ -966,13 +918,13 @@
                 uint8_t* rowData = dt.findRowData(rowName.c_str());
                 if (!rowData) continue;
                 if (!isReadableMemory(rowData, 0x20)) continue;
-                uint8_t enabledState = *reinterpret_cast<uint8_t*>(rowData + enabledOff);
+                uint8_t enabledState = *reinterpret_cast<uint8_t*>(rowData + 0x10);
                 if (enabledState != 0) continue;  // Disabled == 1
 
                 // Filter 3: DLC-gated (check the result handle's RowName against block set)
                 if (checkResultHandle)
                 {
-                    FName resultName = unlock_readRecipeResultName(rowData, handleOff);
+                    FName resultName = unlock_readRecipeResultName(rowData);
                     try {
                         std::wstring resultStr = resultName.ToString();
                         if (!resultStr.empty() && blockedByDLC.count(resultStr) > 0) continue;
@@ -1002,7 +954,7 @@
 
             // 1. Find the discovery manager
             std::vector<UObject*> mgrs;
-            findAllOfSafe(STR("MorDiscoveryManager"), mgrs); // v6.12.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("MorDiscoveryManager"), mgrs);
             if (mgrs.empty())
             {
                 VLOG(STR("[Unlock] MorDiscoveryManager not found — load a world first\n"));
@@ -1086,7 +1038,7 @@
         {
             std::vector<UObject*> result;
             std::vector<UObject*> allDTs;
-            findAllOfSafe(STR("DataTable"), allDTs); // v6.12.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("DataTable"), allDTs);
             for (auto* dt : allDTs)
             {
                 if (!dt || !isObjectAlive(dt)) continue;
@@ -1164,7 +1116,7 @@
         void togglePeaceMode()
         {
             std::vector<UObject*> mgrs;
-            findAllOfSafe(STR("MorAISpawnManager"), mgrs); // v6.12.0 — SEH-wrapped
+            UObjectGlobals::FindAllOf(STR("MorAISpawnManager"), mgrs);
             if (mgrs.empty())
             {
                 VLOG(STR("[PeaceMode] MorAISpawnManager not found — load a world first\n"));
@@ -1221,7 +1173,7 @@
             // Phase 1: Lore screen MarkAllRead (single-call path)
             {
                 std::vector<UObject*> screens;
-                findAllOfSafe(STR("WBP_LoreScreen_v2_C"), screens); // v6.12.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(STR("WBP_LoreScreen_v2_C"), screens);
                 if (!screens.empty() && isObjectAlive(screens[0]))
                 {
                     anyScreenFound = true;
@@ -1236,7 +1188,7 @@
             // Phase 2: Goals screen — per-entry mark via SetLoreEntryViewed / SetTutorialEntryViewed / SetTipEntryViewed
             {
                 std::vector<UObject*> screens;
-                findAllOfSafe(STR("WBP_GoalsScreen_C"), screens); // v6.12.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(STR("WBP_GoalsScreen_C"), screens);
                 if (!screens.empty() && isObjectAlive(screens[0]))
                 {
                     anyScreenFound = true;
@@ -1263,7 +1215,7 @@
             // sub-tables may not be covered by the Blueprint MarkAllRead above).
             {
                 std::vector<UObject*> screens;
-                findAllOfSafe(STR("WBP_LoreScreen_v2_C"), screens); // v6.12.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(STR("WBP_LoreScreen_v2_C"), screens);
                 if (!screens.empty() && isObjectAlive(screens[0]))
                 {
                     UObject* ls = screens[0];
@@ -1277,7 +1229,7 @@
             // This clears the "NEW!" badges on the construction build menu (the "4 unread building" count).
             {
                 std::vector<UObject*> tabs;
-                findAllOfSafe(STR("UI_WBP_Build_Tab_C"), tabs); // v6.12.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(STR("UI_WBP_Build_Tab_C"), tabs);
                 if (!tabs.empty() && isObjectAlive(tabs[0]))
                 {
                     anyScreenFound = true;
@@ -1301,7 +1253,7 @@
             // Same pattern as the build tab. Clears the "296 new" count on crafting stations.
             {
                 std::vector<UObject*> screens;
-                findAllOfSafe(STR("UI_WBP_Crafting_Screen_C"), screens); // v6.12.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(STR("UI_WBP_Crafting_Screen_C"), screens);
                 int invoked = 0;
                 for (UObject* screen : screens)
                 {
@@ -1325,7 +1277,7 @@
             // This is the pause-menu Crafting entry that opens a recipe compendium.
             {
                 std::vector<UObject*> viewers;
-                findAllOfSafe(STR("UI_WBP_Recipe_Viewer_C"), viewers); // v6.12.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(STR("UI_WBP_Recipe_Viewer_C"), viewers);
                 int invoked = 0;
                 for (UObject* viewer : viewers)
                 {
@@ -1350,7 +1302,7 @@
             // per-entry SetLoreEntryViewed because MarkAllAsRead may persist differently.
             {
                 std::vector<UObject*> screens;
-                findAllOfSafe(STR("WBP_GoalsScreen_C"), screens); // v6.12.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(STR("WBP_GoalsScreen_C"), screens);
                 int invoked = 0;
                 for (UObject* screen : screens)
                 {
@@ -1393,7 +1345,7 @@
             UObject* morDb = nullptr;
             {
                 std::vector<UObject*> dbs;
-                findAllOfSafe(STR("MorDatabase"), dbs); // v6.12.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(STR("MorDatabase"), dbs);
                 for (auto* d : dbs) { if (d && isObjectAlive(d)) { morDb = d; break; } }
             }
             if (!morDb) {
@@ -1415,7 +1367,7 @@
             {
                 UObject* mmMgr = nullptr;
                 std::vector<UObject*> mgrs;
-                findAllOfSafe(STR("MorMinimapManager"), mgrs); // v6.12.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(STR("MorMinimapManager"), mgrs);
                 for (auto* m : mgrs) { if (m && isObjectAlive(m)) { mmMgr = m; break; } }
 
                 if (mmMgr)
@@ -1458,7 +1410,7 @@
             int chaptersDiscovered = 0;
             {
                 std::vector<UObject*> widgets;
-                findAllOfSafe(STR("MorGameMinimapWidget"), widgets); // v6.12.0 — SEH-wrapped
+                UObjectGlobals::FindAllOf(STR("MorGameMinimapWidget"), widgets);
                 for (auto* w : widgets)
                 {
                     if (!w || !isObjectAlive(w)) continue;
