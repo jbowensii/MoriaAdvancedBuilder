@@ -50,7 +50,11 @@ namespace MoriaMods
         if (utf8Path.empty()) return {};
         int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(),
                                        static_cast<int>(utf8Path.size()), nullptr, 0);
-        if (wlen <= 0) return std::wstring(utf8Path.begin(), utf8Path.end()); // ASCII fallback
+        // ASCII fallback — file is in a free namespace; can't see the
+        // moria_common.h utf8ToWide. Inline ASCII zero-extend is OK
+        // here because this fallback only fires when the path is
+        // already ASCII (MultiByteToWideChar already handles UTF-8).
+        if (wlen <= 0) { std::wstring out; for (auto c : utf8Path) out.push_back(static_cast<wchar_t>(c)); return out; }
         std::wstring out(static_cast<size_t>(wlen), L'\0');
         MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(),
                             static_cast<int>(utf8Path.size()), out.data(), wlen);
@@ -431,7 +435,10 @@ namespace MoriaMods
     {
         auto dash = meshName.find('-');
         std::string shortName = (dash != std::string::npos) ? meshName.substr(0, dash) : meshName;
-        return std::wstring(shortName.begin(), shortName.end());
+        // Mesh names are ASCII (asset paths); zero-extend is safe here.
+        std::wstring out;
+        for (auto c : shortName) out.push_back(static_cast<wchar_t>(c));
+        return out;
     }
 
 

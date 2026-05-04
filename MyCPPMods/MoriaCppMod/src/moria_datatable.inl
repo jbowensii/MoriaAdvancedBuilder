@@ -339,7 +339,7 @@ struct DataTableUtil
             RC::Output::send<RC::LogLevel::Warning>(
                 STR("[MoriaCppMod] [DT] callAddRowInternal EXCEPTION for '{}': {}\n"),
                 std::wstring(rowName),
-                std::wstring(std::string(e.what()).begin(), std::string(e.what()).end()));
+                utf8ToWide(std::string(e.what()))); // v6.16.0 — UTF-8 antipattern fixed
             return false;
         } catch (...) {
             RC::Output::send<RC::LogLevel::Warning>(

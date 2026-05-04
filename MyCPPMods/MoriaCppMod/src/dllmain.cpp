@@ -1,4 +1,4 @@
-// MoriaCppMod v6.15.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.16.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -149,9 +149,9 @@ namespace MoriaMods
             {
                 auto& sr = m_savedRemovals[i];
                 VLOG(STR("[MoriaCppMod] [Saved-Diag] [{}] mesh='{}' pos=({},{},{}) bubble='{}'\n"),
-                     i, std::wstring(sr.meshName.begin(), sr.meshName.end()),
+                     i, utf8ToWide(sr.meshName),
                      sr.posX, sr.posY, sr.posZ,
-                     std::wstring(sr.bubbleId.begin(), sr.bubbleId.end()));
+                     utf8ToWide(sr.bubbleId));
             }
         }
 
@@ -195,10 +195,10 @@ namespace MoriaMods
                         entry.isTypeRule = true;
                         entry.meshName = tr->meshName;
                         entry.friendlyName = extractFriendlyName(entry.meshName);
-                        entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
+                        entry.fullPathW = utf8ToWide(entry.meshName);
                         // JSON-tagged display for type rules
                         std::string json = formatTypeRuleJson(entry.meshName);
-                        entry.coordsW = std::wstring(json.begin(), json.end());
+                        entry.coordsW = utf8ToWide(json);
                     }
                     else if (auto* pos = std::get_if<ParsedRemovalPosition>(&parsed))
                     {
@@ -209,7 +209,7 @@ namespace MoriaMods
                         entry.bubbleId = pos->bubbleId;
                         entry.bubbleName = pos->bubbleName;
                         entry.friendlyName = extractFriendlyName(entry.meshName);
-                        entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
+                        entry.fullPathW = utf8ToWide(entry.meshName);
                         // JSON-tagged display: compact one-line object showing bubble id + name + world + local coords
                         char buf[512];
                         std::snprintf(buf, sizeof(buf),
@@ -219,7 +219,7 @@ namespace MoriaMods
                             entry.posX, entry.posY, entry.posZ,
                             entry.localX, entry.localY, entry.localZ);
                         std::string s(buf);
-                        entry.coordsW = std::wstring(s.begin(), s.end());
+                        entry.coordsW = utf8ToWide(s);
                     }
                     else
                     {
@@ -594,14 +594,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.15.0");
+            ModVersion = STR("6.16.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.15.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.16.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -642,7 +642,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.15.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.16.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -799,7 +799,7 @@ namespace MoriaMods
                 // Construct or OnInitialized. Append Cheats to tabArray
                 // BEFORE the navbar's Construct runs (navbar reads tabArray
                 // directly during its own Construct).
-                // v6.15.0 — Removed: PE pre-hook on PreConstruct/Construct/
+                // v6.16.0 — Removed: PE pre-hook on PreConstruct/Construct/
                 // OnInitialized of WBP_SettingsScreen_C used to call
                 // appendCheatsTabToArray here. The function was stubbed in
                 // v6.14.0 (Cheats merged into Gameplay tab in v0.48), so
@@ -813,7 +813,7 @@ namespace MoriaMods
                 {
                     s_instance->onNavTabPressedPre(context, func, parms);
                 }
-                // v6.15.0 — Removed: legacy v0.4 NavBar pre-hook for
+                // v6.16.0 — Removed: legacy v0.4 NavBar pre-hook for
                 // onInitializeNavBarPre (Cheats-tab insertion path that
                 // was superseded by Option C in v0.48). Function deleted
                 // in this same version.
@@ -1157,9 +1157,9 @@ namespace MoriaMods
                         entry.lastJoined = "";
                         s_instance->addOrUpdateSessionHistory(entry);
                         VLOG(STR("[SessionHistory] saved (history-item) name='{}' host='{}' port='{}'\n"),
-                             std::wstring(entry.name.begin(), entry.name.end()).c_str(),
-                             std::wstring(entry.domain.begin(), entry.domain.end()).c_str(),
-                             std::wstring(entry.port.begin(), entry.port.end()).c_str());
+                             utf8ToWide(entry.name).c_str(),
+                             utf8ToWide(entry.domain).c_str(),
+                             utf8ToWide(entry.port).c_str());
                     }
                 }
 
@@ -1285,7 +1285,7 @@ namespace MoriaMods
                     {
                         s_instance->onNativeSettingsScreenShown(context);
                         s_instance->onSettingsRelatedShown(context, fnStr2);
-                        // v6.15.0 — Removed: appendCheatsTabToArray call
+                        // v6.16.0 — Removed: appendCheatsTabToArray call
                         // (function was a v6.14.0 stub since v0.48 merged
                         // Cheats into Gameplay tab). Function itself deleted
                         // in this version.
@@ -1605,7 +1605,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.15.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.16.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -3196,7 +3196,7 @@ namespace MoriaMods
 
                                         saveGameMods(m_ftGameModEntries);
                                         VLOG(STR("[MoriaCppMod] [Settings] Game Mod '{}' = {}\n"),
-                                            std::wstring(m_ftGameModEntries[idx].name.begin(), m_ftGameModEntries[idx].name.end()),
+                                            utf8ToWide(m_ftGameModEntries[idx].name),
                                             m_ftGameModEntries[idx].enabled ? 1 : 0);
                                     }
                                 }
@@ -3597,7 +3597,7 @@ namespace MoriaMods
             tickReapplyCheatsContext();    // v6.9.0 — keep Cheats-tab visibility swap stable
             tickFGKDiscoveryDiag();        // v6.9.0 — one-shot probe of AMorDiscoveryManager.Recipes
             tickActorLookupDiag();         // v6.9.0 — Path #5 ActorRowNameLookup TMap byte-layout dump
-            // v6.15.0 — Removed: tickFGKInjectionTest call. Function was
+            // v6.16.0 — Removed: tickFGKInjectionTest call. Function was
             // permanently disabled (datatable-fgk-cache-revisit.md) and
             // its body stripped in v6.14.0; the function itself is also
             // deleted in this version.

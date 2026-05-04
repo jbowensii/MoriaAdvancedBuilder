@@ -1261,7 +1261,7 @@
                     r.modBits = modBits;
                     VLOG(STR("[SettingsUI] capture: '{}' vk=0x{:02x} mods=0x{:02x} on '{}'\n"),
                          fname.c_str(), vk, modBits,
-                         std::wstring(r.iniKey.begin(), r.iniKey.end()).c_str());
+                         utf8ToWide(r.iniKey).c_str());
                     saveConfig();
                 };
 
@@ -1528,7 +1528,7 @@
                 try { keyStr = keyName->ToString(); } catch (...) {}
                 bool isShift = (chordPtr[0x18] & 0x01) != 0;
                 VLOG(STR("[SettingsUI] rebind '{}' -> Key='{}' Shift={}\n"),
-                     std::wstring(r.iniKey.begin(), r.iniKey.end()).c_str(),
+                     utf8ToWide(r.iniKey).c_str(),
                      keyStr.c_str(), isShift ? STR("Y") : STR("N"));
                 // Map FName back to VK (for s_bindings storage).
                 uint8_t vk = fkeyNameToVK(keyStr);
@@ -1594,7 +1594,7 @@
                     r.vk = vk;
                     r.modBits = modBits;
                     VLOG(STR("[SettingsUI] rebind '{}' captured chord vk=0x{:02x} mods=0x{:02x}\n"),
-                         std::wstring(r.iniKey.begin(), r.iniKey.end()).c_str(), vk, modBits);
+                         utf8ToWide(r.iniKey).c_str(), vk, modBits);
                 }
                 saveConfig();
                 return;

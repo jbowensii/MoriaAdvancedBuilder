@@ -65,9 +65,9 @@
                 auto parsed = parseSlotLine(line);
                 if (auto* slot = std::get_if<ParsedSlot>(&parsed))
                 {
-                    m_recipeSlots[slot->slotIndex].displayName = std::wstring(slot->displayName.begin(), slot->displayName.end());
-                    m_recipeSlots[slot->slotIndex].textureName = std::wstring(slot->textureName.begin(), slot->textureName.end());
-                    m_recipeSlots[slot->slotIndex].rowName = std::wstring(slot->rowName.begin(), slot->rowName.end());
+                    m_recipeSlots[slot->slotIndex].displayName = utf8ToWide(slot->displayName);
+                    m_recipeSlots[slot->slotIndex].textureName = utf8ToWide(slot->textureName);
+                    m_recipeSlots[slot->slotIndex].rowName = utf8ToWide(slot->rowName);
                     m_recipeSlots[slot->slotIndex].used = true;
                     loaded++;
                 }
@@ -266,8 +266,8 @@
                                         else
                                         {
                                             VLOG(STR("[MoriaCppMod] INI: unrecognized key '{}' for {}\n"),
-                                                 std::wstring(kv->value.begin(), kv->value.end()),
-                                                 std::wstring(kv->key.begin(), kv->key.end()));
+                                                 utf8ToWide(kv->value),
+                                                 utf8ToWide(kv->key));
                                         }
                                     }
                                 }

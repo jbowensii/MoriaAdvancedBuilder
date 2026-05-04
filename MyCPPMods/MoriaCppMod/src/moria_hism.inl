@@ -259,7 +259,7 @@
                 m_currentBubbleId = newId;
                 m_currentBubble = bubble;  // v6.4.2 cache for local-coord math
                 VLOG(STR("[MoriaCppMod] [Bubble] Entered: '{}' (id={})\n"),
-                     newName, std::wstring(newId.begin(), newId.end()));
+                     newName, utf8ToWide(newId));
                 return true;
             }
             m_currentBubble = bubble;  // always refresh pointer even on same id (bubble reload)
@@ -281,7 +281,7 @@
                 m_currentBubbleId = newId;
                 m_currentBubble = bubble;  // v6.4.2 cache
                 VLOG(STR("[MoriaCppMod] [Bubble] Event: entered '{}' (id={})\n"),
-                     newName, std::wstring(newId.begin(), newId.end()));
+                     newName, utf8ToWide(newId));
                 m_processedComps.clear();
             }
             else
@@ -602,7 +602,7 @@
                         for (auto& sr : m_savedRemovals)
                             if (sr.meshName == meshId) { inSaved = true; break; }
                         VLOG(STR("[MoriaCppMod] [Replay-Diag] meshId='{}' inSaved={}\n"),
-                             std::wstring(meshId.begin(), meshId.end()), inSaved ? 1 : 0);
+                             utf8ToWide(meshId), inSaved ? 1 : 0);
                     }
                 }
 
