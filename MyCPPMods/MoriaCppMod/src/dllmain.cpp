@@ -1,4 +1,4 @@
-// MoriaCppMod v6.14.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.15.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -594,14 +594,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.14.0");
+            ModVersion = STR("6.15.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.14.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.15.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -642,7 +642,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.14.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.15.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -799,16 +799,11 @@ namespace MoriaMods
                 // Construct or OnInitialized. Append Cheats to tabArray
                 // BEFORE the navbar's Construct runs (navbar reads tabArray
                 // directly during its own Construct).
-                if (context && (wcscmp(fnStr, STR("PreConstruct")) == 0 ||
-                                wcscmp(fnStr, STR("Construct")) == 0 ||
-                                wcscmp(fnStr, STR("OnInitialized")) == 0))
-                {
-                    std::wstring cls = safeClassName(context);
-                    if (cls == STR("WBP_SettingsScreen_C"))
-                    {
-                        s_instance->appendCheatsTabToArray(context);
-                    }
-                }
+                // v6.15.0 — Removed: PE pre-hook on PreConstruct/Construct/
+                // OnInitialized of WBP_SettingsScreen_C used to call
+                // appendCheatsTabToArray here. The function was stubbed in
+                // v6.14.0 (Cheats merged into Gameplay tab in v0.48), so
+                // the entire pre-hook branch was a no-op.
                 // CP5 v0.7 — when user clicks the Cheats tab in the navbar,
                 // redirect the tab name to "Gameplay" so the framework
                 // displays the Gameplay tab content. Set a flag so the
@@ -818,12 +813,10 @@ namespace MoriaMods
                 {
                     s_instance->onNavTabPressedPre(context, func, parms);
                 }
-                // Legacy v0.4 hook — keep in case some path still calls it.
-                if (wcscmp(fnStr, STR("Initialize NavBar")) == 0 ||
-                    wcscmp(fnStr, STR("InitializeNavBar")) == 0)
-                {
-                    s_instance->onInitializeNavBarPre(context, func, parms);
-                }
+                // v6.15.0 — Removed: legacy v0.4 NavBar pre-hook for
+                // onInitializeNavBarPre (Cheats-tab insertion path that
+                // was superseded by Option C in v0.48). Function deleted
+                // in this same version.
                 // Diagnostic: log all UFunctions called on the navbar class
                 // (one-shot per name) so we can find the function that
                 // populates tabs even if its name differs from expected.
@@ -1292,9 +1285,10 @@ namespace MoriaMods
                     {
                         s_instance->onNativeSettingsScreenShown(context);
                         s_instance->onSettingsRelatedShown(context, fnStr2);
-                        // CP5 — append a NEW "Cheats" tab to tabArray (don't replace legal).
-                        if (cls == STR("WBP_SettingsScreen_C"))
-                            s_instance->appendCheatsTabToArray(context);
+                        // v6.15.0 — Removed: appendCheatsTabToArray call
+                        // (function was a v6.14.0 stub since v0.48 merged
+                        // Cheats into Gameplay tab). Function itself deleted
+                        // in this version.
                         // v0.50 — inject mod action buttons (Rename/Save/Unlock/
                         // Read All/Clear All Buffs) into the pause menu's
                         // VerticalBox_0 right above LeaveButton.
@@ -1611,7 +1605,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.14.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.15.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -1797,12 +1791,6 @@ namespace MoriaMods
             return false;
         }
 
-        // v6.14.0 — tickFGKInjectionTest body deleted (~140 lines).
-        // The full runtime FGK injection test was permanently disabled
-        // per datatable-fgk-cache-revisit.md (AddRow succeeds but FGK
-        // cache stays stale; vtable probe crashed; AOB ambiguous).
-        // Stub kept because gameThreadTick calls it.
-        void tickFGKInjectionTest() { /* permanently disabled */ }
 
         bool m_actorLookupDiagDone{false};
         void tickActorLookupDiag()
@@ -3609,7 +3597,10 @@ namespace MoriaMods
             tickReapplyCheatsContext();    // v6.9.0 — keep Cheats-tab visibility swap stable
             tickFGKDiscoveryDiag();        // v6.9.0 — one-shot probe of AMorDiscoveryManager.Recipes
             tickActorLookupDiag();         // v6.9.0 — Path #5 ActorRowNameLookup TMap byte-layout dump
-            tickFGKInjectionTest();        // v6.9.0 — runtime AddRow + HandleDataTableChanged test
+            // v6.15.0 — Removed: tickFGKInjectionTest call. Function was
+            // permanently disabled (datatable-fgk-cache-revisit.md) and
+            // its body stripped in v6.14.0; the function itself is also
+            // deleted in this version.
 
             // v6.9.0 CP3 — Quick Build chord-aware dispatch.
             //   USE (s_bindings[i].key, no modifiers): user-rebound USE

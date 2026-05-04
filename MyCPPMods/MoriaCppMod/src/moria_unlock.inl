@@ -314,6 +314,35 @@
                 if (drmOff < 0) drmOff = 0x40;
                 int refundsOff = util.getFieldOffset(L"bAllowRefunds");
                 if (refundsOff < 0) refundsOff = 0xF2;
+                // v6.15.0 — Reflectively resolve inner FMorRequiredRecipeMaterial
+                // layout (Count offset + struct stride). Walks
+                // DefaultRequiredMaterials FArrayProperty -> Inner
+                // FStructProperty -> Struct -> ForEachProperty.
+                int innerCountOff = 0x20; // fallback
+                int innerStride   = 0x28; // fallback
+                if (util.rowStruct)
+                {
+                    for (auto* prop : util.rowStruct->ForEachProperty())
+                    {
+                        if (prop->GetName() != std::wstring_view(L"DefaultRequiredMaterials")) continue;
+                        auto* arrProp = static_cast<FArrayProperty*>(prop);
+                        FProperty* inner = arrProp->GetInner();
+                        if (!inner) break;
+                        auto* innerStructProp = static_cast<FStructProperty*>(inner);
+                        UScriptStruct* innerStruct = innerStructProp->GetStruct();
+                        if (!innerStruct) break;
+                        innerStride = innerStruct->GetPropertiesSize();
+                        for (auto* p : innerStruct->ForEachProperty())
+                        {
+                            if (p->GetName() == std::wstring_view(L"Count"))
+                            {
+                                innerCountOff = p->GetOffset_Internal();
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
 
                 auto rowNames = util.getRowNames();
                 int rows = 0;
@@ -330,13 +359,13 @@
                     if (!arrData || arrNum <= 0 || arrNum > 100) { /* still continue to bAllowRefunds */ }
                     else
                     {
-                        // Each element is FMorRequiredRecipeMaterial (0x28 bytes), Count at +0x20 (int32)
-                        constexpr int kStride = 0x28;
+                        // v6.15.0 — Reflective stride + Count offset.
+                        const int kStride = innerStride;
                         for (int32_t i = 0; i < arrNum; ++i)
                         {
                             uint8_t* elem = arrData + i * kStride;
                             if (!isReadableMemory(elem, kStride)) continue;
-                            int32_t* countAddr = reinterpret_cast<int32_t*>(elem + 0x20);
+                            int32_t* countAddr = reinterpret_cast<int32_t*>(elem + innerCountOff);
 
                             wchar_t kbuf[96];
                             swprintf(kbuf, 96, L"%p|DRM[%d].Count", (void*)rowData, i);

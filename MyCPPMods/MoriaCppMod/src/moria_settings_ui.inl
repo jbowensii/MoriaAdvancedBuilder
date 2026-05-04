@@ -1905,7 +1905,8 @@
                         auto* visPtr = child->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility"));
                         if (visPtr) *visPtr = 1; // Collapsed
                         setWidgetVisibility(child, 1);
-                        m_cheatsHostNativeChildren.push_back(FWeakObjectPtr(child));
+                        // v6.15.0 — m_cheatsHostNativeChildren tracking removed
+                        // (vector was write-only; never iterated for restore).
                         ++hidCount;
                     }
                 }
@@ -3136,8 +3137,9 @@
         // widget, so swapping doesn't destroy them. Only runs on tab
         // state change (not every tick) so RemoveChild/AddChild aren't
         // hammered.
-        bool m_lastApplyCheatsTabActive{false};
-        bool m_lastApplyValid{false};
+        // v6.15.0 — m_lastApplyCheatsTabActive + m_lastApplyValid removed
+        // (defunct memoisation; the only thing they memoised was a flag
+        // that became permanently false in v0.48).
 
         void parentMove(UObject* fromPanel, UObject* toPanel, UObject* widget)
         {
@@ -3172,8 +3174,9 @@
 
         void applyTabContextVisibility()
         {
-            if (m_lastApplyValid && m_lastApplyCheatsTabActive == m_cheatsTabActive)
-                return;
+            // v6.15.0 — removed defunct m_lastApplyValid/m_lastApplyCheatsTabActive
+            // memoisation — m_cheatsTabActive is permanently false since v0.48
+            // so the early-return never fired anyway.
             UObject* gpVB = m_dualGameplayScroll.Get();
             UObject* chVB = m_dualCheatsScroll.Get();
             // v0.45 — if VBox refs went null (GC), re-find by walking
@@ -3227,8 +3230,6 @@
                 setWidgetVisibilityForce(gpVB, m_cheatsTabActive ? 1 : 0);
             if (chVB && isObjectAlive(chVB))
                 setWidgetVisibilityForce(chVB, m_cheatsTabActive ? 0 : 1);
-            m_lastApplyValid = true;
-            m_lastApplyCheatsTabActive = m_cheatsTabActive;
         }
 
         void tickReapplyCheatsContext()
@@ -3386,7 +3387,8 @@
                     cur = cur->GetOuterPrivate();
                 }
             }
-            if (!settingsScreen) settingsScreen = m_settingsScreenAppendedFor.Get();
+            // v6.15.0 — was a fallback through m_settingsScreenAppendedFor;
+            // field removed (only writer was deleted in v6.14.0).
             if (!settingsScreen || !isObjectAlive(settingsScreen)) return;
 
             VLOG(STR("[SettingsUI] CP5 — post-hook: cheats={}\n"),
@@ -3462,7 +3464,10 @@
                 if (safeClassName(cur) == STR("WBP_SettingsScreen_C")) return cur;
                 cur = cur->GetOuterPrivate();
             }
-            return m_settingsScreenAppendedFor.Get();
+            // v6.15.0 — fallback returned m_settingsScreenAppendedFor; field
+            // removed (only writer deleted in v6.14.0). Caller already
+            // null-checks, so returning nullptr is safe.
+            return nullptr;
         }
 
         void forceInjectDualContent(UObject* gameplayTab)
@@ -4210,7 +4215,8 @@
         // ────────────────────────────────────────────────────────────────
 
         FWeakObjectPtr m_cheatsTabInjectedFor;
-        FWeakObjectPtr m_settingsScreenAppendedFor;
+        // v6.15.0 — m_settingsScreenAppendedFor removed (writer deleted
+        // in v6.14.0; fallback readers updated to nullptr).
         // Index of our appended Cheats tab in the tabArray (typically 7
         // since the array shipped with 7 entries 0..6).
         int m_cheatsTabIndex{-1};
@@ -4293,9 +4299,8 @@
         // should keep refreshing the navbar selection. Set by pre-hook so
         // the highlight repaints even if framework writes stale state late.
         uint64_t m_cheatsHighlightRefreshDeadline{0};
-        // Native children of the Cheats-host instance that we collapsed
-        // (the BP's Construct populates a Gameplay UI we don't want).
-        std::vector<FWeakObjectPtr> m_cheatsHostNativeChildren;
+        // v6.15.0 — m_cheatsHostNativeChildren removed (vector was
+        // write-only; never iterated for restore).
         // Legacy fields — retained for back-compat with helpers but not
         // populated under the v0.10 per-instance approach.
         struct OriginalChild { FWeakObjectPtr widget; uint8_t origVis; };
@@ -4323,16 +4328,8 @@
         // injection. Both removed when Cheats merged into Gameplay tab
         // (v0.48 / Option C). The function has had no live callers since.
 
-        void appendCheatsTabToArray(UObject* settingsScreen)
-        {
-            // v6.14.0 — Stub. Cheats tab removed in v0.48 (Option C —
-            // merged into Gameplay tab). The two callers in dllmain.cpp
-            // are now no-ops; left in place because removing them would
-            // require touching the global PE pre-hook switch which has
-            // its own audit risk. See pending-todo.md v6.15.0+ for
-            // full callsite removal.
-            (void)settingsScreen;
-        }
+        // v6.15.0 — appendCheatsTabToArray DELETED (was a stub since
+        // v6.14.0; both callers in dllmain.cpp removed in v6.15.0).
 
         // Inject Cheats content into the legal tab's widget tree.
         // Pattern mirrors injectModGameOptions but adds buttons that
@@ -4575,88 +4572,11 @@
             }
         }
 
-        // CP5 v0.4 — pre-hook on UI_WBP_NavBar_Build.InitializeNavBar.
-        // Modifies the input Tabs array BEFORE the function builds the
-        // navbar buttons. Param name might be "Tabs" — fallback to scan
-        // all params if needed.
-        void onInitializeNavBarPre(UObject* navBar, UFunction* fn, void* parms)
-        {
-            if (!fn || !parms) return;
-            // Find Tabs param.
-            auto* p = findParam(fn, STR("Tabs"));
-            if (!p)
-            {
-                VLOG(STR("[SettingsUI] CP5 — InitializeNavBar 'Tabs' param not found\n"));
-                return;
-            }
-            uint8_t* parmsBytes = static_cast<uint8_t*>(parms);
-            TArray<uint8_t>* tabs = reinterpret_cast<TArray<uint8_t>*>(parmsBytes + p->GetOffset_Internal());
-            if (!tabs) return;
-            int n = tabs->Num();
-            int maxN = tabs->Max();
-            uint8_t* base = tabs->GetData();
-            if (!base || n <= 0)
-            {
-                VLOG(STR("[SettingsUI] CP5 — InitializeNavBar Tabs is empty (Num={})\n"), n);
-                return;
-            }
-            constexpr int kStride = 0xE8;
-
-            int legalIdx = -1;
-            for (int i = 0; i < n && i < 16; ++i)
-            {
-                uint8_t* entry = base + (size_t)i * kStride;
-                FName* fnEntry = reinterpret_cast<FName*>(entry + 0x00);
-                std::wstring name;
-                try { name = fnEntry->ToString(); } catch (...) { continue; }
-                if (name == L"Cheats") return; // already augmented
-                if (name == L"legal" || name == L"Legal") legalIdx = i;
-            }
-            if (legalIdx < 0)
-            {
-                static int s_warnedNoLegal = 0;
-                if (s_warnedNoLegal < 2) {
-                    VLOG(STR("[SettingsUI] CP5 — InitializeNavBar Tabs has no legal entry to clone (Num={})\n"), n);
-                    ++s_warnedNoLegal;
-                }
-                return;
-            }
-
-            uint8_t* writeBase = base;
-            if (n >= maxN)
-            {
-                int newCapacity = maxN < 8 ? 8 : maxN * 2;
-                size_t newBytes = (size_t)newCapacity * kStride;
-                uint8_t* newBuf = static_cast<uint8_t*>(FMemory::Malloc(newBytes, 8));
-                if (!newBuf) return;
-                std::memset(newBuf, 0, newBytes);
-                std::memcpy(newBuf, base, (size_t)n * kStride);
-                struct TAH { uint8_t* Data; int32_t Num; int32_t Max; };
-                TAH* hdr = reinterpret_cast<TAH*>(tabs);
-                uint8_t* oldBuf = hdr->Data;
-                hdr->Data = newBuf;
-                hdr->Max = newCapacity;
-                if (oldBuf) FMemory::Free(oldBuf);
-                writeBase = newBuf;
-            }
-
-            uint8_t* dst = writeBase + (size_t)n * kStride;
-            uint8_t* src = writeBase + (size_t)legalIdx * kStride;
-            std::memcpy(dst, src, kStride);
-            RC::Unreal::FName cheatsName(STR("Cheats"), RC::Unreal::FNAME_Add);
-            std::memcpy(dst + 0x00, &cheatsName, sizeof(RC::Unreal::FName));
-            FText cheatsDisplay(L"Cheats");
-            std::memcpy(dst + 0x08, &cheatsDisplay, sizeof(FText));
-            tabs->SetNum(n + 1, false);
-
-            static int s_loggedTimes = 0;
-            if (s_loggedTimes < 3)
-            {
-                VLOG(STR("[SettingsUI] CP5 — InitializeNavBar pre-hook: appended Cheats (Tabs was {} entries, now {})\n"),
-                     n, n + 1);
-                ++s_loggedTimes;
-            }
-        }
+        // v6.15.0 — onInitializeNavBarPre DELETED (~80 lines). Was the
+        // CP5 v0.4 NavBar pre-hook for Cheats-tab insertion via clone of
+        // legal tab; superseded by Option C in v0.48 (Cheats merged
+        // into Gameplay tab). PE pre-hook callsite in dllmain.cpp also
+        // removed in this version.
 
         // CP5 v0.3 — post-hook for WBP_SettingsScreen.GetNavBarTabs.
         //

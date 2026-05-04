@@ -269,8 +269,9 @@
 
         void umgSetText(UObject* textBlock, const std::wstring& text)
         {
+            // v6.15.0 — UFunction lookup is cached per-class via cachedUFunction.
             if (!textBlock || !isObjectAlive(textBlock)) return;
-            auto* fn = textBlock->GetFunctionByNameInChain(STR("SetText"));
+            auto* fn = cachedUFunction(static_cast<UClass*>(textBlock->GetClassPrivate()), STR("SetText"));
             if (!fn) return;
             auto* pInText = findParam(fn, STR("InText"));
             if (!pInText) return;
@@ -284,8 +285,9 @@
 
         void umgSetTextColor(UObject* textBlock, float r, float g, float b, float a)
         {
+            // v6.15.0 — UFunction lookup is cached per-class via cachedUFunction.
             if (!textBlock || !isObjectAlive(textBlock)) return;
-            auto* fn = textBlock->GetFunctionByNameInChain(STR("SetColorAndOpacity"));
+            auto* fn = cachedUFunction(static_cast<UClass*>(textBlock->GetClassPrivate()), STR("SetColorAndOpacity"));
             if (!fn) return;
             auto* p = findParam(fn, STR("InColorAndOpacity"));
             if (!p) return;
