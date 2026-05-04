@@ -1914,6 +1914,16 @@
                 VLOG(STR("[MoriaCppMod] Target info copied to clipboard\n"));
             }
 
+            // v6.20.4 — Phase 4 follow-up: also fire a brief game-native
+            // notification so the user gets clear visual confirmation
+            // without having to look at the home-rolled panel. Full info
+            // remains on the clipboard above; the notification is a
+            // 1-2 line summary that auto-dismisses.
+            std::wstring notifTitle = L"Inspect: " + (display.empty() ? name : display);
+            std::wstring notifBody  = L"Class: " + cls;
+            if (!recipeDisplay.empty()) notifBody += L"\nRecipe: " + recipeDisplay;
+            showGameNotification(notifTitle, notifBody, 6.0f);
+
             m_tiShowTick = GetTickCount64();
         }
 
@@ -5372,13 +5382,88 @@
 
         ULONGLONG m_lastSaveTime{0};
 
+        // v6.20.4 — Phase 4 follow-up: route transient notifications through
+        // the game's own UI_WBP_NotificationFeed (the system the game uses
+        // for inventory pickups, lore discoveries, etc.) instead of the
+        // home-rolled white-on-red error-box widget. Spawns a fresh
+        // UI_WBP_Notification_Generic_C, calls SetData(text1, text2, ...),
+        // then QueueNewNotification(notif, duration) on the running feed.
+        // Falls back to showInfoMessage (legacy error box) if the feed
+        // isn't loaded yet (rare — only at main menu / pre-character).
+        UClass* m_notifGenericCls{nullptr};
+        bool m_inNotifFallback{false};
+        UObject* resolveNotificationFeed()
+        {
+            std::vector<UObject*> feeds;
+            try { UObjectGlobals::FindAllOf(STR("UI_WBP_NotificationFeed_C"), feeds); } catch (...) {}
+            for (UObject* f : feeds) {
+                if (f && isObjectAlive(f)) return f;
+            }
+            return nullptr;
+        }
+        void showGameNotification(const std::wstring& title,
+                                  const std::wstring& body = L"",
+                                  float duration = 3.0f)
+        {
+            UObject* feed = resolveNotificationFeed();
+            if (!feed)
+            {
+                if (m_inNotifFallback) return;
+                m_inNotifFallback = true;
+                showInfoMessage(title);
+                m_inNotifFallback = false;
+                return;
+            }
+            if (!m_notifGenericCls)
+            {
+                try
+                {
+                    m_notifGenericCls = UObjectGlobals::StaticFindObject<UClass*>(
+                        nullptr, nullptr,
+                        STR("/Game/UI/Notifications/UI_WBP_Notification_Generic.UI_WBP_Notification_Generic_C"));
+                }
+                catch (...) {}
+            }
+            if (!m_notifGenericCls) { showInfoMessage(title); return; }
+
+            UObject* notif = jw_createGameWidget(m_notifGenericCls);
+            if (!notif) { showInfoMessage(title); return; }
+
+            if (auto* setDataFn = notif->GetFunctionByNameInChain(STR("SetData")))
+            {
+                int sz = setDataFn->GetParmsSize();
+                std::vector<uint8_t> b(sz, 0);
+                auto setText = [&](const wchar_t* parmName, const std::wstring& val) {
+                    auto* p = findParam(setDataFn, parmName);
+                    if (!p) return;
+                    FText t(val.c_str());
+                    std::memcpy(b.data() + p->GetOffset_Internal(), &t, sizeof(FText));
+                };
+                setText(STR("text1"), title);
+                if (!body.empty()) setText(STR("text2"), body);
+                try { safeProcessEvent(notif, setDataFn, b.data()); } catch (...) {}
+            }
+
+            if (auto* queueFn = feed->GetFunctionByNameInChain(STR("QueueNewNotification")))
+            {
+                int sz = queueFn->GetParmsSize();
+                std::vector<uint8_t> b(sz, 0);
+                if (auto* p = findParam(queueFn, STR("NewNotif")))
+                    *reinterpret_cast<UObject**>(b.data() + p->GetOffset_Internal()) = notif;
+                if (auto* p = findParam(queueFn, STR("Duration")))
+                    *reinterpret_cast<float*>(b.data() + p->GetOffset_Internal()) = duration;
+                try { safeProcessEvent(feed, queueFn, b.data()); } catch (...) {}
+            }
+            VLOG(STR("[Notif] Queued '{}'\n"), title.c_str());
+        }
+
         void triggerSaveGame()
         {
             // Cooldown: prevent double-trigger (10s minimum between saves)
             ULONGLONG now = GetTickCount64();
             if (now - m_lastSaveTime < 10000)
             {
-                showInfoMessage(L"Save: please wait...");
+                showGameNotification(L"Save: please wait...", L"", 2.0f);
                 return;
             }
 
@@ -5423,7 +5508,7 @@
                     {
                         safeProcessEvent((*cm), cmFn, nullptr);
                         m_lastSaveTime = now;
-                        showInfoMessage(L"Game Saved");
+                        showGameNotification(L"Game Saved", L"", 3.0f);
                         VLOG(STR("[MoriaCppMod] [Save] Triggered via CheatManager::SaveSystemAutoSave\n"));
                         return;
                     }
@@ -5441,7 +5526,7 @@
 
             safeProcessEvent(cheatsComp, saveFn, nullptr);
             m_lastSaveTime = now;
-            showInfoMessage(L"Game Saved");
+            showGameNotification(L"Game Saved", L"", 3.0f);
             VLOG(STR("[MoriaCppMod] [Save] Triggered via MorCheatsComponent::ServerAutoSave\n"));
         }
 
