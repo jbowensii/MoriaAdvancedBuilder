@@ -1,4 +1,4 @@
-// MoriaCppMod v6.16.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.17.0 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -431,7 +431,10 @@ namespace MoriaMods
         UObject* m_ftTabActiveTexture{nullptr};
         UObject* m_ftTabInactiveTexture{nullptr};
         int m_ftSelectedTab{0};
-        UObject* m_ftScrollBox{nullptr};
+        // v6.17.0 — FWeakObjectPtr migration. Settings panel rebuilds and
+        // language changes destroy the underlying scrollbox; weak ref
+        // returns nullptr automatically post-GC.
+        FWeakObjectPtr m_ftScrollBox;
         UObject* m_ftTabContent[6]{};
 
         // v6.4.1 Cheats tab — widget refs for action buttons and toggle state
@@ -465,7 +468,9 @@ namespace MoriaMods
         // Used to restore DEFAULT and to compute multipliers from the original baseline.
         std::unordered_map<std::wstring, double> m_tweakOriginals;
         UObject* m_ftKeyBoxLabels[BIND_COUNT]{};
-        UObject* m_ftCheckImages[BIND_COUNT]{};
+        // v6.17.0 — FWeakObjectPtr migration. Settings panel rebuild can
+        // GC these checkbox images.
+        FWeakObjectPtr m_ftCheckImages[BIND_COUNT];
         UObject* m_ftModBoxLabel{nullptr};
 
         UObject* m_ftControllerCheckImg{nullptr};
@@ -491,7 +496,8 @@ namespace MoriaMods
         int m_ftLastRemovalCount{-1};
 
         static constexpr int MAX_GAME_MODS = 16;
-        UObject* m_ftGameModCheckImages[MAX_GAME_MODS]{};
+        // v6.17.0 — FWeakObjectPtr migration; settings panel rebuild.
+        FWeakObjectPtr m_ftGameModCheckImages[MAX_GAME_MODS];
         std::vector<GameModEntry> m_ftGameModEntries;
 
 
@@ -521,8 +527,12 @@ namespace MoriaMods
         int  m_dragToolbar{-1};
         float m_dragOffsetX{0}, m_dragOffsetY{0};
         UClass* m_wllClass{nullptr};
-        UObject* m_repositionMsgWidget{nullptr};
-        UObject* m_repositionInfoBoxWidget{nullptr};
+        // v6.17.0 — FWeakObjectPtr migration. These widgets can outlive
+        // their parent across world transitions / panel rebuilds; the
+        // weak ref returns nullptr automatically when the underlying
+        // UObject is GC'd, eliminating the stale-pointer crash class.
+        FWeakObjectPtr m_repositionMsgWidget;
+        FWeakObjectPtr m_repositionInfoBoxWidget;
 
         static constexpr int TB_COUNT = 4;
         float m_toolbarPosX[TB_COUNT]{-1, -1, -1, -1};
@@ -594,14 +604,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.16.0");
+            ModVersion = STR("6.17.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.16.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.17.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -642,7 +652,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.16.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.17.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -1605,7 +1615,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.16.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.17.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -2189,7 +2199,7 @@ namespace MoriaMods
                     constexpr float kHitRadY = 0.25f;
                     float bestDist = 1e9f;
                     int   bestIdx  = -1;
-                    UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget, m_repositionInfoBoxWidget};
+                    UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget, m_repositionInfoBoxWidget.Get()}; // v6.17.0 weakptr
                     for (int i = 0; i < TB_COUNT; i++)
                     {
                         if (!widgets[i]) continue;
@@ -2219,7 +2229,7 @@ namespace MoriaMods
                     float fy = std::clamp(curFracY - m_dragOffsetY, 0.01f, 0.99f);
                     m_toolbarPosX[m_dragToolbar] = fx;
                     m_toolbarPosY[m_dragToolbar] = fy;
-                    UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget, m_repositionInfoBoxWidget};
+                    UObject* widgets[TB_COUNT] = {m_umgBarWidget, m_abBarWidget, m_mcBarWidget, m_repositionInfoBoxWidget.Get()}; // v6.17.0 weakptr
                     float px = m_screen.fracToPixelX(fx);
                     float py = m_screen.fracToPixelY(fy);
                     static int s_dragLog = 0;
@@ -2889,14 +2899,14 @@ namespace MoriaMods
                             int sectionHeight = static_cast<int>(80.0f * s2p);
 
                             float scrollOff = 0.0f;
-                            if (m_ftScrollBox)
+                            if (UObject* sb = m_ftScrollBox.Get())
                             {
-                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                auto* getScrollFn = sb->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
                                 {
                                     int sz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(sz, 0);
-                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
+                                    safeProcessEvent(sb, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= sz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -2927,10 +2937,10 @@ namespace MoriaMods
                                             {
 
                                                 s_bindings[b].enabled = !s_bindings[b].enabled;
-                                                if (m_ftCheckImages[b])
+                                                if (UObject* chk = m_ftCheckImages[b].Get()) // v6.17.0 weakptr
                                                 {
-                                                    auto* visFn = m_ftCheckImages[b]->GetFunctionByNameInChain(STR("SetVisibility"));
-                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = s_bindings[b].enabled ? 0 : 2; safeProcessEvent(m_ftCheckImages[b], visFn, vp); }
+                                                    auto* visFn = chk->GetFunctionByNameInChain(STR("SetVisibility"));
+                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = s_bindings[b].enabled ? 0 : 2; safeProcessEvent(chk, visFn, vp); }
                                                 }
                                                 saveConfig();
                                                 VLOG(STR("[MoriaCppMod] [Settings] Bind {} enabled={}\n"), b, s_bindings[b].enabled);
@@ -2979,14 +2989,14 @@ namespace MoriaMods
 
 
                             float scrollOff = 0.0f;
-                            if (m_ftScrollBox)
+                            if (UObject* sb = m_ftScrollBox.Get())
                             {
-                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                auto* getScrollFn = sb->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
                                 {
                                     int gsz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(gsz, 0);
-                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
+                                    safeProcessEvent(sb, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -3126,14 +3136,14 @@ namespace MoriaMods
                                  curX, curY, iconX0, iconX1, entryStart, s_config.removalCount.load());
 
                             float scrollOff = 0.0f;
-                            if (m_ftScrollBox)
+                            if (UObject* sb = m_ftScrollBox.Get())
                             {
-                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                auto* getScrollFn = sb->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
                                 {
                                     int sz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(sz, 0);
-                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
+                                    safeProcessEvent(sb, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= sz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -3163,14 +3173,14 @@ namespace MoriaMods
                             int rowH = static_cast<int>(128.0f * s2p);
 
                             float scrollOff = 0.0f;
-                            if (m_ftScrollBox)
+                            if (UObject* sb = m_ftScrollBox.Get())
                             {
-                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                auto* getScrollFn = sb->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
                                 {
                                     int gsz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(gsz, 0);
-                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
+                                    safeProcessEvent(sb, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -3188,10 +3198,10 @@ namespace MoriaMods
                                     if (idx >= 0 && idx < static_cast<int>(m_ftGameModEntries.size()) && idx < MAX_GAME_MODS)
                                     {
                                         m_ftGameModEntries[idx].enabled = !m_ftGameModEntries[idx].enabled;
-                                        if (m_ftGameModCheckImages[idx])
+                                        if (UObject* chk = m_ftGameModCheckImages[idx].Get()) // v6.17.0 weakptr
                                         {
-                                            auto* visFn = m_ftGameModCheckImages[idx]->GetFunctionByNameInChain(STR("SetVisibility"));
-                                            if (visFn) { uint8_t vp[8]{}; vp[0] = m_ftGameModEntries[idx].enabled ? 0 : 2; safeProcessEvent(m_ftGameModCheckImages[idx], visFn, vp); }
+                                            auto* visFn = chk->GetFunctionByNameInChain(STR("SetVisibility"));
+                                            if (visFn) { uint8_t vp[8]{}; vp[0] = m_ftGameModEntries[idx].enabled ? 0 : 2; safeProcessEvent(chk, visFn, vp); }
                                         }
 
                                         saveGameMods(m_ftGameModEntries);
@@ -3212,14 +3222,14 @@ namespace MoriaMods
                         {
                             // Read current scroll offset (scrollbox moves tab content upward)
                             float scrollOff = 0.0f;
-                            if (m_ftScrollBox)
+                            if (UObject* sb = m_ftScrollBox.Get())
                             {
-                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                auto* getScrollFn = sb->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
                                 {
                                     int gsz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(gsz, 0);
-                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
+                                    safeProcessEvent(sb, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -3306,14 +3316,14 @@ namespace MoriaMods
                         {
                             // Read scroll offset (same pattern as tab 4)
                             float scrollOff = 0.0f;
-                            if (m_ftScrollBox)
+                            if (UObject* sb = m_ftScrollBox.Get())
                             {
-                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
+                                auto* getScrollFn = sb->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
                                 {
                                     int gsz = getScrollFn->GetParmsSize();
                                     std::vector<uint8_t> sp(gsz, 0);
-                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
+                                    safeProcessEvent(sb, getScrollFn, sp.data());
                                     auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
                                     if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
                                         scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
@@ -3791,10 +3801,10 @@ namespace MoriaMods
                     m_ftTabActiveTexture = nullptr;
                     m_ftTabInactiveTexture = nullptr;
                     m_ftSelectedTab = 0;
-                    m_ftScrollBox = nullptr;
+                    m_ftScrollBox = FWeakObjectPtr(); // v6.17.0 weakptr
                     for (auto& c : m_ftTabContent) c = nullptr;
                     for (auto& l : m_ftKeyBoxLabels) l = nullptr;
-                    for (auto& c : m_ftCheckImages) c = nullptr;
+                    for (auto& c : m_ftCheckImages) c = FWeakObjectPtr(); // v6.17.0 weakptr reset
                     m_ftModBoxLabel = nullptr;
                     m_ftControllerCheckImg = nullptr;
                     m_ftControllerProfileLabel = nullptr;
@@ -3804,7 +3814,7 @@ namespace MoriaMods
                     m_ftRemovalVBox = nullptr;
                     m_ftRemovalHeader = nullptr;
                     m_ftLastRemovalCount = -1;
-                    for (auto& c : m_ftGameModCheckImages) c = nullptr;
+                    for (auto& c : m_ftGameModCheckImages) c = FWeakObjectPtr(); // v6.17.0 weakptr reset
                     m_ftGameModEntries.clear();
                     m_ftRenameWidget = nullptr;
                     m_ftRenameInput = nullptr;
@@ -3839,8 +3849,8 @@ namespace MoriaMods
 
                     m_repositionMode = false;
                     m_dragToolbar = -1;
-                    m_repositionMsgWidget = nullptr;
-                    m_repositionInfoBoxWidget = nullptr;
+                    m_repositionMsgWidget = FWeakObjectPtr(); // v6.17.0 weakptr reset
+                    m_repositionInfoBoxWidget = FWeakObjectPtr(); // v6.17.0 weakptr reset
 
                     m_targetInfoWidget = nullptr;
                     m_tiTitleLabel = nullptr;

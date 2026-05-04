@@ -3760,10 +3760,10 @@
                 m_ftTabActiveTexture = nullptr;
                 m_ftTabInactiveTexture = nullptr;
                 m_ftSelectedTab = 0;
-                m_ftScrollBox = nullptr;
+                m_ftScrollBox = FWeakObjectPtr(); // v6.17.0 weakptr
                 for (auto& c : m_ftTabContent) c = nullptr;
                 for (auto& l : m_ftKeyBoxLabels) l = nullptr;
-                for (auto& c : m_ftCheckImages) c = nullptr;
+                for (auto& c : m_ftCheckImages) c = FWeakObjectPtr(); // v6.17.0 weakptr reset
                 m_ftModBoxLabel = nullptr;
                 m_ftNoCollisionCheckImg = nullptr;
                 m_ftNoCollisionLabel = nullptr;
@@ -3771,7 +3771,7 @@
                 m_ftRemovalVBox = nullptr;
                 m_ftRemovalHeader = nullptr;
                 m_ftLastRemovalCount = -1;
-                for (auto& c : m_ftGameModCheckImages) c = nullptr;
+                for (auto& c : m_ftGameModCheckImages) c = FWeakObjectPtr(); // v6.17.0 weakptr reset
                 m_ftGameModEntries.clear();
                 if (s_capturingBind >= 0) { s_capturingBind = -1; }
                 setInputModeGame();
@@ -4053,7 +4053,7 @@
                     UObject* scrollBox = UObjectGlobals::StaticConstructObject(sbP);
                     if (rightSizeBox && scrollBox)
                     {
-                        m_ftScrollBox = scrollBox;
+                        m_ftScrollBox = FWeakObjectPtr(scrollBox); // v6.17.0 weakptr
 
                         auto* setHOvFn = rightSizeBox->GetFunctionByNameInChain(STR("SetHeightOverride"));
                         if (setHOvFn) { int sz = setHOvFn->GetParmsSize(); std::vector<uint8_t> hp(sz, 0); auto* p = findParam(setHOvFn, STR("InHeightOverride")); if (p) *reinterpret_cast<float*>(hp.data() + p->GetOffset_Internal()) = 815.0f; safeProcessEvent(rightSizeBox, setHOvFn, hp.data()); }
@@ -4479,7 +4479,7 @@
                                                     umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
                                                     umgSetBrushSize(chkImg, 80.0f, 80.0f);
                                                     addToOverlay(cbOl, chkImg);
-                                                    m_ftGameModCheckImages[gi] = chkImg;
+                                                    m_ftGameModCheckImages[gi] = FWeakObjectPtr(chkImg); // v6.17.0 weakptr
 
                                                     if (!gm.enabled)
                                                     {
@@ -5047,7 +5047,7 @@
                                             umgSetBrushNoMatch(chkImg, texCheck, setBrushFn);
                                             umgSetBrushSize(chkImg, 80.0f, 80.0f);
                                             addToOverlay(cbOl, chkImg);
-                                            m_ftCheckImages[b] = chkImg;
+                                            m_ftCheckImages[b] = FWeakObjectPtr(chkImg); // v6.17.0 weakptr
 
                                             if (!s_bindings[b].enabled)
                                             {
@@ -5249,13 +5249,13 @@
                     setWidgetVisibility(m_ftTabContent[i], (i == tab) ? 0 : 1); // 0=Visible, 1=Collapsed
             }
 
-            if (m_ftScrollBox)
+            if (UObject* sb = m_ftScrollBox.Get())
             {
-                auto* setScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("SetScrollOffset"));
+                auto* setScrollFn = sb->GetFunctionByNameInChain(STR("SetScrollOffset"));
                 if (setScrollFn)
                 {
                     auto* pOff = findParam(setScrollFn, STR("NewScrollOffset"));
-                    if (pOff) { int sz = setScrollFn->GetParmsSize(); std::vector<uint8_t> sp(sz, 0); *reinterpret_cast<float*>(sp.data() + pOff->GetOffset_Internal()) = 0.0f; safeProcessEvent(m_ftScrollBox, setScrollFn, sp.data()); }
+                    if (pOff) { int sz = setScrollFn->GetParmsSize(); std::vector<uint8_t> sp(sz, 0); *reinterpret_cast<float*>(sp.data() + pOff->GetOffset_Internal()) = 0.0f; safeProcessEvent(sb, setScrollFn, sp.data()); }
                 }
             }
 
