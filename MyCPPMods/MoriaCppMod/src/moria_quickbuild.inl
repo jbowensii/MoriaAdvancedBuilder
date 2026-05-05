@@ -1055,7 +1055,6 @@
                     m_recipeSlots[slot].rowName.clear();
                     std::memset(m_recipeSlots[slot].bLockData, 0, BLOCK_DATA_SIZE);
                     m_recipeSlots[slot].hasBLockData = false;
-                    std::memset(m_recipeSlots[slot].recipeHandle, 0, RECIPE_HANDLE_SIZE);
                     m_recipeSlots[slot].hasHandle = false;
                     m_recipeSlots[slot].used = false;
                     if (m_activeBuilderSlot == slot) m_activeBuilderSlot = -1;
@@ -1074,7 +1073,6 @@
             m_recipeSlots[slot].hasBLockData = true;
             if (m_hasLastHandle)
             {
-                std::memcpy(m_recipeSlots[slot].recipeHandle, m_lastCapturedHandle, RECIPE_HANDLE_SIZE);
                 m_recipeSlots[slot].hasHandle = true;
 
                 uint32_t ci = *reinterpret_cast<uint32_t*>(m_lastCapturedHandle + 8);

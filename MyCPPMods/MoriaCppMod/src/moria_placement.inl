@@ -1037,7 +1037,6 @@
             if (hSz < RECIPE_HANDLE_SIZE) return;
             std::vector<uint8_t> hParams(hSz, 0);
             safeProcessEvent(buildHUD, getHandleFn, hParams.data());
-            std::memcpy(m_recipeSlots[slot].recipeHandle, hParams.data(), RECIPE_HANDLE_SIZE);
             m_recipeSlots[slot].hasHandle = true;
             uint32_t ci = *reinterpret_cast<uint32_t*>(hParams.data() + 8);
             QBLOG(STR("[MoriaCppMod] [QB] Cached recipe handle for F{}: CI={}\n"), slot + 1, ci);
