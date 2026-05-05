@@ -2117,6 +2117,12 @@
             if (widgetTree)
                 setRootWidget(widgetTree, rootBorder);
 
+            // v6.20.13 — Restyled from white-on-red error look to game-
+            // native dark-transparent panel with gold text. The
+            // UI_WBP_NotificationFeed approach didn't work — the BP
+            // renders item/recipe/lore-specific layouts, not arbitrary
+            // text — so we abandon that entirely and just make this
+            // home-rolled box look like the game's notifications.
             auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
             if (setBrushColorFn)
             {
@@ -2126,7 +2132,8 @@
                     int sz = setBrushColorFn->GetParmsSize();
                     std::vector<uint8_t> cb(sz, 0);
                     auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
-                    c[0] = 0.22f; c[1] = 0.06f; c[2] = 0.06f; c[3] = 0.88f;
+                    // Dark transparent background ~ near-black, 80% opaque.
+                    c[0] = 0.05f; c[1] = 0.05f; c[2] = 0.07f; c[3] = 0.82f;
                     safeProcessEvent(rootBorder, setBrushColorFn, cb.data());
                 }
             }
@@ -2139,7 +2146,8 @@
                     int sz = setBorderPadFn->GetParmsSize();
                     std::vector<uint8_t> pp(sz, 0);
                     auto* m = reinterpret_cast<float*>(pp.data() + pPad->GetOffset_Internal());
-                    m[0] = 12.0f; m[1] = 8.0f; m[2] = 12.0f; m[3] = 8.0f;
+                    // More generous padding to feel like a notification panel.
+                    m[0] = 20.0f; m[1] = 12.0f; m[2] = 20.0f; m[3] = 12.0f;
                     safeProcessEvent(rootBorder, setBorderPadFn, pp.data());
                 }
             }
@@ -2167,7 +2175,9 @@
             UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
             if (!tb) return;
             umgSetText(tb, L"");
-            umgSetTextColor(tb, 1.0f, 0.85f, 0.6f, 1.0f);
+            // v6.20.13 — game-gold text (matches the warm cream color used
+            // in the game's UI for highlights / important values).
+            umgSetTextColor(tb, 1.0f, 0.82f, 0.45f, 1.0f);
             auto* wrapFn = tb->GetFunctionByNameInChain(STR("SetAutoWrapText"));
             if (wrapFn) { int ws = wrapFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapFn, STR("InAutoWrapText")); if (pw) *reinterpret_cast<bool*>(wp.data() + pw->GetOffset_Internal()) = true; safeProcessEvent(tb, wrapFn, wp.data()); }
             auto* wrapAtFn = tb->GetFunctionByNameInChain(STR("SetWrapTextAt"));
@@ -5380,14 +5390,15 @@
 
         ULONGLONG m_lastSaveTime{0};
 
-        // v6.20.4 — Phase 4 follow-up: route transient notifications through
-        // the game's own UI_WBP_NotificationFeed (the system the game uses
-        // for inventory pickups, lore discoveries, etc.) instead of the
-        // home-rolled white-on-red error-box widget. Spawns a fresh
-        // UI_WBP_Notification_Generic_C, calls SetData(text1, text2, ...),
-        // then QueueNewNotification(notif, duration) on the running feed.
-        // Falls back to showInfoMessage (legacy error box) if the feed
-        // isn't loaded yet (rare — only at main menu / pre-character).
+        // v6.20.13 — Reverted UI_WBP_NotificationFeed approach. The feed's
+        // UI_WBP_Notification_Generic_C BP renders item/recipe/lore-specific
+        // layouts and won't display arbitrary text via SetData. v6.20.4-12
+        // confirmed the technical pieces fired (feed found, class resolved,
+        // notification parented to grid, ShowNotification UFunction called)
+        // but nothing visible — the BP-side render path for text-only is
+        // empty. Now showGameNotification is a thin wrapper around the
+        // restyled showInfoMessage (game-gold on dark transparent), which
+        // works reliably in pause AND in-world.
         UClass* m_notifGenericCls{nullptr};
         bool m_inNotifFallback{false};
         UObject* resolveNotificationFeed()
@@ -5439,7 +5450,20 @@
             VLOG(STR("[Notif] No NotificationFeed instance found\n"));
             return nullptr;
         }
+        // v6.20.13 — Thin wrapper around restyled showInfoMessage.
+        // Body parameter is appended to title with a newline if present.
+        // Duration is ignored (showInfoMessage has its own auto-hide).
         void showGameNotification(const std::wstring& title,
+                                  const std::wstring& body = L"",
+                                  float /*duration*/ = 3.0f)
+        {
+            std::wstring msg = body.empty() ? title : (title + L"\n" + body);
+            showInfoMessage(msg);
+        }
+
+        // Disabled - kept for reference; the feed approach didn't render
+        // text-only notifications. See v6.20.13 commit message for details.
+        void showGameNotificationViaFeed_DISABLED(const std::wstring& title,
                                   const std::wstring& body = L"",
                                   float duration = 3.0f)
         {
