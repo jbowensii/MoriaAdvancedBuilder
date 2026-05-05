@@ -236,7 +236,6 @@
             struct TBInfo { int idx; int cols; int rows; UObject* widget; };
             TBInfo bars[] = {
                 {2, 4, 3, m_mcBarWidget},
-                {0, 8, 1, m_umgBarWidget},
                 {1, 1, 1, m_abBarWidget},
             };
             for (auto& b : bars)

@@ -465,7 +465,7 @@
         void toggleRepositionMode()
         {
 
-            if (!m_repositionMode && !m_umgBarWidget && !m_abBarWidget && !m_mcBarWidget)
+            if (!m_repositionMode && !m_abBarWidget && !m_mcBarWidget)
                 return;
 
             m_repositionMode = !m_repositionMode;
@@ -477,14 +477,12 @@
                 if (!m_toolbarsVisible)
                 {
                     m_toolbarsVisible = true;
-                    setWidgetVisibility(m_umgBarWidget, 0);
                     setWidgetVisibility(m_mcBarWidget, 0);
                 }
                 createRepositionMessage();
                 createPlaceholderInfoBox();
 
                 UObject* focusW = m_repositionMsgWidget ? m_repositionMsgWidget
-                                : m_umgBarWidget ? m_umgBarWidget
                                 : m_abBarWidget;
                 setInputModeUI(focusW);
                 VLOG(STR("[MoriaCppMod] Entered toolbar repositioning mode\n"));
