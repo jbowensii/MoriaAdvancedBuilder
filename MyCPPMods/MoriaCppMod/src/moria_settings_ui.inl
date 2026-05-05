@@ -905,32 +905,54 @@
                 }
             }
 
-            // ── Mod Key Bindings section (9 rows — minus the 6 moved
-            //    into native sections in v0.28) ──────────────────────────
-            struct ModSpec { const wchar_t* label; int bindIdx; const char* iniKey; };
-            // v0.30 — Snap Toggle moved to Building section in native
-            // headers below. MOD KEY BINDINGS shrinks to 8 entries.
+            // ── Mod Key Bindings section ───────────────────────────────
+            // v6.20.24 — siblingIdx + withShift fields:
+            //   - "Flying Dwarf"     = SHIFT + s_bindings[11].key  (\ default)
+            //   - "Duplicate Target" = SHIFT + s_bindings[12].key  (] default)
+            // Previously these rows had bindIdx=-1 and vk=0, which caused
+            // applyDefaultChordToSelector to early-return — the BP
+            // InputKeySelector then displayed its placeholder (SpaceBar),
+            // confusing users into thinking the binding had reverted to SPACE.
+            // The actual dispatch lives in moria_debug.inl::dispatchMcSlot
+            // case 3/case 4 which check isModifierDown() — these rows are
+            // chord variants of the parent slot, not independent bindings.
+            struct ModSpec {
+                const wchar_t* label;
+                int bindIdx;          // -1 if this is a chord variant
+                int siblingIdx;       // sibling slot to inherit key from when bindIdx<0
+                bool withShift;
+                const char* iniKey;
+            };
             static const ModSpec mods[] = {
-                { STR("Integrity Check"),    10, "StabilityCheck" },
-                { STR("Invisible Dwarf"),    11, "SuperDwarf" },
-                { STR("Flying Dwarf"),       -1, "FlyingDwarf" },
-                { STR("Target"),             12, "Target" },
-                { STR("Duplicate Target"),   -1, "DuplicateTarget" },
-                { STR("Remove Single"),      14, "RemoveTarget" },
-                { STR("Undo Remove"),        15, "UndoLast" },
-                { STR("Remove All"),         16, "RemoveAll" },
+                { STR("Integrity Check"),    10, -1, false, "StabilityCheck" },
+                { STR("Invisible Dwarf"),    11, -1, false, "SuperDwarf" },
+                { STR("Flying Dwarf"),       -1, 11, true,  "FlyingDwarf" },
+                { STR("Target"),             12, -1, false, "Target" },
+                { STR("Duplicate Target"),   -1, 12, true,  "DuplicateTarget" },
+                { STR("Remove Single"),      14, -1, false, "RemoveTarget" },
+                { STR("Undo Remove"),        15, -1, false, "UndoLast" },
+                { STR("Remove All"),         16, -1, false, "RemoveAll" },
             };
             if (UObject* hd = spawnSectionHeading(STR("Mod Key Bindings")))
                 addToScrollBox(scrollBox, hd);
             int modAdded = 0;
             for (const auto& m : mods)
             {
-                uint8_t vk = (m.bindIdx >= 0 && m.bindIdx < BIND_COUNT) ? s_bindings[m.bindIdx].key : 0;
-                UObject* row = spawnKeybindRow(outer, m.label, nullptr, vk, false, selectors);
+                uint8_t vk = 0;
+                if (m.bindIdx >= 0 && m.bindIdx < BIND_COUNT)
+                    vk = s_bindings[m.bindIdx].key;
+                else if (m.siblingIdx >= 0 && m.siblingIdx < BIND_COUNT)
+                    vk = s_bindings[m.siblingIdx].key;  // chord variant tracks sibling
+                UObject* row = spawnKeybindRow(outer, m.label, nullptr, vk, m.withShift, selectors);
                 if (row) {
                     addToScrollBox(scrollBox, row);
-                    applyDefaultChordToSelector(row, vk, false);
-                    trackRow(row, m.bindIdx, vk, false, 0, m.iniKey);
+                    applyDefaultChordToSelector(row, vk, m.withShift);
+                    // v6.20.25 — modBits must reflect withShift so
+                    // tickReapplyModifierPrefixes draws the SHIFT glyph.
+                    // Was 0 in v6.20.24 — Flying Dwarf / Duplicate Target
+                    // rows showed bare key without the SHIFT prefix.
+                    uint8_t modBits = m.withShift ? 0x01 : 0;
+                    trackRow(row, m.bindIdx, vk, m.withShift, modBits, m.iniKey);
                     ++modAdded;
                 }
             }

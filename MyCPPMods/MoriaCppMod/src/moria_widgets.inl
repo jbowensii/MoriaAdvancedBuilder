@@ -5793,6 +5793,16 @@
             m_ftRenameWidget = userWidget;
             m_ftRenameVisible = true;
             setInputModeUI(userWidget);
+
+            // v6.20.24 — clear pending bit-0 latch on RETURN/ESCAPE/LBUTTON
+            // before entering poll loop. Without this, ESCAPE-to-open-pause-menu
+            // OR ENTER-to-click-RENAME-button leaves a pending press latched in
+            // GetAsyncKeyState; the next poll inside the dialog sees it and
+            // immediately closes/confirms the dialog (28ms after open).
+            (void)GetAsyncKeyState(VK_RETURN);
+            (void)GetAsyncKeyState(VK_ESCAPE);
+            (void)GetAsyncKeyState(VK_LBUTTON);
+
             VLOG(STR("[MoriaCppMod] [Rename] Dialog opened\n"));
         }
 
@@ -5808,10 +5818,31 @@
             m_ftRenameConfirmLabel = nullptr;
             m_ftRenameVisible = false;
 
+            // v6.20.25 — if the rename dialog was opened from the pause menu
+            // (typical), the pause menu is still on screen and needs UI input.
+            // Falling through to setInputModeGame leaves the user locked out
+            // (game paused, pause menu visible but non-interactive — only ESC
+            // dismisses it). Detect any live pause-menu instance and restore
+            // UI mode focused on it.
             if (m_ftVisible && m_fontTestWidget)
+            {
                 setInputModeUI(m_fontTestWidget);
+            }
             else
-                setInputModeGame();
+            {
+                std::vector<UObject*> menus;
+                findAllOfSafe(STR("UI_WBP_EscapeMenu2_C"), menus);
+                UObject* pauseMenu = nullptr;
+                for (UObject* m : menus)
+                {
+                    if (!m || !isObjectAlive(m)) continue;
+                    if (isWidgetInViewport(m)) { pauseMenu = m; break; }
+                }
+                if (pauseMenu)
+                    setInputModeUI(pauseMenu);
+                else
+                    setInputModeGame();
+            }
             VLOG(STR("[MoriaCppMod] [Rename] Dialog closed (deferred removal)\n"));
         }
 

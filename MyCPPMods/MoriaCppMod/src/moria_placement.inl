@@ -968,6 +968,42 @@
         }
 
 
+        // v6.20.26 — build a 16-byte FMor*RecipeRowHandle from a row name + DT.
+        // Layout: [DT* 8 bytes][FName.CI 4][FName.Number 4]. Returns true on success.
+        // Used by both F-key and target-build DIRECT paths so they share one
+        // robust path: rebuilds the handle from the still-valid row name on
+        // every press, instead of trusting a cached DT* that may have aged out
+        // across world transitions / GC.
+        bool buildSyntheticRecipeHandle(const std::wstring& rowName, uint8_t* outHandle16)
+        {
+            if (rowName.empty() || !outHandle16) return false;
+            if (!m_dtConstructions.isBound()) m_dtConstructions.bind(L"DT_Constructions");
+            UObject* dt = m_dtConstructions.table;
+            if (!dt || !isObjectAlive(dt)) return false;
+            std::memset(outHandle16, 0, RECIPE_HANDLE_SIZE);
+            *reinterpret_cast<UObject**>(outHandle16 + 0) = dt;
+            try {
+                FName rowFName(rowName.c_str(), FNAME_Add);
+                std::memcpy(outHandle16 + 8, &rowFName, sizeof(FName));
+            } catch (...) {
+                return false;
+            }
+            return true;
+        }
+
+        // v6.20.26 — get the live build HUD or return nullptr.
+        UObject* getActiveBuildHUD()
+        {
+            UObject* comp = getCachedBuildComp();
+            if (!comp) return nullptr;
+            auto* fn = comp->GetFunctionByNameInChain(STR("GetActiveBuildingWidget"));
+            if (!fn) return nullptr;
+            struct { UObject* Ret{nullptr}; } params{};
+            safeProcessEvent(comp, fn, &params);
+            if (!params.Ret || !isObjectAlive(params.Ret)) return nullptr;
+            return params.Ret;
+        }
+
         bool trySelectRecipeByHandle(UObject* buildHUD, const uint8_t* handleData)
         {
             if (!buildHUD || !handleData || !isObjectAlive(buildHUD)) return false;
@@ -1258,7 +1294,15 @@
                                             m_recipeSlots[slot].hasHandle);
 
 
-            if (m_recipeSlots[slot].hasHandle)
+            // v6.20.26 — DIRECT path: always rebuild handle from rowName.
+            // Was: trusted cached recipeHandle (with raw DT pointer that ages out
+            // across world transitions / GC). User reported "occasionally F#
+            // does nothing" — consistent with stale DT pointer in cached handle:
+            // SelectRecipe returns success but ghost doesn't spawn because the
+            // game can't find the row in the freed/changed DT pointer.
+            // New path: rebuild a synthetic handle every press from the still-
+            // valid rowName + freshly-bound DT. Same code path target-build uses.
+            if (!m_recipeSlots[slot].rowName.empty())
             {
                 ULONGLONG now = GetTickCount64();
                 if (now - m_lastDirectSelectTime < 150)
@@ -1268,36 +1312,25 @@
                     return;
                 }
 
-                UObject* buildHUD = nullptr;
-                UObject* comp = getCachedBuildComp();
-                if (comp)
+                UObject* buildHUD = getActiveBuildHUD();
+                uint8_t handle[RECIPE_HANDLE_SIZE]{};
+                bool haveHandle = buildSyntheticRecipeHandle(m_recipeSlots[slot].rowName, handle);
+
+                if (buildHUD && haveHandle)
                 {
-                    auto* fn = comp->GetFunctionByNameInChain(STR("GetActiveBuildingWidget"));
-                    if (fn)
+                    QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT SelectRecipe F{} (synthetic handle, row='{}')\n"),
+                          slot + 1, m_recipeSlots[slot].rowName);
                     {
-                        struct { UObject* Ret{nullptr}; } params{};
-                        safeProcessEvent(comp, fn, &params);
-                        if (params.Ret && isObjectAlive(params.Ret))
-                            buildHUD = params.Ret;
-                    }
-                }
-                if (buildHUD)
-                {
-                    QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT SelectRecipe for F{} (skipping state machine)\n"), slot + 1);
-                    {
-                        // RAII guard — ensures m_isAutoSelecting is always cleared
                         m_isAutoSelecting = true;
                         struct AutoSelectGuardDirect { bool& f; ~AutoSelectGuardDirect() { f = false; } } guardDirect{m_isAutoSelecting};
 
-                        if (trySelectRecipeByHandle(buildHUD, m_recipeSlots[slot].recipeHandle))
+                        if (trySelectRecipeByHandle(buildHUD, handle))
                         {
                             m_isAutoSelecting = false;
-
                             if (isPlacementActive())
                             {
                                 m_lastDirectSelectTime = now;
                                 m_lastQBSelectTime = now;
-
                                 m_deferHideAndRefresh = true;
                                 const std::wstring& targetName = m_recipeSlots[slot].displayName;
                                 showOnScreen((L"Build: " + targetName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
@@ -1307,15 +1340,18 @@
                                 onGhostAppeared();
                                 return;
                             }
-                            QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path: SelectRecipe succeeded but no ghost — stale handle, invalidating\n"));
+                            QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path: SelectRecipe returned but no ghost — falling through\n"));
                         }
-                    } // guardDirect clears m_isAutoSelecting
-                    m_recipeSlots[slot].hasHandle = false;
-                    QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path failed, falling through to state machine\n"));
+                        else
+                        {
+                            QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path: trySelectRecipeByHandle failed — falling through\n"));
+                        }
+                    }
                 }
                 else
                 {
-                    QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path: no active overlay, need build menu\n"));
+                    QBLOG(STR("[MoriaCppMod] [QuickBuild] DIRECT path: buildHUD={:p} haveHandle={} — falling through\n"),
+                          (void*)buildHUD, haveHandle ? STR("Y") : STR("N"));
                 }
             }
 
@@ -1363,6 +1399,48 @@
             m_isTargetBuild = true;
             m_pendingQuickBuildSlot = -1;
             m_qbStartTime = GetTickCount64();
+
+            // v6.20.26 — DIRECT path: same shared helpers as F-key DIRECT.
+            // Build synthetic handle from m_targetBuildRowName + DT_Constructions,
+            // call SelectRecipe directly on live build HUD. Both F# and SHIFT+]
+            // now flow through buildSyntheticRecipeHandle + getActiveBuildHUD +
+            // trySelectRecipeByHandle.
+            if (!m_targetBuildRowName.empty())
+            {
+                UObject* buildHUD = getActiveBuildHUD();
+                uint8_t handle[RECIPE_HANDLE_SIZE]{};
+                bool haveHandle = buildSyntheticRecipeHandle(m_targetBuildRowName, handle);
+                if (buildHUD && haveHandle)
+                {
+                    m_isAutoSelecting = true;
+                    struct AutoSelectGuardTgt { bool& f; ~AutoSelectGuardTgt() { f = false; } } guardTgt{m_isAutoSelecting};
+                    if (trySelectRecipeByHandle(buildHUD, handle))
+                    {
+                        m_isAutoSelecting = false;
+                        if (isPlacementActive())
+                        {
+                            m_lastQBSelectTime = GetTickCount64();
+                            m_lastDirectSelectTime = m_lastQBSelectTime;
+                            QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path SUCCESS for '{}' (row='{}')\n"),
+                                  m_targetBuildName, m_targetBuildRowName);
+                            showOnScreen((L"Build: " + m_targetBuildName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
+                            onGhostAppeared();
+                            m_qbPhase = PlacePhase::Idle;
+                            return;
+                        }
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path: SelectRecipe returned but no ghost — falling through\n"));
+                    }
+                    else
+                    {
+                        QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path: trySelectRecipeByHandle failed — falling through\n"));
+                    }
+                }
+                else
+                {
+                    QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path: buildHUD={:p} haveHandle={} — falling through\n"),
+                          (void*)buildHUD, haveHandle ? STR("Y") : STR("N"));
+                }
+            }
 
             if (isBuildTabShowing())
             {
