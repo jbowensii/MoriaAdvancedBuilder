@@ -5392,43 +5392,51 @@
         bool m_inNotifFallback{false};
         UObject* resolveNotificationFeed()
         {
-            // v6.20.6 — diagnostic: log how many feeds we find of each
-            // candidate name. The first attempt searches the BP class
-            // name. If FindAllOf returns 0, the feed instance simply
-            // isn't alive (rare — only when the player is at the main
-            // menu / pre-character) OR the class name is wrong.
+            // v6.20.12 — Pick a CONSTRUCTED feed instance, not a CDO or
+            // archetype. Diagnostic in v6.20.11 confirmed the previous
+            // first-alive pick returned a feed whose notificationBox
+            // (and every other child member) was 0x0 — meaning that
+            // instance hadn't been Construct()'d. The live HUD feed is
+            // the one whose `notificationBox` member is non-null.
             std::vector<UObject*> feeds;
             try { UObjectGlobals::FindAllOf(STR("UI_WBP_NotificationFeed_C"), feeds); } catch (...) {}
             int aliveCount = 0;
-            for (UObject* f : feeds) if (f && isObjectAlive(f)) ++aliveCount;
-            VLOG(STR("[Notif] FindAllOf<UI_WBP_NotificationFeed_C>: total={} alive={}\n"),
-                 (int)feeds.size(), aliveCount);
-
-            for (UObject* f : feeds) {
-                if (f && isObjectAlive(f)) return f;
-            }
-
-            // Fallback class names — try without the _C suffix or with
-            // a different name in case the BP class was renamed.
-            static const wchar_t* alts[] = {
-                STR("UI_WBP_NotificationFeed"),
-                STR("UI_WBP_NotificationOverlay_C"),
-                STR("UI_WBP_NotificationOverlay"),
-            };
-            for (const wchar_t* alt : alts)
+            int constructedCount = 0;
+            UObject* picked = nullptr;
+            for (UObject* f : feeds)
             {
-                feeds.clear();
-                try { UObjectGlobals::FindAllOf(alt, feeds); } catch (...) {}
-                if (!feeds.empty())
+                if (!f || !isObjectAlive(f)) continue;
+                ++aliveCount;
+                // Skip CDO (BP archetype object).
+                UClass* cls = static_cast<UClass*>(f->GetClassPrivate());
+                if (cls && static_cast<UObject*>(cls->GetClassDefaultObject()) == f) continue;
+                // Filter for a feed whose child members are populated.
+                if (auto* nbPtr = f->GetValuePtrByPropertyNameInChain<UObject*>(STR("notificationBox")))
                 {
-                    VLOG(STR("[Notif] Found {} instance(s) under name '{}'\n"),
-                         (int)feeds.size(), alt);
-                    for (UObject* f : feeds) {
-                        if (f && isObjectAlive(f)) return f;
+                    if (*nbPtr && isObjectAlive(*nbPtr))
+                    {
+                        ++constructedCount;
+                        if (!picked) picked = f;
                     }
                 }
             }
-            VLOG(STR("[Notif] No NotificationFeed found under any candidate name; falling back to error-box\n"));
+            VLOG(STR("[Notif] FindAllOf<UI_WBP_NotificationFeed_C>: total={} alive={} constructed={} picked={:p}\n"),
+                 (int)feeds.size(), aliveCount, constructedCount, (void*)picked);
+            if (picked) return picked;
+
+            // No CONSTRUCTED feed yet — return any alive instance so the
+            // class lookup still works (Spawn + ShowNotification will go
+            // through the standalone fallback).
+            for (UObject* f : feeds)
+            {
+                if (f && isObjectAlive(f))
+                {
+                    UClass* cls = static_cast<UClass*>(f->GetClassPrivate());
+                    if (cls && static_cast<UObject*>(cls->GetClassDefaultObject()) == f) continue;
+                    return f;
+                }
+            }
+            VLOG(STR("[Notif] No NotificationFeed instance found\n"));
             return nullptr;
         }
         void showGameNotification(const std::wstring& title,
