@@ -382,9 +382,8 @@
 
         void refreshKeyLabels()
         {
-            for (int i = 0; i < 8; i++)
-                if (m_umgKeyLabels[i])
-                    umgSetText(m_umgKeyLabels[i], keyName(s_bindings[i].key));
+            // v6.21.4 batch 3 Tier 2a — OLD UMG bar QB key-labels loop
+            // removed with the bar.
             for (int i = 0; i < MC_SLOTS; i++)
                 if (m_mcKeyLabels[i])
                     umgSetText(m_mcKeyLabels[i], keyName(s_bindings[MC_BIND_BASE + i].key));

@@ -1,4 +1,4 @@
-// MoriaCppMod v6.21.3 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.21.4 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -337,9 +337,10 @@ namespace MoriaMods
 
 
         UObject* m_umgBarWidget{nullptr};
-        UObject* m_umgSlotButtons[8]{};           // UButton wrappers for gamepad navigation
+        // v6.21.4 batch 3 Tier 2a — removed m_umgSlotButtons[8] (OLD UMG bar
+        // gamepad nav — bar is gone; gamepad QB polling block also removed).
         UObject* m_umgStateImages[8]{};
-        // v6.21.3 batch 3 — removed m_umgIconImages/m_umgIconTextures/m_umgIconNames
+        // v6.21.4 batch 3 — removed m_umgIconImages/m_umgIconTextures/m_umgIconNames
         // (orphaned arrays from OLD UMG bar; only ever cleared, never read).
         UObject* m_umgTexEmpty{nullptr};
         UObject* m_umgTexInactive{nullptr};
@@ -409,8 +410,8 @@ namespace MoriaMods
         DIGamepadState m_diPrevState{};           // previous frame
 
 
-        UObject* m_umgKeyLabels[8]{};
-        UObject* m_umgKeyBgImages[8]{};
+        // v6.21.4 batch 3 Tier 2a — removed m_umgKeyLabels[8] (OLD UMG bar
+        // F-key labels) + m_umgKeyBgImages[8] (orphan, never read).
         UObject* m_mcKeyLabels[MC_SLOTS]{};
         UObject* m_mcKeyBgImages[MC_SLOTS]{};
         UObject* m_umgTexBlankRect{nullptr};
@@ -634,14 +635,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.21.3");
+            ModVersion = STR("6.21.4");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.3\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.4\n"));
         }
 
         ~MoriaCppMod() override
@@ -682,7 +683,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.3 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.4 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -1680,7 +1681,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.21.3: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.21.4: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -2779,24 +2780,9 @@ namespace MoriaMods
                         }
                     }
 
-                    // Quick Build toolbar (8 slots)
-                    static bool s_qbBtnWasPressed[8]{};
-                    if (m_umgBarWidget)
-                    {
-                        for (int i = 0; i < 8; i++)
-                        {
-                            if (pollButton(m_umgSlotButtons[i], s_isPressedFn, s_qbBtnWasPressed[i]))
-                            {
-                                VLOG(STR("[MoriaCppMod] [Gamepad] QB slot {} button pressed\n"), i);
-                                if (m_handleResolvePhase == HandleResolvePhase::Done)
-                                {
-                                    ULONGLONG clickNow = GetTickCount64();
-                                    if (clickNow - m_lastQBSelectTime >= 500)
-                                        quickBuildSlot(i);
-                                }
-                            }
-                        }
-                    }
+                    // v6.21.4 batch 3 Tier 2a — removed Quick Build gamepad
+                    // polling block (used m_umgBarWidget + m_umgSlotButtons,
+                    // both gone with the OLD UMG bar).
 
                     // Advanced Builder toolbar (1 slot)
                     static bool s_abBtnWasPressed{false};
@@ -4002,8 +3988,6 @@ namespace MoriaMods
                     {
                         m_umgStateImages[i] = nullptr;
                         m_umgSlotStates[i] = UmgSlotState::Empty;
-                        m_umgKeyLabels[i] = nullptr;
-                        m_umgKeyBgImages[i] = nullptr;
                     }
                     m_activeBuilderSlot = -1;
                     m_umgSetBrushFn = nullptr;
