@@ -1691,17 +1691,72 @@
                         setRootWidget(widgetTree, rootSizeBox);
 
                     auto* setWFn = rootSizeBox->GetFunctionByNameInChain(STR("SetWidthOverride"));
-                    if (setWFn) { int sz = setWFn->GetParmsSize(); std::vector<uint8_t> wp(sz, 0); auto* p = findParam(setWFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = 820.0f; safeProcessEvent(rootSizeBox, setWFn, wp.data()); }
+                    if (setWFn) { int sz = setWFn->GetParmsSize(); std::vector<uint8_t> wp(sz, 0); auto* p = findParam(setWFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = 1100.0f; safeProcessEvent(rootSizeBox, setWFn, wp.data()); }
 
                 }
             }
 
 
+            // v6.20.29 — outer frame border (gold-ish line, ~2 px) wraps the
+            // dark panel for a game-window look. Two-Border sandwich:
+            //   rootSizeBox > frameBorder (gold) > rootBorder (dark) > VBox
+            // The frame's padding doubles as the visible outline width.
+            FStaticConstructObjectParameters frameP(borderClass, outer);
+            UObject* frameBorder = UObjectGlobals::StaticConstructObject(frameP);
+            if (frameBorder)
+            {
+                if (auto* fn = frameBorder->GetFunctionByNameInChain(STR("SetBrushColor")))
+                {
+                    auto* p = findParam(fn, STR("InBrushColor"));
+                    if (p) {
+                        int sz = fn->GetParmsSize();
+                        std::vector<uint8_t> cb(sz, 0);
+                        auto* c = reinterpret_cast<float*>(cb.data() + p->GetOffset_Internal());
+                        // Warm gold-bronze, matches existing accent (pause-menu RENAME etc.)
+                        c[0] = 0.55f; c[1] = 0.42f; c[2] = 0.18f; c[3] = 1.0f;
+                        safeProcessEvent(frameBorder, fn, cb.data());
+                    }
+                }
+                if (auto* fn = frameBorder->GetFunctionByNameInChain(STR("SetPadding")))
+                {
+                    auto* p = findParam(fn, STR("InPadding"));
+                    if (p) {
+                        int sz = fn->GetParmsSize();
+                        std::vector<uint8_t> pp(sz, 0);
+                        auto* m = reinterpret_cast<float*>(pp.data() + p->GetOffset_Internal());
+                        m[0] = 2.0f; m[1] = 2.0f; m[2] = 2.0f; m[3] = 2.0f;
+                        safeProcessEvent(frameBorder, fn, pp.data());
+                    }
+                }
+            }
+
             FStaticConstructObjectParameters borderP(borderClass, outer);
             UObject* rootBorder = UObjectGlobals::StaticConstructObject(borderP);
             if (!rootBorder) return;
 
-            if (rootSizeBox)
+            // SizeBox > frameBorder > rootBorder
+            if (rootSizeBox && frameBorder)
+            {
+                auto* setContentFn2 = rootSizeBox->GetFunctionByNameInChain(STR("SetContent"));
+                if (setContentFn2)
+                {
+                    auto* pC = findParam(setContentFn2, STR("Content"));
+                    int sz = setContentFn2->GetParmsSize();
+                    std::vector<uint8_t> sc(sz, 0);
+                    if (pC) *reinterpret_cast<UObject**>(sc.data() + pC->GetOffset_Internal()) = frameBorder;
+                    safeProcessEvent(rootSizeBox, setContentFn2, sc.data());
+                }
+                auto* setFrameContentFn = frameBorder->GetFunctionByNameInChain(STR("SetContent"));
+                if (setFrameContentFn)
+                {
+                    auto* pC = findParam(setFrameContentFn, STR("Content"));
+                    int sz = setFrameContentFn->GetParmsSize();
+                    std::vector<uint8_t> sc(sz, 0);
+                    if (pC) *reinterpret_cast<UObject**>(sc.data() + pC->GetOffset_Internal()) = rootBorder;
+                    safeProcessEvent(frameBorder, setFrameContentFn, sc.data());
+                }
+            }
+            else if (rootSizeBox)
             {
                 auto* setContentFn2 = rootSizeBox->GetFunctionByNameInChain(STR("SetContent"));
                 if (setContentFn2)
@@ -1718,6 +1773,9 @@
                 setRootWidget(widgetTree, rootBorder);
             }
 
+            // v6.20.28 — popup-style chrome: dark panel background.
+            // Match WBP_UI_GenericPopup look: very dark blue-grey, ~88% opacity,
+            // subtle inset padding. Real chrome capture deferred.
             auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
             if (setBrushColorFn)
             {
@@ -1727,7 +1785,7 @@
                     int sz = setBrushColorFn->GetParmsSize();
                     std::vector<uint8_t> cb(sz, 0);
                     auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
-                    c[0] = 0.0f; c[1] = 0.0f; c[2] = 0.0f; c[3] = 0.0f;
+                    c[0] = 0.04f; c[1] = 0.05f; c[2] = 0.07f; c[3] = 0.92f;
                     safeProcessEvent(rootBorder, setBrushColorFn, cb.data());
                 }
             }
@@ -1741,7 +1799,7 @@
                     int sz = setBorderPadFn->GetParmsSize();
                     std::vector<uint8_t> pp(sz, 0);
                     auto* m = reinterpret_cast<float*>(pp.data() + pPad->GetOffset_Internal());
-                    m[0] = 12.0f; m[1] = 8.0f; m[2] = 12.0f; m[3] = 8.0f;
+                    m[0] = 0.0f; m[1] = 0.0f; m[2] = 0.0f; m[3] = 0.0f;
                     safeProcessEvent(rootBorder, setBorderPadFn, pp.data());
                 }
             }
@@ -1766,6 +1824,152 @@
             auto* vbC = findParam(addToVBoxFn, STR("Content"));
             auto* vbR = findParam(addToVBoxFn, STR("ReturnValue"));
 
+            // ── v6.20.28 TITLE BAR ──────────────────────────────────────
+            // Horizontal Border at top with title + X close button.
+            // Drag is detected in tickTargetInfoDrag() via mouse polling.
+            auto* hboxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.HorizontalBox"));
+            auto* spacerClassTI = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Spacer"));
+            auto* buttonClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Button"));
+            UObject* titleBar = nullptr;
+            if (hboxClass && buttonClass)
+            {
+                FStaticConstructObjectParameters tbBP(borderClass, outer);
+                titleBar = UObjectGlobals::StaticConstructObject(tbBP);
+                if (titleBar)
+                {
+                    if (auto* fn = titleBar->GetFunctionByNameInChain(STR("SetBrushColor")))
+                    {
+                        auto* p = findParam(fn, STR("InBrushColor"));
+                        if (p) {
+                            int sz = fn->GetParmsSize();
+                            std::vector<uint8_t> cb(sz, 0);
+                            auto* c = reinterpret_cast<float*>(cb.data() + p->GetOffset_Internal());
+                            c[0] = 0.10f; c[1] = 0.12f; c[2] = 0.16f; c[3] = 1.0f;
+                            safeProcessEvent(titleBar, fn, cb.data());
+                        }
+                    }
+                    if (auto* fn = titleBar->GetFunctionByNameInChain(STR("SetPadding")))
+                    {
+                        auto* p = findParam(fn, STR("InPadding"));
+                        if (p) {
+                            int sz = fn->GetParmsSize();
+                            std::vector<uint8_t> pp(sz, 0);
+                            auto* m = reinterpret_cast<float*>(pp.data() + p->GetOffset_Internal());
+                            m[0] = 12.0f; m[1] = 6.0f; m[2] = 6.0f; m[3] = 6.0f;
+                            safeProcessEvent(titleBar, fn, pp.data());
+                        }
+                    }
+
+                    FStaticConstructObjectParameters hP(hboxClass, outer);
+                    UObject* hbox = UObjectGlobals::StaticConstructObject(hP);
+                    if (hbox)
+                    {
+                        if (auto* sFn = titleBar->GetFunctionByNameInChain(STR("SetContent")))
+                        {
+                            auto* pC = findParam(sFn, STR("Content"));
+                            int sz = sFn->GetParmsSize();
+                            std::vector<uint8_t> sc(sz, 0);
+                            if (pC) *reinterpret_cast<UObject**>(sc.data() + pC->GetOffset_Internal()) = hbox;
+                            safeProcessEvent(titleBar, sFn, sc.data());
+                        }
+
+                        FStaticConstructObjectParameters tP(textBlockClass, outer);
+                        UObject* tb = UObjectGlobals::StaticConstructObject(tP);
+                        if (tb)
+                        {
+                            umgSetText(tb, L"Inspect");
+                            umgSetTextColor(tb, 1.0f, 0.82f, 0.45f, 1.0f);
+                            m_tiTitleLabel = tb;
+                            auto* addFn = hbox->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
+                            if (addFn) {
+                                auto* pCh = findParam(addFn, STR("Content"));
+                                int sz = addFn->GetParmsSize();
+                                std::vector<uint8_t> ap(sz, 0);
+                                if (pCh) *reinterpret_cast<UObject**>(ap.data() + pCh->GetOffset_Internal()) = tb;
+                                UObject* hSlot = nullptr;
+                                auto* pRet = findParam(addFn, STR("ReturnValue"));
+                                safeProcessEvent(hbox, addFn, ap.data());
+                                if (pRet) hSlot = *reinterpret_cast<UObject**>(ap.data() + pRet->GetOffset_Internal());
+                                if (hSlot) {
+                                    // v6.20.29 — write FSlateChildSize directly:
+                                    // {float Value=1.0, uint8 SizeRule=Fill(1)}.
+                                    // Earlier "InSize" UFunction call was packing the
+                                    // uint8 enum incorrectly, leaving the title slot
+                                    // at default Auto-size and the X button hugging
+                                    // the title text instead of right-justified.
+                                    if (auto* sizePtr =
+                                        hSlot->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Size")))
+                                    {
+                                        *reinterpret_cast<float*>(sizePtr + 0) = 1.0f;
+                                        *(sizePtr + 4) = 1; // ESlateSizeRule::Fill
+                                    }
+                                    // HAlign=Left so title text doesn't drift center.
+                                    if (auto* fnH = hSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                                    {
+                                        int sz = fnH->GetParmsSize();
+                                        std::vector<uint8_t> bb(sz, 0);
+                                        bb[0] = 1; // HAlign_Left
+                                        safeProcessEvent(hSlot, fnH, bb.data());
+                                    }
+                                }
+                            }
+                        }
+
+                        // X close button
+                        FStaticConstructObjectParameters bP(buttonClass, outer);
+                        UObject* xBtn = UObjectGlobals::StaticConstructObject(bP);
+                        if (xBtn)
+                        {
+                            FStaticConstructObjectParameters xtP(textBlockClass, outer);
+                            UObject* xtb = UObjectGlobals::StaticConstructObject(xtP);
+                            if (xtb) {
+                                umgSetText(xtb, L"\x2715"); // ✕
+                                umgSetTextColor(xtb, 1.0f, 0.82f, 0.45f, 1.0f);
+                                if (auto* sf = xBtn->GetFunctionByNameInChain(STR("SetContent")))
+                                {
+                                    auto* pC = findParam(sf, STR("Content"));
+                                    int sz = sf->GetParmsSize();
+                                    std::vector<uint8_t> sc(sz, 0);
+                                    if (pC) *reinterpret_cast<UObject**>(sc.data() + pC->GetOffset_Internal()) = xtb;
+                                    safeProcessEvent(xBtn, sf, sc.data());
+                                }
+                            }
+                            m_tiCloseButton = xBtn;
+                            auto* addFn = hbox->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
+                            if (addFn) {
+                                auto* pCh = findParam(addFn, STR("Content"));
+                                int sz = addFn->GetParmsSize();
+                                std::vector<uint8_t> ap(sz, 0);
+                                if (pCh) *reinterpret_cast<UObject**>(ap.data() + pCh->GetOffset_Internal()) = xBtn;
+                                UObject* xSlot = nullptr;
+                                auto* pRet2 = findParam(addFn, STR("ReturnValue"));
+                                safeProcessEvent(hbox, addFn, ap.data());
+                                if (pRet2) xSlot = *reinterpret_cast<UObject**>(ap.data() + pRet2->GetOffset_Internal());
+                                if (xSlot) {
+                                    // v6.20.29 — X stays at right, takes only its
+                                    // own desired size. SizeRule=Auto (0) is default
+                                    // but explicitly set HAlign=Right so the X is
+                                    // pinned against the title-bar's right edge.
+                                    if (auto* fnH = xSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                                    {
+                                        int hsz = fnH->GetParmsSize();
+                                        std::vector<uint8_t> bb(hsz, 0);
+                                        bb[0] = 3; // HAlign_Right
+                                        safeProcessEvent(xSlot, fnH, bb.data());
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    int sz = addToVBoxFn->GetParmsSize();
+                    std::vector<uint8_t> ap(sz, 0);
+                    if (vbC) *reinterpret_cast<UObject**>(ap.data() + vbC->GetOffset_Internal()) = titleBar;
+                    safeProcessEvent(vbox, addToVBoxFn, ap.data());
+                    m_tiTitleBar = titleBar;
+                }
+            }
+
             auto makeTextBlock = [&](const std::wstring& text, float r, float g, float b, float a) -> UObject* {
                 FStaticConstructObjectParameters tbP(textBlockClass, outer);
                 UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
@@ -1774,7 +1978,7 @@
                 umgSetTextColor(tb, r, g, b, a);
 
                 auto* wrapAtFn = tb->GetFunctionByNameInChain(STR("SetWrapTextAt"));
-                if (wrapAtFn) { int ws = wrapAtFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapAtFn, STR("InWrapTextAt")); if (pw) *reinterpret_cast<float*>(wp.data() + pw->GetOffset_Internal()) = 790.0f; safeProcessEvent(tb, wrapAtFn, wp.data()); }
+                if (wrapAtFn) { int ws = wrapAtFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapAtFn, STR("InWrapTextAt")); if (pw) *reinterpret_cast<float*>(wp.data() + pw->GetOffset_Internal()) = 1060.0f; safeProcessEvent(tb, wrapAtFn, wp.data()); }
                 auto* wrapFn = tb->GetFunctionByNameInChain(STR("SetAutoWrapText"));
                 if (wrapFn) { int ws = wrapFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapFn, STR("InAutoWrapText")); if (pw) *reinterpret_cast<bool*>(wp.data() + pw->GetOffset_Internal()) = true; safeProcessEvent(tb, wrapFn, wp.data()); }
                 int sz = addToVBoxFn->GetParmsSize();
@@ -1784,11 +1988,9 @@
                 return tb;
             };
 
-
-            m_tiTitleLabel = makeTextBlock(Loc::get("ui.target_info_title"), 0.78f, 0.86f, 1.0f, 1.0f);
-
-            makeTextBlock(L"--------------------------------", 0.31f, 0.51f, 0.78f, 0.5f);
-
+            // body content (no separator dashes — title bar replaces the
+            // old title-text-with-line-of-dashes pattern). Indent slightly
+            // via padding-fake by prefixing two spaces.
             m_tiClassLabel   = makeTextBlock(Loc::get("ui.label_class"), 0.86f, 0.90f, 0.96f, 0.9f);
             m_tiNameLabel    = makeTextBlock(Loc::get("ui.label_name"), 0.86f, 0.90f, 0.96f, 0.9f);
             m_tiDisplayLabel = makeTextBlock(Loc::get("ui.label_display"), 0.86f, 0.90f, 0.96f, 0.9f);
@@ -1820,7 +2022,7 @@
                     int sz = setDesiredSizeFn->GetParmsSize();
                     std::vector<uint8_t> sb(sz, 0);
                     auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal());
-                    v[0] = 840.0f; v[1] = 480.0f;
+                    v[0] = 1120.0f; v[1] = 380.0f;
                     safeProcessEvent(userWidget, setDesiredSizeFn, sb.data());
                 }
             }
@@ -1875,6 +2077,12 @@
             if (!m_targetInfoWidget) createTargetInfoWidget();
             if (!m_targetInfoWidget) return;
 
+
+            // v6.20.28 — title bar shows "Inspect: <display name>"
+            std::wstring titleText = L"Inspect";
+            if (!display.empty())      titleText = L"Inspect: " + display;
+            else if (!name.empty())    titleText = L"Inspect: " + name;
+            if (m_tiTitleLabel) umgSetText(m_tiTitleLabel, titleText);
 
             umgSetText(m_tiClassLabel, wrapText(Loc::get("ui.value_class_prefix"), cls));
             umgSetText(m_tiNameLabel, wrapText(Loc::get("ui.value_name_prefix"), name));
@@ -1932,6 +2140,97 @@
             // fallback (red box) appeared on top of the panel.
 
             m_tiShowTick = GetTickCount64();
+            // v6.20.28 — auto-hide 10s after most-recent show update
+            m_tiAutoHideAtMs = m_tiShowTick + 10000ull;
+        }
+
+        // v6.20.28 — drag inspect window from title bar; click X to close.
+        // Also handles the auto-hide timeout. Called from gameThreadTick.
+        // Mouse polling because we don't have a click delegate on bare UButton
+        // here — and drag tracking needs every-frame updates anyway.
+        void tickTargetInfoDrag()
+        {
+            if (!m_targetInfoWidget || !isObjectAlive(m_targetInfoWidget)) return;
+
+            // Auto-hide timeout
+            if (m_tiAutoHideAtMs != 0 && !m_tiDragActive)
+            {
+                ULONGLONG now = GetTickCount64();
+                if (now >= m_tiAutoHideAtMs)
+                {
+                    m_tiAutoHideAtMs = 0;
+                    hideTargetInfo();
+                    return;
+                }
+            }
+
+            int curX, curY, viewW, viewH;
+            if (!m_screen.getCursorClientPixels(curX, curY, viewW, viewH))
+            {
+                m_tiDragActive = false;
+                m_tiLMBPrev = false;
+                return;
+            }
+
+            bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            bool rising  = lmb && !m_tiLMBPrev;
+            bool falling = !lmb && m_tiLMBPrev;
+            m_tiLMBPrev  = lmb;
+
+            // Compute widget bounds in cursor (image-pixel) space.
+            // Widget was centered on (m_toolbarPosX[3], m_toolbarPosY[3])
+            // with desired size 840×480 design-px scaled by viewport.
+            float fracX = (m_toolbarPosX[3] >= 0) ? m_toolbarPosX[3] : TB_DEF_X[3];
+            float fracY = (m_toolbarPosY[3] >= 0) ? m_toolbarPosY[3] : TB_DEF_Y[3];
+            float s2p   = m_screen.viewportScale;
+            float wW    = 1100.0f * s2p;
+            float wH    = 380.0f * s2p;
+            float cx    = m_screen.fracToPixelX(fracX);
+            float cy    = m_screen.fracToPixelY(fracY);
+            float left  = cx - wW * 0.5f;
+            float top   = cy - wH * 0.5f;
+            // Title bar height: ~ font + padding ≈ 32 design-px → 32 * s2p
+            float titleH = 32.0f * s2p;
+            // X close button is in the rightmost ~32 design-px of title bar.
+            float closeBtnW = 32.0f * s2p;
+
+            bool overTitle = (curX >= left && curX <= left + wW &&
+                              curY >= top  && curY <= top  + titleH);
+            bool overClose = (curX >= left + wW - closeBtnW && curX <= left + wW &&
+                              curY >= top  && curY <= top  + titleH);
+
+            if (rising && overClose)
+            {
+                hideTargetInfo();
+                return;
+            }
+            if (rising && overTitle && !overClose)
+            {
+                m_tiDragActive = true;
+                m_tiDragOffsetX = curX - static_cast<int>(cx);
+                m_tiDragOffsetY = curY - static_cast<int>(cy);
+                VLOG(STR("[MoriaCppMod] [TI] Drag START at cursor=({},{}) widget center=({:.0f},{:.0f})\n"),
+                     curX, curY, cx, cy);
+            }
+            if (falling && m_tiDragActive)
+            {
+                m_tiDragActive = false;
+                m_toolbarPosX[3] = (m_screen.viewW > 0 ? cx / m_screen.viewW : 0.5f);
+                m_toolbarPosY[3] = (m_screen.viewH > 0 ? cy / m_screen.viewH : 0.5f);
+                saveConfig();
+                VLOG(STR("[MoriaCppMod] [TI] Drag END — saved fracX={:.3f} fracY={:.3f}\n"),
+                     m_toolbarPosX[3], m_toolbarPosY[3]);
+            }
+            if (m_tiDragActive && lmb)
+            {
+                float newCx = static_cast<float>(curX - m_tiDragOffsetX);
+                float newCy = static_cast<float>(curY - m_tiDragOffsetY);
+                setWidgetPosition(m_targetInfoWidget, newCx, newCy, true);
+                m_toolbarPosX[3] = (m_screen.viewW > 0 ? newCx / m_screen.viewW : 0.5f);
+                m_toolbarPosY[3] = (m_screen.viewH > 0 ? newCy / m_screen.viewH : 0.5f);
+                // Reset auto-hide while dragging.
+                m_tiAutoHideAtMs = GetTickCount64() + 10000ull;
+            }
         }
 
 
