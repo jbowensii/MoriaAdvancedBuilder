@@ -22,7 +22,10 @@
             if (m_pendingWidgetRemovals.empty()) return;
             for (auto* w : m_pendingWidgetRemovals)
             {
-                if (!w) continue;
+                // v6.20.23 — alive-check before deref. Between deferRemoveWidget
+                // (this frame) and tick (next frame) a world transition can GC
+                // the widget. Without this, GetFunctionByNameInChain AVs.
+                if (!w || !isObjectAlive(w)) continue;
                 auto* removeFn = w->GetFunctionByNameInChain(STR("RemoveFromParent"));
                 if (!removeFn) removeFn = w->GetFunctionByNameInChain(STR("RemoveFromViewport"));
                 if (removeFn) safeProcessEvent(w, removeFn, nullptr);
@@ -501,7 +504,7 @@
         {
             if (name.empty()) return nullptr;
             std::vector<UObject*> textures;
-            UObjectGlobals::FindAllOf(STR("Texture2D"), textures);
+            findAllOfSafe(STR("Texture2D"), textures);
             for (auto* t : textures)
             {
                 if (!t) continue;
@@ -605,7 +608,7 @@
             UObject* texBlankRect = nullptr;
             {
                 std::vector<UObject*> textures;
-                UObjectGlobals::FindAllOf(STR("Texture2D"), textures);
+                findAllOfSafe(STR("Texture2D"), textures);
                 VLOG(STR("[MoriaCppMod] [UMG] Found {} Texture2D objects\n"), textures.size());
                 for (auto* t : textures)
                 {
@@ -1162,7 +1165,7 @@
             UObject* texToolsIcon = nullptr;
             {
                 std::vector<UObject*> textures;
-                UObjectGlobals::FindAllOf(STR("Texture2D"), textures);
+                findAllOfSafe(STR("Texture2D"), textures);
                 for (auto* t : textures)
                 {
                     if (!t) continue;
@@ -2367,7 +2370,7 @@
             UObject* texHideChar = nullptr;
             {
                 std::vector<UObject*> textures;
-                UObjectGlobals::FindAllOf(STR("Texture2D"), textures);
+                findAllOfSafe(STR("Texture2D"), textures);
                 for (auto* t : textures)
                 {
                     if (!t) continue;
@@ -2983,7 +2986,7 @@
 
             // Resolve all needed textures by name in one pass.
             std::vector<UObject*> textures;
-            try { UObjectGlobals::FindAllOf(STR("Texture2D"), textures); } catch (...) {}
+            try { findAllOfSafe(STR("Texture2D"), textures); } catch (...) {}
             UObject* slotTex[QUICK_BUILD_SLOTS]{};
             int filled = 0;
             for (int i = 0; i < QUICK_BUILD_SLOTS; ++i)
@@ -3116,7 +3119,7 @@
             UObject* tmplt = nullptr;
             {
                 std::vector<UObject*> instances;
-                try { UObjectGlobals::FindAllOf(STR("WBP_UI_ActionBar_C"), instances); } catch (...) {}
+                try { findAllOfSafe(STR("WBP_UI_ActionBar_C"), instances); } catch (...) {}
                 VLOG(STR("[NewBuildingBar] discover: found {} ActionBar instances\n"),
                      (int)instances.size());
                 // Prefer one that ISN'T the CDO and has middleFrame with
@@ -3207,7 +3210,7 @@
             // of the spawned slot's internal images for ImageSize.
             {
                 std::vector<UObject*> textures;
-                try { UObjectGlobals::FindAllOf(STR("Texture2D"), textures); } catch (...) {}
+                try { findAllOfSafe(STR("Texture2D"), textures); } catch (...) {}
                 for (auto* t : textures) {
                     if (!t) continue;
                     auto name = t->GetName();
@@ -3379,7 +3382,7 @@
                 !texChromeTop || !texChromeMiddle || !texChromeBottom)
             {
                 std::vector<UObject*> textures;
-                try { UObjectGlobals::FindAllOf(STR("Texture2D"), textures); } catch (...) {}
+                try { findAllOfSafe(STR("Texture2D"), textures); } catch (...) {}
                 for (auto* t : textures) {
                     if (!t) continue;
                     auto name = t->GetName();
@@ -3508,7 +3511,7 @@
             UObject* texKeyBg = nullptr;
             {
                 std::vector<UObject*> textures;
-                try { UObjectGlobals::FindAllOf(STR("Texture2D"), textures); } catch (...) {}
+                try { findAllOfSafe(STR("Texture2D"), textures); } catch (...) {}
                 for (auto* t : textures) {
                     if (!t) continue;
                     if (t->GetName() == STR("T_UI_Icon_Input_Blank_Rect")) { texKeyBg = t; break; }
@@ -3535,7 +3538,7 @@
             {
                 m_nbbHudTexturesDumped = true;
                 std::vector<UObject*> textures;
-                try { UObjectGlobals::FindAllOf(STR("Texture2D"), textures); } catch (...) {}
+                try { findAllOfSafe(STR("Texture2D"), textures); } catch (...) {}
                 int count = 0;
                 VLOG(STR("[NBB-TEX] === HUD/ActionBar texture inventory ===\n"));
                 for (auto* t : textures) {
@@ -3889,7 +3892,7 @@
             UObject* defaultFont = nullptr;
             {
                 std::vector<UObject*> fonts;
-                UObjectGlobals::FindAllOf(STR("Font"), fonts);
+                findAllOfSafe(STR("Font"), fonts);
                 for (auto* f : fonts)
                 {
                     if (f && std::wstring(f->GetName()) == L"DefaultRegularFont")
@@ -3996,7 +3999,7 @@
                 {
                     VLOG(STR("[MoriaCppMod] [Settings] Separator texture not found. Textures with 'Shared'/'Line'/'Sep':\n"));
                     std::vector<UObject*> allTex;
-                    UObjectGlobals::FindAllOf(STR("Texture2D"), allTex);
+                    findAllOfSafe(STR("Texture2D"), allTex);
                     for (auto* t : allTex)
                     {
                         if (!t) continue;
@@ -5615,7 +5618,7 @@
                     std::wstring currentName = L"(unknown)";
 
                     std::vector<UObject*> mgrs;
-                    UObjectGlobals::FindAllOf(STR("CustomizationManager"), mgrs);
+                    findAllOfSafe(STR("CustomizationManager"), mgrs);
                     UObject* pawn = getPawn();
                     UObject* target = nullptr;
                     for (auto* mgr : mgrs) { if (!mgr) continue; if (mgr->GetOuterPrivate() == pawn) { target = mgr; break; } }
@@ -5670,7 +5673,7 @@
                         {
                             UObject* defaultFont = nullptr;
                             std::vector<UObject*> fonts;
-                            UObjectGlobals::FindAllOf(STR("Font"), fonts);
+                            findAllOfSafe(STR("Font"), fonts);
                             for (auto* f : fonts) { if (f && std::wstring(f->GetName()) == L"DefaultRegularFont") { defaultFont = f; break; } }
                             if (defaultFont)
                             {
@@ -5875,7 +5878,7 @@
             UObject* defaultFont = nullptr;
             {
                 std::vector<UObject*> fonts;
-                UObjectGlobals::FindAllOf(STR("Font"), fonts);
+                findAllOfSafe(STR("Font"), fonts);
                 for (auto* f : fonts) { if (f && std::wstring(f->GetName()) == L"DefaultRegularFont") { defaultFont = f; break; } }
             }
 

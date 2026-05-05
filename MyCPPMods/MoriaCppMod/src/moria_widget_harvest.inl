@@ -353,7 +353,7 @@
             // Try FindAllOf first — class must be loaded already. If not loaded,
             // we skip this widget rather than risk loading a cooked uasset cold.
             std::vector<UObject*> insts;
-            UObjectGlobals::FindAllOf(shortName, insts);
+            findAllOfSafe(shortName, insts);
             // FindAllOf returns instances; we want their class. Walk back to UClass.
             for (auto* o : insts)
             {

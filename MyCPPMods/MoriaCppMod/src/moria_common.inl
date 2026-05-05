@@ -351,7 +351,7 @@ UObject* addToOverlay(UObject* parent, UObject* child)
 UObject* findWidgetByClass(const wchar_t* className, bool requireVisible = false)
 {
     std::vector<UObject*> widgets;
-    UObjectGlobals::FindAllOf(STR("UserWidget"), widgets);
+    findAllOfSafe(STR("UserWidget"), widgets);
     QBLOG(STR("[MoriaCppMod] [QB] findWidgetByClass('{}') requireVisible={} total={}\n"),
           className, requireVisible, widgets.size());
     for (auto* w : widgets)
