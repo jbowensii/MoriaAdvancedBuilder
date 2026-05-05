@@ -978,18 +978,14 @@
             return true;
         }
 
-        // v6.20.26 — get the live build HUD or return nullptr.
-        UObject* getActiveBuildHUD()
-        {
-            UObject* comp = getCachedBuildComp();
-            if (!comp) return nullptr;
-            auto* fn = comp->GetFunctionByNameInChain(STR("GetActiveBuildingWidget"));
-            if (!fn) return nullptr;
-            struct { UObject* Ret{nullptr}; } params{};
-            safeProcessEvent(comp, fn, &params);
-            if (!params.Ret || !isObjectAlive(params.Ret)) return nullptr;
-            return params.Ret;
-        }
+        // v6.21.9 — getActiveBuildHUD removed. Was an unintentional
+        // duplicate of getCachedBuildHUD that lacked caching + the
+        // findWidgetByClass(UI_WBP_BuildHUDv2_C) fallback. As a result
+        // GetActiveBuildingWidget returning null (its normal state when
+        // placement is between ghosts) caused DIRECT paths to skip every
+        // F# and SHIFT+] press, falling through to the slow widget-walk
+        // state machine. v6.7.0 was reliable because it used the cached
+        // helper. Now both DIRECT paths route through getCachedBuildHUD.
 
         bool trySelectRecipeByHandle(UObject* buildHUD, const uint8_t* handleData)
         {
@@ -1299,7 +1295,7 @@
                     return;
                 }
 
-                UObject* buildHUD = getActiveBuildHUD();
+                UObject* buildHUD = getCachedBuildHUD();
                 uint8_t handle[RECIPE_HANDLE_SIZE]{};
                 bool haveHandle = buildSyntheticRecipeHandle(m_recipeSlots[slot].rowName, handle);
 
@@ -1403,7 +1399,7 @@
                     return;
                 }
 
-                UObject* buildHUD = getActiveBuildHUD();
+                UObject* buildHUD = getCachedBuildHUD();
                 uint8_t handle[RECIPE_HANDLE_SIZE]{};
                 bool haveHandle = buildSyntheticRecipeHandle(m_targetBuildRowName, handle);
 
