@@ -4352,13 +4352,15 @@
 
             // v0.11 — bottom decorative strip removed per user request.
 
-            // ── Add to viewport at top-center.
+            // ── Add to viewport at top-center. v6.20.46 — ZOrder bumped
+            // 50 → 100 (matches OLD UMG QuickBuild bar). Bar was likely
+            // being drawn under the game's main HUD which sits at higher Z.
             auto* fnAdd = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
             if (fnAdd)
             {
                 std::vector<uint8_t> b(fnAdd->GetParmsSize(), 0);
                 if (auto* p = findParam(fnAdd, STR("ZOrder")))
-                    *reinterpret_cast<int32_t*>(b.data() + p->GetOffset_Internal()) = 50;
+                    *reinterpret_cast<int32_t*>(b.data() + p->GetOffset_Internal()) = 100;
                 safeProcessEvent(userWidget, fnAdd, b.data());
             }
             if (auto* fnAlign = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport")))
