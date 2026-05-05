@@ -5514,22 +5514,81 @@
                 try { safeProcessEvent(notif, setDataFn, b.data()); } catch (...) {}
             }
 
-            // v6.20.8 — Previous QueueNewNotification path was failing
-            // silently. The feed's BP-side queue may filter text-only
-            // notifications (no item/recipe/lore payload) or its timer
-            // isn't firing for our externally-spawned widget. Bypass
-            // the feed entirely: AddToViewport directly + call the
-            // notification's own ShowNotification(duration) UFunction.
-            // This is the Pattern that matches what the game does
-            // internally when an item is picked up.
-            if (auto* addFn = notif->GetFunctionByNameInChain(STR("AddToViewport")))
+            // v6.20.10 — Standalone-AddToViewport path in v6.20.8 made
+            // the notification spawn but it never appeared visually.
+            // Reason: when the notification is parented to the feed's
+            // `notificationBox` UGridPanel, the grid lays it out at the
+            // proper screen position. AddToViewport gives no parent
+            // sizing — the widget renders at (0,0) with desired size 0.
+            //
+            // Proper path: parent our notification to the feed's
+            // notificationBox grid as a child. The feed's BP-internal
+            // layout then sizes/positions it correctly. Then call
+            // ShowNotification(Duration) to play the intro animation.
+            UObject* notifBox = nullptr;
+            if (auto* nbPtr = feed->GetValuePtrByPropertyNameInChain<UObject*>(STR("notificationBox")))
+                notifBox = *nbPtr;
+            if (notifBox && isObjectAlive(notifBox))
             {
-                int sz = addFn->GetParmsSize();
-                std::vector<uint8_t> b(sz, 0);
-                if (auto* p = findParam(addFn, STR("ZOrder")))
-                    *reinterpret_cast<int32_t*>(b.data() + p->GetOffset_Internal()) = 700; // above pause menu
-                try { safeProcessEvent(notif, addFn, b.data()); } catch (...) {}
+                if (auto* addChildFn = notifBox->GetFunctionByNameInChain(STR("AddChild")))
+                {
+                    int sz = addChildFn->GetParmsSize();
+                    std::vector<uint8_t> b(sz, 0);
+                    auto* pContent = findParam(addChildFn, STR("Content"));
+                    if (!pContent) pContent = findParam(addChildFn, STR("Widget"));
+                    if (pContent)
+                    {
+                        *reinterpret_cast<UObject**>(b.data() + pContent->GetOffset_Internal()) = notif;
+                        try { safeProcessEvent(notifBox, addChildFn, b.data()); } catch (...) {}
+                        VLOG(STR("[Notif] Parented to feed.notificationBox\n"));
+                    }
+                }
+                // Also add to feed's notificationArray so the feed's BP
+                // can manage the notification's lifecycle (move down,
+                // remove old ones, etc).
+                if (auto* arr = feed->GetValuePtrByPropertyNameInChain<TArray<UObject*>>(STR("notificationArray")))
+                {
+                    arr->Add(notif);
+                }
             }
+            else
+            {
+                // Fallback: AddToViewport with explicit size/position.
+                if (auto* addFn = notif->GetFunctionByNameInChain(STR("AddToViewport")))
+                {
+                    int sz = addFn->GetParmsSize();
+                    std::vector<uint8_t> b(sz, 0);
+                    if (auto* p = findParam(addFn, STR("ZOrder")))
+                        *reinterpret_cast<int32_t*>(b.data() + p->GetOffset_Internal()) = 700;
+                    try { safeProcessEvent(notif, addFn, b.data()); } catch (...) {}
+                }
+                if (auto* sizeFn = notif->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport")))
+                {
+                    int sz = sizeFn->GetParmsSize();
+                    std::vector<uint8_t> b(sz, 0);
+                    if (auto* p = findParam(sizeFn, STR("Size")))
+                    {
+                        float* xy = reinterpret_cast<float*>(b.data() + p->GetOffset_Internal());
+                        xy[0] = 480.0f; xy[1] = 100.0f;
+                    }
+                    try { safeProcessEvent(notif, sizeFn, b.data()); } catch (...) {}
+                }
+                if (auto* posFn = notif->GetFunctionByNameInChain(STR("SetPositionInViewport")))
+                {
+                    int sz = posFn->GetParmsSize();
+                    std::vector<uint8_t> b(sz, 0);
+                    if (auto* p = findParam(posFn, STR("Position")))
+                    {
+                        float* xy = reinterpret_cast<float*>(b.data() + p->GetOffset_Internal());
+                        xy[0] = 100.0f; xy[1] = 100.0f;
+                    }
+                    if (auto* p = findParam(posFn, STR("bRemoveDPIScale")))
+                        *reinterpret_cast<bool*>(b.data() + p->GetOffset_Internal()) = false;
+                    try { safeProcessEvent(notif, posFn, b.data()); } catch (...) {}
+                }
+                VLOG(STR("[Notif] feed.notificationBox unavailable; standalone AddToViewport at (100,100)\n"));
+            }
+
             if (auto* showFn = notif->GetFunctionByNameInChain(STR("ShowNotification")))
             {
                 int sz = showFn->GetParmsSize();
@@ -5537,7 +5596,7 @@
                 if (auto* p = findParam(showFn, STR("Duration")))
                     *reinterpret_cast<float*>(b.data() + p->GetOffset_Internal()) = duration;
                 try { safeProcessEvent(notif, showFn, b.data()); } catch (...) {}
-                VLOG(STR("[Notif] Spawned + ShowNotification fired for '{}' ({}s)\n"),
+                VLOG(STR("[Notif] ShowNotification fired for '{}' ({}s)\n"),
                      title.c_str(), duration);
             }
             else
