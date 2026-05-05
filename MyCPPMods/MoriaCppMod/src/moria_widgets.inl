@@ -516,14 +516,14 @@
 
         void updateBuildersBar()
         {
-            // v6.20.22 — also refresh the NEW Building Bar icons (top-of-screen).
-            // Without this, SHIFT+F# updates m_recipeSlots[i].textureName + the
-            // OLD UMG bar but the NBB icons stay at whatever was rendered when
-            // the bar was first created. User reported: "icon does not change"
-            // (they were looking at the top bar).
+            // v6.20.22 — refresh NEW Building Bar icons. v6.20.48 — also
+            // refresh active-slot highlight (was OLD-bar only via
+            // setUmgSlotState; now NBB-only since OLD bar was removed).
             if (m_newBuildingBar && isObjectAlive(m_newBuildingBar))
             {
                 populateNewBuildingBarIcons();
+                for (int i = 0; i < 8; i++)
+                    newBuildingBarHighlight(i, i == m_activeBuilderSlot);
             }
             if (!m_umgBarWidget) return;
             for (int i = 0; i < 8; i++)
