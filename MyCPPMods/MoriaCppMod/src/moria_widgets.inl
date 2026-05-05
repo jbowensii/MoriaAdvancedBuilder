@@ -221,7 +221,7 @@
         {
             switch (tb)
             {
-            case 0: return (slot >= 0 && slot < 8) ? m_umgStateImages[slot] : nullptr;
+            // case 0 (OLD UMG QB bar) removed v6.21.7 — bar deleted.
             case 1: return (slot == 0) ? m_abStateImage : nullptr;
             case 2: return (slot >= 0 && slot < MC_SLOTS) ? m_mcStateImages[slot] : nullptr;
             default: return nullptr;
@@ -557,7 +557,6 @@
 
             auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
             if (!setBrushFn) { showErrorBox(L"AB: SetBrushFromTexture missing!"); return; }
-            if (!m_umgSetBrushFn) m_umgSetBrushFn = setBrushFn;
 
 
             FStaticConstructObjectParameters outerBorderP(borderClass, outer);
@@ -2382,9 +2381,8 @@
                 showErrorBox(L"MC: textures not found!");
                 return;
             }
-            if (!m_umgTexBlankRect && texBlankRect) m_umgTexBlankRect = texBlankRect;
-            if (!m_umgTexInactive && texInactive) m_umgTexInactive = texInactive;
-            if (!m_umgTexActive && texActive) m_umgTexActive = texActive;
+            // v6.21.7 — m_umgTexBlankRect/Inactive/Active captures removed
+            // (fields gone; createModControllerBar itself is dead code).
 
 
             struct TexFallback { UObject*& ref; const TCHAR* path; const wchar_t* name; };
@@ -2456,8 +2454,6 @@
 
             auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
             if (!setBrushFn) { showErrorBox(L"MC: SetBrushFromTexture missing!"); return; }
-
-            if (!m_umgSetBrushFn) m_umgSetBrushFn = setBrushFn;
 
 
             FStaticConstructObjectParameters outerBorderP(borderClass, outer);

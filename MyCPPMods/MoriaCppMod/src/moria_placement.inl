@@ -254,34 +254,21 @@
             if (stateImg && !isObjectAlive(stateImg)) { m_mcStateImages[slot] = nullptr; stateImg = nullptr; }
             if (iconImg && !isObjectAlive(iconImg)) { m_mcIconImages[slot] = nullptr; iconImg = nullptr; }
 
+            // v6.21.7 — state-image brush updates removed (textures + brushFn
+            // captures lived in dead createModControllerBar; MC bar itself is
+            // dead so this whole function early-returns at the m_mcBarWidget
+            // null check above. Icon dimming retained in case MC bar is ever
+            // resurrected.
             if (state == UmgSlotState::Disabled)
             {
-                if (stateImg && m_umgTexInactive && m_umgSetBrushFn)
-                    umgSetBrush(stateImg, m_umgTexInactive, m_umgSetBrushFn);
                 if (iconImg)
                     umgSetImageColor(iconImg, 0.3f, 0.3f, 0.3f, 0.4f);
             }
-            else if (state == UmgSlotState::Active)
+            else if (iconImg)
             {
-                if (stateImg && m_umgTexActive && m_umgSetBrushFn)
-                    umgSetBrush(stateImg, m_umgTexActive, m_umgSetBrushFn);
-                if (iconImg)
-                    umgSetImageColor(iconImg, 1.0f, 1.0f, 1.0f, 1.0f);
+                umgSetImageColor(iconImg, 1.0f, 1.0f, 1.0f, 1.0f);
             }
-            else if (state == UmgSlotState::Inactive)
-            {
-                if (stateImg && m_umgTexInactive && m_umgSetBrushFn)
-                    umgSetBrush(stateImg, m_umgTexInactive, m_umgSetBrushFn);
-                if (iconImg)
-                    umgSetImageColor(iconImg, 1.0f, 1.0f, 1.0f, 1.0f);
-            }
-            else
-            {
-                if (stateImg && m_umgTexEmpty && m_umgSetBrushFn)
-                    umgSetBrush(stateImg, m_umgTexEmpty, m_umgSetBrushFn);
-                if (iconImg)
-                    umgSetImageColor(iconImg, 1.0f, 1.0f, 1.0f, 1.0f);
-            }
+            (void)stateImg;
         }
 
 
