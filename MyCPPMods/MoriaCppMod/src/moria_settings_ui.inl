@@ -1770,7 +1770,11 @@
         // Each entry maps a spawned WBP_FrontEndButton to a kind code so a
         // ProcessEvent post-hook on OnMenuButtonClicked can dispatch.
         enum class GameOptKind { None, Rename, Save, Unlock, ReadAll, ClearBuffs,
-                                  ToggleNoCollision, TogglePeace };
+                                  ToggleNoCollision, TogglePeace,
+                                  // v6.20.30 — Confirm/Cancel buttons on the in-game
+                                  // WBP_UI_RenameWorldModal_C used as our character
+                                  // rename UI (replaces the home-rolled dialog).
+                                  RenameModalConfirm, RenameModalCancel };
         struct GameOptButton {
             FWeakObjectPtr widget;
             GameOptKind    kind;
@@ -4380,7 +4384,13 @@
                 switch (g.kind)
                 {
                     case GameOptKind::Rename:
-                        showRenameDialog();
+                        showRenameDialog_v2();   // v6.20.30 — uses in-game modal
+                        break;
+                    case GameOptKind::RenameModalConfirm:
+                        confirmRenameDialog();   // v6.20.30 — Confirm in modal
+                        break;
+                    case GameOptKind::RenameModalCancel:
+                        hideRenameDialog();      // v6.20.30 — Cancel in modal
                         break;
                     case GameOptKind::Save:
                         triggerSaveGame();
@@ -4793,7 +4803,7 @@
                                      2.0f, 0.3f, 0.8f, 1.0f);
                         saveConfig();
                         break;
-                    case CheatKind::RenameChar:       showRenameDialog(); break;
+                    case CheatKind::RenameChar:       showRenameDialog_v2(); break;
                     case CheatKind::SaveGame:         triggerSaveGame(); break;
                     default: break;
                 }
@@ -4809,7 +4819,9 @@
                      (int)g.kind);
                 switch (g.kind)
                 {
-                    case GameOptKind::Rename:           showRenameDialog(); break;
+                    case GameOptKind::Rename:           showRenameDialog_v2(); break;
+                    case GameOptKind::RenameModalConfirm: confirmRenameDialog(); break;
+                    case GameOptKind::RenameModalCancel:  hideRenameDialog(); break;
                     case GameOptKind::Save:             triggerSaveGame(); break;
                     case GameOptKind::Unlock:           unlockAllAvailableRecipes(); break;
                     case GameOptKind::ReadAll:          markAllLoreRead(); break;
@@ -4884,7 +4896,7 @@
                                      2.0f, 0.3f, 0.8f, 1.0f);
                         saveConfig();
                         break;
-                    case CheatKind::RenameChar:       showRenameDialog(); break;
+                    case CheatKind::RenameChar:       showRenameDialog_v2(); break;
                     case CheatKind::SaveGame:         triggerSaveGame(); break;
                     default: break;
                 }

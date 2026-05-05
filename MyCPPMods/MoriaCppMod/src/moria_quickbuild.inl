@@ -180,6 +180,11 @@
                     file << tbNames[i] << "X = " << std::fixed << std::setprecision(4) << fx << "\n";
                     file << tbNames[i] << "Y = " << std::fixed << std::setprecision(4) << fy << "\n";
                 }
+                // v6.20.33 — rotation display position (separate from TB array)
+                if (m_rotDispPosX >= 0.0f)
+                    file << "RotDisplayX = " << std::fixed << std::setprecision(4) << m_rotDispPosX << "\n";
+                if (m_rotDispPosY >= 0.0f)
+                    file << "RotDisplayY = " << std::fixed << std::setprecision(4) << m_rotDispPosY << "\n";
             }
 
             VLOG(STR("[MoriaCppMod] Saved config to MoriaCppMod.ini\n"));
@@ -393,6 +398,17 @@
                                 }
                                 catch (...) {}
                             }
+                            // v6.20.33 — rotation display X/Y (separate from TB array)
+                            try {
+                                if (strEqualCI(kv->key, "RotDisplayX")) {
+                                    float val = std::stof(kv->value);
+                                    if (val >= 0.0f && val <= 1.0f) m_rotDispPosX = val;
+                                }
+                                else if (strEqualCI(kv->key, "RotDisplayY")) {
+                                    float val = std::stof(kv->value);
+                                    if (val >= 0.0f && val <= 1.0f) m_rotDispPosY = val;
+                                }
+                            } catch (...) {}
                         }
                     }
                 }

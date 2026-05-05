@@ -2234,6 +2234,372 @@
         }
 
 
+        // ── v6.20.31 Rotation display ───────────────────────────────────
+        // 4-cell pyramid (1 top centered, 3 below) showing:
+        //   top  : current F9 rotation step (5..90 degrees)
+        //   left : Yaw of the active build piece
+        //   mid  : Pitch
+        //   right: Roll
+        // Texture frame: T_UI_Btn_Inv_Armor_Hover (inventory armor slot frame)
+        // Position: bottom-left of viewport, anchored ~10% from left, ~85% from top
+        // Visible only while placement is active.
+
+        UObject* loadInvArmorHoverTexture()
+        {
+            if (m_rotInvArmorTex && isObjectAlive(m_rotInvArmorTex)) return m_rotInvArmorTex;
+            // Path candidates — case-corrected per ue4-ui-duplication skill
+            // (FModel sometimes shows lowercase but actual UE path is Textures).
+            const wchar_t* paths[] = {
+                STR("/Game/UI/Textures/_Inventory/ArmorSlots/T_UI_Btn_Inv_Armor_Hover.T_UI_Btn_Inv_Armor_Hover"),
+                STR("/Game/UI/textures/_Inventory/ArmorSlots/T_UI_Btn_Inv_Armor_Hover.T_UI_Btn_Inv_Armor_Hover"),
+                STR("/Game/UI/Textures/_Inventory/T_UI_Btn_Inv_Armor_Hover.T_UI_Btn_Inv_Armor_Hover"),
+            };
+            for (const auto* p : paths)
+            {
+                try {
+                    UObject* t = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, p);
+                    if (t && isObjectAlive(t)) { m_rotInvArmorTex = t; return t; }
+                } catch (...) {}
+            }
+            // Fallback: scan all loaded Texture2D for the matching name.
+            std::vector<UObject*> textures;
+            findAllOfSafe(STR("Texture2D"), textures);
+            for (auto* t : textures)
+            {
+                if (!t || !isObjectAlive(t)) continue;
+                try {
+                    if (std::wstring(t->GetName()) == STR("T_UI_Btn_Inv_Armor_Hover"))
+                    { m_rotInvArmorTex = t; return t; }
+                } catch (...) {}
+            }
+            return nullptr;
+        }
+
+        // Build one cell: SizeBox(48x48) > Overlay > [Image(frame), TextBlock]
+        // Returns the SizeBox; outLabel is set to the text block for later updates.
+        UObject* buildRotCell(UObject* outer, UClass* sbCls, UClass* ovCls,
+                              UClass* imgCls, UClass* tbCls,
+                              UObject* frameTex, UFunction* setBrushFn,
+                              const wchar_t* initialText, UObject*& outLabel)
+        {
+            outLabel = nullptr;
+            FStaticConstructObjectParameters sbP(sbCls, outer);
+            UObject* sb = UObjectGlobals::StaticConstructObject(sbP);
+            if (!sb) return nullptr;
+            jw_setSizeBoxOverride(sb, 144.0f, 144.0f); // v6.20.33 — 3× from 48
+
+            FStaticConstructObjectParameters ovP(ovCls, outer);
+            UObject* ov = UObjectGlobals::StaticConstructObject(ovP);
+            if (!ov) return sb;
+            if (auto* sf = sb->GetFunctionByNameInChain(STR("SetContent")))
+            {
+                auto* p = findParam(sf, STR("Content"));
+                int sz = sf->GetParmsSize();
+                std::vector<uint8_t> bb(sz, 0);
+                if (p) *reinterpret_cast<UObject**>(bb.data() + p->GetOffset_Internal()) = ov;
+                safeProcessEvent(sb, sf, bb.data());
+            }
+
+            // Frame image (or fallback solid color if texture missing).
+            FStaticConstructObjectParameters imgP(imgCls, outer);
+            UObject* img = UObjectGlobals::StaticConstructObject(imgP);
+            if (img)
+            {
+                if (frameTex && setBrushFn) umgSetBrush(img, frameTex, setBrushFn);
+                if (auto* fn = img->GetFunctionByNameInChain(STR("SetColorAndOpacity")))
+                {
+                    int sz = fn->GetParmsSize();
+                    std::vector<uint8_t> bb(sz, 0);
+                    auto* p = findParam(fn, STR("InColorAndOpacity"));
+                    if (p) {
+                        auto* c = reinterpret_cast<float*>(bb.data() + p->GetOffset_Internal());
+                        c[0] = 1.0f; c[1] = 1.0f; c[2] = 1.0f; c[3] = 1.0f;
+                        safeProcessEvent(img, fn, bb.data());
+                    }
+                }
+                addToOverlay(ov, img);
+            }
+
+            // Text label centered.
+            FStaticConstructObjectParameters tbP(tbCls, outer);
+            UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
+            if (tb)
+            {
+                umgSetText(tb, initialText);
+                umgSetTextColor(tb, 1.0f, 0.95f, 0.78f, 1.0f);
+                UObject* tbSlot = addToOverlay(ov, tb);
+                if (tbSlot)
+                {
+                    if (auto* fnH = tbSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                    { int sz = fnH->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 2; /*Center*/ safeProcessEvent(tbSlot, fnH, bb.data()); }
+                    if (auto* fnV = tbSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment")))
+                    { int sz = fnV->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 2; /*Center*/ safeProcessEvent(tbSlot, fnV, bb.data()); }
+                }
+                outLabel = tb;
+            }
+            return sb;
+        }
+
+        void createRotationDisplay()
+        {
+            if (m_rotDisplayWidget) return;
+
+            auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
+            auto* sizeBoxClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.SizeBox"));
+            auto* overlayClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Overlay"));
+            auto* imageClass      = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Image"));
+            auto* textBlockClass  = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+            auto* hboxClass       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.HorizontalBox"));
+            auto* vboxClass       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.VerticalBox"));
+            if (!userWidgetClass || !sizeBoxClass || !overlayClass || !imageClass ||
+                !textBlockClass || !hboxClass || !vboxClass) return;
+
+            auto* pc = findPlayerController();
+            if (!pc) return;
+            auto* createFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
+            auto* wblClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
+            if (!createFn || !wblClass) return;
+            UObject* wblCDO = wblClass->GetClassDefaultObject();
+            if (!wblCDO) return;
+
+            int csz = createFn->GetParmsSize();
+            std::vector<uint8_t> cp(csz, 0);
+            auto* pWC = findParam(createFn, STR("WorldContextObject"));
+            auto* pWT = findParam(createFn, STR("WidgetType"));
+            auto* pOP = findParam(createFn, STR("OwningPlayer"));
+            auto* pRV = findParam(createFn, STR("ReturnValue"));
+            if (pWC) *reinterpret_cast<UObject**>(cp.data() + pWC->GetOffset_Internal()) = pc;
+            if (pWT) *reinterpret_cast<UObject**>(cp.data() + pWT->GetOffset_Internal()) = userWidgetClass;
+            if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
+            safeProcessEvent(wblCDO, createFn, cp.data());
+            UObject* userWidget = pRV ? *reinterpret_cast<UObject**>(cp.data() + pRV->GetOffset_Internal()) : nullptr;
+            if (!userWidget) return;
+
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
+            UObject* outer = widgetTree ? widgetTree : userWidget;
+
+            // Frame texture (load once; null = falls back to plain TextBlock w/o frame).
+            UObject* frameTex = loadInvArmorHoverTexture();
+            UFunction* setBrushFn = nullptr;
+            if (frameTex)
+            {
+                setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(
+                    nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
+            }
+
+            // VBox root (top cell row + bottom 3-cell row)
+            FStaticConstructObjectParameters vP(vboxClass, outer);
+            UObject* vbox = UObjectGlobals::StaticConstructObject(vP);
+            if (!vbox) return;
+            if (widgetTree) setRootWidget(widgetTree, vbox);
+
+            // Top: HBox with HAlign=Center containing the step cell
+            FStaticConstructObjectParameters topP(hboxClass, outer);
+            UObject* topHBox = UObjectGlobals::StaticConstructObject(topP);
+            if (topHBox)
+            {
+                UObject* stepCell = buildRotCell(outer, sizeBoxClass, overlayClass,
+                                                 imageClass, textBlockClass,
+                                                 frameTex, setBrushFn, L"5°",
+                                                 m_rotDisplayStep);
+                if (stepCell)
+                {
+                    auto* addFn = topHBox->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
+                    if (addFn) {
+                        auto* p = findParam(addFn, STR("Content"));
+                        int sz = addFn->GetParmsSize();
+                        std::vector<uint8_t> bb(sz, 0);
+                        if (p) *reinterpret_cast<UObject**>(bb.data() + p->GetOffset_Internal()) = stepCell;
+                        safeProcessEvent(topHBox, addFn, bb.data());
+                    }
+                }
+                // Add topHBox to vbox with HAlign_Center to center the lone cell over the row of 3 below.
+                auto* vbAdd = vbox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
+                if (vbAdd) {
+                    auto* p = findParam(vbAdd, STR("Content"));
+                    auto* pRet = findParam(vbAdd, STR("ReturnValue"));
+                    int sz = vbAdd->GetParmsSize();
+                    std::vector<uint8_t> bb(sz, 0);
+                    if (p) *reinterpret_cast<UObject**>(bb.data() + p->GetOffset_Internal()) = topHBox;
+                    safeProcessEvent(vbox, vbAdd, bb.data());
+                    UObject* slot = pRet ? *reinterpret_cast<UObject**>(bb.data() + pRet->GetOffset_Internal()) : nullptr;
+                    if (slot)
+                    {
+                        if (auto* fnH = slot->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                        { int sz2 = fnH->GetParmsSize(); std::vector<uint8_t> hb(sz2, 0); hb[0] = 2; safeProcessEvent(slot, fnH, hb.data()); }
+                    }
+                }
+            }
+
+            // Bottom: HBox of 3 cells (Yaw, Pitch, Roll)
+            FStaticConstructObjectParameters botP(hboxClass, outer);
+            UObject* botHBox = UObjectGlobals::StaticConstructObject(botP);
+            if (botHBox)
+            {
+                auto addCellToHbox = [&](UObject* cell) {
+                    if (!cell) return;
+                    auto* addFn = botHBox->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
+                    if (!addFn) return;
+                    auto* p = findParam(addFn, STR("Content"));
+                    int sz = addFn->GetParmsSize();
+                    std::vector<uint8_t> bb(sz, 0);
+                    if (p) *reinterpret_cast<UObject**>(bb.data() + p->GetOffset_Internal()) = cell;
+                    safeProcessEvent(botHBox, addFn, bb.data());
+                };
+                addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass,
+                                            frameTex, setBrushFn, L"Y", m_rotDisplayYaw));
+                addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass,
+                                            frameTex, setBrushFn, L"P", m_rotDisplayPitch));
+                addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass,
+                                            frameTex, setBrushFn, L"R", m_rotDisplayRoll));
+                auto* vbAdd = vbox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
+                if (vbAdd) {
+                    auto* p = findParam(vbAdd, STR("Content"));
+                    int sz = vbAdd->GetParmsSize();
+                    std::vector<uint8_t> bb(sz, 0);
+                    if (p) *reinterpret_cast<UObject**>(bb.data() + p->GetOffset_Internal()) = botHBox;
+                    safeProcessEvent(vbox, vbAdd, bb.data());
+                }
+            }
+
+            // Add to viewport, position bottom-left of toolbar area.
+            if (auto* fn = userWidget->GetFunctionByNameInChain(STR("AddToViewport")))
+            {
+                auto* p = findParam(fn, STR("ZOrder"));
+                int sz = fn->GetParmsSize();
+                std::vector<uint8_t> bb(sz, 0);
+                if (p) *reinterpret_cast<int32_t*>(bb.data() + p->GetOffset_Internal()) = 80;
+                safeProcessEvent(userWidget, fn, bb.data());
+            }
+            m_screen.refresh(findPlayerController());
+            // v6.20.33 — use saved position if any, else default (15%, 65%) —
+            // moved away from 10%/85% which overlapped the armor HUD.
+            float fX = (m_rotDispPosX >= 0.0f) ? m_rotDispPosX : 0.15f;
+            float fY = (m_rotDispPosY >= 0.0f) ? m_rotDispPosY : 0.65f;
+            setWidgetPosition(userWidget, m_screen.fracToPixelX(fX),
+                                          m_screen.fracToPixelY(fY), true);
+
+            m_rotDisplayWidget = userWidget;
+            VLOG(STR("[MoriaCppMod] [RotDisp] Rotation display widget created (frameTex={}, posFrac=({:.3f},{:.3f}))\n"),
+                 frameTex ? STR("YES") : STR("NO"), fX, fY);
+        }
+
+        // v6.20.33 — Drag handling. Mouse-down on any rotation cell starts
+        // drag; LMB held updates position; falling-edge saves to ini.
+        void tickRotationDisplayDrag()
+        {
+            if (!m_rotDisplayWidget || !isObjectAlive(m_rotDisplayWidget)) return;
+
+            int curX, curY, viewW, viewH;
+            if (!m_screen.getCursorClientPixels(curX, curY, viewW, viewH))
+            { m_rotDispDragActive = false; m_rotDispLMBPrev = false; return; }
+
+            bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            bool rising  = lmb && !m_rotDispLMBPrev;
+            bool falling = !lmb && m_rotDispLMBPrev;
+            m_rotDispLMBPrev = lmb;
+
+            // Bounds: SizeBox is "144 wide" centered at posFrac, but VBox makes
+            // the actual widget 144 wide × 290 tall (top cell + 144 bottom row).
+            float fX = (m_rotDispPosX >= 0.0f) ? m_rotDispPosX : 0.15f;
+            float fY = (m_rotDispPosY >= 0.0f) ? m_rotDispPosY : 0.65f;
+            float s2p = m_screen.viewportScale;
+            float wW = 432.0f * s2p; // 3 cells × 144 wide bottom row
+            float wH = 300.0f * s2p; // top 144 + bottom 144 + small gap
+            float cx = m_screen.fracToPixelX(fX);
+            float cy = m_screen.fracToPixelY(fY);
+            float left = cx - wW * 0.5f;
+            float top  = cy - wH * 0.5f;
+            bool overWidget = (curX >= left && curX <= left + wW &&
+                               curY >= top  && curY <= top  + wH);
+
+            if (rising && overWidget)
+            {
+                m_rotDispDragActive = true;
+                m_rotDispDragOffsetX = curX - static_cast<int>(cx);
+                m_rotDispDragOffsetY = curY - static_cast<int>(cy);
+                VLOG(STR("[MoriaCppMod] [RotDisp] Drag START at ({},{}) widget=({:.0f},{:.0f})\n"),
+                     curX, curY, cx, cy);
+            }
+            if (falling && m_rotDispDragActive)
+            {
+                m_rotDispDragActive = false;
+                saveConfig();
+                VLOG(STR("[MoriaCppMod] [RotDisp] Drag END — saved fracX={:.3f} fracY={:.3f}\n"),
+                     m_rotDispPosX, m_rotDispPosY);
+            }
+            if (m_rotDispDragActive && lmb)
+            {
+                float newCx = static_cast<float>(curX - m_rotDispDragOffsetX);
+                float newCy = static_cast<float>(curY - m_rotDispDragOffsetY);
+                setWidgetPosition(m_rotDisplayWidget, newCx, newCy, true);
+                m_rotDispPosX = (m_screen.viewW > 0 ? newCx / m_screen.viewW : 0.5f);
+                m_rotDispPosY = (m_screen.viewH > 0 ? newCy / m_screen.viewH : 0.5f);
+            }
+        }
+
+        void updateRotationDisplay()
+        {
+            if (!m_rotDisplayWidget || !isObjectAlive(m_rotDisplayWidget)) return;
+            // Step
+            if (m_rotDisplayStep)
+            {
+                int step = s_overlay.rotationStep.load();
+                std::wstring s = std::to_wstring(step) + L"\xB0"; // °
+                umgSetText(m_rotDisplayStep, s);
+            }
+            // Read TargetRotation from GATA's TraceResults struct (offsets resolved in resolveGATAOffsets).
+            float pitch = 0.0f, yaw = 0.0f, roll = 0.0f;
+            UObject* gata = resolveGATA();
+            if (gata && m_offTraceResults >= 0 && m_offTargetRotation >= 0 && resolveGATAOffsets(gata))
+            {
+                uint8_t* base = reinterpret_cast<uint8_t*>(gata) + m_offTraceResults + m_offTargetRotation;
+                if (isReadableMemory(base, sizeof(float) * 3))
+                {
+                    float* rot = reinterpret_cast<float*>(base);
+                    pitch = rot[0]; yaw = rot[1]; roll = rot[2];
+                }
+            }
+            auto fmt = [](float v) {
+                int iv = static_cast<int>(v) % 360;
+                if (iv < 0) iv += 360;
+                return std::to_wstring(iv) + L"\xB0";
+            };
+            if (m_rotDisplayYaw)   umgSetText(m_rotDisplayYaw,   fmt(yaw));
+            if (m_rotDisplayPitch) umgSetText(m_rotDisplayPitch, fmt(pitch));
+            if (m_rotDisplayRoll)  umgSetText(m_rotDisplayRoll,  fmt(roll));
+        }
+
+        // v6.20.34 — always-visible (user can't get mouse cursor while
+        // building, so hiding the widget when not-building made it
+        // un-draggable). Widget stays visible all the time once character
+        // is loaded; YPR values just show last-known when not actively
+        // placing. Throttled to 4 Hz.
+        ULONGLONG m_rotDispLastTickMs{0};
+        void tickRotationDisplay()
+        {
+            ULONGLONG now = GetTickCount64();
+            if (now - m_rotDispLastTickMs < 250) return;
+            m_rotDispLastTickMs = now;
+
+            if (!m_characterLoaded) return;
+
+            if (!m_rotDisplayWidget) {
+                VLOG(STR("[MoriaCppMod] [RotDisp] creating widget (always-on)...\n"));
+                createRotationDisplay();
+                if (!m_rotDisplayWidget) return;
+            }
+            if (m_rotDisplayWidget && isObjectAlive(m_rotDisplayWidget))
+            {
+                if (auto* fn = m_rotDisplayWidget->GetFunctionByNameInChain(STR("SetVisibility")))
+                { uint8_t p[8]{}; p[0] = 0; safeProcessEvent(m_rotDisplayWidget, fn, p); }
+                updateRotationDisplay();
+                tickRotationDisplayDrag();
+            }
+        }
+
+
         // ── Crosshair reticle (centered, shown during inspect) ──────────
 
         void createCrosshair()
@@ -5799,6 +6165,201 @@
         }
 
 
+        // v6.20.30 — spawn the in-game WBP_UI_RenameWorldModal_C as our
+        // character rename dialog. Reuses the game's native chrome (heading,
+        // editable text box, Confirm/Cancel buttons, modal backdrop) so it
+        // looks consistent with the world-rename screen. ConfirmButton +
+        // CancelButton get registered in m_gameOptButtons with new
+        // RenameModalConfirm/Cancel kinds; onModGameOptionClicked dispatches
+        // those into our existing confirmRenameDialog / hideRenameDialog logic
+        // so the read-text-and-apply path is unchanged.
+        //
+        // The modal class inherits from UMorUIMainMenuScreen but spawns fine
+        // in-game via WidgetBlueprintLibrary::Create — we add to viewport
+        // without invoking OnBeforeShow, since that path is for the main
+        // menu's screen-stack and may reference state we don't have in-world.
+        void showRenameDialog_v2()
+        {
+            if (m_ftRenameVisible) { VLOG(STR("[MoriaCppMod] [Rename] BLOCKED: already visible\n")); return; }
+            if (!m_characterLoaded) { showErrorBox(Loc::get("err.character_not_loaded")); return; }
+
+            // 1. Resolve modal class. v6.20.33 — force-load via
+            //    LoadAsset_Blocking. v6.20.32 worked once when the asset
+            //    happened to be warm in memory, then failed mid-session
+            //    after GC unloaded it. LoadAsset_Blocking guarantees the
+            //    class is resident before we try to spawn from it.
+            //    Cache the class pointer in m_renameModalCls after first
+            //    successful resolve.
+            UClass* modalCls = m_renameModalCls.Get() ? static_cast<UClass*>(m_renameModalCls.Get()) : nullptr;
+            if (!modalCls)
+            {
+                // Try a few candidate paths first via fast StaticFindObject
+                // (skips force-load if the asset is already in memory).
+                const wchar_t* candidates[] = {
+                    STR("/Game/UI/WorldSelect/WBP_UI_RenameWorldModal.WBP_UI_RenameWorldModal_C"),
+                    STR("/Game/UI/MainMenu/WBP_UI_RenameWorldModal.WBP_UI_RenameWorldModal_C"),
+                    STR("/Game/UI/Modal/WBP_UI_RenameWorldModal.WBP_UI_RenameWorldModal_C"),
+                    STR("/Game/UI/WBP_UI_RenameWorldModal.WBP_UI_RenameWorldModal_C"),
+                };
+                for (const auto* c : candidates)
+                {
+                    try { modalCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, c); }
+                    catch (...) {}
+                    if (modalCls) break;
+                }
+
+                // If still not found, force-load each candidate via
+                // KismetSystemLibrary:LoadAsset_Blocking. This synchronously
+                // loads the cooked .uasset chunk into memory.
+                if (!modalCls)
+                {
+                    auto* loadFn = UObjectGlobals::StaticFindObject<UFunction*>(
+                        nullptr, nullptr,
+                        STR("/Script/Engine.KismetSystemLibrary:LoadAsset_Blocking"));
+                    auto* kslClass = UObjectGlobals::StaticFindObject<UClass*>(
+                        nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary"));
+                    UObject* kslCDO = kslClass ? kslClass->GetClassDefaultObject() : nullptr;
+                    if (loadFn && kslCDO)
+                    {
+                        for (const auto* c : candidates)
+                        {
+                            try {
+                                int sz = loadFn->GetParmsSize();
+                                std::vector<uint8_t> bb(sz, 0);
+                                // TSoftObjectPtr<UObject> at offset 0 (40 bytes).
+                                // Layout: FName Asset (8) + FString SubPath (16) + int32 Tag (4) + FWeakObjectPtr (8)
+                                FName assetName(c, FNAME_Add);
+                                std::memcpy(bb.data(), &assetName, sizeof(FName));
+                                safeProcessEvent(kslCDO, loadFn, bb.data());
+                            } catch (...) {}
+                            try { modalCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, c); }
+                            catch (...) {}
+                            if (modalCls) {
+                                VLOG(STR("[MoriaCppMod] [Rename v2] LoadAsset_Blocking succeeded for {}\n"), c);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Last resort: scan FindAllOf for any live instance.
+                if (!modalCls)
+                {
+                    std::vector<UObject*> insts;
+                    findAllOfSafe(STR("WBP_UI_RenameWorldModal_C"), insts);
+                    for (UObject* o : insts)
+                    {
+                        if (o && isObjectAlive(o))
+                        {
+                            modalCls = static_cast<UClass*>(o->GetClassPrivate());
+                            if (modalCls) break;
+                        }
+                    }
+                }
+
+                if (modalCls) m_renameModalCls = FWeakObjectPtr(modalCls);
+            }
+            if (!modalCls)
+            {
+                VLOG(STR("[MoriaCppMod] [Rename v2] WBP_UI_RenameWorldModal_C class not found — falling back to legacy dialog\n"));
+                showRenameDialog();
+                return;
+            }
+
+            // 2. Spawn via WidgetBlueprintLibrary::Create.
+            UObject* modal = jw_createGameWidget(modalCls);
+            if (!modal)
+            {
+                VLOG(STR("[MoriaCppMod] [Rename v2] jw_createGameWidget failed — falling back\n"));
+                showRenameDialog();
+                return;
+            }
+
+            // 3. Override heading. Member is UTextBlock* HeadingText @ 0x03F8.
+            if (auto* hPtr = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("HeadingText")))
+                if (UObject* h = *hPtr)
+                    umgSetText(h, L"Rename Character");
+
+            // 4. Cache WorldNameTextBox reference. We don't pre-fill (the
+            //    text starts empty for a clean rename UX, no need to clear).
+            //    Member is UEditableTextBox* WorldNameTextBox @ 0x0408.
+            UObject* input = nullptr;
+            if (auto* iPtr = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("WorldNameTextBox")))
+                input = *iPtr;
+
+            // 5. Defensively null out World Select Item so any internal
+            //    world-rename logic no-ops if the BP's BndEvt path runs.
+            if (auto* wsiPtr = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("World Select Item")))
+                *wsiPtr = nullptr;
+
+            // 6. Register Confirm + Cancel buttons in m_gameOptButtons so our
+            //    OnButtonReleasedEvent post-hook dispatches them.
+            UObject* confirmBtn = nullptr;
+            UObject* cancelBtn  = nullptr;
+            if (auto* p = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("ConfirmButton")))
+                confirmBtn = *p;
+            if (auto* p = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("CancelButton")))
+                cancelBtn = *p;
+            if (confirmBtn) {
+                GameOptButton g; g.widget = FWeakObjectPtr(confirmBtn);
+                g.kind = GameOptKind::RenameModalConfirm; g.fromPauseMenu = false;
+                m_gameOptButtons.push_back(g);
+            }
+            if (cancelBtn) {
+                GameOptButton g; g.widget = FWeakObjectPtr(cancelBtn);
+                g.kind = GameOptKind::RenameModalCancel; g.fromPauseMenu = false;
+                m_gameOptButtons.push_back(g);
+            }
+
+            // 7. Add to viewport at high Z + UI input mode.
+            if (auto* fn = modal->GetFunctionByNameInChain(STR("AddToViewport")))
+            {
+                auto* p = findParam(fn, STR("ZOrder"));
+                int sz = fn->GetParmsSize();
+                std::vector<uint8_t> bb(sz, 0);
+                if (p) *reinterpret_cast<int32_t*>(bb.data() + p->GetOffset_Internal()) = 200;
+                safeProcessEvent(modal, fn, bb.data());
+            }
+            // v6.20.32 — call BP lifecycle entry points so the modal's own
+            // input bindings wire up. Without OnBeforeShow, the BP's BndEvt
+            // for the EditableTextBox change event never fires, so typed
+            // text never lands in WorldNameText member, and confirm sees
+            // "empty string". Also without OnCustomFocusSet, keyboard focus
+            // doesn't land on WorldNameTextBox so keystrokes leak to game.
+            if (auto* fn = modal->GetFunctionByNameInChain(STR("OnBeforeShow")))
+            {
+                std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
+                safeProcessEvent(modal, fn, bb.data());
+            }
+            if (auto* fn = modal->GetFunctionByNameInChain(STR("OnAfterShow")))
+            {
+                std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
+                safeProcessEvent(modal, fn, bb.data());
+            }
+            if (auto* fn = modal->GetFunctionByNameInChain(STR("OnCustomFocusSet")))
+            {
+                std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
+                safeProcessEvent(modal, fn, bb.data());
+            }
+
+            // 8. Cache pointers in the existing rename machinery so
+            //    confirmRenameDialog (reads m_ftRenameInput) and
+            //    hideRenameDialog (releases m_ftRenameWidget) work as-is.
+            m_ftRenameWidget = modal;
+            m_ftRenameInput  = input;
+            m_ftRenameConfirmLabel = nullptr; // legacy field; not used by modal
+            m_ftRenameVisible = true;
+            m_ftRenameUsingModal = true;
+
+            setInputModeUI(modal);
+            VLOG(STR("[MoriaCppMod] [Rename v2] WBP_UI_RenameWorldModal_C spawned at {:p}, input={:p}, confirm={:p}, cancel={:p}\n"),
+                 (void*)modal, (void*)input, (void*)confirmBtn, (void*)cancelBtn);
+        }
+
+        // Legacy home-rolled rename dialog. Dead code in v6.20.30 — left in
+        // place as fallback during transition (showRenameDialog_v2 calls it
+        // if the modal class can't be resolved). Will be removed in the
+        // cleanup batch.
         void showRenameDialog()
         {
             if (m_ftRenameVisible) { VLOG(STR("[MoriaCppMod] [Rename] BLOCKED: already visible\n")); return; }
@@ -6116,6 +6677,7 @@
             m_ftRenameInput = nullptr;
             m_ftRenameConfirmLabel = nullptr;
             m_ftRenameVisible = false;
+            m_ftRenameUsingModal = false; // v6.20.30
 
             // v6.20.25 — if the rename dialog was opened from the pause menu
             // (typical), the pause menu is still on screen and needs UI input.
@@ -6147,24 +6709,57 @@
 
         void confirmRenameDialog()
         {
-            if (!m_ftRenameVisible || !m_ftRenameInput) return;
-
-
-            auto* getFn = m_ftRenameInput->GetFunctionByNameInChain(STR("GetText"));
-            if (!getFn) { showErrorBox(L"GetText not found on EditableTextBox"); hideRenameDialog(); return; }
-
-            int gsz = getFn->GetParmsSize();
-            std::vector<uint8_t> gbuf(gsz, 0);
-            safeProcessEvent(m_ftRenameInput, getFn, gbuf.data());
-
-            auto* retProp = findParam(getFn, STR("ReturnValue"));
-            if (!retProp) { hideRenameDialog(); return; }
-
-
+            if (!m_ftRenameVisible) return;
             std::wstring newName;
-            auto* ftext = reinterpret_cast<FText*>(gbuf.data() + retProp->GetOffset_Internal());
-            if (ftext->Data)
-                newName = ftext->ToString();
+
+            // v6.20.32 — when using the in-game modal, prefer reading the
+            // WorldNameText field on the modal itself (the BP's
+            // OnEditableTextBoxChangedEvent BndEvt copies typed text there).
+            // GetText on the EditableTextBox sometimes returns empty between
+            // BP frames if the textbox hasn't yet committed via Enter.
+            if (m_ftRenameUsingModal && m_ftRenameWidget && isObjectAlive(m_ftRenameWidget))
+            {
+                auto* wntPtr = m_ftRenameWidget->GetValuePtrByPropertyNameInChain<FText>(STR("WorldNameText"));
+                if (wntPtr && wntPtr->Data)
+                {
+                    try { newName = wntPtr->ToString(); } catch (...) {}
+                }
+                // Fallback: read "World Name" FString via raw memory (FString
+                // layout: TArray<TCHAR> with Data ptr at offset 0).
+                if (newName.empty())
+                {
+                    auto* wnsRaw = m_ftRenameWidget->GetValuePtrByPropertyNameInChain<uint8_t>(STR("World Name"));
+                    if (wnsRaw && isReadableMemory(wnsRaw, sizeof(void*)))
+                    {
+                        wchar_t* dataPtr = *reinterpret_cast<wchar_t**>(wnsRaw);
+                        if (dataPtr && isReadableMemory(dataPtr, sizeof(wchar_t)))
+                        {
+                            try { newName = std::wstring(dataPtr); } catch (...) {}
+                        }
+                    }
+                }
+            }
+
+            // Fallback / legacy path: GetText on the cached EditableTextBox.
+            if (newName.empty() && m_ftRenameInput && isObjectAlive(m_ftRenameInput))
+            {
+                auto* getFn = m_ftRenameInput->GetFunctionByNameInChain(STR("GetText"));
+                if (getFn)
+                {
+                    int gsz = getFn->GetParmsSize();
+                    std::vector<uint8_t> gbuf(gsz, 0);
+                    safeProcessEvent(m_ftRenameInput, getFn, gbuf.data());
+                    if (auto* retProp = findParam(getFn, STR("ReturnValue")))
+                    {
+                        auto* ftext = reinterpret_cast<FText*>(gbuf.data() + retProp->GetOffset_Internal());
+                        if (ftext->Data)
+                            try { newName = ftext->ToString(); } catch (...) {}
+                    }
+                }
+            }
+
+            VLOG(STR("[MoriaCppMod] [Rename] confirm read newName='{}' (len={}) usingModal={}\n"),
+                 newName, (int)newName.size(), m_ftRenameUsingModal ? STR("Y") : STR("N"));
 
             if (newName.empty()) { showErrorBox(Loc::get("err.rename_name_empty")); return; }
 
