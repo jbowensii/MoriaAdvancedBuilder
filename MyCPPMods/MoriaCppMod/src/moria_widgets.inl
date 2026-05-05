@@ -5506,62 +5506,78 @@
             if (m_ftRenameVisible) { VLOG(STR("[MoriaCppMod] [Rename] BLOCKED: already visible\n")); return; }
             if (!m_characterLoaded) { showErrorBox(Loc::get("err.character_not_loaded")); return; }
 
-            // 1. Resolve modal class. v6.21.2 — reverted to WBP_UI_RenameWorldModal_C
-            //    (the world-rename modal that worked reliably in v6.20.30-32).
-            //    The CharacterCreatorRenameDialog isn't in memory during in-world
-            //    play (it lives in the front-end Character Creator screen), so
-            //    every resolve attempt failed and fell back to the legacy dialog.
-            //    The world-rename modal IS available in-world (asset stays loaded
-            //    from the world-select flow).
-            constexpr const wchar_t* kRenameModalPath =
-                STR("/Game/UI/WorldSelect/WBP_UI_RenameWorldModal.WBP_UI_RenameWorldModal_C");
-
-            UClass* modalCls = nullptr;
-            try { modalCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kRenameModalPath); }
-            catch (...) {}
+            // 1. Resolve modal class. v6.21.6 — restored v6.20.34 multi-path
+            //    approach. The modal asset isn't always at /Game/UI/WorldSelect/
+            //    (it gets cached/relocated by the asset registry); we try
+            //    several candidate paths via fast StaticFindObject first, then
+            //    LoadAsset_Blocking on each, then a class-name FindAllOf as
+            //    last resort. Cache the resolved class for the session.
+            UClass* modalCls = m_renameModalCls.Get() ? static_cast<UClass*>(m_renameModalCls.Get()) : nullptr;
             if (!modalCls)
             {
-                // Force-load via LoadAsset_Blocking — same UFunction the
-                // game uses for any soft-class load.
-                auto* loadFn = UObjectGlobals::StaticFindObject<UFunction*>(
-                    nullptr, nullptr,
-                    STR("/Script/Engine.KismetSystemLibrary:LoadAsset_Blocking"));
-                auto* kslClass = UObjectGlobals::StaticFindObject<UClass*>(
-                    nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary"));
-                UObject* kslCDO = kslClass ? kslClass->GetClassDefaultObject() : nullptr;
-                if (loadFn && kslCDO)
+                const wchar_t* candidates[] = {
+                    STR("/Game/UI/WorldSelect/WBP_UI_RenameWorldModal.WBP_UI_RenameWorldModal_C"),
+                    STR("/Game/UI/MainMenu/WBP_UI_RenameWorldModal.WBP_UI_RenameWorldModal_C"),
+                    STR("/Game/UI/Modal/WBP_UI_RenameWorldModal.WBP_UI_RenameWorldModal_C"),
+                    STR("/Game/UI/WBP_UI_RenameWorldModal.WBP_UI_RenameWorldModal_C"),
+                };
+                for (const auto* c : candidates)
                 {
-                    try {
-                        int sz = loadFn->GetParmsSize();
-                        std::vector<uint8_t> bb(sz, 0);
-                        FName assetName(kRenameModalPath, FNAME_Add);
-                        std::memcpy(bb.data(), &assetName, sizeof(FName));
-                        safeProcessEvent(kslCDO, loadFn, bb.data());
-                    } catch (...) {}
-                    try { modalCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kRenameModalPath); }
+                    try { modalCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, c); }
                     catch (...) {}
-                    if (modalCls)
-                        VLOG(STR("[MoriaCppMod] [Rename v2] LoadAsset_Blocking succeeded for {}\n"), kRenameModalPath);
+                    if (modalCls) break;
                 }
-            }
-            // v6.21.2 — fallback: the class might already be in memory but
-            // at a different asset path than our guess. Scan all UClass
-            // instances for one whose name matches.
-            if (!modalCls)
-            {
-                std::vector<UObject*> allClasses;
-                findAllOfSafe(STR("Class"), allClasses);
-                for (UObject* c : allClasses)
+
+                // Force-load each candidate via LoadAsset_Blocking if not resident.
+                if (!modalCls)
                 {
-                    if (!c || !isObjectAlive(c)) continue;
-                    try {
-                        if (std::wstring(c->GetName()) == STR("WBP_UI_RenameWorldModal_C"))
-                        { modalCls = static_cast<UClass*>(c); break; }
-                    } catch (...) {}
+                    auto* loadFn = UObjectGlobals::StaticFindObject<UFunction*>(
+                        nullptr, nullptr,
+                        STR("/Script/Engine.KismetSystemLibrary:LoadAsset_Blocking"));
+                    auto* kslClass = UObjectGlobals::StaticFindObject<UClass*>(
+                        nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary"));
+                    UObject* kslCDO = kslClass ? kslClass->GetClassDefaultObject() : nullptr;
+                    if (loadFn && kslCDO)
+                    {
+                        for (const auto* c : candidates)
+                        {
+                            try {
+                                int sz = loadFn->GetParmsSize();
+                                std::vector<uint8_t> bb(sz, 0);
+                                FName assetName(c, FNAME_Add);
+                                std::memcpy(bb.data(), &assetName, sizeof(FName));
+                                safeProcessEvent(kslCDO, loadFn, bb.data());
+                            } catch (...) {}
+                            try { modalCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, c); }
+                            catch (...) {}
+                            if (modalCls) {
+                                VLOG(STR("[MoriaCppMod] [Rename v2] LoadAsset_Blocking succeeded for {}\n"), c);
+                                break;
+                            }
+                        }
+                    }
                 }
-                if (modalCls)
-                    VLOG(STR("[MoriaCppMod] [Rename v2] resolved class via FindAllOf(Class) name scan: {:p}\n"),
-                         (void*)modalCls);
+
+                // Last resort: scan FindAllOf for any live instance of the class name,
+                // then derive UClass* from its outer.
+                if (!modalCls)
+                {
+                    std::vector<UObject*> insts;
+                    findAllOfSafe(STR("WBP_UI_RenameWorldModal_C"), insts);
+                    for (UObject* o : insts)
+                    {
+                        if (o && isObjectAlive(o))
+                        {
+                            modalCls = static_cast<UClass*>(o->GetClassPrivate());
+                            if (modalCls) break;
+                        }
+                    }
+                    if (modalCls)
+                        VLOG(STR("[MoriaCppMod] [Rename v2] resolved class via FindAllOf instance-scan: {:p}\n"),
+                             (void*)modalCls);
+                }
+
+                if (modalCls) m_renameModalCls = FWeakObjectPtr(modalCls);
             }
             if (!modalCls)
             {
@@ -5606,6 +5622,11 @@
             UObject* input = nullptr;
             if (auto* iPtr = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("WorldNameTextBox")))
                 input = *iPtr;
+
+            // 4a. Defensively null out World Select Item so any internal
+            //     world-rename logic (BP BndEvt path) no-ops.
+            if (auto* wsiPtr = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("World Select Item")))
+                *wsiPtr = nullptr;
 
             // 5. Register Confirm + Cancel buttons (both UWBP_FrontEndButton_C).
             UObject* confirmBtn = nullptr;

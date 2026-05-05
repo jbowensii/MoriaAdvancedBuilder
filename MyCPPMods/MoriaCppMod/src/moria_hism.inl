@@ -1243,97 +1243,102 @@
             VLOG(STR("[MoriaCppMod] Buildable: {} Recipe: {}\n"), isBuildable ? STR("Yes") : STR("No"), recipeRef);
 
 
+            // v6.21.6 — DT_Constructions scan ALWAYS runs (was previously
+            // gated on actor_dump.txt opening — when file write failed for
+            // any reason, m_targetBuildRowName stayed empty and SHIFT+]
+            // DIRECT path silently fell through to fragile name-based
+            // selectRecipeByTargetName. Scan is independent now; file
+            // writes are best-effort.
             std::wstring dtDisplayName;
             std::wstring dtRowName;
             {
                 std::wofstream dumpFile(modPath("Mods/MoriaCppMod/actor_dump.txt"), std::ios::trunc);
-                if (dumpFile.is_open())
+                bool fOK = dumpFile.is_open();
+
+                if (fOK)
                 {
                     dumpFile << L"=== DT_Constructions SCAN for: " << actorClassName << L" ===\n";
                     dumpFile << L"Actor path: " << assetPath << L"\n";
+                }
+                std::wstring classPath;
+                if (actorCls)
+                {
+                    classPath = std::wstring(actorCls->GetPathName());
+                    if (fOK) dumpFile << L"Class path: " << classPath << L"\n\n";
+                }
 
-                    std::wstring classPath;
-                    if (actorCls)
-                    {
-                        classPath = std::wstring(actorCls->GetPathName());
-                        dumpFile << L"Class path: " << classPath << L"\n";
-                    }
-                    dumpFile << L"\n";
-                    dumpFile.flush();
+                if (!m_dtConstructions.isBound()) m_dtConstructions.bind(L"DT_Constructions");
 
+                if (!m_dtConstructions.isBound())
+                {
+                    if (fOK) dumpFile << L"DT_Constructions NOT FOUND\n";
+                }
+                else
+                {
+                    auto names = m_dtConstructions.getRowNames();
+                    int actorOff = m_dtConstructions.resolvePropertyOffset(L"Actor");
 
-                    if (!m_dtConstructions.isBound()) m_dtConstructions.bind(L"DT_Constructions");
-
-                    if (!m_dtConstructions.isBound())
-                    {
-                        dumpFile << L"DT_Constructions NOT FOUND\n";
-                    }
-                    else
+                    if (fOK)
                     {
                         dumpFile << L"Found DT_Constructions at " << m_dtConstructions.table << L"\n\n";
-
-                        auto names = m_dtConstructions.getRowNames();
-                        int actorOff = m_dtConstructions.resolvePropertyOffset(L"Actor");
-
                         dumpFile << L"DT_Constructions: " << names.size() << L" rows, Actor@0x"
                                  << std::hex << actorOff << std::dec << L"\n\n";
                         dumpFile.flush();
+                    }
 
-                        int matchCount = 0;
+                    int matchCount = 0;
+                    for (size_t i = 0; i < names.size(); i++)
+                    {
+                        const auto& rowNameStr = names[i];
+                        uint8_t* rowData = m_dtConstructions.findRowData(rowNameStr.c_str());
+                        if (!rowData) continue;
 
-                        for (size_t i = 0; i < names.size(); i++)
+                        std::wstring rowAssetPath;
+                        if (actorOff >= 0 && isReadableMemory(rowData + actorOff + SOFTCLASSPTR_ASSETPATH_FNAME, 8))
                         {
-                            const auto& rowNameStr = names[i];
-                            uint8_t* rowData = m_dtConstructions.findRowData(rowNameStr.c_str());
-                            if (!rowData) continue;
+                            FName assetFName;
+                            std::memcpy(&assetFName, rowData + actorOff + SOFTCLASSPTR_ASSETPATH_FNAME, 8);
+                            try { rowAssetPath = assetFName.ToString(); } catch (...) { continue; }
+                        }
+                        else continue;
 
-
-                            std::wstring rowAssetPath;
-                            if (actorOff >= 0 && isReadableMemory(rowData + actorOff + SOFTCLASSPTR_ASSETPATH_FNAME, 8))
-                            {
-                                FName assetFName;
-                                std::memcpy(&assetFName, rowData + actorOff + SOFTCLASSPTR_ASSETPATH_FNAME, 8);
-                                try { rowAssetPath = assetFName.ToString(); } catch (...) { continue; }
-                            }
-                            else continue;
-
-                            bool isMatch = false;
-                            if (!rowAssetPath.empty())
-                            {
-                                if (!classPath.empty() && classPath.find(rowAssetPath) != std::wstring::npos)
-                                    isMatch = true;
-                                if (!isMatch && !recipeRef.empty() && rowAssetPath.find(recipeRef) != std::wstring::npos)
-                                    isMatch = true;
-                            }
-
-                            if (i < 3 || isMatch)
-                            {
-                                std::wstring dispName = m_dtConstructions.readFText(rowNameStr.c_str(), L"DisplayName");
-
-                                dumpFile << (isMatch ? L">>> MATCH" : L"   ") << L" [" << i << L"] " << rowNameStr
-                                         << L"  Display=\"" << dispName << L"\"  ActorPath=\"" << rowAssetPath << L"\"\n";
-                                dumpFile.flush();
-
-                                if (isMatch && dtDisplayName.empty())
-                                {
-                                    dtDisplayName = dispName;
-                                    dtRowName = rowNameStr;
-                                }
-                            }
-
-                            if (isMatch) matchCount++;
+                        bool isMatch = false;
+                        if (!rowAssetPath.empty())
+                        {
+                            if (!classPath.empty() && classPath.find(rowAssetPath) != std::wstring::npos)
+                                isMatch = true;
+                            if (!isMatch && !recipeRef.empty() && rowAssetPath.find(recipeRef) != std::wstring::npos)
+                                isMatch = true;
                         }
 
+                        if (isMatch && dtDisplayName.empty())
+                        {
+                            std::wstring dispName = m_dtConstructions.readFText(rowNameStr.c_str(), L"DisplayName");
+                            dtDisplayName = dispName;
+                            dtRowName = rowNameStr;
+                        }
+
+                        if (fOK && (i < 3 || isMatch))
+                        {
+                            std::wstring dispName = m_dtConstructions.readFText(rowNameStr.c_str(), L"DisplayName");
+                            dumpFile << (isMatch ? L">>> MATCH" : L"   ") << L" [" << i << L"] " << rowNameStr
+                                     << L"  Display=\"" << dispName << L"\"  ActorPath=\"" << rowAssetPath << L"\"\n";
+                            dumpFile.flush();
+                        }
+
+                        if (isMatch) matchCount++;
+                    }
+
+                    if (fOK)
+                    {
                         dumpFile << L"\n=== RESULTS: " << names.size() << L" rows scanned, " << matchCount << L" matches ===\n";
                         if (!dtDisplayName.empty())
                             dumpFile << L"MATCHED: row='" << dtRowName << L"' display='" << dtDisplayName << L"'\n";
                         else
                             dumpFile << L"NO MATCH FOUND for classPath='" << classPath << L"'\n";
                     }
-                    dumpFile.close();
-
-                    VLOG(STR("[MoriaCppMod] DT_Constructions scan -> actor_dump.txt\n"));
                 }
+                if (fOK) { dumpFile.close(); VLOG(STR("[MoriaCppMod] DT_Constructions scan -> actor_dump.txt\n")); }
             }
 
             if (!dtDisplayName.empty())
