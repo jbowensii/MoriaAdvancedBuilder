@@ -182,6 +182,36 @@ static bool isObjectAlive(UObject* obj)
 }
 
 
+// v6.20.17 — true if a widget is currently displayed (parent slot non-null OR
+// IsInViewport returns true). Used to filter stale ghost UMG widgets returned
+// by FindAllOf that linger between GC passes after the screen was closed.
+// Calling BP MarkAllAsRead on a stale widget is a silent no-op, which is what
+// caused crafting recipes to revert on reload in v6.20.16.
+static bool isWidgetInViewport(UObject* widget)
+{
+    if (!widget || !isObjectAlive(widget)) return false;
+    __try
+    {
+        // Try IsInViewport UFunction first (UUserWidget). Returns bool.
+        auto* isInVp = widget->GetFunctionByNameInChain(STR("IsInViewport"));
+        if (isInVp)
+        {
+            struct { bool ret; } parm{false};
+            safeProcessEvent(widget, isInVp, &parm);
+            if (parm.ret) return true;
+        }
+        // Fallback: Slot pointer non-null means widget is parented in a panel.
+        auto** slotPtr = widget->GetValuePtrByPropertyNameInChain<UObject*>(STR("Slot"));
+        if (slotPtr && *slotPtr) return true;
+        return false;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
+
+
 // SEH-wrapped FindAllOf. C++ functions with destructors can't host __try,
 // so we put the call in a plain helper. Returns false on AV (caller
 // should treat as "no results"). The output vector is filled on success.

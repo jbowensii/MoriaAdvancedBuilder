@@ -47,7 +47,20 @@
         // (Quick Build F-keys, etc.) check this and bail out so user
         // keypresses for rebind don't trigger gameplay actions.
         bool m_settingsScreenOpen{false};
-        bool isSettingsScreenOpen() const { return m_settingsScreenOpen; }
+        // v6.20.21 — auto-recover from missed Hide hook. If flag is set but the
+        // native widget pointer is dead, the OnAfterHide hook didn't fire
+        // (sometimes happens during world transition / unusual screen close).
+        // Without this, F-keys silently swallow forever after that.
+        bool isSettingsScreenOpen() const
+        {
+            if (!m_settingsScreenOpen) return false;
+            UObject* w = m_nativeSettingsScreen.Get();
+            if (!w) {
+                const_cast<MoriaCppMod*>(this)->m_settingsScreenOpen = false;
+                return false;
+            }
+            return true;
+        }
 
         // Set of class names we've already logged once on first sight, so the
         // log doesn't spam if the user opens/closes Settings repeatedly.

@@ -1249,52 +1249,74 @@
                 }
             }
 
-            // Phase 5: Crafting Screen — UI_WBP_Crafting_Screen_C::MarkAllAsRead() (one-call).
-            // Same pattern as the build tab. Clears the "296 new" count on crafting stations.
+            // Phase 5/6: crafting recipes — bulk MarkAllAsRead on live screens.
+            //
+            // KNOWN VANILLA LIMITATION (v6.20.20): crafting "new!" badges revert on
+            // game reload regardless of what we do here. Confirmed three ways:
+            //   1. No SaveGame UPROPERTY in the entire Moria module mentions recipe-
+            //      viewed state (DiscoveredRecipes is Transient on both
+            //      AMorDiscoveryManager and UMorRecipeViewerWidget).
+            //   2. UMorCraftingScreen::SetRecipeViewed is an empty C++ stub. We tried
+            //      calling its BP override per-row (v6.20.18) — didn't persist.
+            //   3. Calling the actual button BndEvt UFunction
+            //      (BndEvt__...MarkAllAsSeenButton...) DID work for persistence but
+            //      its side-effects (BP click chain: animation/focus/hide/input-
+            //      unbind) broke our input dispatch and lore-screen UI when invoked
+            //      outside a real click context (v6.20.19, reverted).
+            //
+            // WORKAROUND for users who want persistent crafting-mark-as-read: open
+            // a crafting station or the Recipe Compendium and physically click the
+            // "MARK ALL AS SEEN" button. The real click does what our programmatic
+            // call can't safely replicate.
+            //
+            // What this phase still does: clears in-session "NEW!" badges so the
+            // counter is gone for the current play session. Reverts on reload.
+            int craftingMarked = 0;
+            int viewerMarked = 0;
             {
                 std::vector<UObject*> screens;
                 UObjectGlobals::FindAllOf(STR("UI_WBP_Crafting_Screen_C"), screens);
-                int invoked = 0;
                 for (UObject* screen : screens)
                 {
                     if (!screen || !isObjectAlive(screen)) continue;
+                    if (!isWidgetInViewport(screen)) continue; // skip stale ghosts
                     auto* fn = screen->GetFunctionByNameInChain(STR("MarkAllAsRead"));
                     if (fn && safeProcessEvent(screen, fn, nullptr))
                     {
                         anyScreenFound = true;
-                        invoked++;
-                        VLOG(STR("[MarkRead] Phase 5: UI_WBP_Crafting_Screen_C::MarkAllAsRead invoked on {}\n"),
+                        craftingMarked++;
+                        VLOG(STR("[MarkRead] Phase 5: UI_WBP_Crafting_Screen_C::MarkAllAsRead invoked (live) on {}\n"),
                              screen->GetName());
                     }
                 }
-                if (invoked == 0)
-                {
-                    VLOG(STR("[MarkRead] Phase 5: No UI_WBP_Crafting_Screen_C instance — open a crafting station once\n"));
-                }
             }
-
-            // Phase 6: Recipe Viewer (top-level Crafting menu) — UI_WBP_Recipe_Viewer_C::MarkAllAsRead().
-            // This is the pause-menu Crafting entry that opens a recipe compendium.
             {
                 std::vector<UObject*> viewers;
                 UObjectGlobals::FindAllOf(STR("UI_WBP_Recipe_Viewer_C"), viewers);
-                int invoked = 0;
                 for (UObject* viewer : viewers)
                 {
                     if (!viewer || !isObjectAlive(viewer)) continue;
+                    if (!isWidgetInViewport(viewer)) continue;
                     auto* fn = viewer->GetFunctionByNameInChain(STR("MarkAllAsRead"));
                     if (fn && safeProcessEvent(viewer, fn, nullptr))
                     {
                         anyScreenFound = true;
-                        invoked++;
-                        VLOG(STR("[MarkRead] Phase 6: UI_WBP_Recipe_Viewer_C::MarkAllAsRead invoked on {}\n"),
+                        viewerMarked++;
+                        VLOG(STR("[MarkRead] Phase 6: UI_WBP_Recipe_Viewer_C::MarkAllAsRead invoked (live) on {}\n"),
                              viewer->GetName());
                     }
                 }
-                if (invoked == 0)
-                {
-                    VLOG(STR("[MarkRead] Phase 6: No UI_WBP_Recipe_Viewer_C instance — open pause menu Crafting once\n"));
-                }
+            }
+            if (craftingMarked > 0 || viewerMarked > 0)
+            {
+                m_pendingCraftingMarkUntilMs = 0;
+                VLOG(STR("[MarkRead] Phase 5/6: marked {} crafting screen(s) + {} recipe viewer(s)\n"),
+                     craftingMarked, viewerMarked);
+            }
+            else
+            {
+                m_pendingCraftingMarkUntilMs = GetTickCount64() + 3600ull * 1000ull;
+                VLOG(STR("[MarkRead] Phase 5/6: no live crafting screen — queued for next open\n"));
             }
 
             // Phase 7: Goals screen — WBP_GoalsScreen_C::MarkAllAsRead() (one-shot, covers goals,
@@ -1333,22 +1355,14 @@
             VLOG(STR("[MarkRead] Complete — total entries marked across all phases: {}\n"), totalMarked);
             showOnScreen(L"All categories marked as read", 3.0f, 0.3f, 1.0f, 0.3f);
 
-            // v6.20.15 — Phase 5: chain a save so the read state actually
-            // persists across reloads. The BP MarkAllRead /
-            // SetLoreEntryViewed calls flip in-memory ViewModel flags but
-            // only the next save round-trip serializes them durably.
-            // Without an explicit save, the player's read-state reverts
-            // on next reload.
-            //
-            // v6.20.16 — Increased delay from 1s to 3s. UMorLoreScreen's
-            // C++ SetLoreEntryViewed/SetTipEntryViewed/SetTutorialEntryViewed
-            // are all EMPTY stubs (verified against UHT MorLoreScreen.cpp);
-            // the actual storage write is BP-side in WBP_LoreScreen_v2_C
-            // and may iterate hundreds of entries per frame. 3s gives the
-            // BP enough headroom to finish writing before save. Also
-            // bypasses the 10s save cooldown so the save actually fires.
+            // v6.20.15 — chain a save so read state actually persists. Without an
+            // explicit save the BP-set flags don't survive a reload.
+            // v6.20.16 — delay 1s → 3s (lore BP iterates hundreds of entries).
+            // v6.20.17 — delay 3s → 6s. Crafting BP MarkAllAsRead is heavier and
+            // we now also chain a "pending mark on next open" pump that may fire
+            // a second save. Keeping the cooldown=0 bypass.
             m_lastSaveTime = 0;
-            m_saveAfterMarkAtMs = GetTickCount64() + 3000ull;
+            m_saveAfterMarkAtMs = GetTickCount64() + 6000ull;
         }
 
         // v6.20.15 — Phase 5: deferred save trigger after markAllLoreRead.
@@ -1362,6 +1376,60 @@
             m_saveAfterMarkAtMs = 0;
             VLOG(STR("[MarkRead] Triggering deferred save to persist read-state\n"));
             triggerSaveGame();
+        }
+
+        // v6.20.17 — pending crafting mark-as-read. Set when markAllLoreRead found
+        // no live crafting screens at press time. Poller retries every 1s for up to
+        // 1h; fires MarkAllAsRead the moment a live screen appears, then schedules
+        // another deferred save so the BP-side viewed flags persist.
+        uint64_t m_pendingCraftingMarkUntilMs{0};
+        uint64_t m_pendingCraftingMarkLastPollMs{0};
+        void tickPendingCraftingMark()
+        {
+            if (m_pendingCraftingMarkUntilMs == 0) return;
+            uint64_t now = GetTickCount64();
+            if (now > m_pendingCraftingMarkUntilMs)
+            {
+                m_pendingCraftingMarkUntilMs = 0;
+                VLOG(STR("[MarkRead] Pending crafting mark expired (1h) — nothing happened\n"));
+                return;
+            }
+            // Throttle to 1Hz
+            if (now - m_pendingCraftingMarkLastPollMs < 1000) return;
+            m_pendingCraftingMarkLastPollMs = now;
+
+            // v6.20.20 — bulk MarkAllAsRead on live screens (BndEvt approach reverted).
+            int marked = 0;
+            {
+                std::vector<UObject*> screens;
+                UObjectGlobals::FindAllOf(STR("UI_WBP_Crafting_Screen_C"), screens);
+                for (UObject* s : screens)
+                {
+                    if (!s || !isObjectAlive(s)) continue;
+                    if (!isWidgetInViewport(s)) continue;
+                    auto* fn = s->GetFunctionByNameInChain(STR("MarkAllAsRead"));
+                    if (fn && safeProcessEvent(s, fn, nullptr)) marked++;
+                }
+            }
+            {
+                std::vector<UObject*> viewers;
+                UObjectGlobals::FindAllOf(STR("UI_WBP_Recipe_Viewer_C"), viewers);
+                for (UObject* v : viewers)
+                {
+                    if (!v || !isObjectAlive(v)) continue;
+                    if (!isWidgetInViewport(v)) continue;
+                    auto* fn = v->GetFunctionByNameInChain(STR("MarkAllAsRead"));
+                    if (fn && safeProcessEvent(v, fn, nullptr)) marked++;
+                }
+            }
+            if (marked > 0)
+            {
+                m_pendingCraftingMarkUntilMs = 0;
+                m_lastSaveTime = 0;
+                m_saveAfterMarkAtMs = GetTickCount64() + 6000ull;
+                showOnScreen(L"Crafting items marked as read", 3.0f, 0.3f, 1.0f, 0.3f);
+                VLOG(STR("[MarkRead] Pending fire: MarkAllAsRead on {} screen(s)\n"), marked);
+            }
         }
 
         // v6.4.5+ — Reveal map: mark every zone discovered + push chapter discovery
