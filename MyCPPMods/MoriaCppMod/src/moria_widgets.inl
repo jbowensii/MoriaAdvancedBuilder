@@ -5508,13 +5508,15 @@
             if (m_ftRenameVisible) { VLOG(STR("[MoriaCppMod] [Rename] BLOCKED: already visible\n")); return; }
             if (!m_characterLoaded) { showErrorBox(Loc::get("err.character_not_loaded")); return; }
 
-            // 1. Resolve modal class. v6.20.47 — same pattern as F#-key DIRECT
-            //    path: resolve fresh on every call, no cache, single canonical
-            //    path. Mirrors buildSyntheticRecipeHandle (rebuild every press).
-            //    StaticFindObject first (cheap, no-op if asset already in memory),
-            //    LoadAsset_Blocking only if needed (same call as F-key handle path).
+            // 1. Resolve modal class. v6.21.2 — reverted to WBP_UI_RenameWorldModal_C
+            //    (the world-rename modal that worked reliably in v6.20.30-32).
+            //    The CharacterCreatorRenameDialog isn't in memory during in-world
+            //    play (it lives in the front-end Character Creator screen), so
+            //    every resolve attempt failed and fell back to the legacy dialog.
+            //    The world-rename modal IS available in-world (asset stays loaded
+            //    from the world-select flow).
             constexpr const wchar_t* kRenameModalPath =
-                STR("/Game/UI/CharacterCreator/WBP_CharacterCreatorRenameDialog.WBP_CharacterCreatorRenameDialog_C");
+                STR("/Game/UI/WorldSelect/WBP_UI_RenameWorldModal.WBP_UI_RenameWorldModal_C");
 
             UClass* modalCls = nullptr;
             try { modalCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kRenameModalPath); }
@@ -5544,11 +5546,9 @@
                         VLOG(STR("[MoriaCppMod] [Rename v2] LoadAsset_Blocking succeeded for {}\n"), kRenameModalPath);
                 }
             }
-            // v6.21.1 — fallback: the class might already be in memory but
+            // v6.21.2 — fallback: the class might already be in memory but
             // at a different asset path than our guess. Scan all UClass
-            // instances for one whose name matches. Log evidence shows
-            // WBP_CharacterCreatorMain_C does instantiate in-session, and
-            // RenameDialog is its child member, so the class IS loaded.
+            // instances for one whose name matches.
             if (!modalCls)
             {
                 std::vector<UObject*> allClasses;
@@ -5557,7 +5557,7 @@
                 {
                     if (!c || !isObjectAlive(c)) continue;
                     try {
-                        if (std::wstring(c->GetName()) == STR("WBP_CharacterCreatorRenameDialog_C"))
+                        if (std::wstring(c->GetName()) == STR("WBP_UI_RenameWorldModal_C"))
                         { modalCls = static_cast<UClass*>(c); break; }
                     } catch (...) {}
                 }
@@ -5567,7 +5567,7 @@
             }
             if (!modalCls)
             {
-                VLOG(STR("[MoriaCppMod] [Rename v2] WBP_CharacterCreatorRenameDialog_C class not found — falling back to legacy dialog\n"));
+                VLOG(STR("[MoriaCppMod] [Rename v2] WBP_UI_RenameWorldModal_C class not found — falling back to legacy dialog\n"));
                 showRenameDialog();
                 return;
             }
@@ -5581,25 +5581,41 @@
                 return;
             }
 
-            // 3. CharCreator dialog has no HeadingText — title is on the
-            //    Lower Third widget (UI_WBP_LowerThird_C). Skip heading override.
+            // 3. Override the heading to "Rename Character" (the modal's
+            //    native heading text is "Rename World" since this is the
+            //    world-rename modal). v6.20.32-style override.
+            if (auto* heading = [&]() -> UObject* {
+                if (auto* p = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("HeadingText")))
+                    return *p;
+                return nullptr;
+            }())
+            {
+                if (auto* setText = heading->GetFunctionByNameInChain(STR("SetText")))
+                {
+                    int psz = setText->GetParmsSize();
+                    std::vector<uint8_t> bb(psz, 0);
+                    if (auto* p = findParam(setText, STR("InText")))
+                    {
+                        FText* ft = reinterpret_cast<FText*>(bb.data() + p->GetOffset_Internal());
+                        new (ft) FText(STR("Rename Character"));
+                        safeProcessEvent(heading, setText, bb.data());
+                        ft->~FText();
+                    }
+                }
+            }
 
-            // 4. Cache RenameBox reference (the EditableTextBox member,
-            //    inherited from UMorCharacterCreatorRenameDialog as RenameBox).
+            // 4. Cache WorldNameTextBox reference (the EditableTextBox).
             UObject* input = nullptr;
-            if (auto* iPtr = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("RenameBox")))
+            if (auto* iPtr = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("WorldNameTextBox")))
                 input = *iPtr;
 
-            // 5. Register Confirm button (UWBP_LaunchScreenButton_C, NOT
-            //    WBP_FrontEndButton_C). RandomNameButton is also clickable
-            //    but we don't intercept it — let it fire its native logic.
+            // 5. Register Confirm + Cancel buttons (both UWBP_FrontEndButton_C).
             UObject* confirmBtn = nullptr;
             UObject* cancelBtn  = nullptr;
             if (auto* p = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("ConfirmButton")))
                 confirmBtn = *p;
-            // No explicit Cancel button on this dialog — Back is handled via
-            // OnActionCalled UFunction. We'll add ESC keypress to fall through
-            // to hideRenameDialog later if needed.
+            if (auto* p = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("CancelButton")))
+                cancelBtn = *p;
             if (confirmBtn) {
                 GameOptButton g; g.widget = FWeakObjectPtr(confirmBtn);
                 g.kind = GameOptKind::RenameModalConfirm; g.fromPauseMenu = false;
@@ -5652,8 +5668,8 @@
             m_ftRenameUsingModal = true;
 
             setInputModeUI(modal);
-            VLOG(STR("[MoriaCppMod] [Rename v2] WBP_CharacterCreatorRenameDialog_C spawned at {:p}, input={:p}, confirm={:p}\n"),
-                 (void*)modal, (void*)input, (void*)confirmBtn);
+            VLOG(STR("[MoriaCppMod] [Rename v2] WBP_UI_RenameWorldModal_C spawned at {:p}, input={:p}, confirm={:p}, cancel={:p}\n"),
+                 (void*)modal, (void*)input, (void*)confirmBtn, (void*)cancelBtn);
         }
 
         // Legacy home-rolled rename dialog. Dead code in v6.20.30 — left in
@@ -6019,15 +6035,15 @@
             // BP frames if the textbox hasn't yet committed via Enter.
             if (m_ftRenameUsingModal && m_ftRenameWidget && isObjectAlive(m_ftRenameWidget))
             {
-                auto* wntPtr = m_ftRenameWidget->GetValuePtrByPropertyNameInChain<FText>(STR("CharacterNameText"));
+                auto* wntPtr = m_ftRenameWidget->GetValuePtrByPropertyNameInChain<FText>(STR("WorldNameText"));
                 if (wntPtr && wntPtr->Data)
                 {
                     try { newName = wntPtr->ToString(); } catch (...) {}
                 }
-                // No FString fallback for CharCreator dialog (it uses FText
-                // CharacterNameText only). Falls through to GetText below if
-                // the FText read returned empty.
-                if (false)
+                // FString fallback: the modal also has a "World Name" FString
+                // populated by the BP graph. Try that if the FText read came
+                // back empty.
+                if (newName.empty())
                 {
                     auto* wnsRaw = m_ftRenameWidget->GetValuePtrByPropertyNameInChain<uint8_t>(STR("World Name"));
                     if (wnsRaw && isReadableMemory(wnsRaw, sizeof(void*)))
