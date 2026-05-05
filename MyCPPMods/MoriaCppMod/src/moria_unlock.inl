@@ -1338,11 +1338,17 @@
             // SetLoreEntryViewed calls flip in-memory ViewModel flags but
             // only the next save round-trip serializes them durably.
             // Without an explicit save, the player's read-state reverts
-            // on next reload. Schedule a save 1 second after marks
-            // complete (animations may still be settling), and bypass
-            // the 10s save cooldown for this trigger.
+            // on next reload.
+            //
+            // v6.20.16 — Increased delay from 1s to 3s. UMorLoreScreen's
+            // C++ SetLoreEntryViewed/SetTipEntryViewed/SetTutorialEntryViewed
+            // are all EMPTY stubs (verified against UHT MorLoreScreen.cpp);
+            // the actual storage write is BP-side in WBP_LoreScreen_v2_C
+            // and may iterate hundreds of entries per frame. 3s gives the
+            // BP enough headroom to finish writing before save. Also
+            // bypasses the 10s save cooldown so the save actually fires.
             m_lastSaveTime = 0;
-            m_saveAfterMarkAtMs = GetTickCount64() + 1000ull;
+            m_saveAfterMarkAtMs = GetTickCount64() + 3000ull;
         }
 
         // v6.20.15 — Phase 5: deferred save trigger after markAllLoreRead.
