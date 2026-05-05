@@ -1400,39 +1400,56 @@
             m_pendingQuickBuildSlot = -1;
             m_qbStartTime = GetTickCount64();
 
-            // v6.20.26 — DIRECT path: same shared helpers as F-key DIRECT.
-            // Build synthetic handle from m_targetBuildRowName + DT_Constructions,
-            // call SelectRecipe directly on live build HUD. Both F# and SHIFT+]
-            // now flow through buildSyntheticRecipeHandle + getActiveBuildHUD +
-            // trySelectRecipeByHandle.
+            // v6.20.44 — DIRECT path UNIFIED with F1-F8 startOrSwitchBuild.
+            // Previously SHIFT+] success path skipped m_deferHideAndRefresh /
+            // m_buildMenuWasOpen / updateBuildersBar / cooldown gate, which
+            // user reports caused inconsistent ghost spawning. This now
+            // mirrors startOrSwitchBuild's DIRECT success EXACTLY (only the
+            // data source differs: m_targetBuildRowName instead of slot).
             if (!m_targetBuildRowName.empty())
             {
+                ULONGLONG now = GetTickCount64();
+                if (now - m_lastDirectSelectTime < 150)
+                {
+                    QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path cooldown ({}ms since last)\n"),
+                          now - m_lastDirectSelectTime);
+                    return;
+                }
+
                 UObject* buildHUD = getActiveBuildHUD();
                 uint8_t handle[RECIPE_HANDLE_SIZE]{};
                 bool haveHandle = buildSyntheticRecipeHandle(m_targetBuildRowName, handle);
+
                 if (buildHUD && haveHandle)
                 {
-                    m_isAutoSelecting = true;
-                    struct AutoSelectGuardTgt { bool& f; ~AutoSelectGuardTgt() { f = false; } } guardTgt{m_isAutoSelecting};
-                    if (trySelectRecipeByHandle(buildHUD, handle))
+                    QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT SelectRecipe (synthetic handle, row='{}')\n"),
+                          m_targetBuildRowName);
                     {
-                        m_isAutoSelecting = false;
-                        if (isPlacementActive())
+                        m_isAutoSelecting = true;
+                        struct AutoSelectGuardTgt { bool& f; ~AutoSelectGuardTgt() { f = false; } } guardTgt{m_isAutoSelecting};
+
+                        if (trySelectRecipeByHandle(buildHUD, handle))
                         {
-                            m_lastQBSelectTime = GetTickCount64();
-                            m_lastDirectSelectTime = m_lastQBSelectTime;
-                            QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path SUCCESS for '{}' (row='{}')\n"),
-                                  m_targetBuildName, m_targetBuildRowName);
-                            showOnScreen((L"Build: " + m_targetBuildName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
-                            onGhostAppeared();
-                            m_qbPhase = PlacePhase::Idle;
-                            return;
+                            m_isAutoSelecting = false;
+                            if (isPlacementActive())
+                            {
+                                // Mirror F1's DIRECT success exactly:
+                                m_lastDirectSelectTime = now;
+                                m_lastQBSelectTime = now;
+                                m_deferHideAndRefresh = true;       // critical — defers menu close
+                                showOnScreen((L"Build: " + m_targetBuildName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
+                                m_buildMenuWasOpen = true;
+                                // m_activeBuilderSlot left untouched (no slot for target build)
+                                updateBuildersBar();
+                                onGhostAppeared();
+                                return;
+                            }
+                            QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path: SelectRecipe returned but no ghost — falling through\n"));
                         }
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path: SelectRecipe returned but no ghost — falling through\n"));
-                    }
-                    else
-                    {
-                        QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path: trySelectRecipeByHandle failed — falling through\n"));
+                        else
+                        {
+                            QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path: trySelectRecipeByHandle failed — falling through\n"));
+                        }
                     }
                 }
                 else
