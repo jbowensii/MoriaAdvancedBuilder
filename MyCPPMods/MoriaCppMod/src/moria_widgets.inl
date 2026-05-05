@@ -5444,17 +5444,57 @@
                 m_inNotifFallback = false;
                 return;
             }
+            // v6.20.7 — Robust class lookup. The feed itself was found
+            // (FindAllOf returned alive instances), but the previous
+            // single-path StaticFindObject for UI_WBP_Notification_Generic_C
+            // was failing — log showed `[EB] showInfoMessage: 'Game Saved'`
+            // immediately after `[Notif] FindAllOf ... alive=2`, meaning we
+            // fell through to the fallback because m_notifGenericCls
+            // stayed null. Try several path candidates AND a name-only
+            // FindAllOf<UClass>-style search before giving up.
             if (!m_notifGenericCls)
             {
-                try
+                static const wchar_t* paths[] = {
+                    STR("/Game/UI/Notifications/UI_WBP_Notification_Generic.UI_WBP_Notification_Generic_C"),
+                    STR("/Game/UI/HUD/Notifications/UI_WBP_Notification_Generic.UI_WBP_Notification_Generic_C"),
+                    STR("/Game/UI/HUD/UI_WBP_Notification_Generic.UI_WBP_Notification_Generic_C"),
+                    STR("/Game/UI/UI_WBP_Notification_Generic.UI_WBP_Notification_Generic_C"),
+                    STR("UI_WBP_Notification_Generic_C"),  // short name
+                };
+                for (const wchar_t* p : paths)
                 {
-                    m_notifGenericCls = UObjectGlobals::StaticFindObject<UClass*>(
-                        nullptr, nullptr,
-                        STR("/Game/UI/Notifications/UI_WBP_Notification_Generic.UI_WBP_Notification_Generic_C"));
+                    try
+                    {
+                        m_notifGenericCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, p);
+                    } catch (...) {}
+                    if (m_notifGenericCls)
+                    {
+                        VLOG(STR("[Notif] Resolved UI_WBP_Notification_Generic_C class via '{}'\n"), p);
+                        break;
+                    }
                 }
-                catch (...) {}
+                // Final fallback: clone the class from the feed's
+                // notificationArray[0] instance, if any.
+                if (!m_notifGenericCls && feed)
+                {
+                    auto* arr = feed->GetValuePtrByPropertyNameInChain<TArray<UObject*>>(STR("notificationArray"));
+                    if (arr && arr->Num() > 0)
+                    {
+                        UObject* sample = (*arr)[0];
+                        if (sample && isObjectAlive(sample))
+                        {
+                            m_notifGenericCls = static_cast<UClass*>(sample->GetClassPrivate());
+                            VLOG(STR("[Notif] Cloned class from feed.notificationArray[0]: {:p}\n"),
+                                 (void*)m_notifGenericCls);
+                        }
+                    }
+                }
             }
-            if (!m_notifGenericCls) { showInfoMessage(title); return; }
+            if (!m_notifGenericCls)
+            {
+                VLOG(STR("[Notif] Could not resolve UI_WBP_Notification_Generic_C class — falling back to error-box\n"));
+                showInfoMessage(title); return;
+            }
 
             UObject* notif = jw_createGameWidget(m_notifGenericCls);
             if (!notif) { showInfoMessage(title); return; }
