@@ -1332,6 +1332,30 @@
 
             VLOG(STR("[MarkRead] Complete — total entries marked across all phases: {}\n"), totalMarked);
             showOnScreen(L"All categories marked as read", 3.0f, 0.3f, 1.0f, 0.3f);
+
+            // v6.20.15 — Phase 5: chain a save so the read state actually
+            // persists across reloads. The BP MarkAllRead /
+            // SetLoreEntryViewed calls flip in-memory ViewModel flags but
+            // only the next save round-trip serializes them durably.
+            // Without an explicit save, the player's read-state reverts
+            // on next reload. Schedule a save 1 second after marks
+            // complete (animations may still be settling), and bypass
+            // the 10s save cooldown for this trigger.
+            m_lastSaveTime = 0;
+            m_saveAfterMarkAtMs = GetTickCount64() + 1000ull;
+        }
+
+        // v6.20.15 — Phase 5: deferred save trigger after markAllLoreRead.
+        // Polled from gameThreadTick (see tickSaveAfterMarkRead below).
+        uint64_t m_saveAfterMarkAtMs{0};
+        void tickSaveAfterMarkRead()
+        {
+            if (m_saveAfterMarkAtMs == 0) return;
+            uint64_t now = GetTickCount64();
+            if (now < m_saveAfterMarkAtMs) return;
+            m_saveAfterMarkAtMs = 0;
+            VLOG(STR("[MarkRead] Triggering deferred save to persist read-state\n"));
+            triggerSaveGame();
         }
 
         // v6.4.5+ — Reveal map: mark every zone discovered + push chapter discovery
