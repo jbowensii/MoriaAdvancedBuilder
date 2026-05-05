@@ -3524,55 +3524,6 @@
                 }
             }
         }
-#if 0  // legacy v0.15 highlight code path — replaced by SetActiveWidget
-
-            // Patch currentTabName -> "Cheats".
-            auto* ctnPtr = context->GetValuePtrByPropertyNameInChain<FName>(STR("currentTabName"));
-            if (ctnPtr)
-            {
-                RC::Unreal::FName cheats(STR("Cheats"), RC::Unreal::FNAME_Add);
-                std::memcpy(ctnPtr, &cheats, sizeof(RC::Unreal::FName));
-            }
-
-            // Force navbar to update selection visuals. Walk the navbar
-            // child buttons (UI_WBP_NavBar_Build_C.UI_WBP_NavBar_Build_Tab_C
-            // entries) and update their selected state.
-            auto* navPtr = context->GetValuePtrByPropertyNameInChain<UObject*>(STR("UI_WBP_NavBar_Build"));
-            UObject* navbar = navPtr ? *navPtr : nullptr;
-            if (!navbar || !isObjectAlive(navbar)) return;
-
-            // Try to call SetTabFocus or similar update method.
-            // Common candidates: UpdateSelection, SelectTab, SetActiveTab.
-            for (const wchar_t* fnName : {
-                STR("UpdateNavBar"), STR("UpdateSelection"), STR("RefreshSelection"),
-                STR("SetActiveTab"), STR("SelectTab"), STR("SetSelectedTab"),
-            })
-            {
-                auto* updateFn = navbar->GetFunctionByNameInChain(fnName);
-                if (!updateFn) continue;
-                int sz = updateFn->GetParmsSize();
-                std::vector<uint8_t> b(sz, 0);
-                // If it takes an FName "Selection" or "TabName" param, fill it.
-                if (auto* p = findParam(updateFn, STR("Selection")))
-                {
-                    RC::Unreal::FName cheats(STR("Cheats"), RC::Unreal::FNAME_Add);
-                    std::memcpy(b.data() + p->GetOffset_Internal(), &cheats, sizeof(RC::Unreal::FName));
-                }
-                else if (auto* p = findParam(updateFn, STR("TabName")))
-                {
-                    RC::Unreal::FName cheats(STR("Cheats"), RC::Unreal::FNAME_Add);
-                    std::memcpy(b.data() + p->GetOffset_Internal(), &cheats, sizeof(RC::Unreal::FName));
-                }
-                safeProcessEvent(navbar, updateFn, b.data());
-                VLOG(STR("[SettingsUI] CP5 — called navbar.{} to refresh\n"), fnName);
-                break;
-            }
-
-            // As a fallback, walk all child buttons and force their
-            // "currentTabName" sync. Iterate the navbar's children.
-            walkAndUpdateNavButtonHighlight(navbar);
-        }
-#endif  // legacy v0.15 highlight code path
 
         // Force navbar selection state to "Cheats". The navbar is
         // UI_WBP_NavBar_Build_C which exposes:
@@ -3582,76 +3533,6 @@
         //   - currentSelection : *Tab
         // Each Tab has IsSelected + OnSelectedEvent/OnDeselectedEvent.
         // We do all three: call SelectThisTab, write SelectedKeyName,
-        // and update each tab button manually as belt-and-suspenders.
-        void walkAndUpdateNavButtonHighlight(UObject* navbar)
-        {
-            if (!navbar || !isObjectAlive(navbar)) return;
-
-            // 1. Call SelectThisTab if available.
-            if (auto* fn = navbar->GetFunctionByNameInChain(STR("SelectThisTab")))
-            {
-                int sz = fn->GetParmsSize();
-                std::vector<uint8_t> b(sz, 0);
-                if (auto* p = findParam(fn, STR("KeyName")))
-                {
-                    RC::Unreal::FName cheats(STR("Cheats"), RC::Unreal::FNAME_Add);
-                    std::memcpy(b.data() + p->GetOffset_Internal(), &cheats, sizeof(RC::Unreal::FName));
-                    safeProcessEvent(navbar, fn, b.data());
-                    VLOG(STR("[SettingsUI] CP5 — called navbar.SelectThisTab('Cheats')\n"));
-                }
-            }
-
-            // 2. Write SelectedKeyName directly.
-            if (auto* skPtr = navbar->GetValuePtrByPropertyNameInChain<FName>(STR("SelectedKeyName")))
-            {
-                RC::Unreal::FName cheats(STR("Cheats"), RC::Unreal::FNAME_Add);
-                std::memcpy(skPtr, &cheats, sizeof(RC::Unreal::FName));
-            }
-
-            // 3. Iterate navBarButtons array and update each button.
-            auto* btns = navbar->GetValuePtrByPropertyNameInChain<TArray<UObject*>>(STR("navBarButtons"));
-            if (!btns) {
-                VLOG(STR("[SettingsUI] CP5 — navBarButtons array not found\n"));
-                return;
-            }
-            VLOG(STR("[SettingsUI] CP5 — iterating {} navbar buttons\n"), btns->Num());
-            UObject* cheatsButton = nullptr;
-            for (int i = 0; i < btns->Num(); ++i)
-            {
-                UObject* tab = (*btns)[i];
-                if (!tab || !isObjectAlive(tab)) continue;
-                auto* knPtr = tab->GetValuePtrByPropertyNameInChain<FName>(STR("KeyName"));
-                std::wstring kn;
-                if (knPtr) { try { kn = knPtr->ToString(); } catch (...) {} }
-                bool shouldBeSelected = (kn == L"Cheats");
-                if (shouldBeSelected) cheatsButton = tab;
-
-                auto* selPtr = tab->GetValuePtrByPropertyNameInChain<bool>(STR("IsSelected"));
-                bool wasSelected = selPtr ? *selPtr : false;
-                if (selPtr) *selPtr = shouldBeSelected;
-
-                if (shouldBeSelected != wasSelected)
-                {
-                    const wchar_t* evt = shouldBeSelected
-                        ? STR("OnSelectedEvent") : STR("OnDeselectedEvent");
-                    if (auto* uf = tab->GetFunctionByNameInChain(evt))
-                    {
-                        int sz = uf->GetParmsSize();
-                        std::vector<uint8_t> b(sz, 0);
-                        safeProcessEvent(tab, uf, b.data());
-                    }
-                    VLOG(STR("[SettingsUI] CP5 — navbar tab[{}] '{}' -> {}\n"),
-                         i, kn.c_str(), shouldBeSelected ? L"SELECTED" : L"deselected");
-                }
-            }
-
-            // 4. Write currentSelection pointer to the cheats button.
-            if (cheatsButton)
-            {
-                auto* csPtr = navbar->GetValuePtrByPropertyNameInChain<UObject*>(STR("currentSelection"));
-                if (csPtr) *csPtr = cheatsButton;
-            }
-        }
 
         // ─────────────────────────────────────────────────────────
         // v0.11 — single-instance dual-content state.
