@@ -1,4 +1,4 @@
-// MoriaCppMod v6.21.2 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.21.3 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -339,9 +339,8 @@ namespace MoriaMods
         UObject* m_umgBarWidget{nullptr};
         UObject* m_umgSlotButtons[8]{};           // UButton wrappers for gamepad navigation
         UObject* m_umgStateImages[8]{};
-        UObject* m_umgIconImages[8]{};
-        UObject* m_umgIconTextures[8]{};
-        std::wstring m_umgIconNames[8];
+        // v6.21.3 batch 3 — removed m_umgIconImages/m_umgIconTextures/m_umgIconNames
+        // (orphaned arrays from OLD UMG bar; only ever cleared, never read).
         UObject* m_umgTexEmpty{nullptr};
         UObject* m_umgTexInactive{nullptr};
         UObject* m_umgTexActive{nullptr};
@@ -635,14 +634,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.21.2");
+            ModVersion = STR("6.21.3");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.2\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.3\n"));
         }
 
         ~MoriaCppMod() override
@@ -683,7 +682,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.2 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.3 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -1681,7 +1680,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.21.2: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.21.3: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -4002,9 +4001,6 @@ namespace MoriaMods
                     for (int i = 0; i < 8; i++)
                     {
                         m_umgStateImages[i] = nullptr;
-                        m_umgIconImages[i] = nullptr;
-                        m_umgIconTextures[i] = nullptr;
-                        m_umgIconNames[i].clear();
                         m_umgSlotStates[i] = UmgSlotState::Empty;
                         m_umgKeyLabels[i] = nullptr;
                         m_umgKeyBgImages[i] = nullptr;
