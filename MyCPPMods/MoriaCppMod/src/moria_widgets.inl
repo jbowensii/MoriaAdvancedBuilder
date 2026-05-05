@@ -5514,17 +5514,36 @@
                 try { safeProcessEvent(notif, setDataFn, b.data()); } catch (...) {}
             }
 
-            if (auto* queueFn = feed->GetFunctionByNameInChain(STR("QueueNewNotification")))
+            // v6.20.8 — Previous QueueNewNotification path was failing
+            // silently. The feed's BP-side queue may filter text-only
+            // notifications (no item/recipe/lore payload) or its timer
+            // isn't firing for our externally-spawned widget. Bypass
+            // the feed entirely: AddToViewport directly + call the
+            // notification's own ShowNotification(duration) UFunction.
+            // This is the Pattern that matches what the game does
+            // internally when an item is picked up.
+            if (auto* addFn = notif->GetFunctionByNameInChain(STR("AddToViewport")))
             {
-                int sz = queueFn->GetParmsSize();
+                int sz = addFn->GetParmsSize();
                 std::vector<uint8_t> b(sz, 0);
-                if (auto* p = findParam(queueFn, STR("NewNotif")))
-                    *reinterpret_cast<UObject**>(b.data() + p->GetOffset_Internal()) = notif;
-                if (auto* p = findParam(queueFn, STR("Duration")))
-                    *reinterpret_cast<float*>(b.data() + p->GetOffset_Internal()) = duration;
-                try { safeProcessEvent(feed, queueFn, b.data()); } catch (...) {}
+                if (auto* p = findParam(addFn, STR("ZOrder")))
+                    *reinterpret_cast<int32_t*>(b.data() + p->GetOffset_Internal()) = 700; // above pause menu
+                try { safeProcessEvent(notif, addFn, b.data()); } catch (...) {}
             }
-            VLOG(STR("[Notif] Queued '{}'\n"), title.c_str());
+            if (auto* showFn = notif->GetFunctionByNameInChain(STR("ShowNotification")))
+            {
+                int sz = showFn->GetParmsSize();
+                std::vector<uint8_t> b(sz, 0);
+                if (auto* p = findParam(showFn, STR("Duration")))
+                    *reinterpret_cast<float*>(b.data() + p->GetOffset_Internal()) = duration;
+                try { safeProcessEvent(notif, showFn, b.data()); } catch (...) {}
+                VLOG(STR("[Notif] Spawned + ShowNotification fired for '{}' ({}s)\n"),
+                     title.c_str(), duration);
+            }
+            else
+            {
+                VLOG(STR("[Notif] ShowNotification UFunction missing on notification widget\n"));
+            }
         }
 
         void triggerSaveGame()
