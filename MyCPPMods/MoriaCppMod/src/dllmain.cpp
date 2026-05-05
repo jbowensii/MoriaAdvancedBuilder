@@ -1,4 +1,4 @@
-// MoriaCppMod v6.20.38 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.20.39 — Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -353,14 +353,14 @@ namespace MoriaMods
 
         static constexpr int MC_SLOTS = 9;
         UObject* m_mcBarWidget{nullptr};
-        // v6.20.38 — "New Building Bar": cloned WBP_UI_ActionBar_C instance,
+        // v6.20.39 — "New Building Bar": cloned WBP_UI_ActionBar_C instance,
         // chrome only (look). Tame-spawned at top of HUD with the 4 special
         // slots (Epic/HeavyCarry/MainHand/Offhand) and inventory wiring
         // hidden/disabled. Phase 2 wires our 8 builder slots to its 8
         // numbered slot widgets.
         UObject* m_newBuildingBar{nullptr};
         bool m_newBuildingBarSpawnAttempted{false};
-        // v6.20.38 — per-slot widget pointers for the New Building Bar.
+        // v6.20.39 — per-slot widget pointers for the New Building Bar.
         // Set during createNewBuildingBar(); used for highlight + Phase 2
         // icon/label updates. 8 slots = 8 indexed entries.
         UObject* m_nbbSlotEmpty[8]{};   // empty-state UImage
@@ -494,7 +494,7 @@ namespace MoriaMods
         // v6.20.31/32/33/34 — Rotation display: 4-cell pyramid (1 top, 3 below)
         // showing current rotation step + Yaw/Pitch/Roll. Top cell: F9 step
         // (5°..90°). Bottom row: Yaw/Pitch/Roll of active build piece (GATA).
-        // v6.20.38 — always visible once character loaded (was conditional on
+        // v6.20.39 — always visible once character loaded (was conditional on
         // build mode, but the user can't get cursor focus while building so
         // they couldn't drag the widget). Throttled to 4 Hz.
         // v6.20.33 — 3× cell size (48→144), draggable from any cell, position
@@ -586,7 +586,7 @@ namespace MoriaMods
         UObject* m_tiBuildLabel{nullptr};
         UObject* m_tiRecipeLabel{nullptr};
         ULONGLONG m_tiShowTick{0};
-        // v6.20.38 — title bar / drag / close
+        // v6.20.39 — title bar / drag / close
         UObject* m_tiTitleBar{nullptr};
         UObject* m_tiCloseButton{nullptr};
         bool     m_tiDragActive{false};
@@ -632,14 +632,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.20.38");
+            ModVersion = STR("6.20.39");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.20.38\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.20.39\n"));
         }
 
         ~MoriaCppMod() override
@@ -680,7 +680,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.20.38 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.20.39 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 — startup diagnostics for Steam ™ path troubleshooting.
@@ -766,7 +766,7 @@ namespace MoriaMods
             {
                 // USE chord (F-key alone or with modifier that doesn't conflict
                 // with the slot's SET chord).
-                // v6.20.38 — narrowed modifier filter. Was: bail on ANY modifier.
+                // v6.20.39 — narrowed modifier filter. Was: bail on ANY modifier.
                 // Now: only bail if the held modifier+key combo IS this slot's
                 // SET chord. Fixes "F1 sometimes shows no ghost" caused by
                 // Discord push-to-talk / Steam overlay / etc. briefly holding
@@ -1048,7 +1048,7 @@ namespace MoriaMods
                     wcscmp(fnStr2, STR("OnClicked")) == 0)
                 {
                     s_instance->onAnyMenuButtonClicked(context, fnStr2);
-                    s_instance->onTrashPopupButtonClicked(context); // v6.20.38 — Phase 4 trash popup
+                    s_instance->onTrashPopupButtonClicked(context); // v6.20.39 — Phase 4 trash popup
                     s_instance->maybeFireCarouselButton(context);
                     // v0.35 — BndEvt_..._{Prev,Next}Button_..._OnButton...
                     // delegates fire on the carousel itself; the fn name
@@ -1664,7 +1664,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.20.38: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.20.39: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick — fires once per frame ON the game thread
@@ -1766,66 +1766,6 @@ namespace MoriaMods
         }
 
 
-        bool m_actorLookupDiagDone{false};
-        void tickActorLookupDiag()
-        {
-            if (m_actorLookupDiagDone) return;
-            std::vector<UObject*> wrappers;
-            findAllOfSafe(STR("MorConstructionsTable"), wrappers);
-            if (wrappers.empty()) return;
-            m_actorLookupDiagDone = true;
-
-            VLOG(STR("[ActorLookup] === Begin ActorRowNameLookup dump ===\n"));
-            for (UObject* w : wrappers)
-            {
-                if (!w || !isObjectAlive(w)) continue;
-                auto* base = reinterpret_cast<uint8_t*>(w);
-                struct SparseArrayHdr {
-                    uint8_t* Data;       // 0x00
-                    int32_t  Num;        // 0x08
-                    int32_t  Max;        // 0x0C
-                    int32_t  NumFree;    // 0x10
-                    int32_t  FirstFree;  // 0x14
-                };
-                SparseArrayHdr* sa = reinterpret_cast<SparseArrayHdr*>(base + 0x110);
-                VLOG(STR("[ActorLookup] wrapper @{:p}  Data={:p} Num={} Max={} NumFree={} FirstFree={}\n"),
-                     (void*)w, (void*)sa->Data, sa->Num, sa->Max, sa->NumFree, sa->FirstFree);
-
-                // Hex-dump first 64 bytes of element data + flag bits 0x18..0x40
-                if (sa->Data && sa->Num > 0)
-                {
-                    // First, dump raw bytes 0x18..0x50 (TBitArray + hash table head)
-                    VLOG(STR("[ActorLookup] hdr-rest bytes (0x18..0x50):\n"));
-                    for (int row = 0x18; row < 0x50; row += 16) {
-                        VLOG(STR("[ActorLookup]   +0x{:02x}: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}  {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}\n"),
-                             row,
-                             base[0x110 + row+0], base[0x110 + row+1], base[0x110 + row+2], base[0x110 + row+3],
-                             base[0x110 + row+4], base[0x110 + row+5], base[0x110 + row+6], base[0x110 + row+7],
-                             base[0x110 + row+8], base[0x110 + row+9], base[0x110 + row+10], base[0x110 + row+11],
-                             base[0x110 + row+12], base[0x110 + row+13], base[0x110 + row+14], base[0x110 + row+15]);
-                    }
-                    // Hex-dump first 256 bytes of element data — NO FName
-                    // interpretation. Lets us see actual layout without
-                    // crashing on bad ComparisonIndex values.
-                    VLOG(STR("[ActorLookup] First 256 bytes of element data:\n"));
-                    int dumpBytes = sa->Num < 8 ? sa->Num * 0x40 : 256;
-                    if (dumpBytes > 256) dumpBytes = 256;
-                    for (int row = 0; row < dumpBytes; row += 16) {
-                        if (!isReadableMemory(sa->Data + row, 16)) {
-                            VLOG(STR("[ActorLookup]   +0x{:03x}: <unreadable>\n"), row);
-                            break;
-                        }
-                        uint8_t* p = sa->Data + row;
-                        VLOG(STR("[ActorLookup]   +0x{:03x}: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}  {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}\n"),
-                             row,
-                             p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
-                             p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15]);
-                    }
-                }
-            }
-            VLOG(STR("[ActorLookup] === End ===\n"));
-        }
-
         bool m_dmDiagDone{false};
         void tickFGKDiscoveryDiag()
         {
@@ -1885,7 +1825,7 @@ namespace MoriaMods
             if (!m_isDedicatedServer)
             {
                 bool justCreated = false;
-                // v6.20.38 — UMG QuickBuild bar (m_umgBarWidget) RE-ENABLED.
+                // v6.20.39 — UMG QuickBuild bar (m_umgBarWidget) RE-ENABLED.
                 // The from-scratch top-of-screen New Building Bar in
                 // v6.10.0 never reliably displayed icons or F-key labels,
                 // and several iterations of fix attempts (v6.19→v6.21-wip)
@@ -2093,7 +2033,7 @@ namespace MoriaMods
             }
 
 
-            // v6.20.38 — MC keybind polling. Was previously gated on
+            // v6.20.39 — MC keybind polling. Was previously gated on
             // `if (m_mcBarWidget)` and v6.10.0 disabled m_mcBarWidget
             // auto-creation, leaving Set Rotation / Snap / Integrity /
             // Invisible Dwarf / Target / Remove Single / Undo / Remove
@@ -3544,10 +3484,9 @@ namespace MoriaMods
             tickCaptureSpecialKeys();      // v6.9.0 — capture DEL/INS/HOME/etc the BP rejects
             tickReapplyCheatsContext();    // v6.9.0 — keep Cheats-tab visibility swap stable
             tickFGKDiscoveryDiag();        // v6.9.0 — one-shot probe of AMorDiscoveryManager.Recipes
-            tickActorLookupDiag();         // v6.9.0 — Path #5 ActorRowNameLookup TMap byte-layout dump
-            tickSaveAfterMarkRead();       // v6.20.38 — Phase 5 lore persistence
-            tickPendingCraftingMark();     // v6.20.38 — fire MarkAllAsRead when crafting screen opens
-            tickTargetInfoDrag();          // v6.20.38 — inspect window drag + close + auto-hide
+            tickSaveAfterMarkRead();       // v6.20.39 — Phase 5 lore persistence
+            tickPendingCraftingMark();     // v6.20.39 — fire MarkAllAsRead when crafting screen opens
+            tickTargetInfoDrag();          // v6.20.39 — inspect window drag + close + auto-hide
             tickRotationDisplay();         // v6.20.31/34 — rotation display (4-cell pyramid, always-on)
 
             // v6.9.0 CP3 — Quick Build chord-aware dispatch.
@@ -3851,7 +3790,7 @@ namespace MoriaMods
                         // player's ASC + DataTables + world are all ready. No-op if nothing saved.
                         applySavedCheatsAndTweaks();
 
-                        // v6.20.38 — auto-spawn the New Building Bar once the
+                        // v6.20.39 — auto-spawn the New Building Bar once the
                         // player + world are ready. One attempt per session.
                         if (!m_newBuildingBarSpawnAttempted)
                         {
