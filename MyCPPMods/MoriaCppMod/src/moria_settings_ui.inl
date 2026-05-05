@@ -1774,6 +1774,7 @@
         struct GameOptButton {
             FWeakObjectPtr widget;
             GameOptKind    kind;
+            bool           fromPauseMenu{false}; // v6.20.27 — protect from Gameplay-tab clear
         };
         std::vector<GameOptButton> m_gameOptButtons;
         UClass* m_frontEndButtonCls{nullptr};
@@ -1793,7 +1794,8 @@
             return false;
         }
 
-        UObject* spawnGameOptButton(UObject* outer, const wchar_t* labelText, GameOptKind kind)
+        UObject* spawnGameOptButton(UObject* outer, const wchar_t* labelText, GameOptKind kind,
+                                    bool fromPauseMenu = false)
         {
             if (!m_frontEndButtonCls) return nullptr;
             UObject* btn = jw_createGameWidget(m_frontEndButtonCls);
@@ -1813,6 +1815,7 @@
                 }
             }
             GameOptButton g; g.widget = FWeakObjectPtr(btn); g.kind = kind;
+            g.fromPauseMenu = fromPauseMenu;
             m_gameOptButtons.push_back(g);
             return btn;
         }
@@ -2041,7 +2044,9 @@
             // ─────────────────────────────────────────────────────────
             if (m_gameplayTabInjectedFor.Get() == gameplayTab) return; // idempotent
 
-            m_gameOptButtons.clear();
+            // v6.20.27 — preserve pause-menu entries (same reason as Gameplay-Cheats path).
+            std::erase_if(m_gameOptButtons,
+                [](const GameOptButton& g) { return !g.fromPauseMenu; });
 
             if (m_settingsSectionHeadingCls)
             {
@@ -2194,7 +2199,11 @@
             int added = 0;
             for (const auto& s : specs)
             {
-                UObject* btn = spawnGameOptButton(outer, s.label, s.kind);
+                // v6.20.27 — fromPauseMenu=true so Settings → Gameplay tab's
+                // m_gameOptButtons.clear() doesn't wipe these out (caused
+                // SAVE GAME / RENAME / etc. to silently no-op after the user
+                // opened the Gameplay tab).
+                UObject* btn = spawnGameOptButton(outer, s.label, s.kind, /*fromPauseMenu=*/true);
                 if (!btn) continue;
                 if (auto* smPtr = btn->GetValuePtrByPropertyNameInChain<bool>(STR("SmallText")))
                     *smPtr = true; // v0.56 — match SETTINGS/FREE CAM size
@@ -3927,7 +3936,14 @@
 
             m_dualModGameWidgets.clear();
             m_dualCheatsWidgets.clear();
-            m_gameOptButtons.clear();
+            // v6.20.27 — preserve pause-menu entries so SAVE GAME / RENAME /
+            // UNLOCK / READ ALL / CLEAR BUFFS still dispatch after the user
+            // opens Settings → Gameplay tab. Was: m_gameOptButtons.clear()
+            // wiped EVERYTHING including the pause-menu entries; clicks on
+            // the pause-menu buttons after that found list-size=0 → silent
+            // no-op. Erase only non-pause-menu (i.e. Gameplay-tab) entries.
+            std::erase_if(m_gameOptButtons,
+                [](const GameOptButton& g) { return !g.fromPauseMenu; });
             m_cheatsButtons.clear();
             m_rowStatus.clear();
             m_buffToggleRows.clear();
