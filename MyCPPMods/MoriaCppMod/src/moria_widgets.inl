@@ -5526,8 +5526,63 @@
             // layout then sizes/positions it correctly. Then call
             // ShowNotification(Duration) to play the intro animation.
             UObject* notifBox = nullptr;
-            if (auto* nbPtr = feed->GetValuePtrByPropertyNameInChain<UObject*>(STR("notificationBox")))
-                notifBox = *nbPtr;
+            // v6.20.11 — try several name variants for the grid property.
+            // The CXX dump shows `notificationBox` (lowercase n) but UE4
+            // BP property names sometimes capitalize differently in the
+            // running game vs the dump. Also enumerate all UObject*
+            // properties on the feed once for diagnostics.
+            static const wchar_t* nameVariants[] = {
+                STR("notificationBox"),
+                STR("NotificationBox"),
+                STR("notification_box"),
+                STR("NotificationsBox"),
+                STR("FeedBox"),
+                STR("notificationsContainer"),
+            };
+            for (const wchar_t* n : nameVariants)
+            {
+                if (auto* nbPtr = feed->GetValuePtrByPropertyNameInChain<UObject*>(n))
+                {
+                    if (*nbPtr) {
+                        notifBox = *nbPtr;
+                        VLOG(STR("[Notif] feed.{} resolved to {:p}\n"), n, (void*)notifBox);
+                        break;
+                    }
+                }
+            }
+            if (!notifBox)
+            {
+                // Diagnostic: walk the feed's class properties and log each
+                // UObject* property name + offset + current value. Helps us
+                // find the actual grid panel field name.
+                static bool s_dumped = false;
+                if (!s_dumped)
+                {
+                    s_dumped = true;
+                    UStruct* cls = static_cast<UStruct*>(feed->GetClassPrivate());
+                    while (cls)
+                    {
+                        for (auto* prop : cls->ForEachProperty())
+                        {
+                            auto pname = prop->GetName();
+                            int off = prop->GetOffset_Internal();
+                            // Heuristic: property type starts with "Object" / "Widget" / "GridPanel"
+                            // We can also check FObjectProperty
+                            if (auto* objProp = CastField<FObjectPropertyBase>(prop))
+                            {
+                                UObject* val = objProp->GetObjectPropertyValue(
+                                    reinterpret_cast<uint8_t*>(feed) + off);
+                                std::wstring valCls = (val && isObjectAlive(val))
+                                    ? safeClassName(val) : L"(null)";
+                                VLOG(STR("[Notif][Diag] feed.{} @0x{:04x} -> {:p} cls={}\n"),
+                                     pname, off, (void*)val, valCls.c_str());
+                            }
+                        }
+                        cls = cls->GetSuperStruct();
+                        if (!cls || cls->GetName() == STR("UserWidget")) break; // stop at base class
+                    }
+                }
+            }
             if (notifBox && isObjectAlive(notifBox))
             {
                 if (auto* addChildFn = notifBox->GetFunctionByNameInChain(STR("AddChild")))
