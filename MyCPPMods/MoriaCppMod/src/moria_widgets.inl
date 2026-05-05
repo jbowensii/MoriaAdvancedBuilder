@@ -516,56 +516,12 @@
 
         void updateBuildersBar()
         {
-            // v6.20.22 — refresh NEW Building Bar icons. v6.20.48 — also
-            // refresh active-slot highlight (was OLD-bar only via
-            // setUmgSlotState; now NBB-only since OLD bar was removed).
-            if (m_newBuildingBar && isObjectAlive(m_newBuildingBar))
-            {
-                populateNewBuildingBarIcons();
-                for (int i = 0; i < 8; i++)
-                    newBuildingBarHighlight(i, i == m_activeBuilderSlot);
-            }
-            if (!m_umgBarWidget) return;
+            // v6.20.49 — sole bar is NBB (top-of-screen). OLD UMG bar
+            // removed in v6.20.48. Refresh icons + active-slot highlight.
+            if (!m_newBuildingBar || !isObjectAlive(m_newBuildingBar)) return;
+            populateNewBuildingBarIcons();
             for (int i = 0; i < 8; i++)
-            {
-                if (!m_recipeSlots[i].used)
-                {
-                    setUmgSlotState(i, UmgSlotState::Empty);
-                    if (m_umgIconTextures[i] || !m_umgIconNames[i].empty())
-                    {
-                        setUmgSlotIcon(i, nullptr);
-                        m_umgIconNames[i].clear();
-                    }
-                }
-                else
-                {
-                    if (i == m_activeBuilderSlot)
-                        setUmgSlotState(i, UmgSlotState::Active);
-                    else
-                        setUmgSlotState(i, UmgSlotState::Inactive);
-
-
-                    bool nameChanged = (m_umgIconNames[i] != m_recipeSlots[i].textureName);
-                    if (nameChanged)
-                    {
-
-                        m_umgIconTextures[i] = nullptr;
-                        m_umgIconNames[i] = m_recipeSlots[i].textureName;
-                    }
-
-
-                    if (!m_umgIconTextures[i] && !m_recipeSlots[i].textureName.empty())
-                    {
-                        UObject* tex = findTexture2DByName(m_recipeSlots[i].textureName);
-                        if (tex)
-                        {
-                            setUmgSlotIcon(i, tex);
-                            VLOG(STR("[MoriaCppMod] [UMG] Slot #{} icon set: {}\n"),
-                                                            i, m_recipeSlots[i].textureName);
-                        }
-                    }
-                }
-            }
+                newBuildingBarHighlight(i, i == m_activeBuilderSlot);
         }
 
         void destroyExperimentalBar()
