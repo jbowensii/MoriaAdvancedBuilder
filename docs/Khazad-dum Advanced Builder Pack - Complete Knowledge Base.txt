@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.3
+Document Version 6.23.6
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3314,7 +3314,7 @@ your popup overlays it without disturbing the input pipeline.
 
 
 --------------------------------------------------------------------------------
-4.5  THE INS REPLENISH 2-STACK BUG (long-standing -> v6.23.2)
+4.5  THE INS REPLENISH 2-STACK BUG (long-standing -> v6.23.5)
 --------------------------------------------------------------------------------
 
 THE BUG. User had two stacks of "Wood" in inventory. Pressed INS to
@@ -3345,41 +3345,99 @@ closest per-instance APIs are:
 
 None of them is "set count of THIS instance to N."
 
-THE FIX (v6.23.2). Walk the FItemInstance Items array on the
-InventoryComponent, find every entry of m_lastPickedUpItemClass whose
-ID differs from the captured handle's ID, and call ServerSplitStack(B,
-m_lastItemHandle, B.Count) to MOVE every duplicate's contents into the
-user's targeted stack. After all duplicates are emptied, ServerDebugSetItem
-reliably hits the targeted instance:
+ITERATION HISTORY (worth knowing because the obvious solutions failed):
+
+  v6.23.2 (FIRST ATTEMPT, REJECTED): Walk FItemInstance Items, ServerSplit-
+    Stack each duplicate INTO m_lastItemHandle to merge them, then call
+    ServerDebugSetItem(class, MaxStack) on the now-single stack. This
+    *worked* mechanically but was rejected on user grounds: "I don't want
+    you to combine stacks. I want to increase the one used to max, not
+    combine or anything like that." The behavior altered other stacks
+    even when the user's intent was to bump only one.
+
+  v6.23.4 (BROKEN INTERMEDIATE): Re-ordered the merge so it ran BEFORE
+    the deficit check. Still violated "no combining" and was a no-op
+    when the class total was already at MaxStack (because the deficit
+    check ran on class-total, returning early before the merge logic).
+    UE4SS.log evidence: `[Replenish] BP_Amber_C currentCount=9999
+    maxStack=9999` followed by "already at max" — the merge code
+    never ran.
+
+  v6.23.5 (LANDED): Stop using ServerDebugSetItem entirely. Walk the
+    FItemInstance Items array, find the entry whose ID matches
+    m_lastItemHandle's ID, and write Count = MaxStack DIRECTLY at
+    `entry + 0x18` (the FItemInstance.Count offset per FGK.hpp:1726).
+    Other stacks of the same class are untouched. No merge, no combine.
+
+CODE (the actual v6.23.5 fix in moria_inventory.inl):
 
     int32_t targetID = *reinterpret_cast<int32_t*>(m_lastItemHandle);
-    auto* splitFn = invComp->GetFunctionByNameInChain(STR("ServerSplitStack"));
-    // Walk Items array...
-    for each entry of class with id != targetID and count > 0:
-        // Synthesize duplicate's FItemHandle
-        uint8_t dupHandle[20];
-        std::memcpy(dupHandle, m_lastItemHandle, 20);  // copy Owner+Payload
-        std::memcpy(dupHandle, &entryID, 4);            // overwrite ID
-        // Call ServerSplitStack(dupHandle, m_lastItemHandle, entryCount)
-        safeProcessEvent(invComp, splitFn, parmBuf);
-    // Then ServerDebugSetItem(class, MaxStack) hits the merged stack
+    if (targetID == 0) return;  // no item targeted
 
-FItemHandle layout (FGK.hpp:1715, size 0x14 = 20 bytes):
-    +0x00 int32 ID                              <- read from FItemInstance.ID
-    +0x04 int32 Payload                         <- copy from m_lastItemHandle
-    +0x08 TWeakObjectPtr<UInventoryComponent>   <- copy from m_lastItemHandle
+    probeItemInstanceStruct(invComp);
+    FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
+    int itemsOff = itemsProp->GetOffset_Internal();
+    uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp) + itemsOff + iiaListOff();
+    uint8_t* arrData  = *reinterpret_cast<uint8_t**>(listBase);
+    int32_t  arrNum   = *reinterpret_cast<int32_t*>(listBase + 8);
 
-The server validates handles primarily on (ID, Owner). Payload appears
-to be a per-Owner counter NOT consulted for stack-merge ops, so reusing
-m_lastItemHandle's Payload bytes is a best-effort approximation that
-works in practice. Worst case (server rejects synthetic handle): the
-Split call is a no-op, and we fall through to the existing class-level
-SetItem - same as before, no regression.
+    int stride   = iiSize();      // 0x30 - sizeof(FItemInstance)
+    int idOff    = iiIDOff();     // 0x20 - offset of FItemInstance.ID
+    int countOff = 0x18;          // offset of FItemInstance.Count
 
-GENERALIZED LESSON. **Read the function signature carefully before
-trusting it.** "ServerDebugSetItem(ItemClass, Count)" was named like an
-instance API but is actually class-level. The dump CXXHeaderDump file is
-truth - if you don't see an FItemHandle parameter, it's not per-instance.
+    for (int32_t i = 0; i < arrNum; i++) {
+        uint8_t* entry = arrData + i * stride;
+        if (*reinterpret_cast<int32_t*>(entry + idOff) != targetID) continue;
+        int32_t cur = *reinterpret_cast<int32_t*>(entry + countOff);
+        if (cur < maxStack)
+            *reinterpret_cast<int32_t*>(entry + countOff) = maxStack;
+        break;
+    }
+
+WHY DIRECT WRITE WORKS. The host (single-player or listen-server host)
+IS the authority. A local change to FItemInstance.Count IS canonical
+and replicates to remote clients on the next FFastArraySerializer tick.
+This is the same pattern moria_inventory.inl:49-84 (`removeItemEffect-
+FromList`) already uses successfully against the Effects FFastArray-
+Serializer. On non-host clients the change is local-only and may be
+overwritten by the next replication pulse — for the common case
+(single-player and host) this works correctly.
+
+FItemInstance layout (FGK.hpp:1723-1733, total size 0x30):
+    +0x00 FFastArraySerializerItem header (16 bytes)
+    +0x10 TSubclassOf<AInventoryItem> Item     (8 bytes)
+    +0x18 int32 Count                          <- write target
+    +0x1C int32 Slot
+    +0x20 int32 ID                             <- match against m_lastItemHandle.ID
+    +0x24 float Durability
+    +0x28 int32 RepairCount
+    +0x2C int32 ContainerStartSlot
+
+FItemHandle layout (FGK.hpp:1715, total size 0x14):
+    +0x00 int32 ID
+    +0x04 int32 Payload
+    +0x08 TWeakObjectPtr<UInventoryComponent> Owner
+
+`m_lastItemHandle` is captured during the BroadcastToContainers_OnChanged /
+ServerMoveItem / MoveSwapItem PE post-hook (the most recent inventory
+operation the player performed touched the item).
+
+GENERALIZED LESSONS:
+
+  1. Read the function signature carefully before trusting it.
+     "ServerDebugSetItem(ItemClass, Count)" was named like an instance
+     API but is actually class-level. The CXXHeaderDump is truth — if
+     you don't see an FItemHandle parameter, it's not per-instance.
+
+  2. Direct memory writes to FFastArraySerializer entries are valid on
+     the authority. Host=server in this game's listen-server model, so
+     a host's local change replicates correctly.
+
+  3. Listen to user direction even when "your" technical solution is
+     more clever. v6.23.2's ServerSplitStack-based merge was elegant
+     and worked, but it changed semantics the user didn't want. The
+     direct-write fix is uglier (raw memcpy at a hardcoded offset) but
+     does what the user asked.
 
 
 --------------------------------------------------------------------------------
@@ -3635,7 +3693,17 @@ over 9 iterations:
                     function bodies that were the SOLE purpose of those
                     call sites. Net -1,553 LOC across 5 files.
     v6.23.1: trash-popup cursor-stuck fix
-    v6.23.2: INS replenish per-instance fix
+    v6.23.2: INS replenish v1 (ServerSplitStack-based merge - rejected
+             by user "no combining stacks")
+    v6.23.4: INS replenish v2 (merge before deficit check - still merging)
+    v6.23.5: INS replenish v3 (direct write to FItemInstance.Count -
+             targets ONLY the user's stack; landed)
+    v6.23.6 Pass 2 (settings_ui follow-up): hard-deleted ~361 LOC of
+             orphan cheats-cluster bodies (tickReapplyCheatsContext,
+             applyGameplayTabContext, appendCheatsTabToArray,
+             appendCheatsTabToNamedArray, walkAndUpdateNavButtonHighlight,
+             #if 0 legacy v0.15 highlight block, dead block in
+             onNavTabPressedPost). moria_settings_ui.inl 5073 -> 4712.
 
 Each Pass-1 iteration was its own GitHub tag. Recovery to any prior
 state is one `git checkout v6.22.X` away.
@@ -3725,15 +3793,17 @@ LESSONS FOR MODDERS DOING THEIR OWN REVIEWS:
 4.13  v6.23.x VERIFIED STATE - WHAT WORKS RIGHT NOW
 --------------------------------------------------------------------------------
 
-As of v6.23.2 (2026-05-08), the following is confirmed working in-game:
+As of v6.23.6 (2026-05-08), the following is confirmed working in-game:
 
     F1-F8 quick-build slots (DIRECT path)
     SHIFT+] target build (state-machine path)
     F9 rotation step
     F10 reposition HUD mode
     F12 save game
-    DEL trash item (with cursor restoration)
-    INS replenish item (per-instance, 2+ stacks correctly handled)
+    DEL trash item (with cursor restoration; v6.23.1)
+    INS replenish item (direct write to FItemInstance.Count on the
+        targeted instance only - other stacks of the same class
+        untouched; v6.23.5)
     END remove attributes
     NUM0-9 navigation
     Pause-menu mod buttons: UNLOCK RECIPES / READ ALL LORE / CLEAR ALL BUFFS
