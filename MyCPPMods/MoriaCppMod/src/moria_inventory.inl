@@ -558,9 +558,101 @@
             }
 
 
+            // v6.23.2 - per-instance INS replenish fix.
+            //
+            // Background: ServerDebugSetItem(ItemClass, Count) is class-level,
+            // not instance-level. The server walks FItemInstance entries for
+            // the given class and sets the FIRST-found stack's count to N.
+            // When the player has 2+ stacks of the same item, the user's
+            // currently-targeted stack (captured in m_lastItemHandle from the
+            // most recent ServerMoveItem/MoveSwapItem PE) goes unchanged
+            // because the first-found stack is usually the lowest-slot one
+            // (often already at MaxStack -> no observable effect).
+            //
+            // Fix: before the class-level SetItem, walk the Items array on
+            // the inventory component, find every entry of the same class
+            // whose ID differs from the user's targeted ID, and use
+            // ServerSplitStack(B, m_lastItemHandle, B.Count) to MOVE every
+            // duplicate's full contents into the user's targeted stack.
+            // After all duplicates are emptied, the user's stack is the
+            // sole survivor of that class - ServerDebugSetItem's subsequent
+            // SetItem call now reliably hits THAT specific instance.
+            //
+            // FItemHandle layout (FGK.hpp:1715, size 0x14):
+            //   +0x00 int32 ID                     <- read from FItemInstance.ID
+            //   +0x04 int32 Payload                <- copy from m_lastItemHandle (Owner-specific)
+            //   +0x08 TWeakObjectPtr Owner (8 B)   <- copy from m_lastItemHandle (same invComp)
+            //
+            // The captured m_lastItemHandle has correct Payload + Owner for
+            // the targeted instance; for the duplicate stacks we reuse those
+            // bytes verbatim (same Owner = same invComp; Payload reuse is a
+            // best-effort approximation since the server validates against
+            // (ID, Owner) primarily and Payload appears to be a per-Owner
+            // monotonic counter not consulted for stack-merge ops).
+            int32_t targetID = *reinterpret_cast<int32_t*>(m_lastItemHandle);
+            auto* splitFn = invComp->GetFunctionByNameInChain(STR("ServerSplitStack"));
+            if (splitFn && targetID != 0 && m_lastPickedUpItemClass)
+            {
+                probeItemInstanceStruct(invComp);
+                FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
+                if (itemsProp)
+                {
+                    int itemsOff = itemsProp->GetOffset_Internal();
+                    uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp) + itemsOff + iiaListOff();
+                    if (isReadableMemory(listBase, 16))
+                    {
+                        uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+                        int32_t arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
+                        if (arrData && arrNum > 0 && arrNum <= 10000)
+                        {
+                            int stride   = iiSize();
+                            int itemOff  = iiItemOff();
+                            int countOff = 0x18;
+                            int idOff    = iiIDOff();
+                            int mergedCount = 0;
+                            int splitParmsSize = splitFn->GetParmsSize();
+                            auto* pSrc   = findParam(splitFn, STR("Source"));
+                            auto* pDst   = findParam(splitFn, STR("Destination"));
+                            auto* pMove  = findParam(splitFn, STR("MoveCount"));
+                            for (int32_t i = 0; i < arrNum; i++)
+                            {
+                                uint8_t* entry = arrData + i * stride;
+                                if (!isReadableMemory(entry, stride)) continue;
+                                UClass* entryCls = *reinterpret_cast<UClass**>(entry + itemOff);
+                                if (entryCls != m_lastPickedUpItemClass) continue;
+                                int32_t entryID  = *reinterpret_cast<int32_t*>(entry + idOff);
+                                int32_t entryCnt = *reinterpret_cast<int32_t*>(entry + countOff);
+                                if (entryID == targetID || entryID == 0 || entryCnt <= 0) continue;
+
+                                // Synthesize duplicate's FItemHandle: ID from entry,
+                                // Payload + Owner reused from the captured handle.
+                                uint8_t dupHandle[20];
+                                std::memcpy(dupHandle, m_lastItemHandle, 20);
+                                std::memcpy(dupHandle, &entryID, 4);
+
+                                std::vector<uint8_t> sp(splitParmsSize, 0);
+                                if (pSrc)  std::memcpy(sp.data() + pSrc->GetOffset_Internal(),  dupHandle, 20);
+                                if (pDst)  std::memcpy(sp.data() + pDst->GetOffset_Internal(),  m_lastItemHandle, 20);
+                                if (pMove) *reinterpret_cast<int32_t*>(sp.data() + pMove->GetOffset_Internal()) = entryCnt;
+                                safeProcessEvent(invComp, splitFn, sp.data());
+                                VLOG(STR("[MoriaCppMod] [Replenish] Merged duplicate stack ID={} count={} -> targetID={}\n"),
+                                     entryID, entryCnt, targetID);
+                                mergedCount += entryCnt;
+                            }
+                            if (mergedCount > 0)
+                                VLOG(STR("[MoriaCppMod] [Replenish] Pre-merged {} item(s) into target stack\n"),
+                                     mergedCount);
+                        }
+                    }
+                }
+            }
+
             // ServerDebugSetItem is a Server RPC — UE4 routes it to the authority
             // automatically, so it works for both host and non-host clients.
             // RequestAddItem was local-only and silently failed on remote clients.
+            // After the per-instance pre-merge above, the targeted stack is
+            // the sole survivor of its class on the server, so the class-level
+            // SetItem reliably bumps THAT specific instance.
             auto* setFn = invComp->GetFunctionByNameInChain(STR("ServerDebugSetItem"));
             if (!setFn)
             {
