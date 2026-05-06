@@ -746,7 +746,15 @@
             m_trashCursorWasVisible = false;
             if (auto* pc2 = findPlayerController())
                 m_trashCursorWasVisible = getBoolProp(pc2, L"bShowMouseCursor");
-            setInputModeUI(popup);
+            // v6.23.1 - only switch to UI-only input mode if cursor was
+            // hidden (i.e. user pressed DEL while in pure gameplay). When
+            // an existing UI (inventory) is already up, leave its input
+            // mode alone - the popup buttons are polled via cursor pixel
+            // position in dllmain.cpp, so we don't need Slate click
+            // routing to reach them. This avoids the cursor-stuck-after-
+            // close bug (the matched skip on close lives in hideTrashDialog).
+            if (!m_trashCursorWasVisible)
+                setInputModeUI(popup);
             VLOG(STR("[MoriaCppMod] [Trash] GenericPopup opened for {}\n"), m_lastPickedUpItemName);
         }
 
@@ -799,17 +807,26 @@
             m_pendingTrashPopup = FWeakObjectPtr();
             m_trashDlgVisible = false;
 
+            // v6.23.1 - cursor-stuck-after-trash bug fix.
+            // Old code path "m_trashCursorWasVisible == true": called
+            // setInputModeGame() and then forced bShowMouseCursor=true,
+            // creating a broken hybrid where input went to the character
+            // (game mode) but cursor was visible-yet-uninteractive. User
+            // had to press ESC to recover (game's ESC handler restores a
+            // sane input mode). The fix: when cursor was visible BEFORE
+            // the popup opened (i.e. inventory or other UI was open),
+            // skip the input-mode reset entirely - the underlying native
+            // UI's input mode is still valid and the popup didn't displace
+            // the player's UI focus. Only call setInputModeGame() when we
+            // know the world was in pure gameplay mode (cursor hidden)
+            // before the popup.
             if (m_ftVisible && m_fontTestWidget)
                 setInputModeUI(m_fontTestWidget);
-            else if (m_trashCursorWasVisible)
-            {
-
+            else if (!m_trashCursorWasVisible)
                 setInputModeGame();
-                if (auto* pc2 = findPlayerController())
-                    setBoolProp(pc2, L"bShowMouseCursor", true);
-            }
-            else
-                setInputModeGame();
+            // else: cursor was already visible before the popup opened,
+            // so the underlying native UI (inventory, etc.) still has
+            // input focus. Don't touch it.
             VLOG(STR("[MoriaCppMod] [Trash] Dialog closed (cursorRestore={})\n"),
                  m_trashCursorWasVisible ? STR("yes") : STR("no"));
         }
