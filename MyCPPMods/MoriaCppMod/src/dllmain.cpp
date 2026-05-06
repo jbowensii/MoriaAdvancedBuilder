@@ -1,4 +1,4 @@
-// MoriaCppMod v6.22.8 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.23.0 - Return to Moria UE4SS C++ mod (~15,500 lines after v6.23.0 Pass 2 cleanup)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -400,37 +400,12 @@ namespace MoriaMods
         // m_mcSlotStates (all bar widget state - widget never spawns). The
         // UmgSlotState enum is also no longer needed (only consumer was
         // m_mcSlotStates) and is removed.
-        // v6.22.4 - Pass 1 comment-out: ENTIRE controller code cluster.
-        // m_controllerEnabled is permanently false (Grep confirmed zero
-        // `=true` writers) since v6.3.5 removed the F12 checkbox UI per
-        // controller-ui-removal.md. With that gate dead, the entire
-        // dispatch loop, PE pre-hook gamepad suppression, PE post-hook
-        // action-bar focus tracking, and DIGamepadReader class are all
-        // unreachable. ~720 LOC total. v6.22.3 already gated DualSenseReader
-        // (the other dead reader); this absorbs that gate too.
-        // Pass 2 deletes after user verifies a session of normal play.
-#if 0  // v6.22.4 Pass 1 - controller cluster fields
-        int m_mcFocusedSlot{-1};                  // currently focused MC slot for gamepad
-        bool m_gameActionBarFocused{false};       // true when game's built-in action bar has gamepad focus
-        int m_gameActionBarIndex{-1};             // current slot index in game's action bar
-        int m_gameHotbarSize{9};                  // game's hotbar slot count (9 slots: 0-7 + epic item at 8)
-        bool m_modToolbarFocused{false};          // true when our mod toolbar has gamepad focus
-        int m_gpFlatIndex{0};                     // current position in flat slot list (all mod slots)
-        ULONGLONG m_gpToggleTime{0};              // timestamp of last toggle for double-click detection
-        bool m_gpAnyButtonPressed{false};         // true if any nav/action button pressed during mod mode
-        int m_gpDismissCalloutFrame{0};           // countdown to send ESC after toggle (dismiss callout)
-
-        // Controller settings (persisted to INI)
-        enum class ControllerProfile : uint8_t { None = 0, Xbox = 1, PS5 = 2 };
-        bool m_controllerEnabled{false};          // F12 checkbox: controller input active
-        ControllerProfile m_controllerProfile{ControllerProfile::Xbox};  // Xbox or PS5
-        DualSenseReader m_dsReader;               // PS5 DualSense raw HID reader (fallback) - was already #if 0'd in v6.22.3
-        DSState m_dsState{};
-        DSState m_dsPrevState{};
-        DIGamepadReader m_diReader;               // DirectInput gamepad reader (works for ALL controllers)
-        DIGamepadState m_diState{};               // current DirectInput state
-        DIGamepadState m_diPrevState{};           // previous frame
-#endif  // v6.22.4 Pass 1 - end controller cluster fields
+        // v6.23.0 - The controller cluster (~720 LOC: DualSenseReader +
+        // DIGamepadReader + dispatch loop + PE hooks + 13 fields) was
+        // gated as v6.22.3+v6.22.4 #if 0 and is now deleted. Entry point
+        // m_controllerEnabled has been permanently false since v6.3.5
+        // removed the F12 checkbox UI. To revive controller support, see
+        // git tag v6.22.4 - the entire infrastructure is preserved there.
 
 
         // v6.21.21 batch 3 Tier 2a - removed m_umgKeyLabels[8] (OLD UMG bar
@@ -683,14 +658,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.22.8");
+            ModVersion = STR("6.23.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.8\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -731,7 +706,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.8 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -917,23 +892,10 @@ namespace MoriaMods
                 // Construct or OnInitialized. Append Cheats to tabArray
                 // BEFORE the navbar's Construct runs (navbar reads tabArray
                 // directly during its own Construct).
-                if (context && (wcscmp(fnStr, STR("PreConstruct")) == 0 ||
-                                wcscmp(fnStr, STR("Construct")) == 0 ||
-                                wcscmp(fnStr, STR("OnInitialized")) == 0))
-                {
-                    std::wstring cls = safeClassName(context);
-                    if (cls == STR("WBP_SettingsScreen_C"))
-                    {
-                        // v6.22.5 - Pass 1 comment-out: appendCheatsTabToArray
-                        // is dead per mod-tab-in-settings-status.md (Option-C
-                        // merge shipped: cheats are now merged into existing
-                        // native Gameplay/Game Options tabs, no new tab is
-                        // added). User confirmed 2026-05-08: there is no more
-                        // added tab or cheats tab. Pass 2 deletes function +
-                        // call sites.
-                        // s_instance->appendCheatsTabToArray(context);
-                    }
-                }
+                // v6.22.5+v6.23.0: appendCheatsTabToArray call removed from
+                // PreConstruct/Construct/OnInitialized hook. The Option-C
+                // merge ships cheats inside the existing native Gameplay /
+                // Game Options tabs; no separate tab is added.
                 // CP5 v0.7 - when user clicks the Cheats tab in the navbar,
                 // redirect the tab name to "Gameplay" so the framework
                 // displays the Gameplay tab content. Set a flag so the
@@ -976,84 +938,9 @@ namespace MoriaMods
                     return;
                 }
 
-                // v6.22.4 - Pass 1 comment-out: PE pre-hook gamepad
-                // suppression block. Gated on m_modToolbarFocused +
-                // m_controllerEnabled, both inside the dead controller
-                // cluster. Pass 2 deletes.
-#if 0  // v6.22.4 Pass 1 - PE pre-hook gamepad suppression
-                // When mod toolbar is active, suppress ALL game functions triggered by gamepad.
-                if (s_instance->m_modToolbarFocused)
-                {
-                    // Log ALL ProcessEvent calls while in mod mode (first 50 unique names)
-                    // to find what L1/R1 triggers so we can suppress it
-                    {
-                        static std::set<std::wstring> s_loggedFns;
-                        if (s_loggedFns.size() < 50)
-                        {
-                            std::wstring fn2(fnStr);
-                            if (s_loggedFns.find(fn2) == s_loggedFns.end())
-                            {
-                                std::wstring cls = safeClassName(context);
-                                VLOG(STR("[MoriaCppMod] [ModMode-PE] fn='{}' cls='{}'\n"), fnStr, cls);
-                                s_loggedFns.insert(fn2);
-                            }
-                        }
-                    }
-
-                    // Suppress specific input/action bar functions.
-                    // Do NOT use substring matching - zeroing params for functions
-                    // like SetCalloutTargetText crashes (null FText → null deref).
-                    bool suppress =
-                        wcscmp(fnStr, STR("HUD Focus From Controller")) == 0 ||
-                        wcscmp(fnStr, STR("HotBarActionRequest")) == 0 ||
-                        wcscmp(fnStr, STR("ProcessHotbarAction")) == 0 ||
-                        wcscmp(fnStr, STR("Navigate To Epic Item")) == 0 ||
-                        wcscmp(fnStr, STR("NavigateToEpicItem")) == 0 ||
-                        wcscmp(fnStr, STR("ToggleGamepadNavIcons")) == 0 ||
-                        wcscmp(fnStr, STR("OnEmoteMenuFocusChanged")) == 0 ||
-                        wcscmp(fnStr, STR("CallEmote")) == 0 ||
-                        wcscmp(fnStr, STR("Input_AnyKey")) == 0 ||
-                        wcscmp(fnStr, STR("OnInputDeviceChanged")) == 0 ||
-                        wcscmp(fnStr, STR("OnBindInputs")) == 0 ||
-                        wcscmp(fnStr, STR("OnInputChanged")) == 0;
-                    if (suppress)
-                    {
-                        if (parms && func->GetParmsSize() > 0)
-                            std::memset(parms, 0, func->GetParmsSize());
-                        return;
-                    }
-                }
-
-                // Also suppress emote menu when D-pad Left is used as toggle
-                // (prevents callout from opening on the toggle press itself)
-                if (s_instance->m_controllerEnabled &&
-                    (wcscmp(fnStr, STR("OnEmoteMenuFocusChanged")) == 0 ||
-                     wcscmp(fnStr, STR("CallEmote")) == 0))
-                {
-                    // Check if D-pad Left is currently held (toggle button)
-                    // For Xbox: check XInput directly. For PS5: always suppress since
-                    // we need IsInputKeyDown to work without emote stealing focus.
-                    bool suppressEmote = false;
-                    if (s_instance->m_controllerProfile == ControllerProfile::Xbox)
-                    {
-                        XINPUT_STATE xs{};
-                        if (XInputGetState(0, &xs) == ERROR_SUCCESS)
-                            suppressEmote = (xs.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
-                    }
-                    else
-                    {
-                        // PS5: always suppress emote - D-pad Left is our toggle
-                        suppressEmote = true;
-                    }
-                    if (suppressEmote)
-                    {
-                        if (parms && func->GetParmsSize() > 0)
-                            std::memset(parms, 0, func->GetParmsSize());
-                        return;
-                    }
-                }
-#endif  // v6.22.4 Pass 1 - end PE pre-hook gamepad suppression
-
+                // (v6.22.4+v6.23.0: PE pre-hook gamepad suppression and
+                //  emote-on-Dpad-Left suppression deleted with the rest of
+                //  the controller cluster.)
                 if (wcscmp(fnStr, STR("RotatePressed")) == 0 || wcscmp(fnStr, STR("RotateCcwPressed")) == 0)
                 {
                     if (s_instance->m_isDedicatedServer) return;
@@ -1458,13 +1345,7 @@ namespace MoriaMods
                     {
                         s_instance->onNativeSettingsScreenShown(context);
                         s_instance->onSettingsRelatedShown(context, fnStr2);
-                        // v6.22.5 - Pass 1 comment-out: see twin gate at the
-                        // PreConstruct/Construct/OnInitialized site above.
-                        // Option-C merge made the dedicated Cheats tab dead
-                        // and user confirmed there is no plan to re-add it.
-                        // if (cls == STR("WBP_SettingsScreen_C"))
-                        //     s_instance->appendCheatsTabToArray(context);
-                        // inject mod action buttons (Rename/Save/Unlock/
+                        // inject mod action buttons (Unlock/
                         // Read All/Clear All Buffs) into the pause menu's
                         // VerticalBox_0 right above LeaveButton.
                         if (cls == STR("UI_WBP_EscapeMenu2_C"))
@@ -1639,47 +1520,6 @@ namespace MoriaMods
                     return;
                 }
 
-                // v6.22.4 - Pass 1 comment-out: PE post-hook action-bar
-                // focus tracking. Sets m_gameActionBarFocused and
-                // m_gameActionBarIndex (both inside dead controller cluster).
-                // Plus the one-shot gamepad-diag block. Pass 2 deletes.
-#if 0  // v6.22.4 Pass 1 - PE post-hook action bar focus
-                // Track game's action bar focus for gamepad toolbar bridging
-                // Try multiple possible function names (C++ delegate vs Blueprint)
-                if (wcscmp(fnStr2, STR("OnHUDActionBarFocusChanged")) == 0 ||
-                    wcscmp(fnStr2, STR("HUD Focus From Controller")) == 0 ||
-                    wcscmp(fnStr2, STR("HUDFocusFromController")) == 0)
-                {
-                    if (parms)
-                    {
-                        bool bFocused = *reinterpret_cast<bool*>(static_cast<uint8_t*>(parms));
-                        int32_t index = *reinterpret_cast<int32_t*>(static_cast<uint8_t*>(parms) + 4);
-                        s_instance->m_gameActionBarFocused = bFocused;
-                        s_instance->m_gameActionBarIndex = index;
-                        VLOG(STR("[MoriaCppMod] [Gamepad] ActionBar hook '{}': focused={} index={}\n"),
-                             fnStr2, bFocused ? 1 : 0, index);
-                    }
-                    return;
-                }
-
-                // Diagnostic: log any function with Focus/ActionBar/Hotbar in the name (first 20 only)
-                {
-                    static int s_focusDiagCount = 0;
-                    if (s_focusDiagCount < 20)
-                    {
-                        std::wstring fn2(fnStr2);
-                        if (fn2.find(STR("ocus")) != std::wstring::npos ||
-                            fn2.find(STR("otbar")) != std::wstring::npos ||
-                            fn2.find(STR("ction")) != std::wstring::npos)
-                        {
-                            std::wstring cls = safeClassName(context);
-                            VLOG(STR("[MoriaCppMod] [Gamepad-Diag] fn='{}' cls='{}'\n"), fnStr2, cls);
-                            s_focusDiagCount++;
-                        }
-                    }
-                }
-#endif  // v6.22.4 Pass 1 - end PE post-hook action bar focus
-
                 if (wcscmp(fnStr2, STR("ServerMoveItem")) == 0 || wcscmp(fnStr2, STR("MoveSwapItem")) == 0 || wcscmp(fnStr2, STR("BroadcastToContainers_OnChanged")) == 0)
                 {
                     if (parms && isLocalContext(context))  // MP: only capture local player's inventory
@@ -1781,7 +1621,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.22.8: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.23.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -1802,407 +1642,20 @@ namespace MoriaMods
                         try { loadAndApplyDefinitions(); }
                         catch (...) { RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Exception during definition loading\n")); }
                     }
-                    // one-shot FGK DynamicTableAsset diagnostic.
-                    // Logs each FGK wrapper's TableAsset, TestTableAsset, and
-                    // DynamicTableAsset pointers + RowMap counts to determine
-                    // whether DynamicTableAsset is initialized at runtime
-                    // and is a viable runtime-additions slot for build menu.
-                    if (!m_fgkDiagDone)
-                    {
-                        m_fgkDiagDone = true;
-                        try { dumpFGKWrapperDiagnostic(); }
-                        catch (...) { VLOG(STR("[FGKDiag] exception\n")); }
-                    }
+                    // (FGK DynamicTableAsset one-shot diagnostic removed in
+                    //  v6.23.0 along with the rest of the FGK runtime-injection
+                    //  investigation. Per closed-features-2026-05-04.md, FGK
+                    //  injection is ABANDONED.)
                     return {false, false};
                 });
         }
 
-        bool m_fgkDiagDone{false};
-        void dumpFGKWrapperDiagnostic()
-        {
-            VLOG(STR("[FGKDiag] === Begin FGK DynamicTableAsset diagnostic ===\n"));
-            // Wrapper class names known from CXXHeaderDump/Moria.hpp.
-            const wchar_t* wrapperClasses[] = {
-                STR("MorConstructionsTable"),
-                STR("MorConstructionRecipesTable"),
-                STR("MorConstructionStabilitiesTable"),
-                STR("MorConsumablesTable"),
-                STR("MorContainerItemsTable"),
-                STR("MorCosmeticConvertTable"),
-                STR("MorWeaponsTable"),
-                STR("MorToolsTable"),
-                STR("MorArmorsTable"),
-                STR("MorOresTable"),
-                STR("MorItemsTable"),
-            };
-            int totalLogged = 0;
-            for (auto* wname : wrapperClasses)
-            {
-                std::vector<UObject*> instances;
-                findAllOfSafe(wname, instances);
-                if (instances.empty()) {
-                    VLOG(STR("[FGKDiag] {}: no instances found\n"), wname);
-                    continue;
-                }
-                for (UObject* w : instances)
-                {
-                    if (!w || !isObjectAlive(w)) continue;
-                    auto* taPtr = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("TableAsset"));
-                    auto* ttPtr = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("TestTableAsset"));
-                    auto* dtPtr = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("DynamicTableAsset"));
-                    UObject* ta = taPtr ? *taPtr : nullptr;
-                    UObject* tt = ttPtr ? *ttPtr : nullptr;
-                    UObject* dt = dtPtr ? *dtPtr : nullptr;
-                    auto rowCount = [](UObject* tbl) -> int {
-                        if (!tbl) return -1;
-                        auto* rm = tbl->GetValuePtrByPropertyNameInChain<uint8_t>(STR("RowMap"));
-                        if (!rm) return -2;
-                        int32_t num = *reinterpret_cast<int32_t*>(rm + 8); // TMap layout: Data*, Num, Max
-                        return num;
-                    };
-                    VLOG(STR("[FGKDiag] {} @{:p}  TableAsset={:p} (rows={})  TestAsset={:p} (rows={})  DynamicAsset={:p} (rows={})\n"),
-                         wname, (void*)w,
-                         (void*)ta, rowCount(ta),
-                         (void*)tt, rowCount(tt),
-                         (void*)dt, rowCount(dt));
-                    if (dt && isObjectAlive(dt))
-                    {
-                        std::wstring dtCls = safeClassName(dt);
-                        std::wstring dtName;
-                        try { dtName = dt->GetName(); } catch (...) {}
-                        VLOG(STR("[FGKDiag]   DynamicAsset class='{}' name='{}'\n"), dtCls.c_str(), dtName.c_str());
-                    }
-                    ++totalLogged;
-                }
-            }
-            VLOG(STR("[FGKDiag] === End - logged {} wrapper instances ===\n"), totalLogged);
+        // (v6.23.0: FGK runtime-injection diagnostics deleted -
+        //  dumpFGKWrapperDiagnostic, resolveHandleDataTableChanged,
+        //  tickFGKInjectionTest, tickActorLookupDiag, tickFGKDiscoveryDiag,
+        //  m_fgkDiagDone, m_pfHandleDataTableChanged, m_fgkInjectionTestDone
+        //  per closed-features-2026-05-04.md ABANDONED.)
 
-            // DiscoveryManager probe deferred to tickFGKDiscoveryDiag -
-            // manager spawns AFTER LoadMap (per-world actor), so polling
-            // each tick until it exists is the right hook point.
-        }
-
-        // Path #5 diagnostic - dump UMorConstructionsTable.ActorRowNameLookup
-        // (TMap<TSoftClassPtr<AActor>, FName> at offset 0x110, header size 0x50).
-        //
-        // UE4 TMap memory layout:
-        //   TSet<TPair<K,V>> Pairs:
-        //     TSparseArray<TSetElement<TPair<K,V>>>:
-        //       0x00: Data*  (pointer to elements)
-        //       0x08: Num    (total slots including holes)
-        //       0x0C: Max    (capacity)
-        //       0x10: NumFreeIndices
-        //       0x14: FirstFreeIndex
-        //       0x18: TBitArray AllocationFlags
-        //   ... + hash table after sparse array
-        //
-        // Element layout (TSetElement<TPair<K,V>>):
-        //   TPair<K,V>:
-        //     K = TSoftClassPtr<AActor> = TSoftObjectPtr<UClass> = 0x28 bytes
-        //     V = FName = 0x08 bytes
-        //   Then HashNextId (4) + HashIndex (4) = 0x38 total per element
-        // Path: pure-UE4SS FGK runtime row injection test.
-        //
-        // Hypothesis: AddRowInternal + UDataTable::HandleDataTableChanged
-        // together trigger FGK wrapper cache rebuild (wrapper picks up the
-        // new row in its ActorRowNameLookup TMap automatically).
-        //
-        // We use the P3R-verified AOB pattern (Moria is UE 4.27.2 same as P3R)
-        // to locate HandleDataTableChanged in Moria's binary. UE.Toolkit
-        // resolves it at the same pattern, so we know it's present.
-        //
-        // Test flow:
-        //   1. Resolve HandleDataTableChanged via AOB scan
-        //   2. Find MorConstructionsTable wrapper instance
-        //   3. Get its TableAsset (the underlying UDataTable)
-        //   4. Read ActorRowNameLookup.Num at wrapper+0x118 (Num offset of TSet)
-        //   5. Use existing m_dtConstructions.addRow() to add a test row
-        //   6. Call HandleDataTableChanged(TableAsset, testRowName)
-        //   7. Re-read ActorRowNameLookup.Num
-        //   8. If Num increased -> wrapper rebuilt cache, FGK injection works
-        //      If Num unchanged -> shipping HandleDataTableChanged is a no-op
-        typedef void(__fastcall* FnHandleDataTableChanged)(void* table, RC::Unreal::FName changedRow);
-        FnHandleDataTableChanged m_pfHandleDataTableChanged{nullptr};
-        bool m_fgkInjectionTestDone{false};
-
-        bool resolveHandleDataTableChanged()
-        {
-            if (m_pfHandleDataTableChanged) return true;
-            // P3R-derived pattern, verified by UE.Toolkit on Moria binary.
-            // Pattern: 48 89 54 24 ?? 55 53 56 57 48 8D 6C 24 ?? 48 81 EC 98 00 00 00
-            //         ^  ^  ^  ^  ?  ^  ^  ^  ^  ^  ^  ^  ^  ?  ^  ^  ^  ^  ^  ^  ^
-            static const uint8_t pat[] = {
-                0x48,0x89,0x54,0x24,0x00, 0x55,0x53,0x56,0x57,
-                0x48,0x8D,0x6C,0x24,0x00, 0x48,0x81,0xEC,0x98,0x00,0x00,0x00
-            };
-            static const bool wild[] = {
-                false,false,false,false,true,  false,false,false,false,
-                false,false,false,false,true,  false,false,false,false,false,false,false
-            };
-            HMODULE hMod = GetModuleHandleW(L"Moria-Win64-Shipping.exe");
-            if (!hMod) hMod = GetModuleHandleW(nullptr);
-            if (!hMod) return false;
-            MODULEINFO modInfo{};
-            if (!GetModuleInformation(GetCurrentProcess(), hMod, &modInfo, sizeof(modInfo)))
-                return false;
-            uint8_t* base = reinterpret_cast<uint8_t*>(hMod);
-            size_t size = modInfo.SizeOfImage;
-            constexpr size_t patLen = sizeof(pat);
-            for (size_t i = 0; i + patLen < size; ++i)
-            {
-                bool match = true;
-                for (size_t j = 0; j < patLen; ++j)
-                {
-                    if (!wild[j] && base[i + j] != pat[j]) { match = false; break; }
-                }
-                if (match)
-                {
-                    m_pfHandleDataTableChanged = reinterpret_cast<FnHandleDataTableChanged>(base + i);
-                    VLOG(STR("[FGKInject] HandleDataTableChanged found at {:p}\n"),
-                         (void*)m_pfHandleDataTableChanged);
-                    return true;
-                }
-            }
-            VLOG(STR("[FGKInject] HandleDataTableChanged AOB pattern NOT found in module\n"));
-            return false;
-        }
-
-        void tickFGKInjectionTest()
-        {
-            // Permanently disabled. Test results from prior runs:
-            //   - AddRowInternal succeeds (row added to underlying DataTable)
-            //   - HandleDataTableChanged is a no-op for FGK wrappers in
-            //     shipping (cache stays at 1132)
-            //   - Vtable probing crashed (one slot was FinishDestroy)
-            //   - AOB pattern is not unique enough - different runs match
-            //     different functions, causing access violations on call
-            // Conclusion documented in datatable-fgk-cache-revisit.md.
-            return;
-            if (m_fgkInjectionTestDone) return;
-            // Need wrapper instance first.
-            std::vector<UObject*> wrappers;
-            findAllOfSafe(STR("MorConstructionsTable"), wrappers);
-            if (wrappers.empty()) return;
-            UObject* wrapper = wrappers[0];
-            if (!wrapper || !isObjectAlive(wrapper)) return;
-
-            // Bind m_dtConstructions to wrapper.TableAsset on demand.
-            // Project memory notes that DataTableUtil bind is lazy; we
-            // wire it here so addRow() works for our test.
-            if (!m_dtConstructions.isBound())
-            {
-                auto* taPtr = wrapper->GetValuePtrByPropertyNameInChain<UObject*>(STR("TableAsset"));
-                UObject* table = taPtr ? *taPtr : nullptr;
-                if (!table || !isObjectAlive(table)) return;
-                if (!m_dtConstructions.bindFromObject(table, STR("DT_Constructions"))) return;
-            }
-
-            // Resolve the engine function via AOB scan.
-            if (!resolveHandleDataTableChanged())
-            {
-                m_fgkInjectionTestDone = true; // don't retry
-                return;
-            }
-
-            m_fgkInjectionTestDone = true;
-            VLOG(STR("[FGKInject] === Begin runtime FGK injection test ===\n"));
-
-            auto* base = reinterpret_cast<uint8_t*>(wrapper);
-            // ActorRowNameLookup TSet header: Data*(8) Num(4) Max(4) ... at wrapper+0x110
-            int32_t numBefore = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
-            VLOG(STR("[FGKInject] ActorRowNameLookup BEFORE: Num={}\n"), numBefore);
-
-            // Get TableAsset (the underlying UDataTable wrapped by MorConstructionsTable).
-            auto* taPtr = wrapper->GetValuePtrByPropertyNameInChain<UObject*>(STR("TableAsset"));
-            UObject* table = taPtr ? *taPtr : nullptr;
-            if (!table || !isObjectAlive(table))
-            {
-                VLOG(STR("[FGKInject] TableAsset missing on wrapper, abort\n"));
-                return;
-            }
-
-            // Add a test row via the existing AddRowInternal vtable call.
-            const wchar_t* testRowName = L"TEST_FGKInjectionRow";
-            uint8_t* newRow = m_dtConstructions.addRow(testRowName);
-            VLOG(STR("[FGKInject] addRow('{}') returned {}\n"),
-                 testRowName, newRow ? STR("non-null") : STR("NULL"));
-
-            // Read count after addRow but BEFORE HandleDataTableChanged.
-            int32_t numAfterAdd = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
-            VLOG(STR("[FGKInject] ActorRowNameLookup AFTER addRow (no notify yet): Num={}\n"), numAfterAdd);
-
-            // Now trigger the engine notification path.
-            try
-            {
-                RC::Unreal::FName fname(testRowName, RC::Unreal::FNAME_Add);
-                VLOG(STR("[FGKInject] Calling HandleDataTableChanged(table={:p}, row='{}')\n"),
-                     (void*)table, testRowName);
-                m_pfHandleDataTableChanged(table, fname);
-                VLOG(STR("[FGKInject] HandleDataTableChanged returned (no crash)\n"));
-            }
-            catch (...)
-            {
-                VLOG(STR("[FGKInject] HandleDataTableChanged threw\n"));
-                return;
-            }
-
-            // Read count after HandleDataTableChanged.
-            int32_t numAfter = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
-            VLOG(STR("[FGKInject] ActorRowNameLookup AFTER HandleDataTableChanged: Num={}\n"), numAfter);
-
-            if (numAfter > numBefore)
-            {
-                VLOG(STR("[FGKInject] *** SUCCESS *** wrapper cache grew from {} to {} - runtime FGK injection works!\n"),
-                     numBefore, numAfter);
-                VLOG(STR("[FGKInject] === End runtime FGK injection test ===\n"));
-                return;
-            }
-
-            // ── Vtable probing was too dangerous (one slot was FinishDestroy
-            //    on a previous run, crashing the engine). Skipped. ──
-            VLOG(STR("[FGKInject] Path #11 (HandleDataTableChanged) was a no-op. Trying TableAsset pointer swap...\n"));
-
-            // ── Path #15 - Proxy TableAsset pointer swap ──
-            VLOG(STR("[FGKInject] Trying Path #15: swap TableAsset pointer to itself (canary test)\n"));
-            // Just write the same pointer back to wrapper.TableAsset.
-            // UFGKDataTableBase.TableAsset is at offset 0x028.
-            UObject** tableAssetSlot = reinterpret_cast<UObject**>(base + 0x028);
-            UObject* originalTable = *tableAssetSlot;
-            // No-op write to the slot. If wrapper subscribes to property
-            // change notifications (rare without UProperty notify), it'd
-            // see the same value; otherwise a no-op.
-            *tableAssetSlot = originalTable;
-            int32_t numAfterCanary = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
-            VLOG(STR("[FGKInject]   canary self-write done; ActorRowNameLookup Num={}\n"), numAfterCanary);
-
-            // Real swap: temporarily nullify TableAsset, read Num,
-            // then restore. If wrapper RE-CACHES on access of its lookup
-            // (rather than at TableAsset assign time), we'd see Num go to
-            // 0 then come back. Risky if game code reads TableAsset in
-            // parallel - gate behind a try/catch.
-            VLOG(STR("[FGKInject]   trying NULL TableAsset swap (briefly)...\n"));
-            try
-            {
-                *tableAssetSlot = nullptr;
-                int32_t numWithNull = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
-                VLOG(STR("[FGKInject]   ActorRowNameLookup with null TableAsset: Num={}\n"), numWithNull);
-                *tableAssetSlot = originalTable;  // restore IMMEDIATELY
-                int32_t numRestored = *reinterpret_cast<int32_t*>(base + 0x110 + 0x08);
-                VLOG(STR("[FGKInject]   restored TableAsset; ActorRowNameLookup Num={}\n"), numRestored);
-                if (numWithNull != numAfterCanary)
-                {
-                    VLOG(STR("[FGKInject] *** wrapper RE-CACHES on TableAsset reads! ***\n"));
-                    VLOG(STR("[FGKInject] *** This means a proxy TableAsset with our row could work ***\n"));
-                }
-                else
-                {
-                    VLOG(STR("[FGKInject]   wrapper cache is statically built; pointer swap doesn't trigger rebuild\n"));
-                }
-            }
-            catch (...)
-            {
-                *tableAssetSlot = originalTable;  // ensure restore on exception
-                VLOG(STR("[FGKInject]   NULL swap raised exception; restored TableAsset\n"));
-            }
-
-            VLOG(STR("[FGKInject] === End runtime FGK injection test ===\n"));
-        }
-
-        bool m_actorLookupDiagDone{false};
-        void tickActorLookupDiag()
-        {
-            if (m_actorLookupDiagDone) return;
-            std::vector<UObject*> wrappers;
-            findAllOfSafe(STR("MorConstructionsTable"), wrappers);
-            if (wrappers.empty()) return;
-            m_actorLookupDiagDone = true;
-
-            VLOG(STR("[ActorLookup] === Begin ActorRowNameLookup dump ===\n"));
-            for (UObject* w : wrappers)
-            {
-                if (!w || !isObjectAlive(w)) continue;
-                auto* base = reinterpret_cast<uint8_t*>(w);
-                struct SparseArrayHdr {
-                    uint8_t* Data;       // 0x00
-                    int32_t  Num;        // 0x08
-                    int32_t  Max;        // 0x0C
-                    int32_t  NumFree;    // 0x10
-                    int32_t  FirstFree;  // 0x14
-                };
-                SparseArrayHdr* sa = reinterpret_cast<SparseArrayHdr*>(base + 0x110);
-                VLOG(STR("[ActorLookup] wrapper @{:p}  Data={:p} Num={} Max={} NumFree={} FirstFree={}\n"),
-                     (void*)w, (void*)sa->Data, sa->Num, sa->Max, sa->NumFree, sa->FirstFree);
-
-                // Hex-dump first 64 bytes of element data + flag bits 0x18..0x40
-                if (sa->Data && sa->Num > 0)
-                {
-                    // First, dump raw bytes 0x18..0x50 (TBitArray + hash table head)
-                    VLOG(STR("[ActorLookup] hdr-rest bytes (0x18..0x50):\n"));
-                    for (int row = 0x18; row < 0x50; row += 16) {
-                        VLOG(STR("[ActorLookup]   +0x{:02x}: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}  {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}\n"),
-                             row,
-                             base[0x110 + row+0], base[0x110 + row+1], base[0x110 + row+2], base[0x110 + row+3],
-                             base[0x110 + row+4], base[0x110 + row+5], base[0x110 + row+6], base[0x110 + row+7],
-                             base[0x110 + row+8], base[0x110 + row+9], base[0x110 + row+10], base[0x110 + row+11],
-                             base[0x110 + row+12], base[0x110 + row+13], base[0x110 + row+14], base[0x110 + row+15]);
-                    }
-                    // Hex-dump first 256 bytes of element data - NO FName
-                    // interpretation. Lets us see actual layout without
-                    // crashing on bad ComparisonIndex values.
-                    VLOG(STR("[ActorLookup] First 256 bytes of element data:\n"));
-                    int dumpBytes = sa->Num < 8 ? sa->Num * 0x40 : 256;
-                    if (dumpBytes > 256) dumpBytes = 256;
-                    for (int row = 0; row < dumpBytes; row += 16) {
-                        if (!isReadableMemory(sa->Data + row, 16)) {
-                            VLOG(STR("[ActorLookup]   +0x{:03x}: <unreadable>\n"), row);
-                            break;
-                        }
-                        uint8_t* p = sa->Data + row;
-                        VLOG(STR("[ActorLookup]   +0x{:03x}: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}  {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}\n"),
-                             row,
-                             p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
-                             p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15]);
-                    }
-                }
-            }
-            VLOG(STR("[ActorLookup] === End ===\n"));
-        }
-
-        bool m_dmDiagDone{false};
-        void tickFGKDiscoveryDiag()
-        {
-            if (m_dmDiagDone) return;
-            std::vector<UObject*> dms;
-            findAllOfSafe(STR("MorDiscoveryManager"), dms);
-            if (dms.empty()) return; // not spawned yet
-            m_dmDiagDone = true;
-            VLOG(STR("[FGKDiag] === DiscoveryManager.Recipes (post-load) ===\n"));
-            VLOG(STR("[FGKDiag] DiscoveryManager instances: {}\n"), (int)dms.size());
-            for (UObject* dm : dms)
-            {
-                if (!dm || !isObjectAlive(dm)) continue;
-                auto* base = reinterpret_cast<uint8_t*>(dm);
-                struct TAH { uint8_t* Data; int32_t Num; int32_t Max; };
-                TAH* recipes = reinterpret_cast<TAH*>(base + 0x0220);
-                VLOG(STR("[FGKDiag] DM @{:p}  Recipes.Data={:p} Num={} Max={}\n"),
-                     (void*)dm, (void*)recipes->Data, recipes->Num, recipes->Max);
-                if (recipes->Data && recipes->Num > 0)
-                {
-                    constexpr int kStride = 0x128;
-                    int n = recipes->Num < 5 ? recipes->Num : 5;
-                    for (int i = 0; i < n; ++i)
-                    {
-                        uint8_t* row = recipes->Data + (size_t)i * kStride;
-                        FName* rn = reinterpret_cast<FName*>(row + 0xD8 + 0x8);
-                        std::wstring rnStr;
-                        try { rnStr = rn->ToString(); } catch (...) {}
-                        VLOG(STR("[FGKDiag]   Recipes[{}] Result.RowName='{}'\n"),
-                             i, rnStr.empty() ? STR("(?)") : rnStr.c_str());
-                    }
-                }
-            }
-            VLOG(STR("[FGKDiag] === End DiscoveryManager diagnostic ===\n"));
-        }
 
 
         // Game thread tick - called once per frame ON the game thread via EngineTick hook.
@@ -2859,253 +2312,6 @@ namespace MoriaMods
                 }
             }
 
-            // v6.22.4 - Pass 1 comment-out: main gamepad dispatch loop.
-            // Top-level gate is m_controllerEnabled which is permanently
-            // false since v6.3.5 removed the F12 checkbox UI. ~230 LOC of
-            // D-pad-toggle / mod-toolbar focus / gamepad nav / dispatchGP.
-            // Pass 2 deletes after user verifies a session of normal play.
-#if 0  // v6.22.4 Pass 1 - main gamepad dispatch loop
-            // Gamepad mod toolbar: D-pad toggle switches between game and mod toolbar control.
-            // OFF = all controller input passes to game normally.
-            // ON  = all controller input intercepted, game gets nothing, we navigate mod toolbars.
-            //
-            // Xbox: D-pad Left = toggle.  PS5: D-pad Right or Touchpad = toggle.
-            // ON controls: LB/RB navigate slots, X/Square select, A/Cross modifier, B/Circle exit.
-            if (m_controllerEnabled && m_characterLoaded)
-            {
-                static bool s_lastRB{}, s_lastLB{}, s_lastX{}, s_lastA{};
-                static bool s_lastToggle{}, s_lastExit{};
-
-                bool hasGamepad = false;
-                bool rb{}, lb{}, xBtn{}, aBtn{}, toggleBtn{}, exitBtn{};
-
-                // --- Read controller state based on profile ---
-                if (m_controllerProfile == ControllerProfile::Xbox)
-                {
-                    XINPUT_STATE xstate{};
-                    if (XInputGetState(0, &xstate) == ERROR_SUCCESS)
-                    {
-                        hasGamepad = true;
-                        rb        = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
-                        lb        = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER)  != 0;
-                        xBtn      = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_X)              != 0;
-                        aBtn      = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_A)              != 0;
-                        toggleBtn = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT)      != 0;
-                        exitBtn   = (xstate.Gamepad.wButtons & XINPUT_GAMEPAD_B)              != 0;
-                    }
-                }
-                else if (m_controllerProfile == ControllerProfile::PS5)
-                {
-                    // PS5: DirectInput - shared access, works with DualSense on Epic Games Store.
-                    // DualSense DirectInput button mapping:
-                    //   [0]=Square [1]=Cross [2]=Circle [3]=Triangle
-                    //   [4]=L1 [5]=R1 [6]=L2 [7]=R2
-                    //   [8]=Create [9]=Options [10]=L3 [11]=R3
-                    //   [12]=PS [13]=Touchpad
-                    m_diPrevState = m_diState;
-                    if (m_diReader.poll(m_diState))
-                    {
-                        hasGamepad = true;
-                        rb        = m_diState.buttons[5];   // R1
-                        lb        = m_diState.buttons[4];   // L1
-                        xBtn      = m_diState.buttons[0];   // Square
-                        aBtn      = m_diState.buttons[1];   // Cross
-                        toggleBtn = m_diState.dpadLeft;      // D-pad Left
-                        exitBtn   = m_diState.buttons[2];   // Circle
-
-                        // Log newly pressed buttons
-                        for (int b = 0; b < 14; b++)
-                        {
-                            if (m_diState.buttons[b] && !m_diPrevState.buttons[b])
-                                VLOG(STR("[MoriaCppMod] [DI-Btn] Button {} pressed\n"), b);
-                        }
-                        if (m_diState.dpadLeft && !m_diPrevState.dpadLeft)
-                            VLOG(STR("[MoriaCppMod] [DI-Btn] D-pad LEFT\n"));
-                        if (m_diState.dpadRight && !m_diPrevState.dpadRight)
-                            VLOG(STR("[MoriaCppMod] [DI-Btn] D-pad RIGHT\n"));
-                        if (m_diState.dpadUp && !m_diPrevState.dpadUp)
-                            VLOG(STR("[MoriaCppMod] [DI-Btn] D-pad UP\n"));
-                        if (m_diState.dpadDown && !m_diPrevState.dpadDown)
-                            VLOG(STR("[MoriaCppMod] [DI-Btn] D-pad DOWN\n"));
-
-                        if (m_diState.connected && !m_diPrevState.connected)
-                            VLOG(STR("[MoriaCppMod] [DI] DirectInput gamepad connected\n"));
-                    }
-                }
-
-                if (hasGamepad)
-                {
-                    // B/Circle also exits mod toolbar mode
-                    if (exitBtn && !s_lastExit && m_modToolbarFocused)
-                        toggleBtn = true;
-
-                    UObject* pawn = m_localPawn ? m_localPawn : getPawn();
-                    auto* pc = m_localPC ? m_localPC : findPlayerController();
-
-                    // --- TOGGLE: D-pad Left enters/exits mod toolbar mode ---
-                    if (toggleBtn && !s_lastToggle)
-                    {
-                        m_modToolbarFocused = !m_modToolbarFocused;
-                        m_gpFlatIndex = 0;
-                        VLOG(STR("[MoriaCppMod] [Gamepad] MOD TOOLBAR {}\n"),
-                             m_modToolbarFocused ? STR("ON") : STR("OFF"));
-
-                        if (m_modToolbarFocused)
-                        {
-                            m_gpDismissCalloutFrame = 3;
-                            // Block pawn input only - NOT the PlayerController.
-                            // PC must stay unblocked so keyboard SHIFT+F keys still work.
-                            if (pawn) setBoolProp(pawn, L"bBlockInput", true);
-                        }
-                        else
-                        {
-                            if (pawn) setBoolProp(pawn, L"bBlockInput", false);
-                        }
-                    }
-
-                    // Delayed ESC to dismiss callout that D-pad Left triggers.
-                    // Only send ESC if we're STILL in mod toolbar mode (not a double-click).
-                    // Double-click (ON→OFF quickly) = leave callout visible.
-                    if (m_gpDismissCalloutFrame > 0)
-                    {
-                        if (!m_modToolbarFocused)
-                        {
-                            // Toggled back OFF before delay expired = double-click, skip ESC
-                            m_gpDismissCalloutFrame = 0;
-                            VLOG(STR("[MoriaCppMod] [Gamepad] Double-click - callout stays\n"));
-                        }
-                        else
-                        {
-                            m_gpDismissCalloutFrame--;
-                            if (m_gpDismissCalloutFrame == 0)
-                            {
-                                keybd_event(VK_ESCAPE, 0, 0, 0);
-                                keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
-                                VLOG(STR("[MoriaCppMod] [Gamepad] Delayed ESC → dismiss callout\n"));
-                            }
-                        }
-                    }
-
-                    // v6.21.21 - all bar widgets gone; gpSlots stays empty.
-                    // Gamepad mod-toolbar nav becomes a no-op when gpCount=0.
-                    struct GPSlot { int tbId; int slot; };
-                    GPSlot gpSlots[1]{};  // sized 1 to avoid zero-array warning
-                    int gpCount = 0;
-                    (void)gpSlots; // suppress unused warning
-
-                    // Helper: get state image for highlighting (always nullptr now)
-                    auto getGPImg = [](int /*tbId*/, int /*slot*/) -> UObject* {
-                        return nullptr;
-                    };
-
-                    auto setHL = [this, &getGPImg](int tbId, int slot, bool on) {
-                        UObject* img = getGPImg(tbId, slot);
-                        if (img && isObjectAlive(img))
-                            umgSetImageColor(img, on ? 1.0f : 1.0f, on ? 0.85f : 1.0f, on ? 0.3f : 1.0f, 1.0f);
-                    };
-
-                    // modifier=false → normal action (A button)
-                    // modifier=true → shift/modifier action (B button)
-                    auto dispatchGP = [this](int tbId, int slot, bool modifier) {
-                        switch (tbId) {
-                        case 0:  // QB: X = activate recipe, A = cancel build (ESC)
-                            if (modifier)
-                            {
-                                // A button: cancel current build placement (like ESC)
-                                keybd_event(VK_ESCAPE, 0, 0, 0);
-                                keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
-                                VLOG(STR("[MoriaCppMod] [Gamepad] QB slot {} - cancel build (ESC)\n"), slot);
-                            }
-                            else if (slot >= 0 && slot < 8 && m_handleResolvePhase == HandleResolvePhase::Done)
-                            {
-                                ULONGLONG t = GetTickCount64();
-                                if (t - m_lastQBSelectTime >= 500) quickBuildSlot(slot);
-                            }
-                            break;
-                        case 1:  // MC: dispatchMcSlot already checks isModifierDown()
-                            // Temporarily force modifier state for gamepad B button
-                            if (slot >= 0 && slot < MC_SLOTS)
-                            {
-                                if (modifier)
-                                {
-                                    // Simulate SHIFT held by temporarily pressing it via keybd_event
-                                    keybd_event(VK_SHIFT, 0, 0, 0);
-                                    dispatchMcSlot(slot);
-                                    keybd_event(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0);
-                                }
-                                else
-                                    dispatchMcSlot(slot);
-                            }
-                            break;
-                        // case 2 (AB toggle) removed v6.21.21.
-                        }
-                    };
-
-                    // Helper: disable game action bar input (HitTestInvisible) and hide nav icons
-                    // --- Highlight first slot on enter ---
-                    if (m_modToolbarFocused && gpCount > 0)
-                    {
-                        // Ensure highlight is on current slot (handles fresh entry)
-                        setHL(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, true);
-                    }
-
-                    // --- Clear highlight on exit ---
-                    if (!m_modToolbarFocused && gpCount > 0)
-                    {
-                        // Clear any stale highlight
-                        for (int i = 0; i < gpCount; i++)
-                            setHL(gpSlots[i].tbId, gpSlots[i].slot, false);
-                    }
-
-                    // --- Navigation + action (only when mod toolbar is ON) ---
-                    if (m_modToolbarFocused && gpCount > 0)
-                    {
-                        if (rb && !s_lastRB)
-                        {
-                            setHL(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, false);
-                            m_gpFlatIndex = (m_gpFlatIndex + 1) % gpCount;
-                            setHL(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, true);
-                            VLOG(STR("[MoriaCppMod] [Gamepad] RB → slot {}\n"), m_gpFlatIndex);
-                        }
-
-                        if (lb && !s_lastLB)
-                        {
-                            setHL(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, false);
-                            m_gpFlatIndex = (m_gpFlatIndex - 1 + gpCount) % gpCount;
-                            setHL(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, true);
-                            VLOG(STR("[MoriaCppMod] [Gamepad] LB → slot {}\n"), m_gpFlatIndex);
-                        }
-
-                        // Diagnostic: log raw button state every 60 frames while in mod mode
-                        static int s_diagFrame = 0;
-                        if (++s_diagFrame % 60 == 0)
-                            VLOG(STR("[MoriaCppMod] [GP-Diag] rb={} lb={} x={} a={} toggle={} exit={}\n"),
-                                 rb?1:0, lb?1:0, xBtn?1:0, aBtn?1:0, toggleBtn?1:0, exitBtn?1:0);
-
-                        static bool s_lastX{};
-                        if (xBtn && !s_lastX)
-                        {
-                            VLOG(STR("[MoriaCppMod] [Gamepad] X → tb={} s={}\n"),
-                                 gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot);
-                            dispatchGP(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, false);
-                        }
-                        if (aBtn && !s_lastA)
-                        {
-                            VLOG(STR("[MoriaCppMod] [Gamepad] A(mod) → tb={} s={}\n"),
-                                 gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot);
-                            dispatchGP(gpSlots[m_gpFlatIndex].tbId, gpSlots[m_gpFlatIndex].slot, true);
-                        }
-                        s_lastX = xBtn;
-                    }
-
-                    s_lastRB = rb;
-                    s_lastLB = lb;
-                    s_lastA = aBtn;
-                    s_lastToggle = toggleBtn;
-                    s_lastExit = exitBtn;
-                }
-            }
-#endif  // v6.22.4 Pass 1 - end main gamepad dispatch loop
 
             if (m_ftVisible && m_fontTestWidget)
             {
@@ -3864,28 +3070,6 @@ namespace MoriaMods
             tickSettingsUI();     // Settings screen take-over (mod keybinds in keymap tab)
             tickReapplyModifierPrefixes(); // keep "L-SHIFT + F1" text on SET rows alive
             tickCaptureSpecialKeys();      // capture DEL/INS/HOME/etc the BP rejects
-            // v6.22.5 - Pass 1 comment-out: tickReapplyCheatsContext is a
-            // 100ms tick that keeps the Cheats-tab visibility swap stable.
-            // m_cheatsTabActive has been permanently false since the
-            // Option-C merge (mod-tab-in-settings-status.md), and user
-            // confirmed 2026-05-08 the tab is never coming back. The whole
-            // tick body is dead-on-flag; gating the call eliminates the
-            // 100ms wakeup. Pass 2 deletes tickReapplyCheatsContext +
-            // applyTabContextVisibility + applyGameplayTabContext +
-            // walkAndUpdateNavButtonHighlight + m_cheatsTabActive field.
-            // tickReapplyCheatsContext();    // keep Cheats-tab visibility swap stable
-            // v6.22.2 - Pass 1 comment-out (per code-review-MASTER.md
-            // iteration 2). FGK runtime injection ABANDONED per
-            // closed-features-2026-05-04.md. The three diagnostic ticks
-            // below are post-investigation zombie code (~250 LOC of dead
-            // bodies reachable from one frame entry). Pass 2 (separate
-            // later iteration, after user verifies no boot-time path
-            // notices their absence) deletes the bodies, the
-            // m_pfHandleDataTableChanged field, resolveHandleDataTableChanged,
-            // and dumpFGKWrapperDiagnostic.
-            // tickFGKDiscoveryDiag();        // one-shot probe of AMorDiscoveryManager.Recipes
-            // tickActorLookupDiag();         // Path #5 ActorRowNameLookup TMap byte-layout dump
-            // tickFGKInjectionTest();        // runtime AddRow + HandleDataTableChanged test
             tickSaveAfterMarkRead();       // v6.21.1 - Phase 5 lore persistence
             tickPendingCraftingMark();     // v6.21.1 - fire MarkAllAsRead when crafting screen opens
             tickTargetInfoDrag();          // v6.21.1 - inspect window drag + close + auto-hide
@@ -3940,12 +3124,6 @@ namespace MoriaMods
             {
                 pollRightClickDeleteSessionHistory();
             }
-            // v6.22.1 - Pass 1 comment-out (per code-review-MASTER.md
-            // iteration 1). The body at moria_session_history.inl:1062-1098
-            // is unreachable past its line-1 `return;` and references
-            // already-dead m_pendingDeleteConfirmed. If user verifies no
-            // regression, Pass 2 deletes the function + field.
-            // tickSessionHistoryConfirm();
             tickSessionHistoryDeferredCapture();
 
             // Esc / close: native flow handles all dismissal - we only modify

@@ -785,7 +785,8 @@
         UClass* m_jwCls_GenericPopup{nullptr};
         FWeakObjectPtr m_pendingDeletePopup;
         size_t m_pendingDeleteIndex{(size_t)-1};
-        bool   m_pendingDeleteConfirmed{false};  // set by ProcessEvent hook on ConfirmButton click
+        // (m_pendingDeleteConfirmed removed in v6.23.0 - was only read by the
+        //  obsolete tickSessionHistoryConfirm polling tick, also deleted.)
 
         // Deferred manual-join capture. The Button_DirectJoinIP / Button_JoinLocal
         // BndEvt fires from inside the global ProcessEvent post-hook; reading
@@ -985,7 +986,6 @@
 
             m_pendingDeletePopup = FWeakObjectPtr(popup);
             m_pendingDeleteIndex = entryIndex;
-            m_pendingDeleteConfirmed = false;
             VLOG(STR("[SessionHistory] confirm popup shown for entry index {}\n"), (int)entryIndex);
             return popup;
         }
@@ -1050,52 +1050,12 @@
 
             m_pendingDeletePopup     = FWeakObjectPtr();
             m_pendingDeleteIndex     = (size_t)-1;
-            m_pendingDeleteConfirmed = false;
         }
 
-        // tickSessionHistoryConfirm — was used to detect popup-gone via
-        // IsInViewport polling. Now obsolete: we act immediately on the
-        // ConfirmButton / CancelButton BndEvt fires inside onAnyMenuButtonClicked.
-        // This polling was actually spamming ProcessEvent and may have been
-        // blocking the button click events. Kept the function as a no-op so
-        // existing callers don't break.
-        void tickSessionHistoryConfirm()
-        {
-            return;
-            // unreachable below — preserved temporarily for diff readability
-            UObject* popup = m_pendingDeletePopup.Get();
-            if (!popup || !isObjectAlive(popup)) return;
-            bool stillInViewport = false;
-            if (stillInViewport) return;
-
-            // Popup gone — m_pendingDeleteConfirmed was set by the global
-            // ProcessEvent hook on `OnMenuButtonClicked` if the user clicked
-            // the ConfirmButton specifically.
-            if (m_pendingDeleteConfirmed && m_pendingDeleteIndex < m_sessionHistory.size())
-            {
-                size_t idx = m_pendingDeleteIndex;
-                std::string nameCopy = m_sessionHistory[idx].name;
-                bool ok = removeSessionHistoryAt(idx);
-                VLOG(STR("[SessionHistory] DELETED entry index {} ('{}'), removeOk={}\n"),
-                     (int)idx,
-                     utf8ToWide(nameCopy).c_str(),
-                     ok ? 1 : 0);
-
-                // Re-inject rows so the live JoinWorld view reflects the
-                // deletion immediately.
-                UObject* jw = m_modJoinWorldWidget.Get();
-                if (jw && isObjectAlive(jw)) injectSessionHistoryRows(jw);
-            }
-            else
-            {
-                VLOG(STR("[SessionHistory] confirm popup closed without confirm — keeping entry {}\n"),
-                     (int)m_pendingDeleteIndex);
-            }
-
-            m_pendingDeletePopup = FWeakObjectPtr();
-            m_pendingDeleteIndex = (size_t)-1;
-            m_pendingDeleteConfirmed = false;
-        }
+        // (tickSessionHistoryConfirm + m_pendingDeleteConfirmed removed in
+        //  v6.23.0. The obsolete polling-based confirm-detection was already
+        //  no-op since we act immediately on the ConfirmButton / CancelButton
+        //  BndEvt fires inside onAnyMenuButtonClicked.)
 
         // Mouse polling: right-click on a row triggers the confirm popup.
         // Called from main tick when JoinWorld duplicate is up.
