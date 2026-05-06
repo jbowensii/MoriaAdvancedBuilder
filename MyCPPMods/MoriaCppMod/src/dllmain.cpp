@@ -1,4 +1,4 @@
-// MoriaCppMod v6.22.2 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.22.3 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -414,9 +414,15 @@ namespace MoriaMods
         enum class ControllerProfile : uint8_t { None = 0, Xbox = 1, PS5 = 2 };
         bool m_controllerEnabled{false};          // F12 checkbox: controller input active
         ControllerProfile m_controllerProfile{ControllerProfile::Xbox};  // Xbox or PS5
+        // v6.22.3 - Pass 1 comment-out (matches gate in moria_dualsense.h).
+        // DualSenseReader is dead - only DIGamepadReader/m_diReader is used
+        // per feedback_ps5_controller_input.md (DirectInput is the only path
+        // that works on Epic Games Store). Pass 2 deletes both blocks.
+#if 0  // v6.22.3 Pass 1
         DualSenseReader m_dsReader;               // PS5 DualSense raw HID reader (fallback)
         DSState m_dsState{};
         DSState m_dsPrevState{};
+#endif
         DIGamepadReader m_diReader;               // DirectInput gamepad reader (works for ALL controllers)
         DIGamepadState m_diState{};               // current DirectInput state
         DIGamepadState m_diPrevState{};           // previous frame
@@ -672,14 +678,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.22.2");
+            ModVersion = STR("6.22.3");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.2\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.22.3\n"));
         }
 
         ~MoriaCppMod() override
@@ -720,7 +726,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.2 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.22.3 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -1744,7 +1750,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.22.2: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.22.3: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread

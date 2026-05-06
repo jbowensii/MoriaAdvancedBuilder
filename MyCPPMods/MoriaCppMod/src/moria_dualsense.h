@@ -102,6 +102,14 @@ struct DSState
     DSConnection connType{DSConnection::None};
 };
 
+// v6.22.3 - Pass 1 comment-out (per code-review-MASTER.md iteration 3,
+// split for safety into 4 sub-iterations - this one is DualSenseReader only).
+// Per feedback_ps5_controller_input.md, only the DirectInput-based
+// DIGamepadReader (defined below at line ~373) actually works on Epic
+// Games Store. DualSenseReader's raw HID path was never reached in
+// production and Grep confirms zero call sites past the dllmain.cpp:417
+// field declaration (also gated below). Pass 2 deletes both blocks.
+#if 0  // v6.22.3 Pass 1 - DualSenseReader is dead code. Pass 2 deletes.
 class DualSenseReader
 {
     HANDLE       m_handle{INVALID_HANDLE_VALUE};
@@ -368,6 +376,7 @@ public:
     int dataOffset() const { return m_dataOffset; }
     const uint8_t* rawBuffer() const { return m_buffer; }
 };
+#endif  // v6.22.3 Pass 1 - end DualSenseReader gate
 
 
 // ---- DirectInput-based gamepad reader ----
