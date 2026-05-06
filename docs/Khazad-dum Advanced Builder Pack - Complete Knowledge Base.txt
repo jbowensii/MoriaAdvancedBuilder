@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.26
+Document Version 7.0.0
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3802,6 +3802,43 @@ over 9 iterations:
                * generic createImageWithBrush helper
                * keybind label rect (76x44)
              No behavior change in the normal case.
+    v7.0.0:  RELEASE - First major version since v6.7.0 (May 2026).
+             124 commits since the last GitHub release. See
+             RELEASE_NOTES_v7.0.0.md for the full changelog.
+
+             Headline features:
+               * Settings UI take-over (Option-C merge: keymap +
+                 Mod Game Options merged into native Gameplay tab)
+               * Native pause-menu mod block (UNLOCK / READ ALL /
+                 CLEAR BUFFS)
+               * New Building Bar (top-of-screen, native-styled,
+                 replaces MC + AB + OLD UMG QuickBuild bars)
+               * Native character rename modal hijack (in-game)
+               * Save Game keybind (F12 default)
+               * Reposition HUD mode (F10 toggle)
+               * Rotation display 4-cell pyramid widget
+               * Cheats tab + Tweaks tab persisted in INI
+
+             Reliability:
+               * Q3 reflection migration of 3 game-data structs +
+                 engine-frozen sanity checks for 2 engine structs
+               * Validation audit pass (3 drift fixes + brush-write
+                 padding + DataTableUtil unbind on world transition)
+               * Slate Prepass AV root-cause fix (rotation widget
+                 pre-spawn at character-load)
+               * INS replenish multi-stack fix
+               * Multiplayer reliability: ServerDebugSetItem,
+                 server-fly sweep, dedicated server detection
+
+             Cleanup (since v6.7.0):
+               * ~1,553 LOC dead code hard-deleted (v6.23.0)
+               * ~750 LOC of stale comments removed (comment audit)
+               * 6 dev diagnostics gated behind s_verbose
+               * Legacy MC bar, AB bar, OLD UMG QuickBuild bar all gone
+
+             Signed installer published as part of the v7.0.0
+             GitHub release. KB Document Version 6.23.26 -> 7.0.0.
+
     v6.23.26: Comment audit chunk 8 - medium/small REWRITEs.
              Concludes the 9-iteration comment audit (chunks 1-8 covering
              4 audit files, ~250 individual edits, ~750 LOC removed).

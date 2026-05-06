@@ -588,14 +588,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.23.26");
+            ModVersion = STR("7.0.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.26\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v7.0.0\n"));
         }
 
         ~MoriaCppMod() override
@@ -635,7 +635,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.26 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v7.0.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
