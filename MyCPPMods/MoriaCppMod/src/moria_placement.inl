@@ -161,9 +161,8 @@
         }
 
 
-        // Cancel the active placement ghost via synthetic ESC key
-        // ESC cancels the ghost when build menu is open (game's own input handler)
-        // NOTE: CancelTargeting() ProcessEvent was too aggressive — destroyed GATA mid-tick
+        // Synthesizing ESC defers cancellation to the game's own input handler.
+        // Calling CancelTargeting() via ProcessEvent destroys GATA mid-tick.
         bool cancelPlacementViaAPI()
         {
             QBLOG(STR("[MoriaCppMod] [QB] Cancelling ghost via keybd_event(VK_ESCAPE)\n"));
@@ -239,11 +238,6 @@
             m_snapEnabled = true;
             VLOG(STR("[MoriaCppMod] [Snap] Snap auto-restored to ON after placement (GATA will spawn fresh)\n"));
         }
-
-
-        // setMcSlotState removed entirely with the MC bar widget.
-        // Function had been a no-op since v6.10.0 (m_mcBarWidget null check
-        // returned early on every call). Callers in this file simplified.
 
 
         void onGhostAppeared()
@@ -513,8 +507,6 @@
             if (!reticle) return;
             if (!resolveReticleOffsets(reticle)) return;
 
-            // Get root component — needed to verify reticle actor structure
-            // All CopiedComponents are siblings under this root SceneComponent.
             // Root has world position + yaw set by GATA; children's RelLoc/RelRot are in root space.
             auto* rootProp = reticle->GetPropertyByNameInChain(STR("RootComponent"));
             if (!rootProp) return;
@@ -780,7 +772,6 @@
                 break;
             }
         }
-        // ---- End Pitch/Roll Experiment ----
 
 
         void onGhostDisappeared()
@@ -808,7 +799,6 @@
             UObject* buildHUD = getCachedBuildHUD();
 
 
-            // FindAllOf the specific build item class — much smaller set than all UserWidgets
             std::vector<UObject*> widgets;
             findAllOfSafe(STR("UI_WBP_Build_Item_Medium_C"), widgets);
 
@@ -959,15 +949,6 @@
             }
             return true;
         }
-
-        // getActiveBuildHUD removed. Was an unintentional
-        // duplicate of getCachedBuildHUD that lacked caching + the
-        // findWidgetByClass(UI_WBP_BuildHUDv2_C) fallback. As a result
-        // GetActiveBuildingWidget returning null (its normal state when
-        // placement is between ghosts) caused DIRECT paths to skip every
-        // F# and SHIFT+] press, falling through to the slow widget-walk
-        // state machine. v6.7.0 was reliable because it used the cached
-        // helper. Now both DIRECT paths route through getCachedBuildHUD.
 
         bool trySelectRecipeByHandle(UObject* buildHUD, const uint8_t* handleData)
         {
@@ -1457,7 +1438,6 @@
             {
                 if (m_showSettleTime > 0)
                 {
-                    // OnAfterShow fired — wait 350ms for animations to settle
                     ULONGLONG settleElapsed = now - m_showSettleTime;
                     if (settleElapsed >= 500)
                     {
@@ -1468,7 +1448,6 @@
                 }
                 else if (isBuildTabShowing())
                 {
-                    // Fallback — OnAfterShow didn't fire but tab is visible
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] SM: tab showing (fallback, {}ms)\n"), elapsed);
                     m_buildMenuPrimed = true;
                     m_showSettleTime = now; // start settle from now
@@ -1490,7 +1469,6 @@
                 {
                     s_overlay.totalRotation = 0;
                     s_overlay.needsUpdate = true;
-                    // updateMcRotationLabel call removed (no-op fn deleted)
                     m_pendingQuickBuildSlot = -1;
                     m_isTargetBuild = false;
                     m_qbPhase = PlacePhase::Idle;

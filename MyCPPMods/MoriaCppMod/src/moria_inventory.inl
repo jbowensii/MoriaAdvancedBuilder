@@ -338,7 +338,6 @@
 
                 VLOG(STR("[MoriaCppMod] [InvAudit] ===== Inventory: {} items =====\n"), arrNum);
 
-                // First pass: log all items (verbose only), collect container info
                 int numContainers = 0;
                 for (int32_t i = 0; i < arrNum; i++)
                 {
@@ -362,7 +361,6 @@
                     }
                 }
 
-                // Second pass: find and remove orphaned items not in any container
                 for (int32_t i = 0; i < arrNum; i++)
                 {
                     uint8_t* entry = arrData + i * stride;

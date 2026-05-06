@@ -32,11 +32,6 @@
 // Asset paths centralised in moria_join_assets.h — included at top of
 // dllmain.cpp (cannot be #included from inside a class scope).
 //
-// Most of the helpers below (jw_setCanvasSlot, jw_addToCanvas, jw_setSizeBoxOverride,
-// font-capture buffers, m_jwTexBtn*) are LEGACY from the v6.6.0 spawn-duplicate
-// path and are no longer referenced. They will be swept in a v6.7.1 cleanup
-// commit so the v6.7.0 feature diff stays reviewable.
-//
 // See `cpp-mod/docs/joinworld-ui-takeover.md` for the full methodology.
 
         // ---------- State ----------
@@ -995,6 +990,3 @@
             }
         }
 
-        // (legacy buildModJoinWorldPlaceholder removed — superseded by
-        //  applyModificationsToJoinWorld which modifies the native widget
-        //  in place. See onNativeJoinWorldShown / tickJoinWorldUI above.)

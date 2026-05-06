@@ -1119,11 +1119,6 @@
             m_pendingDeleteIndex     = (size_t)-1;
         }
 
-        // (tickSessionHistoryConfirm + m_pendingDeleteConfirmed removed in
-        //  v6.23.0. The obsolete polling-based confirm-detection was already
-        //  no-op since we act immediately on the ConfirmButton / CancelButton
-        //  BndEvt fires inside onAnyMenuButtonClicked.)
-
         // Mouse polling: right-click on a row triggers the confirm popup.
         // Called from main tick when JoinWorld duplicate is up.
         // Strategy: use UMG's IsHovered() UFunction on each injected row

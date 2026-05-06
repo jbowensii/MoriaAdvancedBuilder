@@ -207,7 +207,6 @@
         }
 
 
-        // ── Bubble tracking ──────────────────────────────────────────
         void findWorldLayout()
         {
             if (m_worldLayout) return;
@@ -257,7 +256,7 @@
             {
                 m_currentBubbleName = newName;
                 m_currentBubbleId = newId;
-                m_currentBubble = bubble;  // v6.4.2 cache for local-coord math
+                m_currentBubble = bubble;
                 VLOG(STR("[MoriaCppMod] [Bubble] Entered: '{}' (id={})\n"),
                      newName, std::wstring(newId.begin(), newId.end()));
                 return true;
@@ -598,13 +597,12 @@
                 std::string meshId = componentNameToMeshId(std::wstring(comp->GetName()));
                 bool isTypeRule = m_typeRemovals.count(meshId) > 0;
 
-                // Diagnostic: log first 20 unique mesh IDs found during replay
+                if (s_verbose)
                 {
                     static std::set<std::string> s_loggedMeshIds;
                     if (s_loggedMeshIds.size() < 20 && s_loggedMeshIds.find(meshId) == s_loggedMeshIds.end())
                     {
                         s_loggedMeshIds.insert(meshId);
-                        // Check if this meshId exists in any saved removal
                         bool inSaved = false;
                         for (auto& sr : m_savedRemovals)
                             if (sr.meshName == meshId) { inSaved = true; break; }
@@ -1132,7 +1130,6 @@
             {
                 VLOG(STR("[MoriaCppMod] No hit\n"));
                 if (showUI) showErrorBox(Loc::get("msg.actor_dump_no_hit"));
-                // clear stale buffer so SHIFT+] caller sees the no-hit state.
                 m_lastTargetBuildable = false;
                 m_targetBuildName.clear();
                 m_targetBuildRecipeRef.clear();
@@ -1271,9 +1268,8 @@
             std::wstring dtDisplayName;
             std::wstring dtRowName;
             {
-                // skip the actor_dump.txt write entirely on
-                // showUI=false (SHIFT+] auto-inspect - file write is pure
-                // diagnostic, not needed for build dispatch).
+                // actor_dump.txt is purely diagnostic; skip the write
+                // when called with showUI=false (SHIFT+] auto-inspect).
                 std::wofstream dumpFile;
                 if (showUI) dumpFile.open(modPath("Mods/MoriaCppMod/actor_dump.txt"), std::ios::trunc);
                 bool fOK = dumpFile.is_open();

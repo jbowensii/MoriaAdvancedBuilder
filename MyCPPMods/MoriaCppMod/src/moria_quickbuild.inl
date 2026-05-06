@@ -131,8 +131,7 @@
             file << "PitchRotate = " << (m_pitchRotateEnabled ? "true" : "false") << "\n";
             file << "RollRotate = " << (m_rollRotateEnabled ? "true" : "false") << "\n";
 
-            // v6.4.4+ — persist Cheats tab state (Peace Mode + buff toggles).
-            // Only "true" entries are written so the INI stays tidy; absent keys = false.
+            // [Cheats]: only "true" entries written; absent keys = false.
             {
                 file << "\n[Cheats]\n";
                 file << "PeaceMode = " << (m_peaceModeEnabled ? "true" : "false") << "\n";
@@ -148,7 +147,7 @@
                 }
             }
 
-            // v6.4.4+ — persist Tweaks tab cycle indices. Only non-default (index > 0) are written.
+            // [Tweaks]: only non-default (index > 0) entries are written.
             {
                 file << "\n[Tweaks]\n";
                 int nTweaks = 0;
@@ -208,7 +207,7 @@
                     {
                         if (strEqualCI(section, "KeybindingsSet"))
                         {
-                            // v6.8.0 CP3 — parse "QuickBuild<N>Set = [SHIFT+|CTRL+|ALT+]<key>"
+                            // "QuickBuild<N>Set = [SHIFT+|CTRL+|ALT+]<key>"
                             std::string k = kv->key;
                             if (k.size() > 11 && strEqualCI(k.substr(0, 10), "QuickBuild")
                                 && strEqualCI(k.substr(k.size() - 3), "Set"))
@@ -323,9 +322,8 @@
                         }
                         else if (strEqualCI(section, "Cheats"))
                         {
-                            // v6.4.4+ Cheats tab persistence. Keys:
-                            //   PeaceMode = true/false
-                            //   Buff_<sanitizedLabel> = true   (only "true" entries present)
+                            // Keys: PeaceMode = true/false
+                            //       Buff_<sanitizedLabel> = true (only "true" entries present)
                             if (strEqualCI(kv->key, "PeaceMode"))
                             {
                                 m_pendingPeaceMode = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
@@ -354,9 +352,8 @@
                         }
                         else if (strEqualCI(section, "Tweaks"))
                         {
-                            // v6.4.4+ Tweaks tab persistence. Keys:
-                            //   <sanitizedLabel> = <cycleIndex>
-                            // (index 0 = DEFAULT and is never written)
+                            // Keys: <sanitizedLabel> = <cycleIndex>
+                            //       (index 0 = DEFAULT and is never written)
                             int nTweaks = 0;
                             const TweakEntry* tweaks = tweakEntries(nTweaks);
                             if ((int)m_tweakCurrentIdx.size() != nTweaks) m_tweakCurrentIdx.assign(nTweaks, 0);

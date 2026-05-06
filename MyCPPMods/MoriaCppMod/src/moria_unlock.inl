@@ -262,8 +262,8 @@
                  totalRowsTouched, totalTablesTouched);
         }
 
-        // v6.4.1 SpecialNoCost — set all FMorRecipeDefinition-derived DT rows to zero material cost
-        // (DefaultRequiredMaterials[*].Count = 0) and set bAllowRefunds = true on construction recipes.
+        // Zero DefaultRequiredMaterials[*].Count and force bAllowRefunds=true
+        // on every FMorRecipeDefinition-derived DataTable row.
         void applyNoCostRecipe(bool useDefault)
         {
             std::vector<UObject*> dts;
@@ -370,7 +370,7 @@
                  totalRows, totalTables);
         }
 
-        // v6.4.1 SpecialInstantCraft — set CraftTimeSeconds to 0.1s on all FMorItemRecipeDefinition rows.
+        // Set CraftTimeSeconds=0.1 on every FMorItemRecipeDefinition DataTable row.
         void applyInstantCraft(bool useDefault)
         {
             std::vector<UObject*> dts;
@@ -463,7 +463,7 @@
             }
 
             updateTweakRowUI(idx);
-            saveConfig();  // v6.4.4+ — persist to MoriaCppMod.ini
+            saveConfig();
         }
 
         // Cache: short GE name → UClass*. Populated from enumerating loaded GE Class Default Objects.
@@ -643,7 +643,7 @@
                 VLOG(STR("[Cheats] '{}' OFF\n"), all[idx].label);
             }
             updateBuffRowUI(idx);
-            saveConfig();  // v6.4.4+ — persist to MoriaCppMod.ini
+            saveConfig();
         }
 
         // v6.4.4+ — re-apply any buffs/tweaks/peace-mode that were loaded from INI.
@@ -757,7 +757,7 @@
             }
             VLOG(STR("[Cheats] Clear All Buffs — all toggles reset\n"));
             showOnScreen(L"All buffs cleared", 3.0f, 0.3f, 1.0f, 0.3f);
-            saveConfig();  // v6.4.4+ — persist to MoriaCppMod.ini
+            saveConfig();
         }
 
 
@@ -1166,7 +1166,7 @@
             }
 
             updateFtPeaceMode();
-            saveConfig();  // v6.4.4+ — persist to MoriaCppMod.ini
+            saveConfig();
         }
 
         // v6.4.1 Phase 2: mark ALL categories as read — lore, goals, tutorials, tips.
@@ -1409,7 +1409,6 @@
             if (now - m_pendingCraftingMarkLastPollMs < 1000) return;
             m_pendingCraftingMarkLastPollMs = now;
 
-            // bulk MarkAllAsRead on live screens (BndEvt approach reverted).
             int marked = 0;
             {
                 std::vector<UObject*> screens;
