@@ -1,4 +1,4 @@
-// MoriaCppMod v6.22.1 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.22.2 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -672,14 +672,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.22.1");
+            ModVersion = STR("6.22.2");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.1\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.22.2\n"));
         }
 
         ~MoriaCppMod() override
@@ -720,7 +720,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.1 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.22.2 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -1744,7 +1744,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.22.1: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.22.2: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -3821,9 +3821,18 @@ namespace MoriaMods
             tickReapplyModifierPrefixes(); // keep "L-SHIFT + F1" text on SET rows alive
             tickCaptureSpecialKeys();      // capture DEL/INS/HOME/etc the BP rejects
             tickReapplyCheatsContext();    // keep Cheats-tab visibility swap stable
-            tickFGKDiscoveryDiag();        // one-shot probe of AMorDiscoveryManager.Recipes
-            tickActorLookupDiag();         // Path #5 ActorRowNameLookup TMap byte-layout dump
-            tickFGKInjectionTest();        // runtime AddRow + HandleDataTableChanged test
+            // v6.22.2 - Pass 1 comment-out (per code-review-MASTER.md
+            // iteration 2). FGK runtime injection ABANDONED per
+            // closed-features-2026-05-04.md. The three diagnostic ticks
+            // below are post-investigation zombie code (~250 LOC of dead
+            // bodies reachable from one frame entry). Pass 2 (separate
+            // later iteration, after user verifies no boot-time path
+            // notices their absence) deletes the bodies, the
+            // m_pfHandleDataTableChanged field, resolveHandleDataTableChanged,
+            // and dumpFGKWrapperDiagnostic.
+            // tickFGKDiscoveryDiag();        // one-shot probe of AMorDiscoveryManager.Recipes
+            // tickActorLookupDiag();         // Path #5 ActorRowNameLookup TMap byte-layout dump
+            // tickFGKInjectionTest();        // runtime AddRow + HandleDataTableChanged test
             tickSaveAfterMarkRead();       // v6.21.1 - Phase 5 lore persistence
             tickPendingCraftingMark();     // v6.21.1 - fire MarkAllAsRead when crafting screen opens
             tickTargetInfoDrag();          // v6.21.1 - inspect window drag + close + auto-hide
