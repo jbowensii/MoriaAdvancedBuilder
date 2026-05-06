@@ -4394,135 +4394,183 @@
             if (m_ftRenameVisible) { VLOG(STR("[MoriaCppMod] [Rename] BLOCKED: already visible\n")); return; }
             if (!m_characterLoaded) { showErrorBox(Loc::get("err.character_not_loaded")); return; }
 
-            // 1. Resolve modal class. v6.21.21 — finally have the correct
-            //    path from the user's Moria-Replication FModel extraction:
-            //      Moria/Content/Character/Shared/CharacterCreator/Widgets/
-            //      WBP_CharacterCreatorRenameDialog.uasset
-            //    UE4 path is /Game/<rest> (Moria/Content -> /Game). The
-            //    class WBP_CharacterCreatorRenameDialog_C is a Blueprint
-            //    subclass of UMorCharacterCreatorRenameDialog (native
-            //    parent in Moria/Public/MorCharacterCreatorRenameDialog.h)
-            //    which provides the RenameBox EditableTextBox, MaxNameLength,
-            //    and CheckNewCharacterName() validation hook. The BP adds
-            //    ConfirmButton (WBP_LaunchScreenButton_C), RandomNameButton
-            //    (WBP_FrontEndButton_C), CharacterNameText (FText) and the
-            //    ConfirmName() UFunction that triggers OnRenameDialogButtonClicked.
-            UClass* modalCls = m_renameModalCls.Get() ? static_cast<UClass*>(m_renameModalCls.Get()) : nullptr;
-            if (!modalCls)
+            // v6.21.23 - REWRITTEN. Earlier v6.21.21 spawned the in-game
+            // WBP_CharacterCreatorRenameDialog_C directly. That worked
+            // visually but the BP expects the main-menu screen-stack
+            // context (OnBeforeShow / OnCustomFocusSet / OnActionCalled
+            // "ui.back" → screen pop). Calling those in-world locks the
+            // game while the BP waits for a parent screen that never
+            // resolves.
+            //
+            // New approach: borrow the proven WBP_UI_GenericPopup_C
+            // chrome (same template the trash dialog and session-history
+            // delete confirm use successfully — Title bar, ConfirmButton,
+            // CancelButton, BackgroundBlur). GenericPopup has no native
+            // text input, so we spawn a separate small UserWidget hosting
+            // a centered UEditableTextBox at slightly higher ZOrder. The
+            // popup's existing buttons hook into our m_gameOptButtons
+            // pipeline; confirmRenameDialog reads from our injected
+            // EditableTextBox.
+
+            // 1. Resolve GenericPopup_C - proven loadable.
+            UClass* popupCls = nullptr;
+            try {
+                popupCls = UObjectGlobals::StaticFindObject<UClass*>(
+                    nullptr, nullptr,
+                    STR("/Game/UI/PopUp/WBP_UI_GenericPopup.WBP_UI_GenericPopup_C"));
+            } catch (...) {}
+            if (!popupCls)
             {
-                constexpr const wchar_t* kClassPath =
-                    STR("/Game/Character/Shared/CharacterCreator/Widgets/WBP_CharacterCreatorRenameDialog.WBP_CharacterCreatorRenameDialog_C");
-                constexpr const wchar_t* kAssetPath =
-                    STR("/Game/Character/Shared/CharacterCreator/Widgets/WBP_CharacterCreatorRenameDialog.WBP_CharacterCreatorRenameDialog");
-
-                // Pass 1: cheap StaticFindObject (in case the asset is
-                // already in memory from the character-creator flow).
-                try { modalCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kClassPath); }
-                catch (...) {}
-                if (modalCls)
-                    VLOG(STR("[MoriaCppMod] [Rename v2] class already loaded at {}\n"), kClassPath);
-
-                // Pass 2: force-load the BP package via the proven
-                // jw_loadAssetBlocking helper, then re-check StaticFindObject.
-                if (!modalCls)
-                {
-                    UObject* loaded = jw_loadAssetBlocking(kAssetPath);
-                    VLOG(STR("[MoriaCppMod] [Rename v2] jw_loadAssetBlocking('{}') -> {:p}\n"),
-                         kAssetPath, (void*)loaded);
-                    try { modalCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kClassPath); }
-                    catch (...) {}
-                    if (modalCls)
-                        VLOG(STR("[MoriaCppMod] [Rename v2] LoadAsset_Blocking made class resolvable\n"));
-                }
-
-                if (modalCls) m_renameModalCls = FWeakObjectPtr(modalCls);
-            }
-            if (!modalCls)
-            {
-                VLOG(STR("[MoriaCppMod] [Rename v2] WBP_CharacterCreatorRenameDialog_C could not be resolved - falling back to legacy popup\n"));
+                VLOG(STR("[MoriaCppMod] [Rename v2] WBP_UI_GenericPopup_C not loaded - falling back to legacy popup\n"));
                 showRenameDialog();
                 return;
             }
 
-            // 2. Spawn via WidgetBlueprintLibrary::Create.
-            UObject* modal = jw_createGameWidget(modalCls);
-            if (!modal)
+            // 2. Spawn the popup chrome.
+            UObject* popup = jw_createGameWidget(popupCls);
+            if (!popup)
             {
-                VLOG(STR("[MoriaCppMod] [Rename v2] jw_createGameWidget failed - falling back to legacy popup\n"));
+                VLOG(STR("[MoriaCppMod] [Rename v2] popup spawn failed - falling back to legacy\n"));
                 showRenameDialog();
                 return;
             }
 
-            // 3. WBP_CharacterCreatorRenameDialog_C has no HeadingText
-            //    member; the title shows via the parent screen's Lower Third
-            //    in the character-creator flow. We don't add a title here -
-            //    the EditableTextBox alone is purpose-built "rename character"
-            //    UI. (decompiled .kms confirms no Heading widget exists.)
+            // 3. AddToViewport at high Z (above pause menu ~100, below our
+            //    input UW which sits at 501).
+            if (auto* fn = popup->GetFunctionByNameInChain(STR("AddToViewport")))
+            {
+                std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
+                if (auto* p = findParam(fn, STR("ZOrder")))
+                    *reinterpret_cast<int32_t*>(bb.data() + p->GetOffset_Internal()) = 500;
+                safeProcessEvent(popup, fn, bb.data());
+            }
 
-            // 4. Cache RenameBox (UEditableTextBox) - inherited member from
-            //    UMorCharacterCreatorRenameDialog. The BP wires its
-            //    OnEditableTextBoxChangedEvent to update CharacterNameText.
-            UObject* input = nullptr;
-            if (auto* iPtr = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("RenameBox")))
-                input = *iPtr;
+            // 4. Configure title + buttons via OnShowWithTwoButtons. Pad
+            //    Message with newlines so the popup body has space for
+            //    our injected input box (which sits visually on top).
+            if (auto* showFn = popup->GetFunctionByNameInChain(STR("OnShowWithTwoButtons")))
+            {
+                std::vector<uint8_t> bb(showFn->GetParmsSize(), 0);
+                auto setText = [&](const wchar_t* parm, const wchar_t* val) {
+                    auto* p = findParam(showFn, parm);
+                    if (!p) return;
+                    FText t(val);
+                    std::memcpy(bb.data() + p->GetOffset_Internal(), &t, sizeof(FText));
+                };
+                setText(STR("Title"),             L"Rename Character");
+                setText(STR("Message"),           L"Enter new name:\n\n\n");
+                setText(STR("ConfirmButtonText"), L"Save");
+                setText(STR("CancelButtonText"),  L"Cancel");
+                safeProcessEvent(popup, showFn, bb.data());
+            }
 
-            // 5. Register the ConfirmButton (UWBP_LaunchScreenButton_C). The
-            //    BP also has a RandomNameButton (UWBP_FrontEndButton_C) -
-            //    we leave that wired to its native logic so the user can
-            //    still randomize. There's no separate Cancel button on this
-            //    dialog; the BP handles "ui.back" via OnActionCalled (ESC).
+            // 5. Cache popup buttons + register for our click hook so the
+            //    existing OnButtonReleasedEvent post-hook routes confirm
+            //    -> confirmRenameDialog and cancel -> hideRenameDialog.
             UObject* confirmBtn = nullptr;
-            if (auto* p = modal->GetValuePtrByPropertyNameInChain<UObject*>(STR("ConfirmButton")))
+            UObject* cancelBtn  = nullptr;
+            if (auto* p = popup->GetValuePtrByPropertyNameInChain<UObject*>(STR("ConfirmButton")))
                 confirmBtn = *p;
+            if (auto* p = popup->GetValuePtrByPropertyNameInChain<UObject*>(STR("CancelButton")))
+                cancelBtn = *p;
             if (confirmBtn) {
                 GameOptButton g; g.widget = FWeakObjectPtr(confirmBtn);
                 g.kind = GameOptKind::RenameModalConfirm; g.fromPauseMenu = false;
                 m_gameOptButtons.push_back(g);
             }
-
-            // 7. Add to viewport at high Z + UI input mode.
-            if (auto* fn = modal->GetFunctionByNameInChain(STR("AddToViewport")))
-            {
-                auto* p = findParam(fn, STR("ZOrder"));
-                int sz = fn->GetParmsSize();
-                std::vector<uint8_t> bb(sz, 0);
-                if (p) *reinterpret_cast<int32_t*>(bb.data() + p->GetOffset_Internal()) = 200;
-                safeProcessEvent(modal, fn, bb.data());
-            }
-            // call BP lifecycle entry points so the modal's own
-            // input bindings wire up. Without OnBeforeShow, the BP's BndEvt
-            // for the EditableTextBox change event never fires, so typed
-            // text never lands in WorldNameText member, and confirm sees
-            // "empty string". Also without OnCustomFocusSet, keyboard focus
-            // doesn't land on WorldNameTextBox so keystrokes leak to game.
-            if (auto* fn = modal->GetFunctionByNameInChain(STR("OnBeforeShow")))
-            {
-                std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
-                safeProcessEvent(modal, fn, bb.data());
-            }
-            if (auto* fn = modal->GetFunctionByNameInChain(STR("OnAfterShow")))
-            {
-                std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
-                safeProcessEvent(modal, fn, bb.data());
-            }
-            if (auto* fn = modal->GetFunctionByNameInChain(STR("OnCustomFocusSet")))
-            {
-                std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
-                safeProcessEvent(modal, fn, bb.data());
+            if (cancelBtn) {
+                GameOptButton g; g.widget = FWeakObjectPtr(cancelBtn);
+                g.kind = GameOptKind::RenameModalCancel; g.fromPauseMenu = false;
+                m_gameOptButtons.push_back(g);
             }
 
-            // 8. Cache pointers in the existing rename machinery so
-            //    confirmRenameDialog (reads m_ftRenameInput) and
-            //    hideRenameDialog (releases m_ftRenameWidget) work as-is.
-            m_ftRenameWidget = modal;
-            m_ftRenameInput  = input;
-            m_ftRenameConfirmLabel = nullptr; // legacy field; not used by modal
-            m_ftRenameVisible = true;
-            m_ftRenameUsingModal = true;
+            // 6. Build a tiny dedicated UserWidget that hosts a centered
+            //    UEditableTextBox so the user has a real text input. The
+            //    UserWidget is added to viewport separately at ZOrder=501
+            //    so it floats over the popup's Message area.
+            UObject* editBox = nullptr;
+            UObject* inputUW = nullptr;
+            {
+                auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
+                auto* canvasClass     = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.CanvasPanel"));
+                auto* sizeBoxClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.SizeBox"));
+                auto* editBoxClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.EditableTextBox"));
+                auto* createFn        = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
+                auto* wblClass        = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
+                auto* pc              = findPlayerController();
+                UObject* wblCDO       = wblClass ? wblClass->GetClassDefaultObject() : nullptr;
 
-            setInputModeUI(modal);
-            VLOG(STR("[MoriaCppMod] [Rename v2] WBP_CharacterCreatorRenameDialog_C spawned at {:p}, input={:p}, confirm={:p}\n"),
-                 (void*)modal, (void*)input, (void*)confirmBtn);
+                if (userWidgetClass && canvasClass && sizeBoxClass && editBoxClass && createFn && wblCDO && pc)
+                {
+                    int csz = createFn->GetParmsSize();
+                    std::vector<uint8_t> cp(csz, 0);
+                    if (auto* p = findParam(createFn, STR("WorldContextObject"))) *reinterpret_cast<UObject**>(cp.data() + p->GetOffset_Internal()) = pc;
+                    if (auto* p = findParam(createFn, STR("WidgetType")))         *reinterpret_cast<UObject**>(cp.data() + p->GetOffset_Internal()) = userWidgetClass;
+                    if (auto* p = findParam(createFn, STR("OwningPlayer")))       *reinterpret_cast<UObject**>(cp.data() + p->GetOffset_Internal()) = pc;
+                    safeProcessEvent(wblCDO, createFn, cp.data());
+                    if (auto* pRet = findParam(createFn, STR("ReturnValue")))
+                        inputUW = *reinterpret_cast<UObject**>(cp.data() + pRet->GetOffset_Internal());
+                }
+
+                if (inputUW)
+                {
+                    UObject* widgetTree = nullptr;
+                    if (auto* wt = inputUW->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree")))
+                        widgetTree = *wt;
+                    UObject* outer = widgetTree ? widgetTree : inputUW;
+
+                    FStaticConstructObjectParameters cParam(canvasClass, outer);
+                    UObject* canvas = UObjectGlobals::StaticConstructObject(cParam);
+                    if (canvas && widgetTree) setRootWidget(widgetTree, canvas);
+
+                    FStaticConstructObjectParameters ebParam(editBoxClass, outer);
+                    editBox = UObjectGlobals::StaticConstructObject(ebParam);
+
+                    if (canvas && editBox)
+                    {
+                        UObject* slot = jw_addToCanvas(canvas, editBox);
+                        // Center anchor (0.5,0.5) with 0.5,0.5 alignment so
+                        // the size centers on screen; size 600x60 design px;
+                        // small upward Y offset to land in the popup body.
+                        if (slot)
+                            jw_setCanvasSlot(slot,
+                                             0.5f, 0.5f, 0.5f, 0.5f,   // anchors
+                                             0.0f, -20.0f,             // position offset
+                                             600.0f, 60.0f,            // size
+                                             0.5f, 0.5f,               // alignment
+                                             false);
+                    }
+
+                    // AddToViewport at ZOrder=501 (just above the popup
+                    // chrome at 500 so the input renders on top).
+                    if (auto* fn = inputUW->GetFunctionByNameInChain(STR("AddToViewport")))
+                    {
+                        std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
+                        if (auto* p = findParam(fn, STR("ZOrder")))
+                            *reinterpret_cast<int32_t*>(bb.data() + p->GetOffset_Internal()) = 501;
+                        safeProcessEvent(inputUW, fn, bb.data());
+                    }
+                }
+            }
+
+            // 7. Cache state. confirmRenameDialog will read from our
+            //    EditableTextBox via GetText() UFunction (legacy path -
+            //    the in-game CharacterNameText FText logic doesn't apply
+            //    here since this is our standalone widget).
+            m_ftRenameWidget       = popup;
+            m_ftRenameInput        = editBox;
+            m_ftRenameConfirmLabel = nullptr;
+            m_ftRenameInputUW      = FWeakObjectPtr(inputUW);
+            m_ftRenameVisible      = true;
+            m_ftRenameUsingModal   = false;  // tells confirmRenameDialog to skip the BP-FText read
+                                             // and go straight to GetText() on m_ftRenameInput
+                                             // (the GenericPopup BP has no per-keystroke Text mirror)
+
+            // 8. Modal: focus on the input textbox so typing lands there.
+            setInputModeUI(editBox ? editBox : popup);
+
+            VLOG(STR("[MoriaCppMod] [Rename v2] custom rename popup spawned: popup={:p} editBox={:p} inputUW={:p}\n"),
+                 (void*)popup, (void*)editBox, (void*)inputUW);
         }
 
         // v6.21.16 - legacy showRenameDialog RESTORED (deleted in v6.21.14
@@ -4857,10 +4905,17 @@
                 deferRemoveWidget(m_ftRenameWidget);
                 m_ftRenameWidget = nullptr;
             }
+            // v6.21.23 - also remove our injected input UserWidget if present
+            // (the standalone EditableTextBox host added at ZOrder=501).
+            if (UObject* inputUW = m_ftRenameInputUW.Get())
+            {
+                deferRemoveWidget(inputUW);
+            }
+            m_ftRenameInputUW = FWeakObjectPtr{};
             m_ftRenameInput = nullptr;
             m_ftRenameConfirmLabel = nullptr;
             m_ftRenameVisible = false;
-            m_ftRenameUsingModal = false; // v6.20.30
+            m_ftRenameUsingModal = false;
 
             // if the rename dialog was opened from the pause menu
             // (typical), the pause menu is still on screen and needs UI input.
