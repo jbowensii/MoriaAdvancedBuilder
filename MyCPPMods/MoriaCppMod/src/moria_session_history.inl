@@ -575,9 +575,75 @@
         std::vector<InjectedRowRef> m_injectedRows;
         FWeakObjectPtr m_sessionHistoryScrollBox;  // our UScrollBox holding the rows
 
-        // Build an FMorConnectionHistoryItem (88 bytes) in the given byte buffer
-        // at the given offset, populated from a JSON entry. Layout from
-        // dumps/CXXHeaderDump/Moria.hpp:
+        // Resolve FMorConnectionHistoryItem layout via reflection. Probe walks
+        // the AddSessionHistoryItem UFunction → ConnectionHistoryData parm
+        // FStructProperty → UScriptStruct, reads stride + each field offset.
+        // Stores results in s_off_chi* sentinels (in moria_reflection.h).
+        // Falls back to the previously-hardcoded values (stride 0x58,
+        // WorldName 0x00, ConnType 0x10, InviteString 0x18, UniqueInvite 0x28,
+        // Password 0x38, IsDedicated 0x48, Created 0x50) on any failure —
+        // those values are the historic shipping layout.
+        bool ensureConnectionHistoryItemOffsets(FProperty* pData)
+        {
+            if (s_off_chiStride > 0
+                && s_off_chiWorldName    >= 0
+                && s_off_chiConnType     >= 0
+                && s_off_chiInviteString >= 0
+                && s_off_chiUniqueInvite >= 0
+                && s_off_chiPassword     >= 0
+                && s_off_chiIsDedicated  >= 0
+                && s_off_chiCreated      >= 0)
+                return true;
+            if (!pData) return false;
+
+            int stride = -1;
+            int offWorldName = -1, offConnType = -1, offInviteString = -1;
+            int offUniqueInvite = -1, offPassword = -1;
+            int offIsDedicated = -1, offCreated = -1;
+
+            if (auto* sProp = CastField<FStructProperty>(pData))
+            {
+                if (UStruct* sStruct = sProp->GetStruct())
+                {
+                    if (auto* ss = static_cast<UScriptStruct*>(sStruct))
+                        stride = static_cast<int>(ss->GetStructureSize());
+                    if (auto* p = sStruct->GetPropertyByNameInChain(STR("WorldName")))
+                        offWorldName = p->GetOffset_Internal();
+                    if (auto* p = sStruct->GetPropertyByNameInChain(STR("ConnectionType")))
+                        offConnType = p->GetOffset_Internal();
+                    if (auto* p = sStruct->GetPropertyByNameInChain(STR("InviteString")))
+                        offInviteString = p->GetOffset_Internal();
+                    if (auto* p = sStruct->GetPropertyByNameInChain(STR("UniqueInviteCode")))
+                        offUniqueInvite = p->GetOffset_Internal();
+                    if (auto* p = sStruct->GetPropertyByNameInChain(STR("OptionalPassword")))
+                        offPassword = p->GetOffset_Internal();
+                    if (auto* p = sStruct->GetPropertyByNameInChain(STR("bIsDedicatedServer")))
+                        offIsDedicated = p->GetOffset_Internal();
+                    if (auto* p = sStruct->GetPropertyByNameInChain(STR("CreationDateTime")))
+                        offCreated = p->GetOffset_Internal();
+                }
+            }
+
+            s_off_chiStride       = (stride          > 0) ? stride          : 0x58;
+            s_off_chiWorldName    = (offWorldName    >= 0) ? offWorldName    : 0x00;
+            s_off_chiConnType     = (offConnType     >= 0) ? offConnType     : 0x10;
+            s_off_chiInviteString = (offInviteString >= 0) ? offInviteString : 0x18;
+            s_off_chiUniqueInvite = (offUniqueInvite >= 0) ? offUniqueInvite : 0x28;
+            s_off_chiPassword     = (offPassword     >= 0) ? offPassword     : 0x38;
+            s_off_chiIsDedicated  = (offIsDedicated  >= 0) ? offIsDedicated  : 0x48;
+            s_off_chiCreated      = (offCreated      >= 0) ? offCreated      : 0x50;
+            VLOG(STR("[SessionHistory] FMorConnectionHistoryItem layout resolved: stride={:#x} "
+                     "World={:#x} ConnType={:#x} Invite={:#x} Unique={:#x} Pwd={:#x} Ded={:#x} Created={:#x}\n"),
+                 (unsigned)s_off_chiStride, (unsigned)s_off_chiWorldName, (unsigned)s_off_chiConnType,
+                 (unsigned)s_off_chiInviteString, (unsigned)s_off_chiUniqueInvite,
+                 (unsigned)s_off_chiPassword, (unsigned)s_off_chiIsDedicated, (unsigned)s_off_chiCreated);
+            return true;
+        }
+
+        // Build an FMorConnectionHistoryItem (~88 bytes) in the given byte buffer,
+        // populated from a JSON entry. Field offsets and stride resolved via
+        // ensureConnectionHistoryItemOffsets() above. Historic shipping layout
+        // (preserved as fallbacks) from dumps/CXXHeaderDump/Moria.hpp:
         //   0x00: FString WorldName            (16 bytes — name shown on row)
         //   0x10: EMorConnectionType (uint8)   (1=IpAndPort)
         //   0x18: FString InviteString         (16 bytes — host:port for join)
@@ -596,43 +662,43 @@
         void buildConnectionHistoryItem(uint8_t* dst, const SessionHistoryEntry& e,
                                         bool isDedicated)
         {
-            std::memset(dst, 0, 0x58);
+            std::memset(dst, 0, s_off_chiStride > 0 ? s_off_chiStride : 0x58);
 
             // WorldName (UTF-8 → wide via proper MultiByteToWideChar)
             std::wstring wname = utf8ToWide(e.name);
-            new (dst + 0x00) FString(wname.c_str());
+            new (dst + s_off_chiWorldName) FString(wname.c_str());
 
             // ConnectionType = IpAndPort (1)
-            *(dst + 0x10) = 1;
+            *(dst + s_off_chiConnType) = 1;
 
             // InviteString = "domain:port"
             std::string urlS = e.domain;
             if (!e.port.empty()) { urlS += ":"; urlS += e.port; }
             std::wstring wurl = utf8ToWide(urlS);
-            new (dst + 0x18) FString(wurl.c_str());
+            new (dst + s_off_chiInviteString) FString(wurl.c_str());
 
             // UniqueInviteCode (leave empty)
-            new (dst + 0x28) FString(STR(""));
+            new (dst + s_off_chiUniqueInvite) FString(STR(""));
 
             // OptionalPassword
             std::wstring wpass = utf8ToWide(e.password);
-            new (dst + 0x38) FString(wpass.c_str());
+            new (dst + s_off_chiPassword) FString(wpass.c_str());
 
             // bIsDedicatedServer
-            *(dst + 0x48) = isDedicated ? 1 : 0;
+            *(dst + s_off_chiIsDedicated) = isDedicated ? 1 : 0;
 
             // CreationDateTime — leave 0 (unknown).
-            *reinterpret_cast<int64_t*>(dst + 0x50) = 0;
+            *reinterpret_cast<int64_t*>(dst + s_off_chiCreated) = 0;
         }
 
         // Symmetric destructor for the FStrings we placement-new'd above.
         // Call after the BP UFunction has consumed (copied) the struct.
         void destroyConnectionHistoryItem(uint8_t* dst)
         {
-            reinterpret_cast<FString*>(dst + 0x00)->~FString();
-            reinterpret_cast<FString*>(dst + 0x18)->~FString();
-            reinterpret_cast<FString*>(dst + 0x28)->~FString();
-            reinterpret_cast<FString*>(dst + 0x38)->~FString();
+            reinterpret_cast<FString*>(dst + s_off_chiWorldName   )->~FString();
+            reinterpret_cast<FString*>(dst + s_off_chiInviteString)->~FString();
+            reinterpret_cast<FString*>(dst + s_off_chiUniqueInvite)->~FString();
+            reinterpret_cast<FString*>(dst + s_off_chiPassword    )->~FString();
         }
 
         // Inject our session-history entries into the native JoinWorld.
@@ -727,6 +793,7 @@
                 VLOG(STR("[SessionHistory] AddSessionHistoryItem param not resolved — abort\n"));
                 return;
             }
+            ensureConnectionHistoryItemOffsets(pData);
 
             int added = 0;
             for (size_t idx = 0; idx < m_sessionHistory.size(); ++idx)
