@@ -174,6 +174,20 @@ namespace MoriaMods
     static constexpr float POS_TOLERANCE = 100.0f;
 
 
+    // Hardcoded UE4.27 struct/property offsets used as the FALLBACK when
+    // reflection-based lookup hasn't run yet (or failed). Every value below
+    // has a paired runtime resolver in moria_reflection.h: getter functions
+    // (brushImageSizeX(), fontTypefaceName(), etc.) check the s_off_*
+    // sentinel first and return the resolved offset, falling back to these
+    // constants only when s_off_* is in the -1 (failed) state.
+    //
+    // The values come from CXXHeaderDump byte offsets for UE4.27 +
+    // Moria-specific structs. They're preserved as a safety net but should
+    // be considered last-resort - reflection wins where it works.
+    //
+    // If a future game patch reorders struct fields, the ureflection path
+    // picks up the new offset automatically; only these constants would
+    // become stale, and only in the failure-fallback edge case.
     static constexpr int BRUSH_IMAGE_SIZE_X = 0x08;
     static constexpr int BRUSH_IMAGE_SIZE_Y = 0x0C;
     static constexpr int BRUSH_RESOURCE_OBJECT = 0x48;

@@ -553,6 +553,28 @@
             // pulse. For the common case (single-player and host), this
             // works correctly. Non-host clients should use the in-game
             // hotbar swap or trade with host instead.
+            //
+            // FItemInstance layout (FGK.hpp:1723-1733, total 0x30 bytes):
+            //   +0x00  FFastArraySerializerItem header (16 bytes)
+            //   +0x10  TSubclassOf<AInventoryItem> Item (8 bytes)
+            //   +0x18  int32 Count                <- the field we write
+            //   +0x1C  int32 Slot
+            //   +0x20  int32 ID                   <- match against targetID
+            //   +0x24  float Durability
+            //   +0x28  int32 RepairCount
+            //   +0x2C  int32 ContainerStartSlot
+            // The 0x18 (Count) and 0x20 (ID) offsets are stable across all
+            // tested patches; iiSize/iiItemOff/iiIDOff helpers in
+            // moria_reflection.h cache the resolved offsets and fall back
+            // to these constants if reflection fails.
+            //
+            // FItemHandle layout (FGK.hpp:1715, total 0x14 = 20 bytes):
+            //   +0x00  int32 ID                   <- m_lastItemHandle bytes 0-3
+            //   +0x04  int32 Payload
+            //   +0x08  TWeakObjectPtr<UInventoryComponent> Owner (8 bytes)
+            // m_lastItemHandle is captured during BroadcastToContainers_OnChanged
+            // / ServerMoveItem / MoveSwapItem PE post-hooks (see captureLastChangedItem
+            // earlier in this file).
             int32_t targetID = *reinterpret_cast<int32_t*>(m_lastItemHandle);
             if (targetID == 0)
             {

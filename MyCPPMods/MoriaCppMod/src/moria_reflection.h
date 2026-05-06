@@ -10,6 +10,35 @@
 namespace MoriaMods
 {
 
+    // Reflection-resolved offset cache.
+    //
+    // Each `s_off_*` is a per-process sentinel-tracked cache of a struct or
+    // property byte offset that we resolve lazily via UE4 reflection
+    // (UStruct::FindPropertyByName + GetOffset_Internal) and reuse on every
+    // subsequent read/write. The naming convention is:
+    //
+    //   s_off_<short-id>   : -2 = never tried; -1 = lookup attempted and
+    //                        failed; >= 0 = resolved offset in bytes
+    //
+    // The -2 / -1 / >=0 trichotomy lets the resolver fall back to the
+    // hardcoded constants in moria_common.h (BRUSH_IMAGE_SIZE_X, etc.) when
+    // reflection is unavailable (e.g. a lookup fires before the relevant
+    // class is registered) WITHOUT re-querying every call. Once we land in
+    // -1 we never re-query; the helper getter (e.g. brushImageSizeX())
+    // returns the BRUSH_IMAGE_SIZE_X constant in that case.
+    //
+    // Lifetime: these are process-global. They're NOT invalidated on world
+    // transition. The Moria code only resolves engine + game struct offsets
+    // here; both are stable across world load/unload. If we ever needed
+    // BP-derived offsets (which CAN drift across DLC), we'd need a
+    // LoadMap-time reset hook - none present yet.
+    //
+    // Adding a new offset:
+    //   1. Declare the sentinel (`inline int s_off_<x> = -2;`)
+    //   2. In the corresponding probe function (e.g. ensureBrushOffset),
+    //      do the lookup and write the resolved offset, or -1 on failure.
+    //   3. Add a getter that returns the cached value or the moria_common.h
+    //      hardcoded fallback.
 
     inline int s_off_font = -2;
     inline int s_off_brush = -2;

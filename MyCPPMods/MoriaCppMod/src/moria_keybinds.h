@@ -8,6 +8,31 @@
 namespace MoriaMods
 {
 
+    // BIND_* index map for s_bindings[BIND_COUNT].
+    //
+    // Each constant is the position of a keybind in the s_bindings array.
+    // The index is the source of truth used by:
+    //   - INI persistence (bindIndexToIniKey() in moria_testable.h maps
+    //     index -> string used in MoriaCppMod.ini under [Keybindings])
+    //   - Settings UI keymap rebind dispatch (the m_ftKeyBoxLabels array
+    //     parallel-indexed to s_bindings)
+    //   - All in-game keypress dispatchers in dllmain.cpp
+    //
+    // ORDER IS LOAD-BEARING. Adding a bind in the middle would shift every
+    // subsequent index; INI files written by older builds would then load
+    // their keys onto the wrong slots. Always APPEND new binds at the end
+    // (right before BIND_COUNT) and bump BIND_COUNT in moria_testable.h
+    // accordingly. The bindIndexToIniKey() table in that header MUST be
+    // kept in lock-step.
+    //
+    // Slot ranges:
+    //   0-7   : Quick Build slots F1..F8 (legacy / pre-MC base)
+    //   8-16  : Mod Controller (MC) slots; MC_BIND_BASE = 8
+    //   17    : Advanced Builder open
+    //   18    : Save Game (was Reserved/Diagnostics)
+    //   19-21 : Inventory keybinds (Trash / Replenish / RemoveAttrs)
+    //   22-23 : Pitch / Roll rotate
+    //   24    : Reposition HUD toggle
 
     static constexpr int MC_BIND_BASE = 8;
     static constexpr int BIND_ROTATION  = 8;
