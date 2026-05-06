@@ -1,4 +1,4 @@
-// MoriaCppMod v6.22.0 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.22.1 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -672,14 +672,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.22.0");
+            ModVersion = STR("6.22.1");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.22.1\n"));
         }
 
         ~MoriaCppMod() override
@@ -720,7 +720,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.22.1 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -1744,7 +1744,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.22.0: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.22.1: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -3878,7 +3878,12 @@ namespace MoriaMods
             {
                 pollRightClickDeleteSessionHistory();
             }
-            tickSessionHistoryConfirm();
+            // v6.22.1 - Pass 1 comment-out (per code-review-MASTER.md
+            // iteration 1). The body at moria_session_history.inl:1062-1098
+            // is unreachable past its line-1 `return;` and references
+            // already-dead m_pendingDeleteConfirmed. If user verifies no
+            // regression, Pass 2 deletes the function + field.
+            // tickSessionHistoryConfirm();
             tickSessionHistoryDeferredCapture();
 
             // Esc / close: native flow handles all dismissal - we only modify
