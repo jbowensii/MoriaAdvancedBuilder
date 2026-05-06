@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.15
+Document Version 6.23.16
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3802,6 +3802,19 @@ over 9 iterations:
                * generic createImageWithBrush helper
                * keybind label rect (76x44)
              No behavior change in the normal case.
+    v6.23.16: Audit Iteration E - DataTableUtil.unbind() on world
+             unload. The 9 cached DataTableUtil instances
+             (m_dtConstructions, m_dtConstructionRecipes, m_dtItems,
+             m_dtWeapons, m_dtTools, m_dtArmor, m_dtConsumables,
+             m_dtContainerItems, m_dtOres) now call unbind() in the
+             world-unload reset block in dllmain.cpp tick. The cached
+             UDataTable* pointer is cleared so the next first-use
+             after world load lazy-rebinds via FindAllOf instead of
+             dereferencing a stale-but-not-yet-GC'd pointer. Cost:
+             one-shot FindAllOf per DT after each character load
+             (acceptable - only fires when the user crosses a world).
+             Closes the stale-pointer crash window the audit
+             identified at moria_datatable.inl:294.
 
 Each Pass-1 iteration was its own GitHub tag. Recovery to any prior
 state is one `git checkout v6.22.X` (or v6.23.X) away.

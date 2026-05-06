@@ -1,4 +1,4 @@
-// MoriaCppMod v6.23.15 - Return to Moria UE4SS C++ mod
+// MoriaCppMod v6.23.16 - Return to Moria UE4SS C++ mod
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -617,14 +617,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.23.15");
+            ModVersion = STR("6.23.16");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.15\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.16\n"));
         }
 
         ~MoriaCppMod() override
@@ -665,7 +665,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.15 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.16 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -1583,7 +1583,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.23.15: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.23.16: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -3169,6 +3169,22 @@ namespace MoriaMods
                     m_definitionsApplied = false;
                     m_processedComps.clear();
                     m_undoStack.clear();
+
+                    // Audit Iteration E: unbind cached UDataTable* pointers
+                    // so a world-transition rebind catches a fresh DT
+                    // instance instead of a stale-but-not-yet-GC'd one.
+                    // Each DataTableUtil lazy-rebinds on first miss, so
+                    // first DT use after the next character load takes a
+                    // one-shot FindAllOf hit (acceptable cost).
+                    m_dtConstructions.unbind();
+                    m_dtConstructionRecipes.unbind();
+                    m_dtItems.unbind();
+                    m_dtWeapons.unbind();
+                    m_dtTools.unbind();
+                    m_dtArmor.unbind();
+                    m_dtConsumables.unbind();
+                    m_dtContainerItems.unbind();
+                    m_dtOres.unbind();
                     m_stuckLogCount = 0;
                     m_lastRescanTime = 0;
                     m_lastStreamCheck = 0;
