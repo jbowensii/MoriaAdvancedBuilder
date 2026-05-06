@@ -1,4 +1,4 @@
-// MoriaCppMod v6.21.14 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.21.15 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -336,13 +336,13 @@ namespace MoriaMods
         std::wstring m_pendingCharName;
 
 
-        // v6.21.14 batch 3 Tier 2b - removed m_umgBarWidget. The OLD UMG
+        // v6.21.15 batch 3 Tier 2b - removed m_umgBarWidget. The OLD UMG
         // QuickBuild bar widget is gone; all toolbar-array slot 0 entries
         // are now nullptr literals (TB_COUNT=4 retained because indices 1-3
         // are still active for AB/MC bars + reposition info box).
-        // v6.21.14 batch 3 Tier 2a - removed m_umgSlotButtons[8] (OLD UMG bar
+        // v6.21.15 batch 3 Tier 2a - removed m_umgSlotButtons[8] (OLD UMG bar
         // gamepad nav - bar is gone; gamepad QB polling block also removed).
-        // v6.21.14 batch 3 Tier 2c - removed all OLD-UMG-bar leftover state
+        // v6.21.15 batch 3 Tier 2c - removed all OLD-UMG-bar leftover state
         // (m_umgStateImages[8], m_umgSlotStates[8], m_umgTexEmpty/Inactive/Active,
         // m_umgSetBrushFn). Readers in setMcSlotState/getSlotStateImage/getGPImg
         // were dead branches (MC bar always-null + tb=0 paths unreachable).
@@ -410,11 +410,11 @@ namespace MoriaMods
         DIGamepadState m_diPrevState{};           // previous frame
 
 
-        // v6.21.14 batch 3 Tier 2a - removed m_umgKeyLabels[8] (OLD UMG bar
+        // v6.21.15 batch 3 Tier 2a - removed m_umgKeyLabels[8] (OLD UMG bar
         // F-key labels) + m_umgKeyBgImages[8] (orphan, never read).
         UObject* m_mcKeyLabels[MC_SLOTS]{};
         UObject* m_mcKeyBgImages[MC_SLOTS]{};
-        // v6.21.14 batch 3 Tier 2c - removed m_umgTexBlankRect (only captured
+        // v6.21.15 batch 3 Tier 2c - removed m_umgTexBlankRect (only captured
         // in dead createModControllerBar; never read).
         UObject* m_mcRotationLabel{nullptr};
         UObject* m_mcSlot0Overlay{nullptr};
@@ -526,10 +526,11 @@ namespace MoriaMods
         std::vector<GameModEntry> m_ftGameModEntries;
 
 
-        UObject* m_abBarWidget{nullptr};
-        UObject* m_abSlotButton{nullptr};          // UButton wrapper for gamepad navigation
-        UObject* m_abKeyLabel{nullptr};
-        UObject* m_abStateImage{nullptr};
+        // v6.21.15 - removed Advanced Builder bar (m_abBarWidget,
+        // m_abSlotButton, m_abKeyLabel, m_abStateImage). Bar was disabled
+        // since v6.10.0 (gated 'if(false)' in character-load create block);
+        // NBB at top-of-screen replaced it. BIND_AB_OPEN keybind constant
+        // KEPT for s_bindings[] config-file compatibility (slot 17).
         // v6.21.1 - was {false}, but the only path that flipped it true was
         // the NUM+ toggle disabled in v6.10.0. Result: OLD UMG QuickBuild bar
         // got created then immediately collapsed at line ~2193, never visible.
@@ -551,7 +552,7 @@ namespace MoriaMods
         ScreenCoords m_screen;
 
 
-        // v6.21.14 batch 3 Tier 2 - removed reposition mode
+        // v6.21.15 batch 3 Tier 2 - removed reposition mode
         // (m_repositionMode, m_dragToolbar, m_dragOffsetX/Y,
         //  m_repositionMsgWidget, m_repositionInfoBoxWidget). Only entry
         // point was the disabled NUM+/AB toggle block. Inspect window and
@@ -639,14 +640,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.21.14");
+            ModVersion = STR("6.21.15");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.14\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.15\n"));
         }
 
         ~MoriaCppMod() override
@@ -687,7 +688,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.14 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.15 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 - startup diagnostics for Steam ™ path troubleshooting.
@@ -1510,7 +1511,6 @@ namespace MoriaMods
                         VLOG(STR("[MoriaCppMod] [HUD] Entered FreeCam - hiding toolbars\n"));
                         s_overlay.visible = false;
                         s_overlay.needsUpdate = true;
-                        s_instance->setWidgetVisibility(s_instance->m_abBarWidget, 1);
                         s_instance->setWidgetVisibility(s_instance->m_mcBarWidget, 1);
                     }
                     return;
@@ -1525,7 +1525,6 @@ namespace MoriaMods
                     if (s_instance->m_toolbarsVisible)
                     {
                         if (s_instance->m_showHotbar) { s_overlay.visible = true; s_overlay.needsUpdate = true; }
-                        s_instance->setWidgetVisibility(s_instance->m_abBarWidget, 0);
                         s_instance->setWidgetVisibility(s_instance->m_mcBarWidget, 0);
                     }
                     return;
@@ -1683,7 +1682,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.21.14: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.21.15: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -2142,7 +2141,7 @@ namespace MoriaMods
                 // remain disabled - their dispatch is restored separately
                 // via the gameThreadTick MC polling block (planned fix #1).
                 if (m_mcBarWidget) { destroyModControllerBar(); }
-                if (m_abBarWidget) { destroyAdvancedBuilderBar(); }
+                // v6.21.15 - AB bar destroy removed (bar gone)
                 // v6.21.1 - OLD UMG bar code removed entirely (batch 2).
                 // NBB at top of screen is the only toolbar. m_umgBarWidget
                 // is also being removed (batch 3) so this safety call is dead.
@@ -2152,11 +2151,7 @@ namespace MoriaMods
                     createModControllerBar();
                     justCreated = true;
                 }
-                if (false /* v0.13 disabled */ && m_characterLoaded && !m_abBarWidget)
-                {
-                    createAdvancedBuilderBar();
-                    justCreated = true;
-                }
+                // v6.21.15 - AB bar create block removed (was gated 'if(false)')
 
                 // v0.14 - CRITICAL: handle-resolution priming was nested
                 // inside the disabled AB-bar block, blocking F1-F8 USE,
@@ -2382,13 +2377,13 @@ namespace MoriaMods
             }
 
 
-            // v6.21.14 - removed reposition-mode block. Toolbar drag/drop
+            // v6.21.15 - removed reposition-mode block. Toolbar drag/drop
             // logic was for the OLD UMG/AB/MC bars (all gone). Inspect
             // window has its own drag in tickTargetInfoDrag; rotation
             // display has tickRotationDisplayDrag.
 
 
-            // v6.21.14 - removed disabled NUM+/AB toggle block (was the only
+            // v6.21.15 - removed disabled NUM+/AB toggle block (was the only
             // entry point to toggleRepositionMode; reposition removed).
 
 
@@ -2605,13 +2600,7 @@ namespace MoriaMods
                                     quickBuildSlot(hitSlot);
                             }
                             break;
-                        case 1:
-                        {
-                            m_toolbarsVisible = !m_toolbarsVisible;
-                            uint8_t vis = m_toolbarsVisible ? 0 : 1;
-                            setWidgetVisibility(m_mcBarWidget, vis);
-                            break;
-                        }
+                        // case 1 (AB toolbar click toggle) removed v6.21.15.
                         case 2:
                             dispatchMcSlot(hitSlot);
                             break;
@@ -2671,19 +2660,12 @@ namespace MoriaMods
                         }
                     }
 
-                    // v6.21.14 batch 3 Tier 2a - removed Quick Build gamepad
+                    // v6.21.15 batch 3 Tier 2a - removed Quick Build gamepad
                     // polling block (used m_umgBarWidget + m_umgSlotButtons,
                     // both gone with the OLD UMG bar).
 
-                    // Advanced Builder toolbar (1 slot)
-                    static bool s_abBtnWasPressed{false};
-                    if (m_abBarWidget && pollButton(m_abSlotButton, s_isPressedFn, s_abBtnWasPressed))
-                    {
-                        VLOG(STR("[MoriaCppMod] [Gamepad] AB button pressed\n"));
-                        m_toolbarsVisible = !m_toolbarsVisible;
-                        uint8_t vis = m_toolbarsVisible ? 0 : 1;
-                        setWidgetVisibility(m_mcBarWidget, vis);
-                    }
+                    // v6.21.15 - removed Advanced Builder gamepad poll block
+                    // (bar widget + slot button gone).
                 }
             }
 
@@ -2808,24 +2790,21 @@ namespace MoriaMods
                         }
                     }
 
-                    // Build flat slot list: AB → MC → QB
+                    // Build flat slot list: MC → (QB removed v6.21.5, AB removed v6.21.15)
                     struct GPSlot { int tbId; int slot; };
-                    GPSlot gpSlots[1 + MC_SLOTS + 8]{};
+                    GPSlot gpSlots[MC_SLOTS]{};
                     int gpCount = 0;
-                    if (m_abBarWidget)
-                        gpSlots[gpCount++] = {2, 0};
                     if (m_toolbarsVisible && m_mcBarWidget)
                         for (int i = 0; i < MC_SLOTS; i++)
                             gpSlots[gpCount++] = {1, i};
-                    // v6.21.14 batch 3 Tier 2b - OLD UMG QB bar gone; tbId=0 gpSlots
+                    // v6.21.15 batch 3 Tier 2b - OLD UMG QB bar gone; tbId=0 gpSlots
                     // population removed.
 
                     // Helper: get state image for highlighting
                     auto getGPImg = [this](int tbId, int slot) -> UObject* {
                         switch (tbId) {
-                        // case 0 (OLD UMG QB bar) removed v6.21.14 - gpSlots no longer populates tbId=0.
+                        // case 0 (OLD UMG QB bar) removed v6.21.5; case 2 (AB) removed v6.21.15.
                         case 1: return (slot >= 0 && slot < MC_SLOTS) ? m_mcStateImages[slot] : nullptr;
-                        case 2: return (slot == 0) ? m_abStateImage : nullptr;
                         default: return nullptr;
                         }
                     };
@@ -2869,10 +2848,7 @@ namespace MoriaMods
                                     dispatchMcSlot(slot);
                             }
                             break;
-                        case 2:  // AB: toggle toolbar visibility
-                            m_toolbarsVisible = !m_toolbarsVisible;
-                            { uint8_t v = m_toolbarsVisible ? 0 : 1; setWidgetVisibility(m_mcBarWidget, v); }
-                            break;
+                        // case 2 (AB toggle) removed v6.21.15.
                         }
                     };
 
@@ -3917,9 +3893,7 @@ namespace MoriaMods
                     m_mcSlot6Overlay = nullptr;
                     m_mcSlot8Overlay = nullptr;
 
-                    m_abBarWidget = nullptr;
-                    m_abKeyLabel = nullptr;
-                    m_abStateImage = nullptr;
+                    // v6.21.15 - AB bar nullptr clears removed (fields gone)
                     m_toolbarsVisible = false;
 
                     m_hoveredToolbar = -1;
