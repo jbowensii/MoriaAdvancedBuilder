@@ -1260,8 +1260,11 @@
                             if (s_off_brush >= 0)
                             {
                                 uint8_t* base = reinterpret_cast<uint8_t*>(pillBg);
-                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 110.0f;
-                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 50.0f;
+                                if (isReadableMemory(base + s_off_brush, 16))
+                                {
+                                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 110.0f;
+                                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 50.0f;
+                                }
                             }
                             addToOverlay(pillOv, pillBg);
                         }
@@ -2182,8 +2185,11 @@
                 umgSetBrush(iImg, slotTex[i], setBrushFn);
                 if (s_off_brush >= 0) {
                     uint8_t* base = reinterpret_cast<uint8_t*>(iImg);
-                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 128.0f;
-                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 128.0f;
+                    if (isReadableMemory(base + s_off_brush, 16))
+                    {
+                        *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 128.0f;
+                        *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 128.0f;
+                    }
                 }
                 if (auto* visPtr = iImg->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility")))
                     *visPtr = 0; // Visible
@@ -2632,8 +2638,11 @@
                 if (s_off_brush >= 0 && w > 0 && h > 0)
                 {
                     uint8_t* base = reinterpret_cast<uint8_t*>(img);
-                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = w;
-                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = h;
+                    if (isReadableMemory(base + s_off_brush, 16))
+                    {
+                        *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = w;
+                        *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = h;
+                    }
                 }
                 umgSetOpacity(img, opacity);
                 return img;
@@ -2853,8 +2862,11 @@
                             // (110x50) stays as-is.
                             if (s_off_brush >= 0) {
                                 uint8_t* base = reinterpret_cast<uint8_t*>(kbImg);
-                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 76.0f;
-                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 44.0f;
+                                if (isReadableMemory(base + s_off_brush, 16))
+                                {
+                                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 76.0f;
+                                    *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 44.0f;
+                                }
                             }
                             UObject* ks = addToOverlay(slotOv, kbImg);
                             if (ks) {
