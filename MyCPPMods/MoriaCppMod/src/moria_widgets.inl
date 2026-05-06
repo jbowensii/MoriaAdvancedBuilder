@@ -1005,12 +1005,21 @@
             bool overClose = (curX >= left + wW - closeBtnW && curX <= left + wW &&
                               curY >= top  && curY <= top  + titleH);
 
-            if (rising && overClose)
+            // v6.21.37 - while in F10 reposition mode, the entire title
+            // bar (including the X area) is treated as drag-handle. The
+            // close-button click was firing hideTargetInfo() and closing
+            // the window mid-reposition (the user kept hitting the close
+            // hot spot while dragging). F10 toggle / ESC is the only way
+            // to exit the mode now.
+            if (rising && overClose && !m_repositionHudMode)
             {
                 hideTargetInfo();
                 return;
             }
-            if (rising && overTitle && !overClose)
+            // In reposition mode, treat overClose ALSO as drag - effectively
+            // making the entire title bar a drag handle.
+            bool dragHotSpot = m_repositionHudMode ? overTitle : (overTitle && !overClose);
+            if (rising && dragHotSpot)
             {
                 m_tiDragActive = true;
                 m_tiDragOffsetX = curX - static_cast<int>(cx);
@@ -1152,32 +1161,47 @@
                         addToOverlay(circleOv, frameImg);
                     }
 
-                    // Label TextBlock - top-center inside circle.
-                    FStaticConstructObjectParameters tbLP(tbCls, outer);
-                    UObject* labelTb = UObjectGlobals::StaticConstructObject(tbLP);
-                    if (labelTb)
+                    // v6.21.37 - Stack label-on-top + value-below as a
+                    // single inner VBox, then anchor that VBox dead-center
+                    // inside the circle. Was: label pinned to top with
+                    // padding-top 18, value full-center; left both off-
+                    // center. Now both visually live in the circle's
+                    // middle band.
+                    FStaticConstructObjectParameters innerVbP(vboxCls, outer);
+                    UObject* innerVb = UObjectGlobals::StaticConstructObject(innerVbP);
+                    if (innerVb)
                     {
-                        umgSetText(labelTb, labelText);
-                        umgSetTextColor(labelTb, 1.0f, 0.95f, 0.78f, 1.0f);
-                        UObject* sl = addToOverlay(circleOv, labelTb);
-                        if (sl)
+                        FStaticConstructObjectParameters tbLP(tbCls, outer);
+                        UObject* labelTb = UObjectGlobals::StaticConstructObject(tbLP);
+                        if (labelTb)
                         {
-                            if (auto* fnH = sl->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
-                            { std::vector<uint8_t> bb(fnH->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(sl, fnH, bb.data()); }
-                            if (auto* fnV = sl->GetFunctionByNameInChain(STR("SetVerticalAlignment")))
-                            { std::vector<uint8_t> bb(fnV->GetParmsSize(), 0); bb[0] = 0; safeProcessEvent(sl, fnV, bb.data()); }
-                            umgSetSlotPadding(sl, 0, 18, 0, 0);
+                            umgSetText(labelTb, labelText);
+                            umgSetTextColor(labelTb, 1.0f, 0.95f, 0.78f, 1.0f);
+                            UObject* sl = addToVBox(innerVb, labelTb);
+                            if (sl)
+                            {
+                                if (auto* fnH = sl->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                                { std::vector<uint8_t> bb(fnH->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(sl, fnH, bb.data()); }
+                            }
                         }
-                    }
 
-                    // Value TextBlock - full-center (the number).
-                    FStaticConstructObjectParameters tbVP(tbCls, outer);
-                    UObject* valueTb = UObjectGlobals::StaticConstructObject(tbVP);
-                    if (valueTb)
-                    {
-                        umgSetText(valueTb, initialValueText);
-                        umgSetTextColor(valueTb, 1.0f, 1.0f, 1.0f, 1.0f);
-                        UObject* sl = addToOverlay(circleOv, valueTb);
+                        FStaticConstructObjectParameters tbVP(tbCls, outer);
+                        UObject* valueTb = UObjectGlobals::StaticConstructObject(tbVP);
+                        if (valueTb)
+                        {
+                            umgSetText(valueTb, initialValueText);
+                            umgSetTextColor(valueTb, 1.0f, 1.0f, 1.0f, 1.0f);
+                            UObject* sl = addToVBox(innerVb, valueTb);
+                            if (sl)
+                            {
+                                if (auto* fnH = sl->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                                { std::vector<uint8_t> bb(fnH->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(sl, fnH, bb.data()); }
+                                umgSetSlotPadding(sl, 0, 2, 0, 0);
+                            }
+                            outLabel = valueTb;
+                        }
+
+                        UObject* sl = addToOverlay(circleOv, innerVb);
                         if (sl)
                         {
                             if (auto* fnH = sl->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
@@ -1185,7 +1209,6 @@
                             if (auto* fnV = sl->GetFunctionByNameInChain(STR("SetVerticalAlignment")))
                             { std::vector<uint8_t> bb(fnV->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(sl, fnV, bb.data()); }
                         }
-                        outLabel = valueTb;
                     }
                 }
 
@@ -1277,10 +1300,23 @@
                     {
                         if (auto* fnH = pillSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
                         { std::vector<uint8_t> bb(fnH->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(pillSlot, fnH, bb.data()); }
-                        // v6.21.36 - zero top padding so pill butts directly
-                        // against circle's bottom edge (was 6, hung off too
-                        // far per user feedback).
                         umgSetSlotPadding(pillSlot, 0, 0, 0, 0);
+                    }
+                    // v6.21.37 - The frame texture has ~18px transparent
+                    // border around the visible circle, so even with zero
+                    // VBox padding the pill appears to "hang off" the bottom.
+                    // SetRenderTranslation moves the pill up by 18 design
+                    // pixels so its top edge meets the visible circle bottom.
+                    if (auto* fn = pillSb->GetFunctionByNameInChain(STR("SetRenderTranslation")))
+                    {
+                        std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
+                        if (auto* p = findParam(fn, STR("Translation")))
+                        {
+                            auto* v = reinterpret_cast<float*>(bb.data() + p->GetOffset_Internal());
+                            v[0] = 0.0f;
+                            v[1] = -18.0f;
+                            safeProcessEvent(pillSb, fn, bb.data());
+                        }
                     }
                 }
             }
@@ -1421,7 +1457,15 @@
                 }
             }
 
-            // Add to viewport, position bottom-left of toolbar area.
+            // v6.21.37 - Set the cache BEFORE AddToViewport. If a tick re-
+            // enters tickRotationDisplay() during the AddToViewport->Slate
+            // realize chain (e.g., Slate decides to repaint inline), the
+            // null cache caused a second createRotationDisplay() call which
+            // could leave a half-attached widget tree behind - candidate
+            // cause of the SWidget::Prepass_Internal AV at 0xFF... seen
+            // during quickbuild (Slate following a stale child pointer).
+            m_rotDisplayWidget = userWidget;
+
             if (auto* fn = userWidget->GetFunctionByNameInChain(STR("AddToViewport")))
             {
                 auto* p = findParam(fn, STR("ZOrder"));
@@ -1431,14 +1475,10 @@
                 safeProcessEvent(userWidget, fn, bb.data());
             }
             m_screen.refresh(findPlayerController());
-            // use saved position if any, else default (15%, 65%) —
-            // moved away from 10%/85% which overlapped the armor HUD.
             float fX = (m_rotDispPosX >= 0.0f) ? m_rotDispPosX : 0.15f;
             float fY = (m_rotDispPosY >= 0.0f) ? m_rotDispPosY : 0.65f;
             setWidgetPosition(userWidget, m_screen.fracToPixelX(fX),
                                           m_screen.fracToPixelY(fY), true);
-
-            m_rotDisplayWidget = userWidget;
             VLOG(STR("[MoriaCppMod] [RotDisp] Rotation display widget created (frameTex={}, posFrac=({:.3f},{:.3f}))\n"),
                  frameTex ? STR("YES") : STR("NO"), fX, fY);
         }
@@ -2797,13 +2837,14 @@
                                     }
                                 }
                             }
-                            // v6.21.36 - bumped from 36x22 to 56x32 so 2-char
-                            // key names ("F8", "F12") and rebound symbols
-                            // fully fit inside the grey rect.
+                            // v6.21.37 - bumped from 56x32 to 76x44 so the
+                            // grey rect is wider than the F-key text plus a
+                            // visible margin on each side. Rotation pill
+                            // (110x50) stays as-is.
                             if (s_off_brush >= 0) {
                                 uint8_t* base = reinterpret_cast<uint8_t*>(kbImg);
-                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 56.0f;
-                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 32.0f;
+                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 76.0f;
+                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 44.0f;
                             }
                             UObject* ks = addToOverlay(slotOv, kbImg);
                             if (ks) {
