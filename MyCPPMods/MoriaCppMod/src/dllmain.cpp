@@ -1,4 +1,4 @@
-// MoriaCppMod v6.21.37 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.21.38 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -663,14 +663,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.21.37");
+            ModVersion = STR("6.21.38");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.37\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.38\n"));
         }
 
         ~MoriaCppMod() override
@@ -711,7 +711,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.37 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.38 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -1735,7 +1735,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.21.37: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.21.38: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -2363,14 +2363,11 @@ namespace MoriaMods
             }
 
 
-            // v6.21.37 - this is the SECOND auto-hide path (the first lives
-            // inside tickTargetInfoDrag). Both must be gated on the F10
-            // reposition mode AND on active drag, otherwise the inspect
-            // window vanishes mid-drag. Drag check uses m_tiDragActive
-            // which tickTargetInfoDrag flips on LMB-down over the title.
-            if (m_tiShowTick > 0 && !m_repositionHudMode && !m_tiDragActive
-                && (GetTickCount64() - m_tiShowTick) >= 10000)
-                hideTargetInfo();
+            // v6.21.38 - inspect window auto-hide was duplicated here AND
+            // inside tickTargetInfoDrag (the latter uses m_tiAutoHideAtMs
+            // and is the canonical path - it has the F10 / drag gates and
+            // gets reset on every drag tick). Removed this duplicate so
+            // there's exactly one timer.
 
             if (m_crosshairShowTick > 0 && (GetTickCount64() - m_crosshairShowTick) >= CROSSHAIR_FADE_MS)
                 hideCrosshair();
