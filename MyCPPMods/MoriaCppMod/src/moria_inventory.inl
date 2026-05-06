@@ -526,174 +526,114 @@
             }
 
 
-            // v6.23.4 - INS replenish fix continued. The previous v6.23.2
-            // attempt placed the per-instance ServerSplitStack merge AFTER
-            // the deficit check, which fired an early-return whenever the
-            // class total was already at MaxStack (e.g. user has stack A
-            // at 9998 and stack B at 1 -> class total 9999 = MaxStack ->
-            // deficit 0 -> "already at max" -> return without merging).
-            // The merge code never executed in the very case the user
-            // reported.
+            // v6.23.5 - INS replenish: bump JUST the targeted stack to
+            // MaxStack. NO MERGING with other stacks of the same class.
             //
-            // The fix is to do the FItemInstance walk FIRST: find the
-            // target stack and sum the duplicates. Then we know:
-            //   targetCount         = count on m_lastItemHandle's stack
-            //   duplicateTotalCount = sum of all other-stack counts of class
-            //   classTotal          = target + duplicates
+            // Why we don't use ServerDebugSetItem(ItemClass, Count): it's
+            // class-level - the server walks FItemInstance entries and
+            // sets the FIRST-found stack's count to N, ignoring which
+            // specific stack the user is hovering. With 2+ stacks of the
+            // same item, the user's targeted stack is left untouched.
             //
-            // Decision logic:
-            //   1. If duplicates exist: ServerSplitStack each into target,
-            //      then call ServerDebugSetItem(class, maxStack) - this
-            //      bumps the now-single stack to MaxStack. ALWAYS run this
-            //      branch when duplicates exist - the user pressed INS
-            //      because they want their targeted stack at MaxStack,
-            //      regardless of how the class total is distributed.
-            //   2. No duplicates AND target.count < maxStack: just call
-            //      ServerDebugSetItem - hits the only stack, single-stack
-            //      case (works as it did before v6.23.2).
-            //   3. No duplicates AND target.count >= maxStack: nothing
-            //      to do - actually at max, show the info message.
+            // Why we don't merge: per user direction, the other stacks
+            // must remain unchanged. Only the targeted instance gets
+            // bumped to MaxStack.
             //
-            // FItemHandle layout (FGK.hpp:1715, size 0x14):
-            //   +0x00 int32 ID                     <- read from FItemInstance.ID
-            //   +0x04 int32 Payload                <- copy from m_lastItemHandle
-            //   +0x08 TWeakObjectPtr Owner (8 B)   <- copy from m_lastItemHandle
+            // The approach: walk the FItemInstance Items array, find the
+            // entry whose ID matches m_lastItemHandle's ID, and write
+            // its Count field directly via reflected offset. The same
+            // pattern removeItemEffectFromList uses successfully for the
+            // Effects FFastArraySerializer at moria_inventory.inl:49-84.
             //
-            // For duplicate handles we reuse the captured handle's Payload+Owner
-            // and overwrite only the ID. The server validates primarily on
-            // (ID, Owner); Payload appears to be a per-Owner counter not
-            // consulted for stack-merge ops.
+            // Replication note: direct memory writes to FFastArraySerializer
+            // entries are authoritative on the host (host IS the server,
+            // so a local change is canonical and replicates to clients
+            // on the next FastArray tick). On non-host clients the change
+            // is local-only and may be overwritten by the next replication
+            // pulse. For the common case (single-player and host), this
+            // works correctly. Non-host clients should use the in-game
+            // hotbar swap or trade with host instead.
             int32_t targetID = *reinterpret_cast<int32_t*>(m_lastItemHandle);
-            int32_t targetCount = 0;
-            int32_t duplicateTotalCount = 0;
-            int duplicateCount = 0;
-
-            auto* splitFn = invComp->GetFunctionByNameInChain(STR("ServerSplitStack"));
-            probeItemInstanceStruct(invComp);
-            FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
-            if (itemsProp && targetID != 0 && m_lastPickedUpItemClass)
+            if (targetID == 0)
             {
-                int itemsOff = itemsProp->GetOffset_Internal();
-                uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp) + itemsOff + iiaListOff();
-                if (isReadableMemory(listBase, 16))
-                {
-                    uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
-                    int32_t arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
-                    if (arrData && arrNum > 0 && arrNum <= 10000)
-                    {
-                        int stride   = iiSize();
-                        int itemOff  = iiItemOff();
-                        int countOff = 0x18;
-                        int idOff    = iiIDOff();
-
-                        // Pass 1: discovery - count target + duplicates.
-                        for (int32_t i = 0; i < arrNum; i++)
-                        {
-                            uint8_t* entry = arrData + i * stride;
-                            if (!isReadableMemory(entry, stride)) continue;
-                            UClass* entryCls = *reinterpret_cast<UClass**>(entry + itemOff);
-                            if (entryCls != m_lastPickedUpItemClass) continue;
-                            int32_t entryID  = *reinterpret_cast<int32_t*>(entry + idOff);
-                            int32_t entryCnt = *reinterpret_cast<int32_t*>(entry + countOff);
-                            if (entryID == targetID) {
-                                targetCount = entryCnt;
-                            } else if (entryID != 0 && entryCnt > 0) {
-                                duplicateTotalCount += entryCnt;
-                                duplicateCount++;
-                            }
-                        }
-
-                        VLOG(STR("[MoriaCppMod] [Replenish] target ID={} count={}; duplicates: {} stacks summing {}; maxStack={}\n"),
-                             targetID, targetCount, duplicateCount, duplicateTotalCount, maxStack);
-
-                        // Pass 2: merge - if duplicates exist, ServerSplitStack each into target.
-                        if (duplicateCount > 0 && splitFn)
-                        {
-                            int splitParmsSize = splitFn->GetParmsSize();
-                            auto* pSrc  = findParam(splitFn, STR("Source"));
-                            auto* pDst  = findParam(splitFn, STR("Destination"));
-                            auto* pMove = findParam(splitFn, STR("MoveCount"));
-                            for (int32_t i = 0; i < arrNum; i++)
-                            {
-                                uint8_t* entry = arrData + i * stride;
-                                if (!isReadableMemory(entry, stride)) continue;
-                                UClass* entryCls = *reinterpret_cast<UClass**>(entry + itemOff);
-                                if (entryCls != m_lastPickedUpItemClass) continue;
-                                int32_t entryID  = *reinterpret_cast<int32_t*>(entry + idOff);
-                                int32_t entryCnt = *reinterpret_cast<int32_t*>(entry + countOff);
-                                if (entryID == targetID || entryID == 0 || entryCnt <= 0) continue;
-
-                                uint8_t dupHandle[20];
-                                std::memcpy(dupHandle, m_lastItemHandle, 20);
-                                std::memcpy(dupHandle, &entryID, 4);
-
-                                std::vector<uint8_t> sp(splitParmsSize, 0);
-                                if (pSrc)  std::memcpy(sp.data() + pSrc->GetOffset_Internal(),  dupHandle, 20);
-                                if (pDst)  std::memcpy(sp.data() + pDst->GetOffset_Internal(),  m_lastItemHandle, 20);
-                                if (pMove) *reinterpret_cast<int32_t*>(sp.data() + pMove->GetOffset_Internal()) = entryCnt;
-                                safeProcessEvent(invComp, splitFn, sp.data());
-                                VLOG(STR("[MoriaCppMod] [Replenish] Merged duplicate stack ID={} count={} -> targetID={}\n"),
-                                     entryID, entryCnt, targetID);
-                            }
-                            VLOG(STR("[MoriaCppMod] [Replenish] Pre-merged {} stacks ({} items total) into target\n"),
-                                 duplicateCount, duplicateTotalCount);
-                        }
-                    }
-                }
+                showOnScreen(L"Replenish failed: no item targeted (move/hover an item first)",
+                             3.0f, 1.0f, 0.4f, 0.4f);
+                return;
             }
 
-            // Single-stack early-out: if there are no duplicates AND the
-            // existing stack is already at MaxStack, nothing to do.
-            if (duplicateCount == 0 && targetCount >= maxStack)
+            probeItemInstanceStruct(invComp);
+            FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
+            if (!itemsProp)
+            {
+                showOnScreen(L"Replenish failed: Items property not resolved",
+                             3.0f, 1.0f, 0.4f, 0.4f);
+                return;
+            }
+
+            int itemsOff = itemsProp->GetOffset_Internal();
+            uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp) + itemsOff + iiaListOff();
+            if (!isReadableMemory(listBase, 16))
+            {
+                showOnScreen(L"Replenish failed: Items list unreadable",
+                             3.0f, 1.0f, 0.4f, 0.4f);
+                return;
+            }
+
+            uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+            int32_t arrNum   = *reinterpret_cast<int32_t*>(listBase + 8);
+            if (!arrData || arrNum <= 0 || arrNum > 10000)
+            {
+                showOnScreen(L"Replenish failed: Items array invalid",
+                             3.0f, 1.0f, 0.4f, 0.4f);
+                return;
+            }
+
+            int stride   = iiSize();
+            int idOff    = iiIDOff();
+            int countOff = 0x18;
+            uint8_t* targetEntry = nullptr;
+            int32_t  targetCount = 0;
+            for (int32_t i = 0; i < arrNum; i++)
+            {
+                uint8_t* entry = arrData + i * stride;
+                if (!isReadableMemory(entry, stride)) continue;
+                int32_t entryID = *reinterpret_cast<int32_t*>(entry + idOff);
+                if (entryID == targetID)
+                {
+                    targetEntry = entry;
+                    targetCount = *reinterpret_cast<int32_t*>(entry + countOff);
+                    break;
+                }
+            }
+            if (!targetEntry)
+            {
+                VLOG(STR("[MoriaCppMod] [Replenish] target ID={} not found in Items (arrNum={})\n"),
+                     targetID, arrNum);
+                showOnScreen(L"Replenish failed: targeted stack not found in inventory",
+                             3.0f, 1.0f, 0.4f, 0.4f);
+                return;
+            }
+
+            VLOG(STR("[MoriaCppMod] [Replenish] target ID={} count={} maxStack={}\n"),
+                 targetID, targetCount, maxStack);
+
+            if (targetCount >= maxStack)
             {
                 std::wstring msg = rowName + L" already at max (" + std::to_wstring(maxStack) + L")";
                 showOnScreen(msg, 3.0f, 0.3f, 1.0f, 0.3f);
                 return;
             }
 
-            // ServerDebugSetItem is a Server RPC — UE4 routes it to the
-            // authority automatically, so it works for host and non-host
-            // clients alike. RequestAddItem was local-only and silently
-            // failed on remote clients. After the per-instance pre-merge
-            // above (when duplicates existed), the targeted stack is the
-            // sole survivor of its class on the server, so the class-level
-            // SetItem reliably bumps THAT specific instance.
-            auto* setFn = invComp->GetFunctionByNameInChain(STR("ServerDebugSetItem"));
-            if (!setFn)
-            {
-                VLOG(STR("[MoriaCppMod] [Replenish] ServerDebugSetItem not found on invComp\n"));
-                showOnScreen(L"Replenish failed: ServerDebugSetItem not found", 3.0f, 1.0f, 0.4f, 0.4f);
-                return;
-            }
+            // The actual replenish: direct write of Count = maxStack on
+            // the targeted instance only. Other stacks of the same class
+            // are untouched.
+            int32_t deficit = maxStack - targetCount;
+            *reinterpret_cast<int32_t*>(targetEntry + countOff) = maxStack;
+            VLOG(STR("[MoriaCppMod] [Replenish] direct write: ID={} count {} -> {} (deficit={})\n"),
+                 targetID, targetCount, maxStack, deficit);
 
-            {
-                int sz = setFn->GetParmsSize();
-                std::vector<uint8_t> p(sz, 0);
-
-                auto* pItem  = findParam(setFn, STR("Item"));
-                auto* pCount = findParam(setFn, STR("Count"));
-
-                if (pItem)  *reinterpret_cast<UClass**>(p.data() + pItem->GetOffset_Internal()) = m_lastPickedUpItemClass;
-                if (pCount) *reinterpret_cast<int32_t*>(p.data() + pCount->GetOffset_Internal()) = maxStack;
-
-                VLOG(STR("[MoriaCppMod] [Replenish] Calling ServerDebugSetItem({}, count={})\n"),
-                     m_lastPickedUpItemName, maxStack);
-                safeProcessEvent(invComp, setFn, p.data());
-            }
-
-            // Status message reflects what happened: if duplicates were
-            // merged, mention the count; otherwise show the simple deficit.
-            int32_t finalDeficit = maxStack - targetCount - duplicateTotalCount;
-            if (finalDeficit < 0) finalDeficit = 0;
-            std::wstring msg;
-            if (duplicateCount > 0) {
-                msg = L"Replenished " + rowName + L" (merged " + std::to_wstring(duplicateCount)
-                    + L" stack" + (duplicateCount == 1 ? L"" : L"s") + L" -> "
-                    + std::to_wstring(maxStack) + L")";
-            } else {
-                msg = L"Replenished " + rowName + L" +" + std::to_wstring(finalDeficit)
-                    + L" (->" + std::to_wstring(maxStack) + L")";
-            }
+            std::wstring msg = L"Replenished " + rowName + L" +" + std::to_wstring(deficit)
+                             + L" (->" + std::to_wstring(maxStack) + L")";
             showOnScreen(msg, 3.0f, 0.3f, 1.0f, 0.3f);
         }
 
