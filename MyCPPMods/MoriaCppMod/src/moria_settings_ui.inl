@@ -971,6 +971,8 @@
                 { STR("Trash Item"),         19, "TrashItem",         STR("EquipmentHeading") },
                 { STR("Replenish Item"),     20, "ReplenishItem",     STR("EquipmentHeading") },
                 { STR("Remove Attributes"),  21, "RemoveAttributes",  STR("EquipmentHeading") },
+                // v6.21.28 - Save Game row injected under native General section.
+                { STR("Save Game"),          18, "SaveGame",          STR("GeneralHeading") },
             };
             int nativeAdded = 0;
             for (const auto& mv : moves)

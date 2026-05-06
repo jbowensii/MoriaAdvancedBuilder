@@ -4562,6 +4562,48 @@
                                 safeProcessEvent(editBox, fn, bb.data());
                             }
                         }
+
+                        // v6.21.28 - DIAGNOSTIC: log every property on the
+                        // EditableTextBox so we can see what's available at
+                        // runtime. Will tell us the exact name of any
+                        // max-chars property and any other settings.
+                        VLOG(STR("[MoriaCppMod] [Rename v2] DIAG editBox properties:\n"));
+                        try {
+                            auto* cls = editBox->GetClassPrivate();
+                            if (cls)
+                            {
+                                int idx = 0;
+                                for (auto* prop : cls->ForEachPropertyInChain())
+                                {
+                                    if (!prop) continue;
+                                    std::wstring n;
+                                    try { n = std::wstring(prop->GetName()); } catch (...) {}
+                                    VLOG(STR("[MoriaCppMod] [Rename v2] DIAG   prop[{}] = {}\n"), idx, n);
+                                    if (++idx >= 80) break;
+                                }
+                            }
+                        } catch (...) {}
+
+                        // v6.21.28 - try clearing max-char limits via every
+                        // candidate property name. Whichever exists wins;
+                        // others no-op safely. This unblocks the 12-char
+                        // typing cutoff the user reported.
+                        for (const wchar_t* propName : {
+                            STR("MaxNumberOfCharacters"),    // most likely
+                            STR("MaximumNumberOfCharacters"),
+                            STR("MaxCharacters"),
+                            STR("MaxLength"),
+                            STR("MaxNameLength"),
+                        })
+                        {
+                            if (auto* p = editBox->GetValuePtrByPropertyNameInChain<int32_t>(propName))
+                            {
+                                int32_t prev = *p;
+                                *p = 0;  // 0 = no limit in UE4 convention
+                                VLOG(STR("[MoriaCppMod] [Rename v2] cleared {} (was {})\n"),
+                                     propName, prev);
+                            }
+                        }
                     }
 
                     // AddToViewport at ZOrder=501 (just above the popup
