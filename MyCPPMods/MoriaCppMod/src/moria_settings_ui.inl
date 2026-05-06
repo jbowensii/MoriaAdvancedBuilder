@@ -1927,11 +1927,9 @@
             VLOG(STR("[SettingsUI] CP5 — injectModGameOptions on instance {:p}, isCheatsHost={}\n"),
                  (void*)gameplayTab, isCheatsHost ? L"YES" : L"no");
 
-            // ─────────────────────────────────────────────────────────
-            // CHEATS HOST PATH — this is the framework's clone of
-            // WBP_GameplayTab spawned for our "Cheats" tabArray entry.
-            // We want it to display ONLY cheats content.
-            // ─────────────────────────────────────────────────────────
+            // Reachable only if the Cheats-tab append is re-enabled
+            // (currently disabled — Option C merges cheats onto the native
+            // Gameplay tab, so isCheatsHost is always false today).
             if (isCheatsHost)
             {
                 if (m_cheatsHostInjectedFor.Get() == gameplayTab) return; // idempotent
@@ -2412,10 +2410,11 @@
         };
         std::vector<CheckBoxRow> m_checkBoxRows;
 
-        // replace native checkbox with a 2-option carousel
-        // (OFF / ON). The carousel widget actually works (we use it for
-        // tweaks). Each toggle row tracks the carousel + an onChanged
-        // callback. Click prev/next arrow → flip state.
+        // Toggle rows render as a 2-option Carousel (OFF/ON). The native
+        // CheckBox widget never displayed its check mark for dynamically-
+        // spawned instances, so the carousel is the primary path; CheckBox
+        // is a fallback when the carousel class isn't cached yet. Each row
+        // tracks the carousel + an onChanged callback.
         struct CarouselToggleRow {
             FWeakObjectPtr widget;
             std::function<void(bool)> onChanged;
@@ -2423,9 +2422,6 @@
         };
         std::vector<CarouselToggleRow> m_carouselToggles;
 
-        // toggle row spawned as a 2-option Carousel (OFF/ON).
-        // The native checkbox widget never showed its check mark for our
-        // dynamically-spawned instances; the carousel always works.
         UObject* spawnCheckBoxRow(const wchar_t* label,
                                   std::function<bool()> getCurrent,
                                   std::function<void(bool)> onChanged)
@@ -2564,9 +2560,8 @@
                 }
             }
 
-            // set CheckIcon's brush via SetBrushFromTexture
-            // UFunction with the F12 menu's known-good T_UI_Icon_Check
-            // texture. The byte-copy approach didn't render properly.
+            // Set CheckIcon's brush via SetBrushFromTexture (byte-copy of
+            // brush data does not render reliably; only the UFunction path works).
             if (auto* iconPtr = row->GetValuePtrByPropertyNameInChain<UObject*>(STR("CheckIcon")))
             {
                 if (UObject* icon = *iconPtr)
@@ -2626,11 +2621,8 @@
             return false;
         }
 
-        // also store the original label per checkbox so we can
-        // prepend "✓ " when on. The native CheckIcon UImage approach
-        // didn't render reliably (4 attempts), so we take the visual
-        // signal into the OptionNameTextBlock label itself.
-        std::vector<std::wstring> m_checkBoxLabels; // parallel to m_checkBoxRows
+        // Original label per checkbox, parallel to m_checkBoxRows.
+        std::vector<std::wstring> m_checkBoxLabels;
 
         void refreshCheckBoxIcons()
         {
@@ -2648,10 +2640,9 @@
                 // We only update the LABEL prefix and CheckIcon UImage
                 // visibility based on m_buffStates.
 
-                // no label prefix (user explicitly didn't want it).
-                // Just keep the inner UCheckBox.CheckedState in sync via
-                // direct property write + SynchronizeProperties so the
-                // Slate widget renders the proper checkmark.
+                // Keep inner UCheckBox.CheckedState in sync via direct
+                // property write + SynchronizeProperties so Slate renders
+                // the checkmark. (No label prefix.)
                 if (auto* cbPtr = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("OptionCheckBox")))
                 {
                     if (UObject* cb = *cbPtr)
@@ -3024,9 +3015,8 @@
                 }
             }
 
-            // use spawnGameOptButton (the proven path) so the
-            // button registers in m_gameOptButtons exactly like CP4 used
-            // to. Then put it inside our HBox row.
+            // Use spawnGameOptButton so the button registers in m_gameOptButtons
+            // for click dispatch, then place it inside the HBox.
             UObject* btn = spawnGameOptButton(outer, buttonText, kind);
             if (!btn) return row;
             if (UObject* innerTb = jw_findChildInTree(btn, STR("ButtonText")))
@@ -3271,56 +3261,15 @@
 
 
 
-        // pre-hook for navTabPressed.
-        //
-        // The framework's WBP_SettingsScreen has fixed per-tab member
-        // widgets (WBP_GameplayTab, WBP_AudioTab, etc.) and switches
-        // between them by tab name. There's no bound widget for "Cheats"
-        // — clicking it would route to nothing. So we:
-        //   1. Set m_cheatsTabActive = true when KeyName == "Cheats".
-        //   2. Rewrite the KeyName parameter to "Gameplay" so the
-        //      framework displays the Gameplay widget (our content host).
-        //   3. Our injectModGameOptions handler reads m_cheatsTabActive
-        //      and renders cheats-only content (native Gameplay UI +
-        //      Mod Game Options collapsed; Cheats section visible).
-        // For any other tab, clear the flag.
-        // when "Cheats" is clicked:
-        //   1. Find the SettingsScreen's WBP_GameplayTab member
-        //   2. Force-inject our cheats content into it (if not already)
-        //   3. Hide all native gameplay children + Mod Game Options
-        //   4. Show only cheats content
-        //   5. Rewrite KeyName -> "Gameplay" so the framework's tab
-        //      switcher actually displays the Gameplay widget (which
-        //      we've now turned into a cheats panel).
-        // When any other tab is clicked: restore native children and
-        // hide cheats content.
-        // pre-hook rewrites KeyName "Cheats" -> "Gameplay" so
-        // the framework's tab switcher displays the Gameplay widget
-        // (which we visibility-swap to show cheats content). Post-hook
-        // then calls navbar.SelectThisTab("Cheats") UFunction to fix
-        // the highlight. GetWidgetSwitcher isn't a UFunction in this
-        // binary so the SetActiveWidget approach was unreachable — we
-        // go back to KeyName rewrite which is the only working path.
-        // Cheats tab removed (Option-C merge). The pre-hook used to
-        // intercept "Cheats" KeyName and rewrite it to "Gameplay" to
-        // route the framework's tab switcher; with Option-C there's
-        // no separate Cheats tab to redirect, so the body is empty.
-        // The hook itself is still registered because dllmain.cpp
-        // routes navTabPressed PE callbacks here unconditionally.
+        // Pre-hook for navTabPressed. Cheats-tab override is removed
+        // (Option-C merge); the body is empty. Hook stays registered
+        // because dllmain.cpp routes navTabPressed PE callbacks here.
         void onNavTabPressedPre(UObject* /*context*/, UFunction* /*fn*/, void* /*parms*/)
         {
         }
 
-        // post-hook on navTabPressed.
-        //
-        // Uses proper UFunction APIs throughout:
-        //   - UFGKUIScreen.GetWidgetSwitcher() -> UWidgetSwitcher
-        //   - UWidgetSwitcher.SetActiveWidget(UWidget*)
-        //   - UWidget.SetVisibility(ESlateVisibility)
-        //
-        // For non-cheats tabs: framework already handled everything;
-        // we just clean up cheats visibility (so they don't peek into
-        // other tabs that briefly share the panel during transitions).
+        // Post-hook on navTabPressed. Rebuilds the Gameplay-tab content
+        // (idempotent) and refreshes context visibility on every tab click.
         void onNavTabPressedPost(UObject* context, UFunction* /*fn*/, void* /*parms*/)
         {
             if (!context || !isObjectAlive(context)) return;
@@ -3351,12 +3300,10 @@
         }
 
 
-        // ─────────────────────────────────────────────────────────
-        // single-instance dual-content state.
-        // We use the SettingsScreen's existing WBP_GameplayTab as the
-        // host, and toggle two parallel widget sets (Mod Game Options
-        // vs Cheats) plus the original native children.
-        // ─────────────────────────────────────────────────────────
+        // State for the merged Gameplay tab. We reparent the SettingsScreen's
+        // WBP_GameplayTab native children into a ScrollBox and append our
+        // mod content (Game Options, Combat, Game Settings, God Mode, Buffs,
+        // Loaded Mods) as siblings.
         FWeakObjectPtr m_dualInjectedFor;
         // Original native children captured on first inject.
         std::vector<FWeakObjectPtr> m_dualNativeChildren;
@@ -3420,11 +3367,9 @@
                 return;
             }
 
-            // Option C: single Gameplay tab, all content cached.
-            // After first inject for THIS gameplayTab, subsequent calls
-            // early-return (no re-injection — duplicates eliminated).
-            // If gameplayTab differs (new SettingsScreen instance), reset
-            // the cache so a fresh inject runs for it.
+            // Cache by gameplayTab pointer. After first inject for this
+            // instance, subsequent calls early-return; on a fresh
+            // SettingsScreen the pointer changes and we re-inject.
             if (m_dualInjectedFor.Get() != gameplayTab)
                 m_dualContentCached = false;
             if (m_dualInjectedFor.Get() == gameplayTab && m_dualContentCached)
@@ -3550,12 +3495,11 @@
                     injectTarget = scrollBox;
                     m_dualScrollBox = FWeakObjectPtr(scrollBox);
 
-                    // two VerticalBox containers inside the
-                    // ScrollBox. Tab swap = toggle visibility of these
-                    // two single widgets (reliable for single-widget
-                    // hide; the previous per-row HBox visibility-collapse
-                    // didn't propagate to children). Native sliders go in
-                    // VBoxA (gameplay), action buttons + cheats in VBoxB.
+                    // Two VerticalBox containers inside the ScrollBox; tab
+                    // swap toggles single-widget visibility (reliable, vs.
+                    // per-row hide which didn't propagate). gpVB holds all
+                    // Gameplay-tab content; chVB is reserved for a future
+                    // cheats context.
                     UClass* vboxClsForCtx = nullptr;
                     try {
                         vboxClsForCtx = UObjectGlobals::StaticFindObject<UClass*>(
@@ -3612,11 +3556,9 @@
             m_cachedOuter   = FWeakObjectPtr(outer);
         skip_panel_setup:;
 
-            // route widgets to one of two context containers.
-            // addToGameplayCtx → gameplay tab content (native sliders +
-            // Combat + Game Settings + Loaded Mods + No Coll/Peace).
-            // addToCheatsCtx → cheats tab content (action buttons + God
-            // Mode + Buffs).
+            // Route widgets to one of two context containers. Both currently
+            // land on the Gameplay VBox (Cheats merged onto Gameplay);
+            // addToCheatsCtx exists for a future split.
             UObject* gpVB = m_dualGameplayScroll.Get();
             UObject* chVB = m_dualCheatsScroll.Get();
             auto addToGameplayCtx = [&](UObject* child) {
@@ -3681,12 +3623,8 @@
                 }
             }
 
-            // Mod Game Options block — only injected when in-game.
-            // These actions (Save Game, Unlock Recipes, etc.) need a
-            // running session, so on the main-menu settings we skip
-            // them entirely. Cheats are also game-state-dependent but
-            // the user wants the Cheats tab visible everywhere; cheat
-            // handlers no-op gracefully if no session.
+            // Mod Game Options block — only injected when in-game (the
+            // actions need a running session). Skipped on main-menu Settings.
             if (isInGame)
             {
                 // All content merged onto Gameplay tab, no
@@ -4030,8 +3968,8 @@
             for (auto& wp : m_dualModGameWidgets)  setWidgetVisibility(wp.Get(), SHOW);
         }
 
-        // Dispatch CP4 button clicks. Called from ProcessEvent post-hook
-        // when WBP_FrontEndButton_C::OnMenuButtonClicked fires.
+        // Dispatch mod-game-option button clicks. Called from a ProcessEvent
+        // post-hook on WBP_FrontEndButton_C::OnMenuButtonClicked.
         void onModGameOptionClicked(UObject* clickedButton)
         {
             if (!clickedButton) return;
@@ -4156,30 +4094,21 @@
         };
         std::vector<RowStatus> m_rowStatus;
 
-        // track the ScrollBox we inject content into so tab
-        // context switches can RemoveChild / AddChild widgets directly
-        // (visibility swap was unreliable).
+        // ScrollBox we inject content into; used for child swaps on tab
+        // context change.
         FWeakObjectPtr m_dualScrollBox;
         FWeakObjectPtr m_panelSetupFor;
         FWeakObjectPtr m_cachedOuter;
-        // Cached UWidgetSwitcher containing two VBoxes
-        // (gameplay context + cheats context). Tab swap = single
-        // SetActiveWidgetIndex call. Content stays cached after first
-        // injection.
         FWeakObjectPtr m_dualWidgetSwitcher;
         bool m_dualContentCached{false};
-        // v0.49b — Pause menu (UI_WBP_EscapeMenu2_C) injection. Tracks
-        // which menu instance we've injected mod action buttons into.
+        // Pause menu (UI_WBP_EscapeMenu2_C) injection. Tracks which menu
+        // instance we've injected mod action buttons into.
         FWeakObjectPtr m_pauseMenuInjectedFor;
-        // hidden VerticalBox where we park widgets that should
-        // not be visible in the current tab context. Sibling of the
-        // ScrollBox, has Visibility=Collapsed so its contents don't
-        // render. Acts as a GC root for the parked widgets.
         FWeakObjectPtr m_dualHiddenStash;
-        // two-ScrollBox approach. Gameplay-context content goes
-        // in m_dualGameplayScroll, Cheats-context in m_dualCheatsScroll.
-        // Tab swap = toggle visibility on these two single widgets,
-        // which is reliable (single-widget hide vs composite-row hide).
+        // Two VerticalBox containers inside the ScrollBox (named *_Scroll
+        // for historical reasons). Gameplay content lives in
+        // m_dualGameplayScroll; m_dualCheatsScroll is reserved for a
+        // future cheats split (currently unused).
         FWeakObjectPtr m_dualGameplayScroll;
         FWeakObjectPtr m_dualCheatsScroll;
 
@@ -4199,15 +4128,11 @@
         // Each row maps to an index in m_ftGameModEntries.
         struct ModPackRow { FWeakObjectPtr selector; int modIdx; };
         std::vector<ModPackRow> m_modPackRows;
-        // Deadline (ms via GetTickCount64) until which tickReapplyCheatsContext
-        // should keep refreshing the navbar selection. Set by pre-hook so
-        // the highlight repaints even if framework writes stale state late.
+        // Orphaned: tickReapplyCheatsContext was deleted; deadline no longer
+        // read. Kept declared for ABI of legacy helpers; consider removing
+        // when the cheats-host branch is verified dead.
         uint64_t m_cheatsHighlightRefreshDeadline{0};
-        // Native children of the Cheats-host instance that we collapsed
-        // (the BP's Construct populates a Gameplay UI we don't want).
         std::vector<FWeakObjectPtr> m_cheatsHostNativeChildren;
-        // Legacy fields — retained for back-compat with helpers but not
-        // populated under the v0.10 per-instance approach.
         struct OriginalChild { FWeakObjectPtr widget; uint8_t origVis; };
         std::vector<OriginalChild> m_gameplayNativeChildren;
         std::vector<FWeakObjectPtr> m_cheatsContextWidgets;
@@ -4330,12 +4255,10 @@
             m_cheatsTabInjectedFor = FWeakObjectPtr(legalTab);
         }
 
-        // Click dispatch — called from ProcessEvent post-hook on
-        // OnMenuButtonClicked. Same hook covers CP4 buttons; this handler
-        // just adds the Cheats tab buttons.
-        // Returns true if the selector matches one of our action rows
-        // (Cheats or Mod Game Options) — fires the action and tells the
-        // caller to skip the keymap-rebind path.
+        // Click dispatch from a ProcessEvent post-hook. Returns true if
+        // `selector` matches one of our action rows (Cheats, Mod Game
+        // Options, buff toggles, tweak cycles, mod-pack toggles) — fires
+        // the action and tells the caller to skip the keymap-rebind path.
         bool maybeFireCheatFromSelector(UObject* selector)
         {
             if (!selector) return false;

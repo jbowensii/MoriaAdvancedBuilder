@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.23
+Document Version 6.23.24
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3802,6 +3802,54 @@ over 9 iterations:
                * generic createImageWithBrush helper
                * keybind label rect (76x44)
              No behavior change in the normal case.
+    v6.23.24: Comment audit chunk 6b - moria_settings_ui.inl REWRITEs
+             second wave; concludes settings_ui REWRITE pass.
+
+             Targets handled this iteration:
+               * CHEATS HOST PATH banner (4-line ASCII-bordered) -> 3-line
+                 dormancy note ("Reachable only if Cheats-tab append is
+                 re-enabled...")
+               * Carousel rationale consolidated from 2 redundant comment
+                 blocks (L2415-2418 + L2426-2428) into a single 5-line
+                 explanation near spawnCheckBoxRow
+               * SetBrushFromTexture rationale dropped "byte-copy approach
+                 didn't render" history; kept the load-bearing constraint
+               * Stale "✓ prefix when on" + "4 attempts" history removed
+                 (the prefix was abandoned per L2649)
+               * "no label prefix (user explicitly didn't want it)" rephrased
+               * spawnGameOptButton "exactly like CP4 used to" -> current-
+                 state "for click dispatch, then place in the HBox"
+               * navTabPressed pre-hook 25-line stale narrative (numbered
+                 strategy describing behavior the function no longer
+                 performs) -> 3-line dormancy note
+               * navTabPressed post-hook 11-line stale claim about UFunction
+                 APIs that aren't used -> 2-line current-state
+               * single-instance dual-content state ASCII-bordered banner
+                 -> 4 lines describing actual merged-tab behavior
+               * "Option C: single Gameplay tab, all content cached"
+                 5-line era ref -> 3-line "Cache by gameplayTab pointer..."
+               * "two VerticalBox containers" 6 lines mentioning unused
+                 chVB -> 5 lines with "reserved for a future cheats split"
+               * route widgets 5-line stale "addToCheatsCtx -> cheats tab
+                 content" -> 3-line current "Both currently land on the
+                 Gameplay VBox..."
+               * Mod Game Options block "user wants Cheats everywhere"
+                 6-line decision-narrative -> 2-line current-state
+               * Dispatch CP4 button click handler header CP4 -> mod-game-option
+               * State field comments cleaned: m_dualScrollBox visibility-
+                 swap-history dropped, m_dualHiddenStash trim, m_dualGameplay/
+                 CheatsScroll updated to reflect post-merge reality
+               * m_cheatsHighlightRefreshDeadline orphan note added (the
+                 reader function tickReapplyCheatsContext was deleted)
+               * m_cheatsHostNativeChildren / m_gameplayNativeChildren legacy-
+                 fields banner trimmed
+               * Click dispatch maybeFireCheatFromSelector header tightened
+
+             Combined chunks 6a + 6b: settings_ui.inl comment-rewrite pass
+             complete. Net ~150 LOC removed from prose-only tightening.
+
+             Build clean.
+
     v6.23.23: Comment audit chunk 6a - moria_settings_ui.inl REWRITEs
              (first wave, ~12 high-impact prose rewrites).
              File header: 38-line "v6.8.0+ instrumentation only / GOAL /
