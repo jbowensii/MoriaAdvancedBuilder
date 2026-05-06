@@ -1,4 +1,4 @@
-// MoriaCppMod v6.23.16 - Return to Moria UE4SS C++ mod
+// MoriaCppMod v6.23.17 - Return to Moria UE4SS C++ mod
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -339,10 +339,6 @@ namespace MoriaMods
         int m_activeBuilderSlot{-1};
 
 
-        // MC bar widget infrastructure removed. MC_SLOTS=9 KEPT
-        // because dispatchMcSlot, keybind polling (s_lastMcKey[MC_SLOTS]),
-        // s_bindings[MC_BIND_BASE..MC_BIND_BASE+8] all reference it.
-        // m_mcBarWidget removed (bar never spawned).
         static constexpr int MC_SLOTS = 9;
         // "New Building Bar": cloned WBP_UI_ActionBar_C instance,
         // chrome only (look). Tame-spawned at top of HUD with the 4 special
@@ -360,9 +356,6 @@ namespace MoriaMods
         // when the world is ready; tickRotationDisplay only flips
         // SetVisibility from then on.
         bool m_rotDisplaySpawnAttempted{false};
-        // per-slot widget pointers for the New Building Bar.
-        // Set during createNewBuildingBar(); used for highlight + Phase 2
-        // icon/label updates. 8 slots = 8 indexed entries.
         UObject* m_nbbSlotEmpty[8]{};   // empty-state UImage
         UObject* m_nbbSlotFocus[8]{};   // focused-state UImage (visibility toggled for highlight)
         UObject* m_nbbSlotIcon[8]{};    // icon UImage (Phase 2 - builder piece icon)
@@ -617,14 +610,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.23.16");
+            ModVersion = STR("6.23.17");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.16\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.17\n"));
         }
 
         ~MoriaCppMod() override
@@ -665,7 +658,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.16 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.17 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -788,8 +781,6 @@ namespace MoriaMods
                     }
                     quickBuildSlot(i);
                 });
-                // Legacy SHIFT/CTRL/ALT registrations removed - chord-aware
-                // polling in gameThreadTick handles SET dispatch.
             }
 
 
@@ -802,10 +793,6 @@ namespace MoriaMods
             });
 
 
-
-            // Recipe unlock + Mark-all-read features moved to the F12 Cheats tab.
-            // See moria_unlock.inl for unlockAllAvailableRecipes() + markAllLoreRead() entry points.
-            // Keybinds removed; buttons in F12 > Cheats tab are the only entry now.
 
             // Pitch/Roll rotation - uses keybind system (BIND_PITCH_ROTATE, BIND_ROLL_ROTATE)
             // Registered dynamically after config load via registerPitchRollKeys()
@@ -845,19 +832,10 @@ namespace MoriaMods
                 const auto fnName = func->GetName();
                 const wchar_t* fnStr = fnName.c_str();
 
-                // pre-hook WBP_SettingsScreen.PreConstruct or
-                // Construct or OnInitialized. Append Cheats to tabArray
-                // BEFORE the navbar's Construct runs (navbar reads tabArray
-                // directly during its own Construct).
-                // v6.22.5+v6.23.6: appendCheatsTabToArray call removed from
-                // PreConstruct/Construct/OnInitialized hook. The Option-C
-                // merge ships cheats inside the existing native Gameplay /
-                // Game Options tabs; no separate tab is added.
-                // when user clicks the Cheats tab in the navbar,
-                // redirect the tab name to "Gameplay" so the framework
+                // navTabPressed pre-hook: when user clicks the Cheats tab,
+                // rewrite the tab name to "Gameplay" so the framework
                 // displays the Gameplay tab content. Set a flag so the
-                // Gameplay tab's OnAfterShow hook injects cheats content
-                // instead of (or in addition to) Mod Game Options.
+                // Gameplay tab's OnAfterShow hook injects cheats content.
                 if (wcscmp(fnStr, STR("navTabPressed")) == 0 && parms)
                 {
                     s_instance->onNavTabPressedPre(context, func, parms);
@@ -895,9 +873,6 @@ namespace MoriaMods
                     return;
                 }
 
-                // (v6.22.4+v6.23.6: PE pre-hook gamepad suppression and
-                //  emote-on-Dpad-Left suppression deleted with the rest of
-                //  the controller cluster.)
                 if (wcscmp(fnStr, STR("RotatePressed")) == 0 || wcscmp(fnStr, STR("RotateCcwPressed")) == 0)
                 {
                     if (s_instance->m_isDedicatedServer) return;
@@ -1150,8 +1125,6 @@ namespace MoriaMods
                     }
                 }
 
-                // Original direct-call hook (kept as a fallback in case the
-                // C++ implementation is also exposed as a UFunction).
                 if (parms &&
                     (wcscmp(fnStr2, STR("DirectJoinSessionWithPassword")) == 0 ||
                      wcscmp(fnStr2, STR("DirectJoinLocalSessionWithPassword")) == 0))
@@ -1359,7 +1332,6 @@ namespace MoriaMods
                     bool isFEReleased = (wcsstr(fnStr2, STR("OnButtonReleasedEvent")) != nullptr);
                     if (isMenuClick || isFEReleased)
                     {
-                        // Diagnostic: log what's firing on what class.
                         static int s_clickDiagCount = 0;
                         if (s_clickDiagCount < 24) {
                             VLOG(STR("[CP4-CLICK] fn='{}' ctxCls='{}' ctx={:p}\n"),
@@ -1408,8 +1380,6 @@ namespace MoriaMods
 
                 if (wcscmp(fnStr2, STR("OnAfterHide")) == 0)
                 {
-                    // hoisted single safeClassName call (was two
-                    // sequential calls: settings-hide gate + build-tab gate).
                     std::wstring cls = safeClassName(context);
 
                     // Clear settings-screen-open gate when SettingsScreen
@@ -1583,7 +1553,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.23.16: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.23.17: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -1604,20 +1574,9 @@ namespace MoriaMods
                         try { loadAndApplyDefinitions(); }
                         catch (...) { RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Exception during definition loading\n")); }
                     }
-                    // (FGK DynamicTableAsset one-shot diagnostic removed in
-                    //  v6.23.6 along with the rest of the FGK runtime-injection
-                    //  investigation. Per closed-features-2026-05-04.md, FGK
-                    //  injection is ABANDONED.)
                     return {false, false};
                 });
         }
-
-        // (v6.23.6: FGK runtime-injection diagnostics deleted -
-        //  dumpFGKWrapperDiagnostic, resolveHandleDataTableChanged,
-        //  tickFGKInjectionTest, tickActorLookupDiag, tickFGKDiscoveryDiag,
-        //  m_fgkDiagDone, m_pfHandleDataTableChanged, m_fgkInjectionTestDone
-        //  per closed-features-2026-05-04.md ABANDONED.)
-
 
 
         // Game thread tick - called once per frame ON the game thread via EngineTick hook.
@@ -1820,12 +1779,6 @@ namespace MoriaMods
                 s_trashLMBPrev = lmb;
             }
 
-
-            // inspect window auto-hide was duplicated here AND
-            // inside tickTargetInfoDrag (the latter uses m_tiAutoHideAtMs
-            // and is the canonical path - it has the F10 / drag gates and
-            // gets reset on every drag tick). Removed this duplicate so
-            // there's exactly one timer.
 
             if (m_crosshairShowTick > 0 && (GetTickCount64() - m_crosshairShowTick) >= CROSSHAIR_FADE_MS)
                 hideCrosshair();
@@ -2089,7 +2042,6 @@ namespace MoriaMods
                 }
                 s_lastHarvestKey = nowDown;
             }
-            // Pitch rotation (,  / SHIFT+,)
             // Pitch rotation (. / SHIFT+.) - BIND_PITCH_ROTATE defaults to '.'
             // gated to ghost-visible (resolveGATA returns non-null).
             {
@@ -2206,10 +2158,6 @@ namespace MoriaMods
                                     quickBuildSlot(hitSlot);
                             }
                             break;
-                        // case 1 (AB toolbar click toggle) removed v6.21.21.
-                        // case 2 (MC toolbar click) removed v6.21.21 -
-                        // hitTestToolbarSlot returns false now; case unreachable.
-                        // dispatchMcSlot is still live via keybind polling.
                         default:
                             break;
                         }
@@ -2670,7 +2618,6 @@ namespace MoriaMods
 
                             bool handled = false;
 
-                            // --- Existing 3 rows (button click) ---
                             if (curX >= btnLeft && curX <= btnRight)
                             {
                                 if (curY >= unlockT && curY <= unlockB)
@@ -2680,11 +2627,9 @@ namespace MoriaMods
                                 else if (curY >= peaceT && curY <= peaceB)
                                 { VLOG(STR("[MoriaCppMod] [Cheats] PEACE/FIGHT clicked\n")); togglePeaceMode(); handled = true; }
                             }
-                            // --- Peace Mode checkbox click ---
                             if (!handled && curX >= cbX0 && curX <= cbX1 && curY >= peaceT && curY <= peaceB)
                             { VLOG(STR("[MoriaCppMod] [Cheats] Peace checkbox clicked\n")); togglePeaceMode(); handled = true; }
 
-                            // --- Buff entries (clear-all / headers / toggles) ---
                             if (!handled)
                             {
                                 int count = (int)m_buffRowTopYs.size();
@@ -3075,16 +3020,6 @@ namespace MoriaMods
             //   widgets in place, so Esc on the native widget runs the BP's
             //   own ClosePanel/back-nav logic. We just clear our tracking
             //   pointers when the widget is no longer alive (handled below).
-            if (m_modJoinWorldWidget.Get() == nullptr)
-            {
-                // Auto-clear stale state when native widget is gone
-                static bool s_loggedClear = false;
-                if (!s_loggedClear) { s_loggedClear = true; }
-            }
-
-            // (legacy hit-test mouse handlers removed - we now modify the native
-            //  widget in place, so its real buttons handle Advanced/Close/etc.)
-
             if (!m_replayActive) return;
             m_frameCounter++;
 
@@ -3233,8 +3168,6 @@ namespace MoriaMods
                     m_trashDlgVisible = false;
                     m_trashDlgOpenTick = 0;
 
-                    // MC bar nullptr clears removed (all fields gone)
-                    // AB bar nullptr clears removed (fields gone)
                     m_toolbarsVisible = false;
 
                     m_hoveredToolbar = -1;
@@ -3278,9 +3211,6 @@ namespace MoriaMods
                         m_localPawn = getPawn();
                         VLOG(STR("[MoriaCppMod] Character loaded - PC={:p} Pawn={:p}, waiting 15s before replay\n"),
                              (void*)m_localPC, (void*)m_localPawn);
-
-                        // Controller blocking at character load removed - UE4's bBlockInput
-                        // and DisableInput don't prevent the callout Gameplay Ability from firing.
 
                         // Server fly: set client-authoritative movement on all characters at login.
                         // Tells the server to trust client positions (allows client fly to work).
