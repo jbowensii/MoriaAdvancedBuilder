@@ -954,8 +954,12 @@
         {
             if (!m_targetInfoWidget || !isObjectAlive(m_targetInfoWidget)) return;
 
-            // Auto-hide timeout
-            if (m_tiAutoHideAtMs != 0 && !m_tiDragActive)
+            // Auto-hide timeout. v6.21.36 - hard-skipped while in
+            // m_repositionHudMode (F10 toggle) so the timer can never fire
+            // and disrupt repositioning. Some path inside showTargetInfoUMG
+            // resets m_tiAutoHideAtMs to a future tick after our F10
+            // dispatcher zeros it; explicit mode-gate is more robust.
+            if (m_tiAutoHideAtMs != 0 && !m_tiDragActive && !m_repositionHudMode)
             {
                 ULONGLONG now = GetTickCount64();
                 if (now >= m_tiAutoHideAtMs)
@@ -1194,16 +1198,18 @@
                 }
             }
 
-            // ---- Key pill SizeBox(88x40) BELOW the circle ----
+            // ---- Key pill SizeBox BELOW the circle ----
             // v6.21.34 - removed the keyBgTex&&setBrushFn outer guard so the
             // pill always renders. Falls back to a solid-grey tint when the
             // texture isn't loaded yet (same fallback NBB uses).
+            // v6.21.36 - bumped pill 88x40 -> 110x50 so font-22 key text
+            // ("F12", longer rebinds) fits without overflow.
             {
                 FStaticConstructObjectParameters pillSbP(sbCls, outer);
                 UObject* pillSb = UObjectGlobals::StaticConstructObject(pillSbP);
                 if (pillSb)
                 {
-                    jw_setSizeBoxOverride(pillSb, 88.0f, 40.0f);
+                    jw_setSizeBoxOverride(pillSb, 110.0f, 50.0f);
                     FStaticConstructObjectParameters pillOvP(ovCls, outer);
                     UObject* pillOv = UObjectGlobals::StaticConstructObject(pillOvP);
                     if (pillOv)
@@ -1242,8 +1248,8 @@
                             if (s_off_brush >= 0)
                             {
                                 uint8_t* base = reinterpret_cast<uint8_t*>(pillBg);
-                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 88.0f;
-                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 40.0f;
+                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 110.0f;
+                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 50.0f;
                             }
                             addToOverlay(pillOv, pillBg);
                         }
@@ -1271,7 +1277,10 @@
                     {
                         if (auto* fnH = pillSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
                         { std::vector<uint8_t> bb(fnH->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(pillSlot, fnH, bb.data()); }
-                        umgSetSlotPadding(pillSlot, 0, 6, 0, 0);
+                        // v6.21.36 - zero top padding so pill butts directly
+                        // against circle's bottom edge (was 6, hung off too
+                        // far per user feedback).
+                        umgSetSlotPadding(pillSlot, 0, 0, 0, 0);
                     }
                 }
             }
@@ -1449,13 +1458,19 @@
             bool falling = !lmb && m_rotDispLMBPrev;
             m_rotDispLMBPrev = lmb;
 
-            // Bounds: SizeBox is "144 wide" centered at posFrac, but VBox makes
-            // the actual widget 144 wide × 290 tall (top cell + 144 bottom row).
+            // v6.21.36 - bumped hit-test bounds for the v6.21.33 cell layout:
+            //   each cell is now 158 wide x (158 circle + ~46 pill+pad) tall
+            //   top row = 1 cell, bottom row = 3 cells side-by-side
+            //   total: 3 * 158 = 474 wide, ~440 tall (2 rows of 220 each).
+            // Previous 432x300 was for the older 144-wide cells without
+            // pills, which left the hit area ~40% smaller than the visible
+            // widget - clicks landed outside the test rect, drag never
+            // started.
             float fX = (m_rotDispPosX >= 0.0f) ? m_rotDispPosX : 0.15f;
             float fY = (m_rotDispPosY >= 0.0f) ? m_rotDispPosY : 0.65f;
             float s2p = m_screen.viewportScale;
-            float wW = 432.0f * s2p; // 3 cells × 144 wide bottom row
-            float wH = 300.0f * s2p; // top 144 + bottom 144 + small gap
+            float wW = 500.0f * s2p; // generous padding around 3 * 158
+            float wH = 460.0f * s2p; // 2 rows of (158 + 46 pill) with gap
             float cx = m_screen.fracToPixelX(fX);
             float cy = m_screen.fracToPixelY(fY);
             float left = cx - wW * 0.5f;
@@ -2782,10 +2797,13 @@
                                     }
                                 }
                             }
+                            // v6.21.36 - bumped from 36x22 to 56x32 so 2-char
+                            // key names ("F8", "F12") and rebound symbols
+                            // fully fit inside the grey rect.
                             if (s_off_brush >= 0) {
                                 uint8_t* base = reinterpret_cast<uint8_t*>(kbImg);
-                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 36.0f;
-                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 22.0f;
+                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 56.0f;
+                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 32.0f;
                             }
                             UObject* ks = addToOverlay(slotOv, kbImg);
                             if (ks) {
