@@ -2169,8 +2169,11 @@
             // affects which handler fires.
             struct Spec { const wchar_t* label; GameOptKind kind; };
             static const Spec specs[] = {
-                { STR("RENAME CHARACTER"), GameOptKind::Rename     },
-                { STR("SAVE GAME"),        GameOptKind::Save       },
+                // v6.21.27 - RENAME CHARACTER + SAVE GAME removed from this
+                // pause-menu inject list. Rename moved to its own dedicated
+                // popup invoked via the Cheats tab (CheatKind::RenameChar)
+                // and via direct call. Save Game moved to a keybind under
+                // General (s_bindings[BIND_SAVE_GAME], default F12).
                 { STR("UNLOCK RECIPES"),   GameOptKind::Unlock     },
                 { STR("READ ALL LORE"),    GameOptKind::ReadAll    },
                 { STR("CLEAR ALL BUFFS"),  GameOptKind::ClearBuffs },

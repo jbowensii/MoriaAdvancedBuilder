@@ -4529,30 +4529,36 @@
                     if (canvas && editBox)
                     {
                         UObject* slot = jw_addToCanvas(canvas, editBox);
-                        // v6.21.25 - bumped from 600x60 to 800x80 design px
-                        // for more comfortable typing area; combined with
-                        // RenderScale 1.6 below the visible widget is ~1280x128.
+                        // v6.21.27 - bumped to 1100x80 design px so text has
+                        // ample room. RenderScale was REMOVED (was 1.6 in
+                        // v6.21.25): user reported typing stopped at 12
+                        // characters - root cause was that SetRenderScale
+                        // visually scales the widget but the underlying
+                        // EditableText scrolling viewport stays at design
+                        // size, so caret-following horizontal scroll runs
+                        // out of room visually after ~12 chars at 1.6x.
+                        // Fix: keep widget at design size 1100, bump font
+                        // size via the deprecated Font UPROPERTY (still
+                        // accepted at runtime in UE4.27).
                         if (slot)
                             jw_setCanvasSlot(slot,
                                              0.5f, 0.5f, 0.5f, 0.5f,   // anchors center
                                              0.0f, -20.0f,             // position offset
-                                             800.0f, 80.0f,            // size
+                                             1100.0f, 80.0f,           // size
                                              0.5f, 0.5f,               // alignment center
                                              false);
 
-                        // v6.21.25 - SetRenderScale(1.6, 1.6) to enlarge the
-                        // entire EditableTextBox 60% so the typed text is
-                        // readable. UE4's default Slate text in EditableTextBox
-                        // is tiny (~12pt) and there's no exposed UFunction to
-                        // change just the font - scaling the widget is the
-                        // simplest way to get visibly bigger text.
-                        if (auto* fn = editBox->GetFunctionByNameInChain(STR("SetRenderScale")))
+                        // Set MinimumDesiredWidth so the EditableTextBox
+                        // claims the full SizeBox width even before any
+                        // text is typed. This anchors the visible scrolling
+                        // viewport to the same width as the box (no clipping
+                        // at small content size).
+                        if (auto* fn = editBox->GetFunctionByNameInChain(STR("SetMinimumDesiredWidth")))
                         {
                             std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
-                            if (auto* p = findParam(fn, STR("Scale")))
+                            if (auto* p = findParam(fn, STR("InMinimumDesiredWidth")))
                             {
-                                float* s = reinterpret_cast<float*>(bb.data() + p->GetOffset_Internal());
-                                s[0] = 1.6f; s[1] = 1.6f;
+                                *reinterpret_cast<float*>(bb.data() + p->GetOffset_Internal()) = 1080.0f;
                                 safeProcessEvent(editBox, fn, bb.data());
                             }
                         }
@@ -4599,10 +4605,15 @@
                     safeProcessEvent(editBox, fn, bb.data());
                 }
             }
-            // Watchdog: tickRenameFocus() runs each frame while the rename
-            // popup is up and re-focuses the EditableTextBox if hovering
-            // the popup's Confirm/Cancel buttons stole keyboard focus.
-            m_renameFocusReassertNeeded = true;
+            // v6.21.27 - watchdog DISABLED. Hypothesis from typing-cuts-out-
+            // at-12-chars report: SetKeyboardFocus during typing was either
+            // committing the partial text or resetting caret state. With
+            // RenderScale removed (v6.21.27.A) the root cause may be gone,
+            // but disabling the per-frame focus assertion eliminates the
+            // potential interference. SetKeyboardFocus is still called once
+            // above on initial show, which should be enough with
+            // SetInputMode_UIOnlyEx to keep focus.
+            m_renameFocusReassertNeeded = false;
 
             VLOG(STR("[MoriaCppMod] [Rename v2] custom rename popup spawned: popup={:p} editBox={:p} inputUW={:p}\n"),
                  (void*)popup, (void*)editBox, (void*)inputUW);

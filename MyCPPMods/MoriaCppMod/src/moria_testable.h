@@ -783,7 +783,7 @@ namespace MoriaMods
             "UndoLast",
             "RemoveAll",
             "AdvancedBuilderOpen",
-            "Reserved1",
+            "SaveGame",
             "TrashItem",
             "ReplenishItem",
             "RemoveAttributes",

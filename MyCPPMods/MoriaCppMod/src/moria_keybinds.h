@@ -16,6 +16,10 @@ namespace MoriaMods
     static constexpr int BIND_TARGET    = 12;
     static constexpr int BIND_CONFIG    = 13;
     static constexpr int BIND_AB_OPEN   = 17;
+    // v6.21.27 - slot 18 repurposed from "Reserved/Diagnostics" to Save Game
+    // (defaults to F12, freed up after the legacy F12 menu dispatcher was
+    // disabled in this version). Live keybind: triggers triggerSaveGame().
+    static constexpr int BIND_SAVE_GAME = 18;
     static constexpr int BIND_TRASH_ITEM     = 19;
     static constexpr int BIND_REPLENISH_ITEM = 20;
     static constexpr int BIND_REMOVE_ATTRS   = 21;
@@ -49,7 +53,7 @@ namespace MoriaMods
             {L"Undo Last", L"Mod Controller", Input::Key::NUM_TWO},
             {L"Remove All", L"Mod Controller", Input::Key::NUM_THREE},
             {L"Advanced Builder Open", L"Advanced Builder", Input::Key::ADD},
-            {L"Reserved", L"Diagnostics", 0},
+            {L"Save Game", L"General", Input::Key::F12},
             {L"Trash Item", L"Game Options", VK_DELETE},
             {L"Replenish Item", L"Game Options", VK_INSERT},
             {L"Remove Attributes", L"Game Options", VK_END},
