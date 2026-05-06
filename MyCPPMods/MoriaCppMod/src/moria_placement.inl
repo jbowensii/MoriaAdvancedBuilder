@@ -1354,64 +1354,20 @@
             m_pendingQuickBuildSlot = -1;
             m_qbStartTime = GetTickCount64();
 
-            // DIRECT path UNIFIED with F1-F8 startOrSwitchBuild.
-            // Previously SHIFT+] success path skipped m_deferHideAndRefresh /
-            // m_buildMenuWasOpen / updateBuildersBar / cooldown gate, which
-            // user reports caused inconsistent ghost spawning. This now
-            // mirrors startOrSwitchBuild's DIRECT success EXACTLY (only the
-            // data source differs: m_targetBuildRowName instead of slot).
-            if (!m_targetBuildRowName.empty())
-            {
-                ULONGLONG now = GetTickCount64();
-                if (now - m_lastDirectSelectTime < 150)
-                {
-                    QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path cooldown ({}ms since last)\n"),
-                          now - m_lastDirectSelectTime);
-                    return;
-                }
-
-                UObject* buildHUD = getCachedBuildHUD();
-                uint8_t handle[RECIPE_HANDLE_SIZE]{};
-                bool haveHandle = buildSyntheticRecipeHandle(m_targetBuildRowName, handle);
-
-                if (buildHUD && haveHandle)
-                {
-                    QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT SelectRecipe (synthetic handle, row='{}')\n"),
-                          m_targetBuildRowName);
-                    {
-                        m_isAutoSelecting = true;
-                        struct AutoSelectGuardTgt { bool& f; ~AutoSelectGuardTgt() { f = false; } } guardTgt{m_isAutoSelecting};
-
-                        if (trySelectRecipeByHandle(buildHUD, handle))
-                        {
-                            m_isAutoSelecting = false;
-                            if (isPlacementActive())
-                            {
-                                // Mirror F1's DIRECT success exactly:
-                                m_lastDirectSelectTime = now;
-                                m_lastQBSelectTime = now;
-                                m_deferHideAndRefresh = true;       // critical — defers menu close
-                                showOnScreen((L"Build: " + m_targetBuildName).c_str(), 2.0f, 0.0f, 1.0f, 0.0f);
-                                m_buildMenuWasOpen = true;
-                                // m_activeBuilderSlot left untouched (no slot for target build)
-                                updateBuildersBar();
-                                onGhostAppeared();
-                                return;
-                            }
-                            QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path: SelectRecipe returned but no ghost — falling through\n"));
-                        }
-                        else
-                        {
-                            QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path: trySelectRecipeByHandle failed — falling through\n"));
-                        }
-                    }
-                }
-                else
-                {
-                    QBLOG(STR("[MoriaCppMod] [TargetBuild] DIRECT path: buildHUD={:p} haveHandle={} — falling through\n"),
-                          (void*)buildHUD, haveHandle ? STR("Y") : STR("N"));
-                }
-            }
+            // v6.21.40 - DIRECT path REMOVED from SHIFT+] (target-build).
+            // v6.7.0 had no DIRECT path here; it always routed through the
+            // state machine and was reliable. v6.20.44 added DIRECT to mirror
+            // the F-key path, but reports of "ghost sometimes doesn't appear
+            // on SHIFT+]" trace back to that change (see
+            // plans/v670-vs-current-build-engine-diff.md). Suspected
+            // mechanisms: (a) m_buildMenuWasOpen=true / m_deferHideAndRefresh
+            // =true on a path where the menu was never open queues spurious
+            // UI cleanup, (b) synthetic-handle layout gambling for a row that
+            // was never confirmed by the game's own GetSelectedRecipeHandle.
+            // F1-F8 keep their DIRECT path - user explicitly designed for
+            // saved-config slot launch with no menu open. SHIFT+] always has
+            // the menu close path to traverse anyway, so the state-machine
+            // cost is acceptable.
 
             if (isBuildTabShowing())
             {
