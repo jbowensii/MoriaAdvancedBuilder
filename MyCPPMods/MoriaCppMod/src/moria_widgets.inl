@@ -4529,16 +4529,33 @@
                     if (canvas && editBox)
                     {
                         UObject* slot = jw_addToCanvas(canvas, editBox);
-                        // Center anchor (0.5,0.5) with 0.5,0.5 alignment so
-                        // the size centers on screen; size 600x60 design px;
-                        // small upward Y offset to land in the popup body.
+                        // v6.21.25 - bumped from 600x60 to 800x80 design px
+                        // for more comfortable typing area; combined with
+                        // RenderScale 1.6 below the visible widget is ~1280x128.
                         if (slot)
                             jw_setCanvasSlot(slot,
-                                             0.5f, 0.5f, 0.5f, 0.5f,   // anchors
+                                             0.5f, 0.5f, 0.5f, 0.5f,   // anchors center
                                              0.0f, -20.0f,             // position offset
-                                             600.0f, 60.0f,            // size
-                                             0.5f, 0.5f,               // alignment
+                                             800.0f, 80.0f,            // size
+                                             0.5f, 0.5f,               // alignment center
                                              false);
+
+                        // v6.21.25 - SetRenderScale(1.6, 1.6) to enlarge the
+                        // entire EditableTextBox 60% so the typed text is
+                        // readable. UE4's default Slate text in EditableTextBox
+                        // is tiny (~12pt) and there's no exposed UFunction to
+                        // change just the font - scaling the widget is the
+                        // simplest way to get visibly bigger text.
+                        if (auto* fn = editBox->GetFunctionByNameInChain(STR("SetRenderScale")))
+                        {
+                            std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
+                            if (auto* p = findParam(fn, STR("Scale")))
+                            {
+                                float* s = reinterpret_cast<float*>(bb.data() + p->GetOffset_Internal());
+                                s[0] = 1.6f; s[1] = 1.6f;
+                                safeProcessEvent(editBox, fn, bb.data());
+                            }
+                        }
                     }
 
                     // AddToViewport at ZOrder=501 (just above the popup
@@ -4569,6 +4586,24 @@
             // 8. Modal: focus on the input textbox so typing lands there.
             setInputModeUI(editBox ? editBox : popup);
 
+            // v6.21.25 - SetKeyboardFocus on the EditableTextBox so that
+            // typed characters route to the input field. setInputModeUI
+            // alone configures input mode but doesn't necessarily transfer
+            // keyboard focus to a specific widget within the focused
+            // hierarchy; explicit SetKeyboardFocus is needed.
+            if (editBox)
+            {
+                if (auto* fn = editBox->GetFunctionByNameInChain(STR("SetKeyboardFocus")))
+                {
+                    std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
+                    safeProcessEvent(editBox, fn, bb.data());
+                }
+            }
+            // Watchdog: tickRenameFocus() runs each frame while the rename
+            // popup is up and re-focuses the EditableTextBox if hovering
+            // the popup's Confirm/Cancel buttons stole keyboard focus.
+            m_renameFocusReassertNeeded = true;
+
             VLOG(STR("[MoriaCppMod] [Rename v2] custom rename popup spawned: popup={:p} editBox={:p} inputUW={:p}\n"),
                  (void*)popup, (void*)editBox, (void*)inputUW);
         }
@@ -4582,6 +4617,41 @@
         // -> SetCharacterName UFunction on the player pawn.
 
 
+
+        // v6.21.25 - keyboard-focus watchdog for the rename popup. Hovering
+        // the popup's Confirm/Cancel buttons steals keyboard focus from the
+        // EditableTextBox, which makes typing stop landing in the input
+        // after 1-2 keystrokes. We re-assert focus every ~250ms while the
+        // popup is open. Cheap: HasKeyboardFocus check + conditional SetKeyboardFocus.
+        void tickRenameFocus()
+        {
+            if (!m_ftRenameVisible) return;
+            if (!m_renameFocusReassertNeeded) return;
+            UObject* editBox = m_ftRenameInput;
+            if (!editBox || !isObjectAlive(editBox)) return;
+
+            ULONGLONG now = GetTickCount64();
+            if (now - m_renameFocusLastReassertMs < 250) return;
+            m_renameFocusLastReassertMs = now;
+
+            // Check current focus state cheaply via HasKeyboardFocus.
+            bool hasFocus = false;
+            if (auto* getFn = editBox->GetFunctionByNameInChain(STR("HasKeyboardFocus")))
+            {
+                std::vector<uint8_t> bb(getFn->GetParmsSize(), 0);
+                safeProcessEvent(editBox, getFn, bb.data());
+                if (auto* pRet = findParam(getFn, STR("ReturnValue")))
+                    hasFocus = *reinterpret_cast<bool*>(bb.data() + pRet->GetOffset_Internal());
+            }
+            if (hasFocus) return;
+
+            // Lost focus - re-assert it.
+            if (auto* setFn = editBox->GetFunctionByNameInChain(STR("SetKeyboardFocus")))
+            {
+                std::vector<uint8_t> bb(setFn->GetParmsSize(), 0);
+                safeProcessEvent(editBox, setFn, bb.data());
+            }
+        }
 
         void hideRenameDialog()
         {
@@ -4602,6 +4672,7 @@
             m_ftRenameConfirmLabel = nullptr;
             m_ftRenameVisible = false;
             m_ftRenameUsingModal = false;
+            m_renameFocusReassertNeeded = false;
 
             // if the rename dialog was opened from the pause menu
             // (typical), the pause menu is still on screen and needs UI input.
