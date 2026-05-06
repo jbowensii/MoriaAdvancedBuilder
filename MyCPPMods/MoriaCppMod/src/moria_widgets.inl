@@ -1082,13 +1082,17 @@
         UObject* buildRotCell(UObject* outer, UClass* sbCls, UClass* ovCls,
                               UClass* imgCls, UClass* tbCls,
                               UObject* frameTex, UFunction* setBrushFn,
-                              const wchar_t* initialText, UObject*& outLabel)
+                              const wchar_t* initialText, UObject*& outLabel,
+                              UObject* keyBgTex,
+                              const wchar_t* initialKeyText,
+                              UObject*& outKeyLbl)
         {
             outLabel = nullptr;
+            outKeyLbl = nullptr;
             FStaticConstructObjectParameters sbP(sbCls, outer);
             UObject* sb = UObjectGlobals::StaticConstructObject(sbP);
             if (!sb) return nullptr;
-            jw_setSizeBoxOverride(sb, 144.0f, 144.0f); // 3× from 48
+            jw_setSizeBoxOverride(sb, 144.0f, 144.0f);
 
             FStaticConstructObjectParameters ovP(ovCls, outer);
             UObject* ov = UObjectGlobals::StaticConstructObject(ovP);
@@ -1122,7 +1126,9 @@
                 addToOverlay(ov, img);
             }
 
-            // Text label centered.
+            // Main label+value text - centered. Now contains just
+            // "label\nvalue" (no key suffix - the key marker is its own
+            // textblock at the bottom of the cell, NBB-toolbar style).
             FStaticConstructObjectParameters tbP(tbCls, outer);
             UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
             if (tb)
@@ -1138,6 +1144,54 @@
                     { int sz = fnV->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 2; /*Center*/ safeProcessEvent(tbSlot, fnV, bb.data()); }
                 }
                 outLabel = tb;
+            }
+
+            // v6.21.32 - Key marker, bottom-center. NBB-toolbar style:
+            // small grey rect background image (T_UI_Icon_Input_Blank_Rect)
+            // with a white TextBlock overlaid. Both anchored bottom-center
+            // of the cell so they stack visually.
+            if (keyBgTex && setBrushFn)
+            {
+                FStaticConstructObjectParameters kbP(imgCls, outer);
+                UObject* kbImg = UObjectGlobals::StaticConstructObject(kbP);
+                if (kbImg)
+                {
+                    umgSetBrush(kbImg, keyBgTex, setBrushFn);
+                    if (s_off_brush >= 0)
+                    {
+                        uint8_t* base = reinterpret_cast<uint8_t*>(kbImg);
+                        *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 64.0f;
+                        *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 28.0f;
+                    }
+                    umgSetOpacity(kbImg, 0.85f);
+                    UObject* ks = addToOverlay(ov, kbImg);
+                    if (ks)
+                    {
+                        if (auto* fnH = ks->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                        { int sz = fnH->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 2; /*Center*/ safeProcessEvent(ks, fnH, bb.data()); }
+                        if (auto* fnV = ks->GetFunctionByNameInChain(STR("SetVerticalAlignment")))
+                        { int sz = fnV->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 3; /*Bottom*/ safeProcessEvent(ks, fnV, bb.data()); }
+                        umgSetSlotPadding(ks, 0, 0, 0, 8);
+                    }
+                }
+            }
+            // Key text (white, on top of the grey bg) - bottom center.
+            FStaticConstructObjectParameters tbKP(tbCls, outer);
+            UObject* tbKey = UObjectGlobals::StaticConstructObject(tbKP);
+            if (tbKey)
+            {
+                umgSetText(tbKey, initialKeyText);
+                umgSetTextColor(tbKey, 1.0f, 1.0f, 1.0f, 1.0f);
+                UObject* ks = addToOverlay(ov, tbKey);
+                if (ks)
+                {
+                    if (auto* fnH = ks->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                    { int sz = fnH->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 2; /*Center*/ safeProcessEvent(ks, fnH, bb.data()); }
+                    if (auto* fnV = ks->GetFunctionByNameInChain(STR("SetVerticalAlignment")))
+                    { int sz = fnV->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 3; /*Bottom*/ safeProcessEvent(ks, fnV, bb.data()); }
+                    umgSetSlotPadding(ks, 0, 0, 0, 10);
+                }
+                outKeyLbl = tbKey;
             }
             return sb;
         }
@@ -1190,6 +1244,10 @@
                     nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
             }
 
+            // v6.21.32 - locate the small grey "key rect" texture used by
+            // the NBB toolbar's F# labels - same texture, same look.
+            UObject* keyBgTex = findTexture2DByName(L"T_UI_Icon_Input_Blank_Rect");
+
             // VBox root (top cell row + bottom 3-cell row)
             FStaticConstructObjectParameters vP(vboxClass, outer);
             UObject* vbox = UObjectGlobals::StaticConstructObject(vP);
@@ -1204,7 +1262,8 @@
                 UObject* stepCell = buildRotCell(outer, sizeBoxClass, overlayClass,
                                                  imageClass, textBlockClass,
                                                  frameTex, setBrushFn, L"Degrees\n0°",
-                                                 m_rotDisplayStep);
+                                                 m_rotDisplayStep,
+                                                 keyBgTex, L"F9", m_rotDisplayStepKey);
                 if (stepCell)
                 {
                     auto* addFn = topHBox->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
@@ -1250,11 +1309,14 @@
                     safeProcessEvent(botHBox, addFn, bb.data());
                 };
                 addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass,
-                                            frameTex, setBrushFn, L"Yaw\n0°", m_rotDisplayYaw));
+                                            frameTex, setBrushFn, L"Yaw\n0°", m_rotDisplayYaw,
+                                            keyBgTex, L"R", m_rotDisplayYawKey));
                 addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass,
-                                            frameTex, setBrushFn, L"Pitch\n0°", m_rotDisplayPitch));
+                                            frameTex, setBrushFn, L"Pitch\n0°", m_rotDisplayPitch,
+                                            keyBgTex, L"T", m_rotDisplayPitchKey));
                 addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass,
-                                            frameTex, setBrushFn, L"Roll\n0°", m_rotDisplayRoll));
+                                            frameTex, setBrushFn, L"Roll\n0°", m_rotDisplayRoll,
+                                            keyBgTex, L"Y", m_rotDisplayRollKey));
                 auto* vbAdd = vbox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
                 if (vbAdd) {
                     auto* p = findParam(vbAdd, STR("Content"));
@@ -1344,11 +1406,14 @@
         void updateRotationDisplay()
         {
             if (!m_rotDisplayWidget || !isObjectAlive(m_rotDisplayWidget)) return;
-            // v6.21.30 - each cell now shows three centered lines:
-            //   label  (Pitch / Yaw / Roll / Degrees)
-            //   value  (the number - center-stage)
-            //   keybind marker (live from current bindings)
-            // Pulled from bindings every refresh so rebinds reflect immediately.
+            // v6.21.32 - each cell shows two centered lines (label + value)
+            // with the keybind marker rendered as a separate bottom-of-cell
+            // grey-bg pill (NBB-toolbar style). Mapping per user direction:
+            //   Degrees -> BIND_ROTATION (Set Rotation, default F9)
+            //   Pitch   -> BIND_PITCH_ROTATE
+            //   Roll    -> BIND_ROLL_ROTATE
+            //   Yaw     -> game's native "Rotate Construction" action (R)
+            //              looked up from PlayerInput.ActionMappings.
             float pitch = 0.0f, yaw = 0.0f, roll = 0.0f;
             UObject* gata = resolveGATA();
             if (gata && m_offTraceResults >= 0 && m_offTargetRotation >= 0 && resolveGATAOffsets(gata))
@@ -1365,33 +1430,84 @@
                 if (iv < 0) iv += 360;
                 return std::to_wstring(iv) + L"\xB0";
             };
-            std::wstring kPitch = keyName(s_bindings[BIND_PITCH_ROTATE].key);
-            std::wstring kYaw   = keyName(s_bindings[BIND_ROTATION].key);
-            std::wstring kRoll  = keyName(s_bindings[BIND_ROLL_ROTATE].key);
-            std::wstring kStep  = L"SHIFT+" + kYaw;
-            // v6.21.31 - one-shot DIAG to verify which slots / VKs are read.
-            // Logs once per session; flag flips on first call.
-            static bool s_rotDispDiagLogged = false;
-            if (!s_rotDispDiagLogged)
-            {
-                s_rotDispDiagLogged = true;
-                VLOG(STR("[MoriaCppMod] [RotDisp] DIAG slot keys: "
-                         "Pitch[{}].key=0x{:02X} '{}' | "
-                         "Yaw[{}].key=0x{:02X} '{}' | "
-                         "Roll[{}].key=0x{:02X} '{}'\n"),
-                     BIND_PITCH_ROTATE, s_bindings[BIND_PITCH_ROTATE].key, kPitch.c_str(),
-                     BIND_ROTATION,     s_bindings[BIND_ROTATION].key,     kYaw.c_str(),
-                     BIND_ROLL_ROTATE,  s_bindings[BIND_ROLL_ROTATE].key,  kRoll.c_str());
-            }
+
+            // Main label+value lines (no key suffix - key is in the
+            // bottom-of-cell pill).
             if (m_rotDisplayStep)
             {
                 int step = s_overlay.rotationStep.load();
-                std::wstring s = L"Degrees\n" + std::to_wstring(step) + L"\xB0\n" + kStep;
-                umgSetText(m_rotDisplayStep, s);
+                umgSetText(m_rotDisplayStep, L"Degrees\n" + std::to_wstring(step) + L"\xB0");
             }
-            if (m_rotDisplayYaw)   umgSetText(m_rotDisplayYaw,   L"Yaw\n"   + fmt(yaw)   + L"\n" + kYaw);
-            if (m_rotDisplayPitch) umgSetText(m_rotDisplayPitch, L"Pitch\n" + fmt(pitch) + L"\n" + kPitch);
-            if (m_rotDisplayRoll)  umgSetText(m_rotDisplayRoll,  L"Roll\n"  + fmt(roll)  + L"\n" + kRoll);
+            if (m_rotDisplayYaw)   umgSetText(m_rotDisplayYaw,   L"Yaw\n"   + fmt(yaw));
+            if (m_rotDisplayPitch) umgSetText(m_rotDisplayPitch, L"Pitch\n" + fmt(pitch));
+            if (m_rotDisplayRoll)  umgSetText(m_rotDisplayRoll,  L"Roll\n"  + fmt(roll));
+
+            // Bottom-of-cell key markers - refresh from current bindings.
+            std::wstring kStep  = keyName(s_bindings[BIND_ROTATION].key);
+            std::wstring kPitch = keyName(s_bindings[BIND_PITCH_ROTATE].key);
+            std::wstring kRoll  = keyName(s_bindings[BIND_ROLL_ROTATE].key);
+            std::wstring kYaw   = readGameRotateConstructionKey();
+            if (m_rotDisplayStepKey)  umgSetText(m_rotDisplayStepKey,  kStep);
+            if (m_rotDisplayYawKey)   umgSetText(m_rotDisplayYawKey,   kYaw);
+            if (m_rotDisplayPitchKey) umgSetText(m_rotDisplayPitchKey, kPitch);
+            if (m_rotDisplayRollKey)  umgSetText(m_rotDisplayRollKey,  kRoll);
+        }
+
+        // v6.21.32 - Read the game's native Rotate Construction keybind from
+        // the PlayerController's PlayerInput.ActionMappings. Falls back to "R"
+        // (default) if anything fails. Called every refresh; cached result not
+        // strictly needed since iteration is cheap on a small array.
+        std::wstring readGameRotateConstructionKey()
+        {
+            UObject* pc = findPlayerController();
+            if (!pc) return L"R";
+            auto* piPtr = pc->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerInput"));
+            UObject* pi = piPtr ? *piPtr : nullptr;
+            if (!pi || !isObjectAlive(pi)) return L"R";
+
+            auto* mapPtr = pi->GetValuePtrByPropertyNameInChain<uint8_t>(STR("ActionMappings"));
+            if (!mapPtr) return L"R";
+
+            // TArray layout: data ptr (8) + ArrayNum int32 (4) + ArrayMax int32 (4).
+            uint8_t* data = nullptr;
+            int32_t num = 0;
+            try {
+                data = *reinterpret_cast<uint8_t**>(mapPtr);
+                num = *reinterpret_cast<int32_t*>(mapPtr + 8);
+            } catch (...) { return L"R"; }
+            if (!data || num <= 0 || num > 1000) return L"R";
+
+            // FInputActionKeyMapping in UE4.27 is 24 bytes:
+            //   FName ActionName       (8)
+            //   FKey  Key (FName-wrap) (8)
+            //   bool  bShift,bCtrl,bAlt,bCmd (4 + 4 padding)
+            constexpr int kEntrySize = 24;
+            for (int i = 0; i < num; i++)
+            {
+                uint8_t* entry = data + (size_t)i * kEntrySize;
+                if (!isReadableMemory(entry, kEntrySize)) continue;
+                try {
+                    FName actionFName;
+                    std::memcpy(&actionFName, entry + 0, sizeof(FName));
+                    std::wstring an = actionFName.ToString();
+                    // Match anything containing both "Rotate" and "Construct"
+                    // (covers RotateConstruction, ConstructionRotate, etc.).
+                    if (an.find(L"Rotate") != std::wstring::npos
+                        && (an.find(L"Construct") != std::wstring::npos
+                            || an.find(L"Build") != std::wstring::npos))
+                    {
+                        FName keyFN;
+                        std::memcpy(&keyFN, entry + 8, sizeof(FName));
+                        std::wstring kn = keyFN.ToString();
+                        // FKey FNames are typically just the key name
+                        // (e.g., "R", "F9"). Some have prefixes - strip "Key_".
+                        if (kn.size() > 4 && kn.substr(0, 4) == L"Key_")
+                            kn = kn.substr(4);
+                        return kn;
+                    }
+                } catch (...) {}
+            }
+            return L"R";
         }
 
         // v6.21.30 - rotation display is now CONDITIONAL: only visible
