@@ -61,7 +61,17 @@
             VLOG(STR("[AdvancedJoinUI] WBP_UI_AdvancedJoinOptions_C OnAfterShow at {:p}, queuing in-place modification\n"),
                  (void*)nativeWidget);
 
-            cacheAdvancedJoinClassRefs(nativeWidget);
+            // v6.22.5 - Pass 1 comment-out: cacheAdvancedJoinClassRefs and
+            // its 6 capture fields (m_aoFontDescription, m_aoFontFieldLabel,
+            // m_aoFontJoinError, m_aoFieldStyle, m_aoFieldBgTex,
+            // m_aoDividerTex) were LEGACY from the v6.6.0 spawn-duplicate
+            // path. The current path modifies the native widget in-place,
+            // so captured fonts/styles/textures are never consumed.
+            // Gating the SINGLE call site here turns the entire dead path
+            // (function body + early-out gate + verbose log + 6 fields) into
+            // unreachable code that still compiles. Pass 2 deletes the body
+            // and fields outright.
+            // cacheAdvancedJoinClassRefs(nativeWidget);
 
             m_nativeAdvancedJoinWidget = FWeakObjectPtr(nativeWidget);
             m_modAdvancedJoinWidget    = FWeakObjectPtr(nativeWidget);

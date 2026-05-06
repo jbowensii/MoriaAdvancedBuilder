@@ -1,4 +1,4 @@
-// MoriaCppMod v6.22.4 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.22.5 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -683,14 +683,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.22.4");
+            ModVersion = STR("6.22.5");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.4\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.22.5\n"));
         }
 
         ~MoriaCppMod() override
@@ -731,7 +731,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.4 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.22.5 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -924,7 +924,14 @@ namespace MoriaMods
                     std::wstring cls = safeClassName(context);
                     if (cls == STR("WBP_SettingsScreen_C"))
                     {
-                        s_instance->appendCheatsTabToArray(context);
+                        // v6.22.5 - Pass 1 comment-out: appendCheatsTabToArray
+                        // is dead per mod-tab-in-settings-status.md (Option-C
+                        // merge shipped: cheats are now merged into existing
+                        // native Gameplay/Game Options tabs, no new tab is
+                        // added). User confirmed 2026-05-08: there is no more
+                        // added tab or cheats tab. Pass 2 deletes function +
+                        // call sites.
+                        // s_instance->appendCheatsTabToArray(context);
                     }
                 }
                 // CP5 v0.7 - when user clicks the Cheats tab in the navbar,
@@ -1448,9 +1455,12 @@ namespace MoriaMods
                     {
                         s_instance->onNativeSettingsScreenShown(context);
                         s_instance->onSettingsRelatedShown(context, fnStr2);
-                        // CP5 - append a NEW "Cheats" tab to tabArray (don't replace legal).
-                        if (cls == STR("WBP_SettingsScreen_C"))
-                            s_instance->appendCheatsTabToArray(context);
+                        // v6.22.5 - Pass 1 comment-out: see twin gate at the
+                        // PreConstruct/Construct/OnInitialized site above.
+                        // Option-C merge made the dedicated Cheats tab dead
+                        // and user confirmed there is no plan to re-add it.
+                        // if (cls == STR("WBP_SettingsScreen_C"))
+                        //     s_instance->appendCheatsTabToArray(context);
                         // inject mod action buttons (Rename/Save/Unlock/
                         // Read All/Clear All Buffs) into the pause menu's
                         // VerticalBox_0 right above LeaveButton.
@@ -1767,7 +1777,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.22.4: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.22.5: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -3850,7 +3860,16 @@ namespace MoriaMods
             tickSettingsUI();     // Settings screen take-over (mod keybinds in keymap tab)
             tickReapplyModifierPrefixes(); // keep "L-SHIFT + F1" text on SET rows alive
             tickCaptureSpecialKeys();      // capture DEL/INS/HOME/etc the BP rejects
-            tickReapplyCheatsContext();    // keep Cheats-tab visibility swap stable
+            // v6.22.5 - Pass 1 comment-out: tickReapplyCheatsContext is a
+            // 100ms tick that keeps the Cheats-tab visibility swap stable.
+            // m_cheatsTabActive has been permanently false since the
+            // Option-C merge (mod-tab-in-settings-status.md), and user
+            // confirmed 2026-05-08 the tab is never coming back. The whole
+            // tick body is dead-on-flag; gating the call eliminates the
+            // 100ms wakeup. Pass 2 deletes tickReapplyCheatsContext +
+            // applyTabContextVisibility + applyGameplayTabContext +
+            // walkAndUpdateNavButtonHighlight + m_cheatsTabActive field.
+            // tickReapplyCheatsContext();    // keep Cheats-tab visibility swap stable
             // v6.22.2 - Pass 1 comment-out (per code-review-MASTER.md
             // iteration 2). FGK runtime injection ABANDONED per
             // closed-features-2026-05-04.md. The three diagnostic ticks

@@ -15,6 +15,13 @@
 
 #pragma once
 
+// v6.22.5 - Pass 1 comment-out: entire MoriaJoinAssets:: namespace.
+// Grep across full src/ tree returns ZERO callers ("MoriaJoinAssets::").
+// Header is included by dllmain.cpp:10 but no symbol is consumed. The
+// asset-path constants below were captured for the v6.6.0 spawn-duplicate
+// JoinWorld path that was abandoned in favor of in-place modification.
+// Pass 2 deletes after user verifies a session of Join World screen use.
+#if 0  // v6.22.5 Pass 1 - MoriaJoinAssets namespace (zero callers)
 namespace MoriaJoinAssets
 {
     // ── Fonts (composite UFont assets) ──────────────────────────────────
@@ -93,3 +100,4 @@ namespace MoriaJoinAssets
     // String table for localised UI strings
     inline constexpr const wchar_t* STR_TABLE_UI                     = L"/Game/Tech/Data/StringTables/UI";
 }
+#endif  // v6.22.5 Pass 1 - end MoriaJoinAssets namespace
