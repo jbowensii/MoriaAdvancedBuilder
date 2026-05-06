@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.24
+Document Version 6.23.25
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3802,6 +3802,47 @@ over 9 iterations:
                * generic createImageWithBrush helper
                * keybind label rect (76x44)
              No behavior change in the normal case.
+    v6.23.25: Comment audit chunk 7 - moria_widgets.inl REWRITEs (high-
+             leverage subset). Concludes settings_ui REWRITE pass and starts
+             widgets cleanup. Highlights:
+               * File header (v5.5.0 stale 18-version-old banner) -> 4-line
+                 file overview describing actual contents
+               * "sole bar is NBB / OLD UMG bar removed in v6.20.48" 2-line
+                 history -> 1-line current-state
+               * "outer frame border (gold-ish line, ~2 px)" 4-line ->
+                 3-line "Two-Border sandwich"
+               * "popup-style chrome / Real chrome capture deferred" 3-line
+                 -> 1-line current-state
+               * "v6.20.28 TITLE BAR" banner -> 2-line title bar comment
+               * tickTargetInfoDrag header 4 lines -> 3 lines (kept
+                 mouse-polling rationale)
+               * Auto-hide reposition-mode skip 5 lines -> 2 lines
+               * "v6.20.31 Rotation display" 9-line ASCII-bordered banner
+                 -> 4-line concise rotation display description
+               * "Set the cache BEFORE AddToViewport" 7-line history-laden
+                 explanation -> 4-line current invariant
+               * tickRotationDisplayDrag 2-line WHAT comment removed
+               * 8-line hit-test bounds history -> 3-line current dimensions
+               * Cell key-binding mapping comment trimmed
+               * readGameRotateConstructionKey 4-line -> 3-line
+               * Rotation display CONDITIONAL header 4 lines -> 2 lines
+               * Pre-spawn at character-load 8 lines -> 4 lines (kept
+                 Slate-Prepass-AV invariant)
+               * UI_WBP_NotificationFeed abandonment 6-line history -> 3
+                 lines current-state with the load-bearing institutional
+                 knowledge preserved
+               * ZOrder=800 rationale 3 lines -> 2 lines current-state
+               * NBB Phase 1 / Phase 2 references stripped (Phase 2 done)
+               * NBB highlight Phase 2 reference dropped
+               * "Icon placeholder (Phase 2 will populate...)" stale ->
+                 current "populated by populateNewBuildingBarIcons"
+               * DEEP DIVE: walk ActionBar diagnostic 5 lines -> 3 lines
+
+             Build clean. Net ~50 LOC removed from prose-only tightening
+             this iteration. ~30 finer-grained widgets REWRITEs (the
+             individual rotation-cell layout / pill rendering / hit-test
+             specifics) deferred to v6.23.26 or out-of-scope.
+
     v6.23.24: Comment audit chunk 6b - moria_settings_ui.inl REWRITEs
              second wave; concludes settings_ui REWRITE pass.
 

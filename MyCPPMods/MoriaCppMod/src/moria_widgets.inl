@@ -1,8 +1,8 @@
 
-// moria_widgets.inl — UMG widget management, F12 config panel, crosshair reticle
-// deferRemoveWidget: hide immediately + remove next frame (prevents Slate PaintFastPath crash)
-// Crosshair reticle: T_UI_Bow_Reticle centered on screen, 40s auto-hide, resolution-scaled via uiScale
-// F12 panel: 1540px width, wLeft corrected for alignment, Environment tab grouped by bubble with icon click narrowed to 64px
+// moria_widgets.inl — UMG primitives + mod widgets that don't fit elsewhere:
+// deferred widget removal, target-info inspect window, rotation display
+// pyramid, crosshair reticle, info notification panel, the New Building Bar,
+// and the F12 dev panel.
 
         std::vector<UObject*> m_pendingWidgetRemovals;
 
@@ -392,8 +392,7 @@
 
         void updateBuildersBar()
         {
-            // sole bar is NBB (top-of-screen). OLD UMG bar
-            // removed in v6.20.48. Refresh icons + active-slot highlight.
+            // Refresh NBB icons + active-slot highlight. (Top-of-screen builder bar is the only toolbar.)
             if (!m_newBuildingBar || !isObjectAlive(m_newBuildingBar)) return;
             populateNewBuildingBarIcons();
             for (int i = 0; i < 8; i++)
@@ -477,10 +476,9 @@
             }
 
 
-            // outer frame border (gold-ish line, ~2 px) wraps the
-            // dark panel for a game-window look. Two-Border sandwich:
-            //   rootSizeBox > frameBorder (gold) > rootBorder (dark) > VBox
-            // The frame's padding doubles as the visible outline width.
+            // Two-Border sandwich: rootSizeBox > frameBorder (gold accent)
+            // > rootBorder (dark panel) > VBox. The 2px frame-padding
+            // doubles as the visible outline width.
             FStaticConstructObjectParameters frameP(borderClass, outer);
             UObject* frameBorder = UObjectGlobals::StaticConstructObject(frameP);
             if (frameBorder)
@@ -552,9 +550,7 @@
                 setRootWidget(widgetTree, rootBorder);
             }
 
-            // popup-style chrome: dark panel background.
-            // Match WBP_UI_GenericPopup look: very dark blue-grey, ~88% opacity,
-            // subtle inset padding. Real chrome capture deferred.
+            // Match WBP_UI_GenericPopup chrome: very dark blue-grey, ~88% opacity.
             auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
             if (setBrushColorFn)
             {
@@ -603,9 +599,8 @@
             auto* vbC = findParam(addToVBoxFn, STR("Content"));
             auto* vbR = findParam(addToVBoxFn, STR("ReturnValue"));
 
-            // ── v6.20.28 TITLE BAR ──────────────────────────────────────
-            // Horizontal Border at top with title + X close button.
-            // Drag is detected in tickTargetInfoDrag() via mouse polling.
+            // Title bar: horizontal Border with title TextBlock + X close button.
+            // Drag-to-move handled in tickTargetInfoDrag() via mouse polling.
             auto* hboxClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.HorizontalBox"));
             auto* spacerClassTI = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Spacer"));
             auto* buttonClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Button"));
@@ -914,23 +909,18 @@
             }
 
             m_tiShowTick = GetTickCount64();
-            // auto-hide 10s after most-recent show update
             m_tiAutoHideAtMs = m_tiShowTick + 10000ull;
         }
 
-        // drag inspect window from title bar; click X to close.
-        // Also handles the auto-hide timeout. Called from gameThreadTick.
-        // Mouse polling because we don't have a click delegate on bare UButton
-        // here — and drag tracking needs every-frame updates anyway.
+        // Drag inspect window from title bar; click X to close; honors
+        // auto-hide timeout. Mouse-polling (not button-delegate) because
+        // drag tracking needs every-frame cursor deltas.
         void tickTargetInfoDrag()
         {
             if (!m_targetInfoWidget || !isObjectAlive(m_targetInfoWidget)) return;
 
-            // Auto-hide timeout. v6.21.36 - hard-skipped while in
-            // m_repositionHudMode (F10 toggle) so the timer can never fire
-            // and disrupt repositioning. Some path inside showTargetInfoUMG
-            // resets m_tiAutoHideAtMs to a future tick after our F10
-            // dispatcher zeros it; explicit mode-gate is more robust.
+            // Skip auto-hide while in F10 reposition mode — otherwise the
+            // inspector vanishes mid-drag.
             if (m_tiAutoHideAtMs != 0 && !m_tiDragActive && !m_repositionHudMode)
             {
                 ULONGLONG now = GetTickCount64();
@@ -1019,15 +1009,10 @@
         }
 
 
-        // ── v6.20.31 Rotation display ───────────────────────────────────
-        // 4-cell pyramid (1 top centered, 3 below) showing:
-        //   top  : current F9 rotation step (5..90 degrees)
-        //   left : Yaw of the active build piece
-        //   mid  : Pitch
-        //   right: Roll
-        // Texture frame: T_UI_Btn_Inv_Armor_Hover (inventory armor slot frame)
-        // Position: bottom-left of viewport, anchored ~10% from left, ~85% from top
-        // Visible only while placement is active.
+        // Rotation display: 4-cell pyramid showing F9 rotation step (top) and
+        // Yaw/Pitch/Roll of the active build piece (bottom row).
+        // Texture frame: T_UI_Btn_Inv_Armor_Hover (inventory armor slot frame).
+        // Default position bottom-left; visible only during placement.
 
         UObject* loadInvArmorHoverTexture()
         {
@@ -1424,13 +1409,10 @@
                 }
             }
 
-            // Set the cache BEFORE AddToViewport. If a tick re-
-            // enters tickRotationDisplay() during the AddToViewport->Slate
-            // realize chain (e.g., Slate decides to repaint inline), the
-            // null cache caused a second createRotationDisplay() call which
-            // could leave a half-attached widget tree behind - candidate
-            // cause of the SWidget::Prepass_Internal AV at 0xFF... seen
-            // during quickbuild (Slate following a stale child pointer).
+            // Cache the widget pointer BEFORE AddToViewport. AddToViewport
+            // can synchronously realize Slate, which can re-enter our tick;
+            // without the cache the tick sees nullptr and double-creates,
+            // leaving a half-attached tree (Slate Prepass AV during quickbuild).
             m_rotDisplayWidget = userWidget;
 
             if (auto* fn = userWidget->GetFunctionByNameInChain(STR("AddToViewport")))
@@ -1450,8 +1432,6 @@
                  frameTex ? STR("YES") : STR("NO"), fX, fY);
         }
 
-        // Drag handling. Mouse-down on any rotation cell starts
-        // drag; LMB held updates position; falling-edge saves to ini.
         void tickRotationDisplayDrag()
         {
             if (!m_rotDisplayWidget || !isObjectAlive(m_rotDisplayWidget)) return;
@@ -1465,14 +1445,9 @@
             bool falling = !lmb && m_rotDispLMBPrev;
             m_rotDispLMBPrev = lmb;
 
-            // bumped hit-test bounds for the v6.21.33 cell layout:
-            //   each cell is now 158 wide x (158 circle + ~46 pill+pad) tall
-            //   top row = 1 cell, bottom row = 3 cells side-by-side
-            //   total: 3 * 158 = 474 wide, ~440 tall (2 rows of 220 each).
-            // Previous 432x300 was for the older 144-wide cells without
-            // pills, which left the hit area ~40% smaller than the visible
-            // widget - clicks landed outside the test rect, drag never
-            // started.
+            // Hit-test bounds match the visible widget (3*158 = 474 wide,
+            // ~440 tall; 2 rows of cell-circle 158 + pill ~46 + pad).
+            // Wider than the cell-circle alone so the pill area is also draggable.
             float fX = (m_rotDispPosX >= 0.0f) ? m_rotDispPosX : 0.15f;
             float fY = (m_rotDispPosY >= 0.0f) ? m_rotDispPosY : 0.65f;
             float s2p = m_screen.viewportScale;
@@ -1513,9 +1488,7 @@
         void updateRotationDisplay()
         {
             if (!m_rotDisplayWidget || !isObjectAlive(m_rotDisplayWidget)) return;
-            // each cell shows two centered lines (label + value)
-            // with the keybind marker rendered as a separate bottom-of-cell
-            // grey-bg pill (NBB-toolbar style). Mapping per user direction:
+            // Cell key-binding mapping:
             //   Degrees -> BIND_ROTATION (Set Rotation, default F9)
             //   Pitch   -> BIND_PITCH_ROTATE
             //   Roll    -> BIND_ROLL_ROTATE
@@ -1559,9 +1532,8 @@
         }
 
         // Read the game's native Rotate Construction keybind from
-        // the PlayerController's PlayerInput.ActionMappings. Falls back to "R"
-        // (default) if anything fails. Called every refresh; cached result not
-        // strictly needed since iteration is cheap on a small array.
+        // PlayerController->PlayerInput.ActionMappings. Falls back to "R" if
+        // anything fails.
         std::wstring readGameRotateConstructionKey()
         {
             UObject* pc = findPlayerController();
@@ -1644,9 +1616,7 @@
             return L"R";
         }
 
-        // rotation display is now CONDITIONAL: only visible
-        // while a build ghost is active (placement in progress) OR
-        // m_repositionHudMode is on (F10 toggle so user can drag it).
+        // Visible only while placement is active OR F10 reposition mode is on.
         // Throttled to 4 Hz.
         ULONGLONG m_rotDispLastTickMs{0};
         void tickRotationDisplay()
@@ -1657,14 +1627,10 @@
 
             if (!m_characterLoaded) return;
 
-            // widget is pre-spawned at character-load (see
-            // dllmain.cpp m_rotDisplaySpawnAttempted block). This tick
-            // ONLY flips SetVisibility - it MUST NOT call
-            // createRotationDisplay any more. The lazy-create path was the
-            // root cause of the Slate Prepass AV at 0xFF... during
-            // quickbuild: widget construction was racing the Slate frame
-            // that ghost spawn lands on. Toggling visibility on a fully-
-            // realized widget is safe.
+            // Widget is pre-spawned at character-load (see dllmain.cpp
+            // m_rotDisplaySpawnAttempted). This tick MUST NOT call
+            // createRotationDisplay — lazy creation here races Slate's
+            // Prepass during quickbuild and AVs.
             if (!m_rotDisplayWidget || !isObjectAlive(m_rotDisplayWidget)) return;
 
             bool shouldShow = m_repositionHudMode || isPlacementActive() || isBuildTabShowing();
@@ -1863,12 +1829,9 @@
             if (widgetTree)
                 setRootWidget(widgetTree, rootBorder);
 
-            // Restyled from white-on-red error look to game-
-            // native dark-transparent panel with gold text. The
-            // UI_WBP_NotificationFeed approach didn't work — the BP
-            // renders item/recipe/lore-specific layouts, not arbitrary
-            // text — so we abandon that entirely and just make this
-            // home-rolled box look like the game's notifications.
+            // Home-rolled gold-on-dark notification panel. UI_WBP_NotificationFeed
+            // was tried and abandoned — its notification BP renders item/recipe/
+            // lore-specific layouts only, not arbitrary text.
             auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
             if (setBrushColorFn)
             {
@@ -1937,9 +1900,8 @@
                 auto* pZOrder = findParam(addToViewportFn, STR("ZOrder"));
                 int vsz = addToViewportFn->GetParmsSize();
                 std::vector<uint8_t> vp(vsz, 0);
-                // raised from 110 to 800 so the error-box (used
-                // as the fallback when UI_WBP_NotificationFeed isn't found)
-                // appears ABOVE the pause menu blur (~ZOrder 100-200).
+                // ZOrder 800: above the pause-menu blur (~100-200) so
+                // notifications stay visible while paused.
                 if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 800;
                 safeProcessEvent(userWidget, addToViewportFn, vp.data());
             }
@@ -2063,13 +2025,8 @@
         //     OUR instance only, so the BP's Tick / OnInvChanged paths
         //     short-circuit on null instead of trying to read inventory.
         //
-        // This is Phase 1 — chrome only, no function. Phase 2 will:
-        //   - layer our 8 builder-slot icons over slotMarker1..8
-        //   - layer our F# key labels on top
-        //   - route clicks/keypresses to our existing dispatch
-        //
-        // The native HUD ActionBar is untouched — our pointer is a
-        // separate UObject of the same class.
+        // The native HUD ActionBar is untouched — our pointer is a separate
+        // UObject of the same class.
         // ─────────────────────────────────────────────────────────────────
         void destroyNewBuildingBar()
         {
@@ -2088,9 +2045,8 @@
             VLOG(STR("[MoriaCppMod] [NewBuildingBar] removed\n"));
         }
 
-        // Highlight/un-highlight a slot by toggling its
-        // "focused" overlay's Visibility. Phase 2 wires this to clicks +
-        // F# key presses. Slot range 0..7.
+        // Highlight a slot by toggling its 'focused' overlay's Visibility.
+        // Slot range 0..7.
         void newBuildingBarHighlight(int slot, bool on)
         {
             if (slot < 0 || slot >= 8) return;
@@ -2392,11 +2348,9 @@
                  (void*)out.texBottomRight, (void*)out.texSlotEmpty,
                  (void*)out.texSlotFocus);
 
-            // DEEP DIVE: walk the spawned ActionBar's WidgetTree
-            // and log every UImage we see, with its texture name + brush
-            // size + parent slot type + canvas-slot Position/Size if it
-            // lives in a CanvasPanel. Lets us understand exactly how the
-            // native chrome is composed without guessing.
+            // Diagnostic dump: walk the spawned ActionBar's WidgetTree and
+            // log each UImage with texture name, brush size, parent slot
+            // type, and canvas Position/Size if applicable.
             auto* wtPtr = tmplt->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
             UObject* wt = wtPtr ? *wtPtr : nullptr;
             UObject* tRoot = nullptr;
@@ -2760,8 +2714,8 @@
                             // highlight toggles both together.
                         }
                     }
-                    // Icon placeholder (Phase 2 will populate with the
-                    // actual builder-piece texture).
+                    // Slot-icon image — populated from m_recipeSlots[i].textureName
+                    // by populateNewBuildingBarIcons.
                     {
                         FStaticConstructObjectParameters ip(imageCls, outer);
                         UObject* iImg = UObjectGlobals::StaticConstructObject(ip);
