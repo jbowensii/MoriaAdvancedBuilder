@@ -3,8 +3,16 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.7.1
-May 2026
+Document Version 6.23.2
+Updated: 2026-05-08
+
+NOTE: The original document body below (Parts 1-3) was written through
+v6.7.1 in May 2026. Part 4 at the bottom adds the lessons learned through
+v6.23.2: Slate Prepass AV root-cause, controller-code removal, dead-code
+sweep, INS replenish per-instance fix, comment-out-before-delete
+discipline, native-rename-modal patching, and the systematic code review
+cycle that produced ~1,650 LOC of net deletions across v6.22.x and
+v6.23.0. Where Part 4 contradicts Parts 1-3, Part 4 wins.
 ================================================================================
 
 
@@ -3055,6 +3063,771 @@ common pitfalls that UE4SS modders should be aware of:
     FItemInstance fields bypass replication and will not be visible to other
     players, will not trigger UI updates, and will desync the client from the
     server.
+
+
+================================================================================
+PART 4: v6.7.1 -> v6.23.2 LESSONS LEARNED (added 2026-05-08)
+================================================================================
+
+This part captures everything we learned between v6.7.1 (when Parts 1-3
+above were written) and v6.23.2 (the current tip). It is organized as a
+catalog of bugs hit, root causes found, fix patterns codified, and dead
+ends abandoned. The audience is other modders who will hit the same
+cliffs we hit. Read this BEFORE writing your own UE4SS mod for this
+game; it will save you weeks.
+
+Codebase shrank from ~17,000 lines to ~15,500 lines over this period -
+v6.22.x + v6.23.0 deleted ~1,650 lines of dead controller code, FGK
+runtime-injection diagnostics, abandoned UI capture paths, and orphaned
+helper functions. Less code, less surface, fewer ways to break.
+
+
+--------------------------------------------------------------------------------
+4.1  THE SLATE PREPASS ACCESS VIOLATION (v6.21.30 -> v6.21.39)
+--------------------------------------------------------------------------------
+
+THE BUG. The user pressed F1 (quick-build) and the game crashed with:
+
+    EXCEPTION_ACCESS_VIOLATION reading address 0xFFFFFFFFFFFFFFFF
+    Moria_Win64_Shipping!SWidget::Prepass_Internal()
+    Moria_Win64_Shipping!FWidgetProxy::ProcessInvalidation()
+    Moria_Win64_Shipping!FSlateInvalidationRoot::ProcessInvalidation()
+    Moria_Win64_Shipping!PrepassWindowAndChildren()
+
+The address 0xFFFFFFFFFFFFFFFF is the destroyed-shared-pointer sentinel
+in Slate. It means a parent SWidget walked its children list and one
+entry's TSharedRef<SWidget> had been zeroed/invalidated mid-iteration.
+
+THE ROOT CAUSE. In v6.21.30 we added a 4-cell rotation display widget
+(Degrees, Yaw, Pitch, Roll). The per-frame tick (`tickRotationDisplay`)
+decided to spawn the widget when `isPlacementActive()` flipped true:
+
+    bool shouldShow = m_repositionHudMode || isPlacementActive() ||
+                      isBuildTabShowing();
+    if (!m_rotDisplayWidget && shouldShow) {
+        createRotationDisplay();   // <-- LAZY CREATE on a gameplay edge
+    }
+
+The instant `startOrSwitchBuild()` succeeded and isPlacementActive()
+flipped true, the very next 250ms-throttled tick called
+createRotationDisplay() — which ran:
+
+    1. WidgetBlueprintLibrary:Create (instantiates UUserWidget + SWidget tree)
+    2. 4 cell construction passes: SizeBox + Overlay + Image + 2 TextBlocks
+    3. AddToViewport (Slate-realizes the root immediately)
+
+That whole chain ran on the SAME frame the engine's UMG was realizing
+other widgets in response to the placement-start event (build HUD reflow,
+action bar repaint, NBB icon update, etc.). UE4.27 Slate has no internal
+lock around the GameViewport's Children array. Our AddToViewport landed
+inside a frame where the parent's Children array was mid-mutation, and a
+stale child pointer was dereferenced one widget over.
+
+WHAT DIDN'T FIX IT. v6.21.37 added a "defensive cache" — set
+`m_rotDisplayWidget = userWidget` BEFORE AddToViewport, so a re-entrant
+tick during Slate-realize couldn't trigger a second build. The crash
+continued to occur. The defensive cache prevents *re-entrant* double-
+construction but does NOT prevent first-construction from racing
+concurrent Slate work.
+
+WHAT FIXED IT (v6.21.39). Pre-create the widget ONCE at character-load,
+gated by `m_rotDisplaySpawnAttempted{false}`, then SetVisibility(Collapsed)
+immediately. The per-frame tick ONLY toggles visibility from then on;
+it never calls createRotationDisplay again:
+
+    // dllmain.cpp character-load path:
+    if (!m_rotDisplaySpawnAttempted) {
+        m_rotDisplaySpawnAttempted = true;
+        createRotationDisplay();
+        if (m_rotDisplayWidget && isObjectAlive(m_rotDisplayWidget)) {
+            // Build hidden; tick will toggle from here on.
+            if (auto* fn = m_rotDisplayWidget->GetFunctionByNameInChain(STR("SetVisibility")))
+            { uint8_t p[8]{}; p[0] = 1; safeProcessEvent(m_rotDisplayWidget, fn, p); }
+        }
+    }
+
+    // tickRotationDisplay - never creates, never destroys:
+    if (!m_rotDisplayWidget || !isObjectAlive(m_rotDisplayWidget)) return;
+    bool shouldShow = m_repositionHudMode || isPlacementActive() ||
+                      isBuildTabShowing();
+    SetVisibility(shouldShow ? Visible : Collapsed);
+
+The New Building Bar has used this pre-spawn-at-character-load pattern
+since v6.21.1 - that's why NBB never had this AV. The rotation display
+just hadn't been retrofitted.
+
+GENERALIZED LESSON FOR MODDERS. **Never lazily create UMG widgets on a
+gameplay edge.** Pre-create at character-load, then only toggle
+visibility from per-frame ticks. Toggling visibility on a fully-realized
+widget is safe - SetVisibility doesn't touch the children list, just
+sets a flag the next Prepass reads. Creating + AddToViewport DOES touch
+the children list, and there's no lock.
+
+
+--------------------------------------------------------------------------------
+4.2  THE SHIFT+] GHOST-NOT-SPAWNING REGRESSION (v6.20.44 -> v6.21.40)
+--------------------------------------------------------------------------------
+
+THE BUG. SHIFT+] (target-build hotkey) sometimes failed to spawn a ghost.
+The user aimed at a buildable wall, pressed SHIFT+], nothing happened.
+Pressing again sometimes worked. Closing and reopening the build menu
+"reset" something and the next press worked.
+
+THE ROOT CAUSE. v6.20.44 added a DIRECT path to startBuildFromTarget()
+that didn't exist in v6.7.0. Previously SHIFT+] always routed through
+the state machine (`PlacePhase::SelectRecipeWalk` -> walk visible build
+menu widgets -> click). Slow but reliable. v6.20.44 added a new path:
+
+    if (!m_targetBuildRowName.empty()) {
+        UObject* buildHUD = getCachedBuildHUD();
+        uint8_t handle[RECIPE_HANDLE_SIZE]{};
+        bool haveHandle = buildSyntheticRecipeHandle(m_targetBuildRowName, handle);
+        if (buildHUD && haveHandle) {
+            if (trySelectRecipeByHandle(buildHUD, handle)) {
+                if (isPlacementActive()) {
+                    m_deferHideAndRefresh = true;
+                    m_buildMenuWasOpen = true;       // <-- LIE: menu was never open
+                    updateBuildersBar();              // <-- runs UMG work
+                    onGhostAppeared();
+                    return;
+                }
+            }
+        }
+    }
+
+The bug had multiple intertwined causes:
+    1. The gate was too weak (`!rowName.empty()` instead of v6.7.0's
+       stronger `m_recipeSlots[slot].hasHandle`). Stale rowName from a
+       prior session - or a row that had drifted across a patch -
+       could fire DIRECT silently.
+    2. The synthetic-handle layout was a bet: we guessed
+       `[DT*][FName.CI][FName.Number]` packing for FDataTableRowHandle.
+       In practice the engine's stronger validation sometimes dropped
+       these handles silently.
+    3. m_buildMenuWasOpen=true on a path where the menu was never open
+       triggered downstream UI cleanup logic that assumed the menu was
+       visible. That cleanup raced ghost realize.
+
+WHAT FIXED IT (v6.21.40). Removed the entire DIRECT block from
+startBuildFromTarget. SHIFT+] reverts to v6.7.0's state-machine-only
+behavior:
+
+    if (isBuildTabShowing()) m_qbPhase = PlacePhase::SelectRecipeWalk;
+    else if (isPlacementActive()) cancelPlacementViaAPI(); m_qbPhase = ...;
+    else activateBuildMode(); m_qbPhase = PlacePhase::WaitingForShow;
+
+The state-machine path is ~350-500ms slower than DIRECT but reliable.
+F1-F8 keep their DIRECT path - that's a separate code site
+(`startOrSwitchBuild`) and the user explicitly designed it for saved-
+config slot launch when no menu is open.
+
+GENERALIZED LESSON. When you add a new fast-path that bypasses the
+existing state machine, prove it works in EVERY edge case before
+removing the slow path. If you can't, keep the slow path as fallback
+and gate the fast path on a strong precondition that's KNOWN to be
+true (not just "non-empty").
+
+
+--------------------------------------------------------------------------------
+4.3  THE 12-CHAR RENAME LIMIT (v6.21.27 -> v6.21.29)
+--------------------------------------------------------------------------------
+
+THE BUG. The character-rename popup let the user type only 12 characters
+before silently rejecting further input. The user wanted up to 22.
+
+WHAT WE TRIED FIRST. We blamed our home-rolled UMG popup's RenderScale
+clipping. Removed RenderScale. Set MinimumDesiredWidth. The 12-char
+limit persisted.
+
+WHAT WE FOUND (via FModel asset inspection). The native game widget
+`WBP_CharacterCreatorRenameDialog_C` has a BP CDO override that sets
+`MaxNameLength = 12` - the parent native class
+`UMorCharacterCreatorRenameDialog` defaults to 32, but the BP overrides
+to 12. The BP's `CheckNewCharacterName` reads `this.MaxNameLength` from
+the instance member.
+
+THE FIX. Hook the native widget's OnAfterShow PE post-hook and patch
+the instance's MaxNameLength field on every show:
+
+    if (cls == STR("WBP_CharacterCreatorRenameDialog_C")) {
+        if (auto* mnlPtr = context->GetValuePtrByPropertyNameInChain<int32_t>(STR("MaxNameLength")))
+            *mnlPtr = 22;
+        if (auto* dwPtr = context->GetValuePtrByPropertyNameInChain<FText>(STR("DisallowedWords")))
+            try { *dwPtr = FText(STR("")); } catch (...) {}
+    }
+
+We patch on every OnAfterShow because the BP may re-construct the
+instance from CDO between shows, resetting our patch. The instance
+member is what the BP code reads, so writing on the instance is enough -
+no CDO patching, no pak mod, no asset edit.
+
+GENERALIZED LESSON. When a UMG popup behaves "weirdly" but consistently,
+inspect the BP via FModel BEFORE chasing your own UI code. CDO overrides
+are common and they will defeat any home-rolled UI you try to build to
+the same spec.
+
+
+--------------------------------------------------------------------------------
+4.4  THE TRASH-POPUP CURSOR-STUCK BUG (long-standing -> v6.23.1)
+--------------------------------------------------------------------------------
+
+THE BUG. User opened inventory, pressed DEL on an item, confirmed the
+trash dialog. Item disappeared. **Cursor stayed on screen but clicks
+did nothing.** Only ESC fixed it.
+
+THE ROOT CAUSE. The trash popup hide path did:
+
+    setInputModeGame();                              // sets cursor=false
+    if (auto* pc2 = findPlayerController())
+        setBoolProp(pc2, L"bShowMouseCursor", true); // forces cursor=true
+
+The result: input mode = Game (clicks go to character/world), cursor =
+visible (but useless because input pipeline is wrong). UE4's input mode
+is a state machine, not two independent flags. Toggling
+bShowMouseCursor=true after SetInputMode_GameOnly does NOT switch modes.
+
+ESC fixed it because the game's native ESC handler opens the pause menu,
+which calls SetInputMode_GameAndUI. That restored a sane mode.
+
+THE FIX (v6.23.1). Don't change input mode if the cursor was already
+visible before our popup opened. The underlying native UI's input mode
+is still valid:
+
+    // showTrashDialog open path:
+    m_trashCursorWasVisible = getBoolProp(pc, L"bShowMouseCursor");
+    if (!m_trashCursorWasVisible)
+        setInputModeUI(popup);   // only if user came from gameplay
+
+    // hideTrashDialog close path:
+    if (m_ftVisible && m_fontTestWidget)
+        setInputModeUI(m_fontTestWidget);
+    else if (!m_trashCursorWasVisible)
+        setInputModeGame();
+    // else: leave whatever native input mode is, alone
+
+Manual click polling via cursor pixel position works regardless of input
+mode, so we don't need Slate click routing for popup buttons.
+
+GENERALIZED LESSON. **Don't create hybrid input modes.** `Game + cursor
+visible` is broken. If a UI is already open, leave its input mode alone -
+your popup overlays it without disturbing the input pipeline.
+
+
+--------------------------------------------------------------------------------
+4.5  THE INS REPLENISH 2-STACK BUG (long-standing -> v6.23.2)
+--------------------------------------------------------------------------------
+
+THE BUG. User had two stacks of "Wood" in inventory. Pressed INS to
+replenish. Nothing happened. Closed and reopened inventory (game auto-
+merged stacks server-side). Pressed INS. Worked.
+
+THE ROOT CAUSE. `UInventoryComponent::ServerDebugSetItem(TSubclassOf<
+AInventoryItem> Item, int32 Count)` is **class-level** not
+**instance-level**. The server walks FItemInstance entries for the given
+class and sets the FIRST-found stack's count to N. The user's targeted/
+hovered stack went unchanged. If the first-found stack was already at
+MaxStack (often the case), there was no observable effect - INS appeared
+to "do nothing."
+
+ESC + reopen worked because the inventory close triggers server-side
+stack auto-merge. On reopen there's only one stack, so ServerDebugSetItem
+hits correctly.
+
+WHY WE COULDN'T JUST USE A PER-INSTANCE RPC. CXXHeaderDump confirms
+there is NO per-instance set-count RPC in UInventoryComponent. The
+closest per-instance APIs are:
+
+    ServerSplitStack(Source, Dest, MoveCount)  - moves N items between stacks
+    ServerMoveItem(Item, Dest, AddType)        - moves a stack to a destination
+    ServerDropItem(Item, Count, Direction)     - drops items
+    ServerChangeDurability(Item, RatioChange)  - durability not count
+    ServerRestoreItem(Item)                    - restores (durability, etc.)
+
+None of them is "set count of THIS instance to N."
+
+THE FIX (v6.23.2). Walk the FItemInstance Items array on the
+InventoryComponent, find every entry of m_lastPickedUpItemClass whose
+ID differs from the captured handle's ID, and call ServerSplitStack(B,
+m_lastItemHandle, B.Count) to MOVE every duplicate's contents into the
+user's targeted stack. After all duplicates are emptied, ServerDebugSetItem
+reliably hits the targeted instance:
+
+    int32_t targetID = *reinterpret_cast<int32_t*>(m_lastItemHandle);
+    auto* splitFn = invComp->GetFunctionByNameInChain(STR("ServerSplitStack"));
+    // Walk Items array...
+    for each entry of class with id != targetID and count > 0:
+        // Synthesize duplicate's FItemHandle
+        uint8_t dupHandle[20];
+        std::memcpy(dupHandle, m_lastItemHandle, 20);  // copy Owner+Payload
+        std::memcpy(dupHandle, &entryID, 4);            // overwrite ID
+        // Call ServerSplitStack(dupHandle, m_lastItemHandle, entryCount)
+        safeProcessEvent(invComp, splitFn, parmBuf);
+    // Then ServerDebugSetItem(class, MaxStack) hits the merged stack
+
+FItemHandle layout (FGK.hpp:1715, size 0x14 = 20 bytes):
+    +0x00 int32 ID                              <- read from FItemInstance.ID
+    +0x04 int32 Payload                         <- copy from m_lastItemHandle
+    +0x08 TWeakObjectPtr<UInventoryComponent>   <- copy from m_lastItemHandle
+
+The server validates handles primarily on (ID, Owner). Payload appears
+to be a per-Owner counter NOT consulted for stack-merge ops, so reusing
+m_lastItemHandle's Payload bytes is a best-effort approximation that
+works in practice. Worst case (server rejects synthetic handle): the
+Split call is a no-op, and we fall through to the existing class-level
+SetItem - same as before, no regression.
+
+GENERALIZED LESSON. **Read the function signature carefully before
+trusting it.** "ServerDebugSetItem(ItemClass, Count)" was named like an
+instance API but is actually class-level. The dump CXXHeaderDump file is
+truth - if you don't see an FItemHandle parameter, it's not per-instance.
+
+
+--------------------------------------------------------------------------------
+4.6  THE applyAddRow HEAP LEAK (latent since DefinitionProcessing landed -> v6.22.6)
+--------------------------------------------------------------------------------
+
+THE BUG. Every time the user toggled a definition pack OFF then back ON
+in the F12 Game Mods tab, the process working set grew by ~count*elemSize
+bytes. Over many toggles the leak compounded.
+
+THE ROOT CAUSE. moria_DefinitionProcessing.inl:1140-1182's `applyAddRow`
+overwrote a TArray's Data pointer without freeing the existing
+allocation:
+
+    std::memcpy(fieldData, &arrData, 8);       // overwrites Data ptr
+    std::memcpy(fieldData + 8, &count, 4);     // overwrites Num
+    std::memcpy(fieldData + 12, &count, 4);    // overwrites Max
+
+If `fieldData` already had a Data pointer from a prior apply (or from
+engine init with non-empty TArray), that allocation leaked. Same pattern
+at :1041-1057 for GameplayTagContainer.
+
+THE FIX (v6.22.6). Read prior Data pointer first; if non-null,
+FMemory::Free it before the memcpy:
+
+    uint8_t* priorData = nullptr;
+    std::memcpy(&priorData, fieldData, 8);
+    if (priorData) FMemory::Free(priorData);
+    std::memcpy(fieldData, &arrData, 8);
+    std::memcpy(fieldData + 8, &count, 4);
+    std::memcpy(fieldData + 12, &count, 4);
+
+UE4.27 default TArray<T> with FHeapAllocator uses FMemory::Malloc, so
+FMemory::Free matches. Defensive: skip the call when prior is null
+(engine-init empty TArrays).
+
+GENERALIZED LESSON. **Direct memory writes to TArray headers leak by
+default.** If you `memcpy` over a Data pointer, you must FMemory::Free
+the previous one. UE4's TArray destructor would handle this normally,
+but a raw memcpy bypasses it.
+
+
+--------------------------------------------------------------------------------
+4.7  THE GetAsyncKeyState HEADER-MACRO HAZARD (latent -> v6.22.7)
+--------------------------------------------------------------------------------
+
+THE BUG. The user alt-tabbed to another app, held Shift while typing,
+and the mod's chord checks misfired (because Shift was "held").
+
+THE ROOT CAUSE. moria_common.inl defined:
+
+    #define GetAsyncKeyState focusedAsyncKeyState
+
+so calls to GetAsyncKeyState in our code routed through a focus-aware
+wrapper that returns 0 when the game isn't the foreground process. But
+the .inl was included at class scope (via `#include "moria_common.inl"`
+inside the MoriaCppMod class body). The macro was therefore visible only
+to translation units that included the .inl - typically just dllmain.cpp.
+
+moria_keybinds.h includes only moria_common.h (not the .inl), and uses
+`::GetAsyncKeyState` in `isModifierDown` and `isChordHeld`. Without the
+macro, those calls hit the raw Win32 API and silently bypassed the
+focus filter.
+
+THE FIX (v6.22.7). Promote the focus-aware helpers to free functions
+inside `namespace MoriaMods` in moria_common.h, alongside the macro.
+Now every TU that includes the header gets focus-aware GetAsyncKeyState.
+
+GENERALIZED LESSON. **Macros that cross translation units belong in
+.h files, not .inl files.** If your .inl is included at class scope (a
+common UE4SS pattern for big mods), its macros are not visible to other
+TUs that include only the .h.
+
+
+--------------------------------------------------------------------------------
+4.8  THE PE-BUDGET REORDER (audit finding -> v6.22.8)
+--------------------------------------------------------------------------------
+
+THE BUG. (Not user-visible; surfaced via code review.) PE post-hook
+callbacks fire on EVERY UFunction invocation across the entire engine -
+animations, ticks, UI, RPCs, thousands per frame. Hot post-hook code that
+called `safeClassName(context)` BEFORE filtering by function name paid
+the SEH-wrapped class-name-resolve cost on every PE that didn't match.
+
+THE FIX (v6.22.8). Always filter by `wcscmp(fnStr, ...)` FIRST (cheap
+string compare, stack-only), then resolve class name only on matched
+function names:
+
+    // CHEAP first
+    if (wcscmp(fnStr, STR("ServerMoveItem")) == 0 ||
+        wcscmp(fnStr, STR("BroadcastToContainers_OnChanged")) == 0)
+    {
+        if (parms && isLocalContext(context)) {
+            std::wstring cls = safeClassName(context);  // EXPENSIVE - only on hits
+            if (cls == STR("MorInventoryComponent")) { ... }
+        }
+    }
+
+Bonus optimization: cache target UClass* once via StaticFindObject,
+then pointer-compare GetClassPrivate() instead of string-comparing.
+
+In v6.22.8 we also hoisted three `safeClassName(context)` calls in the
+OnAfterShow post-hook (popup-tracker / rename-patch / build-tab) to a
+single shared call, since they all read the same context.
+
+GENERALIZED LESSON. **In ProcessEvent post-hooks, every byte you do
+costs a millisecond.** PE post-hooks are called millions of times per
+session. Cheap-filter first; expensive-resolve second; cache where
+possible.
+
+
+--------------------------------------------------------------------------------
+4.9  ABANDONED FEATURES AND WHY (v6.7.1 -> v6.23.2)
+--------------------------------------------------------------------------------
+
+A. FGK runtime DataTable injection (multiple paths, all dead in v6.23.0).
+
+    We tried to add new building recipes at runtime via FGK's
+    DynamicTableAsset cache. Multiple approaches:
+
+        Path #1  Direct AddRow on the underlying UDataTable - blocked
+                 by FGK wrapper's own cache.
+        Path #5  ActorRowNameLookup TMap dump + injection - byte-layout
+                 traced but the wrapper rejected synthetic entries.
+        Path #6  HandleDataTableChanged callback after AddRow - no-op
+                 in shipping (the function was inlined to nothing).
+        Path #10 UE.Toolkit XML injection - viable but external; we'd
+                 need to write a Moria-specific UE.Toolkit extension.
+        Path #11 IoStore .pak with replacement DT - works but requires
+                 cooked-pak workflow we couldn't reliably maintain.
+
+    All paths abandoned per closed-features-2026-05-04.md. The FGK
+    diagnostic functions (tickFGKInjectionTest, tickActorLookupDiag,
+    tickFGKDiscoveryDiag, dumpFGKWrapperDiagnostic,
+    resolveHandleDataTableChanged) and the m_pfHandleDataTableChanged
+    field were all comment-out'd in v6.22.2 and hard-deleted in v6.23.0
+    (~250 LOC).
+
+    LESSON FOR MODDERS: If you want to add new build recipes to this
+    game, the answer is UE.Toolkit-style external XML injection, NOT
+    runtime DT modification through the FGK wrapper. The wrapper's
+    cache is the killer.
+
+B. DualSenseReader raw HID reader (~265 LOC, deleted in v6.23.0).
+
+    Built a raw HID-level DualSense reader as fallback for PS5
+    controllers. Never reached - DIGamepadReader (DirectInput) handled
+    the PS5 fine on Steam. On Epic Games Store, only DirectInput works
+    for PS5 (the game's XInput probe doesn't see DualSense in EGS), so
+    DualSenseReader was redundant.
+
+    LESSON: PS5 controller input on UE4.27 + EGS - use DirectInput, not
+    XInput. XInput works for Xbox-protocol controllers only.
+
+C. The entire controller code cluster (v6.3.5 UI removal -> v6.23.0
+   hard-delete; ~720 LOC).
+
+    v6.3.5 removed the F12 controller-enable checkbox. After that,
+    `m_controllerEnabled` was permanently false (Grep confirmed zero
+    `=true` writers anywhere). Every line of controller dispatch -
+    PE pre-hook gamepad suppression, PE post-hook action-bar focus
+    tracking, the main D-pad-Left toggle / dispatchGP loop, all 13
+    controller fields, and DIGamepadReader itself - was unreachable.
+    v6.23.0 deleted the lot.
+
+    LESSON: When you disable a feature, also delete its dispatch. We
+    waited 18 months between disabling the UI and deleting the
+    pipeline; the cost was ~720 LOC of zombie code in a hot file.
+
+D. MoriaJoinAssets:: namespace (~80 LOC, deleted in v6.23.0).
+
+    Asset-path constants captured for the v6.6.0 spawn-duplicate
+    JoinWorld attempt. v6.7.0 switched to in-place modification. The
+    constants stayed; nothing read them. Grep confirmed 0 callers
+    project-wide.
+
+    LESSON: Named-constant headers don't get garbage-collected. If you
+    rewrite a feature, kill the old constants too.
+
+E. AdvancedJoin captures (cacheAdvancedJoinClassRefs body + 6 fields,
+   ~76 LOC, deleted in v6.23.0).
+
+    Same root cause as D - v6.6.0 spawn-duplicate code that v6.7.0
+    in-place modification superseded. The capture walker ran every
+    OnAfterShow but produced data nobody read.
+
+F. Settings-screen "Cheats" tab (~150 LOC of orphan-on-flag code).
+
+    The mod-tab-in-settings-status.md documents Option-C: instead of
+    creating a separate "Cheats" tab in the native Settings UI, we
+    merge cheat content into the existing native Gameplay/Game Options
+    tabs. The Option-A "create a new tab" code was preserved but
+    dead-on-flag (m_cheatsTabActive permanently false). v6.22.5 gated
+    the call sites; v6.23.0 deleted them but left the function bodies
+    in moria_settings_ui.inl pending follow-up cleanup (intra-file
+    call edges complicate the deletion).
+
+    LESSON: When designing for engine takeover, the "merge into
+    existing native widget" path is almost always cleaner than "spawn
+    a new tab" - matches game styling automatically, no chrome to
+    capture, no positioning math.
+
+G. Editor project / cooked .pak features.
+
+    Separate "Moria-Replication" repo at
+    github.com/jbowensii/Moria-Replication for editor-project
+    reconstruction. Abandoned per closed-features-2026-05-04.md
+    because the cooked-pak workflow couldn't be reliably maintained
+    across game updates.
+
+
+--------------------------------------------------------------------------------
+4.10  DISCIPLINE: COMMENT-OUT BEFORE DELETE
+--------------------------------------------------------------------------------
+
+After several incidents where "looks unused" code turned out to be
+called via deep paths (reflection-driven, hooks, ProcessEvent dispatch,
+Settings UI keymap rebinds, MP-only RPC paths), we adopted a strict
+two-pass discipline for dead-code removal:
+
+    PASS 1 (cautious): Wrap suspect block in `#if 0 ... #endif`.
+                       Commit + tag + push to GitHub. User tests
+                       in-game across at least one full play session
+                       (multiple world-loads, multiple feature
+                       interactions). If user confirms nothing broke,
+                       proceed to Pass 2.
+
+    PASS 2 (confident): Delete the wrapped block entirely (remove the
+                        `#if 0`, the body, the `#endif`, the comment
+                        explaining the gate). Commit + tag + push.
+
+Each pass ships as its own version bump. Pass 1 + Pass 2 are NEVER
+bundled in the same commit.
+
+WHY. Comment-out preserves intact + visible + git-blameable while we
+verify. Once a line is gone from git, the recovery cost is real -
+diffing back through history, reconstructing context. The cases that
+bit us were all "obviously unused" until they weren't.
+
+THE v6.22.x -> v6.23.0 SWEEP. We executed this discipline rigorously
+over 9 iterations:
+
+    v6.22.1 Pass 1: tickSessionHistoryConfirm() call commented out
+    v6.22.2 Pass 1: 3 FGK diagnostic ticks commented out
+    v6.22.3 Pass 1: DualSenseReader class commented out
+    v6.22.4 Pass 1: entire controller cluster (~720 LOC) commented out
+    v6.22.5 Pass 1: 3 dead clusters (MoriaJoinAssets, AdvancedJoin
+                    captures, settings cheats call sites) commented out
+    v6.22.6: real fix - applyAddRow heap leak
+    v6.22.7: real fix - GetAsyncKeyState macro move
+    v6.22.8: real fix - safeClassName hoist in PE post-hooks
+    v6.23.0 Pass 2: hard-deleted all v6.22.1-5 #if 0 blocks + orphan
+                    function bodies that were the SOLE purpose of those
+                    call sites. Net -1,553 LOC across 5 files.
+    v6.23.1: trash-popup cursor-stuck fix
+    v6.23.2: INS replenish per-instance fix
+
+Each Pass-1 iteration was its own GitHub tag. Recovery to any prior
+state is one `git checkout v6.22.X` away.
+
+LESSON: Even "obviously dead code" might not be. Use a two-pass cycle
+for high-leverage cleanups, especially across class boundaries or
+across files. The extra commit cost is trivial; the recovery cost
+when you delete something live is not.
+
+
+--------------------------------------------------------------------------------
+4.11  DISCIPLINE: COMPILER-DRIVEN DELETION DISCOVERY
+--------------------------------------------------------------------------------
+
+When wrapping field declarations in `#if 0`, building IMMEDIATELY
+surfaces every remaining dependency. The compiler errors are the
+exact roadmap of what else needs to be wrapped.
+
+EXAMPLE FROM v6.22.4 (controller cluster).
+
+We started by `#if 0`-ing only the 13 controller field declarations
+in dllmain.cpp. The build then produced exactly these errors:
+
+    dllmain.cpp(973):  m_modToolbarFocused: not a member
+    dllmain.cpp(1017): m_controllerEnabled: not a member
+    dllmain.cpp(1632): m_gameActionBarFocused: not a member
+    dllmain.cpp(2842): m_controllerEnabled: undeclared
+    ... (35 errors total)
+
+Each error pointed to a code block that referenced the now-gated
+fields. We wrapped each block in turn (PE pre-hook gamepad
+suppression, PE post-hook action-bar focus, main gamepad dispatch
+loop, DIGamepadReader class). Build clean.
+
+This is FAR cheaper than reading every file looking for "callers."
+The compiler does the search for free.
+
+LESSON: For dead-code sweeps that span multiple call sites, gate the
+DECLARATIONS first, build, follow the errors. Don't try to find all
+callers manually before starting.
+
+
+--------------------------------------------------------------------------------
+4.12  MULTI-AGENT CODE REVIEW METHODOLOGY
+--------------------------------------------------------------------------------
+
+For the v6.22.0 stability milestone, we ran a comprehensive code
+review using parallel Opus agents:
+
+    Agent A: ~14,600 LOC big files (dllmain.cpp, moria_widgets.inl,
+             moria_settings_ui.inl)
+    Agent B: ~12,200 LOC medium files (placement, unlock, quickbuild,
+             hism, inventory, session_history, join_world_ui,
+             DefinitionProcessing, testable.h)
+    Agent C: ~4,400 LOC small files + headers (12 files)
+    Agent D: Consolidator - reads A+B+C output, ranks findings, produces
+             a 5-iteration action plan
+
+Each per-bucket agent applied 3 lenses to every finding:
+    - Lint (UB, narrowing, missing nulls, exception safety, etc.)
+    - Dead code (verified via Grep across full src/ tree)
+    - Correctness/design (magic numbers, error-swallowing, hardcoded
+      offsets, missing alive-checks before deref, etc.)
+
+Each finding got severity (Critical / High / Medium / Low) and a
+[KNOWN] tag if already documented in prior reviews.
+
+OUTPUT: a single ranked master report at code-review-MASTER.md with
+6 actionable iterations, all Low or Low-Medium risk. The user picked
+fix #1, we shipped it, verified, picked fix #2, etc. Net result was
+v6.22.6-v6.22.8 (3 real fixes) + v6.23.0 (Pass-2 deletion sweep).
+
+LESSONS FOR MODDERS DOING THEIR OWN REVIEWS:
+    1. Split by file bucket, not by lens. Each agent reads each file
+       only once.
+    2. The consolidator agent is essential - per-file findings
+       overlap, and de-duping by hand is tedious.
+    3. Tag [KNOWN] aggressively against prior review reports - keeps
+       the focus on net-new findings.
+    4. Front-load Critical/High in the TL;DR. The user reads top to
+       bottom; bury Low items at the end.
+    5. End with an action plan, not raw findings. The action plan is
+       what gets executed.
+
+
+--------------------------------------------------------------------------------
+4.13  v6.23.x VERIFIED STATE - WHAT WORKS RIGHT NOW
+--------------------------------------------------------------------------------
+
+As of v6.23.2 (2026-05-08), the following is confirmed working in-game:
+
+    F1-F8 quick-build slots (DIRECT path)
+    SHIFT+] target build (state-machine path)
+    F9 rotation step
+    F10 reposition HUD mode
+    F12 save game
+    DEL trash item (with cursor restoration)
+    INS replenish item (per-instance, 2+ stacks correctly handled)
+    END remove attributes
+    NUM0-9 navigation
+    Pause-menu mod buttons: UNLOCK RECIPES / READ ALL LORE / CLEAR ALL BUFFS
+    Settings UI keymap rebinds (mod keybinds in native Key Mapping tab)
+    Settings UI Gameplay tab cheats (Option-C merge)
+    New Building Bar (top-of-screen, 8 slots, NBB)
+    Rotation display (4-cell pyramid, F10-positionable)
+    Inspect window (F10-positionable)
+    Native CharacterCreator rename modal patched to MaxNameLength=22
+    JoinWorld in-place mod with session history JSON
+    Definition packs (F12 Game Mods tab) with applyAddRow heap-leak fix
+
+NOT WORKING / DEFERRED:
+    Controller input (deleted in v6.23.0; m_controllerEnabled was
+        permanently false since v6.3.5 anyway)
+    F12 dispatcher to our own settings menu (replaced by native
+        Settings takeover)
+    FGK runtime DT injection (abandoned)
+    Editor-project / cooked-pak features (separate Moria-Replication
+        repo, abandoned)
+
+
+--------------------------------------------------------------------------------
+4.14  RECOMMENDED MODDER WORKFLOW
+--------------------------------------------------------------------------------
+
+Based on what worked best for us:
+
+    1. **Build / deploy iteration loop**: ~5 seconds per cycle.
+       cmake --build + cp DLL. No game restart needed if UE4SS hot-
+       reloads modules; otherwise restart the game.
+
+    2. **VLOG everything during investigation, log nothing in shipping**.
+       Use a `s_verbose` global (read from ue4ss-settings.ini) to gate
+       expensive logs. Strip debug-only logs that ran on every PE -
+       they cost the same as the real work.
+
+    3. **GuiConsoleEnabled = NO**. This crashes Return to Moria with
+       DXGI_ERROR_DEVICE_REMOVED. Stick to UE4SS.log file output.
+
+    4. **GraphicsAPI = dx11**. opengl crashes. dx11 is the only safe
+       value for this game.
+
+    5. **DO NOT downgrade to UE4SS v3.0.1**. It removes
+       register_keydown_event and flips FName defaults in ways that
+       break our reflection.
+
+    6. **Verify against CXXHeaderDump, not against documentation**.
+       The dump is truth; comments and READMEs lie. If you don't see
+       FItemHandle in the function signature, it's not per-instance.
+
+    7. **Discovery via runtime logging beats path/offset guessing**.
+       Hook ProcessEvent post-callback, log every UFunction name +
+       class name + parm size for the operations you care about,
+       then read the log to find what you need. This took ~20 min
+       and replaced what would otherwise be hours of FModel browsing.
+
+    8. **Comment-out before delete** (see 4.10).
+
+    9. **Pre-create UMG widgets at character-load** (see 4.1).
+
+    10. **Server RPCs over local-only functions for inventory ops**.
+        ServerDebugSetItem (works MP) over RequestAddItem (local-only).
+        Even on dedicated servers without a server-side mod, the
+        Server* RPCs route correctly via UE4's authority replication.
+
+
+--------------------------------------------------------------------------------
+4.15  FOR FUTURE MODDERS - QUICK START CHECKLIST
+--------------------------------------------------------------------------------
+
+If you're starting a UE4SS C++ mod for Return to Moria today, do these
+in order:
+
+    [ ] Read Parts 1-3 above for the building/inventory/UI fundamentals.
+    [ ] Read Part 4 in full for the post-v6.7.1 lessons.
+    [ ] Set up the build environment per the workspace's
+        cpp-mod/MyCPPMods/MoriaCppMod/CMakeLists.txt template.
+    [ ] Configure ue4ss-settings.ini: GraphicsAPI=dx11, GuiConsoleEnabled=0,
+        ConsoleEnabled=1, Verbose=true (during dev only).
+    [ ] Mirror the file organization: dllmain.cpp at root, .inl files
+        included at class scope, .h files for free-function utilities.
+    [ ] Adopt the safety helpers: safeProcessEvent, safeClassName,
+        seh_findAllOf / findAllOfSafe, isObjectAlive, modPath for I/O.
+    [ ] Adopt the focus-aware GetAsyncKeyState wrapper IN moria_common.h
+        (not .inl - see 4.7).
+    [ ] Adopt the comment-out-before-delete discipline for any cleanup.
+    [ ] Pre-create UMG widgets at character-load, never lazily.
+    [ ] In PE post-hooks, filter by function name FIRST, class name AFTER.
+    [ ] Read CXXHeaderDump aggressively. It's the ground truth.
+
+The full source of MoriaCppMod is the reference implementation for
+every pattern in this document. Browse cpp-mod/MyCPPMods/MoriaCppMod/src
+for working examples.
 
 
 ================================================================================
