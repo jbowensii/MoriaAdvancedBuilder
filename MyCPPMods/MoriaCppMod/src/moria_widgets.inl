@@ -1195,7 +1195,9 @@
             }
 
             // ---- Key pill SizeBox(88x40) BELOW the circle ----
-            if (keyBgTex && setBrushFn)
+            // v6.21.34 - removed the keyBgTex&&setBrushFn outer guard so the
+            // pill always renders. Falls back to a solid-grey tint when the
+            // texture isn't loaded yet (same fallback NBB uses).
             {
                 FStaticConstructObjectParameters pillSbP(sbCls, outer);
                 UObject* pillSb = UObjectGlobals::StaticConstructObject(pillSbP);
@@ -1218,14 +1220,31 @@
                         UObject* pillBg = UObjectGlobals::StaticConstructObject(imgP);
                         if (pillBg)
                         {
-                            umgSetBrush(pillBg, keyBgTex, setBrushFn);
+                            if (keyBgTex && setBrushFn)
+                            {
+                                umgSetBrush(pillBg, keyBgTex, setBrushFn);
+                                umgSetOpacity(pillBg, 0.9f);
+                            }
+                            else
+                            {
+                                // Fallback: solid translucent grey via tint.
+                                if (auto* fn = pillBg->GetFunctionByNameInChain(STR("SetColorAndOpacity")))
+                                {
+                                    std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
+                                    if (auto* p = findParam(fn, STR("InColorAndOpacity")))
+                                    {
+                                        auto* c = reinterpret_cast<float*>(bb.data() + p->GetOffset_Internal());
+                                        c[0] = 0.18f; c[1] = 0.18f; c[2] = 0.18f; c[3] = 0.9f;
+                                        safeProcessEvent(pillBg, fn, bb.data());
+                                    }
+                                }
+                            }
                             if (s_off_brush >= 0)
                             {
                                 uint8_t* base = reinterpret_cast<uint8_t*>(pillBg);
                                 *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 88.0f;
                                 *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 40.0f;
                             }
-                            umgSetOpacity(pillBg, 0.9f);
                             addToOverlay(pillOv, pillBg);
                         }
                         // Key TextBlock - center, larger font.
@@ -2720,19 +2739,46 @@
                     // rect background (matches the existing builder bar
                     // style). Text is read from s_bindings[i].key so it
                     // tracks the user's QuickBuild keymap.
-                    if (texKeyBg)
+                    //
+                    // v6.21.34 - ALWAYS create the bg image. Previous code
+                    // gated on texKeyBg != null, which silently dropped the
+                    // grey rect when the T_UI_Icon_Input_Blank_Rect texture
+                    // wasn't loaded yet at NBB-creation time (texture loads
+                    // after the input subsystem fires). Fallback path: if
+                    // the texture isn't found, leave the brush at UImage's
+                    // default 1x1 white texture and tint via
+                    // SetColorAndOpacity to a translucent grey - same
+                    // visual result.
                     {
                         FStaticConstructObjectParameters kbP(imageCls, outer);
                         UObject* kbImg = UObjectGlobals::StaticConstructObject(kbP);
                         if (kbImg)
                         {
-                            umgSetBrush(kbImg, texKeyBg, setBrushFn);
+                            if (texKeyBg)
+                            {
+                                umgSetBrush(kbImg, texKeyBg, setBrushFn);
+                                umgSetOpacity(kbImg, 0.8f);
+                            }
+                            else
+                            {
+                                // Fallback: solid translucent grey via tint
+                                // on the UImage default 1x1 white brush.
+                                if (auto* fn = kbImg->GetFunctionByNameInChain(STR("SetColorAndOpacity")))
+                                {
+                                    std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
+                                    if (auto* p = findParam(fn, STR("InColorAndOpacity")))
+                                    {
+                                        auto* c = reinterpret_cast<float*>(bb.data() + p->GetOffset_Internal());
+                                        c[0] = 0.18f; c[1] = 0.18f; c[2] = 0.18f; c[3] = 0.85f;
+                                        safeProcessEvent(kbImg, fn, bb.data());
+                                    }
+                                }
+                            }
                             if (s_off_brush >= 0) {
                                 uint8_t* base = reinterpret_cast<uint8_t*>(kbImg);
                                 *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 36.0f;
                                 *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 22.0f;
                             }
-                            umgSetOpacity(kbImg, 0.8f);
                             UObject* ks = addToOverlay(slotOv, kbImg);
                             if (ks) {
                                 umgSetHAlign(ks, 2); // Center
