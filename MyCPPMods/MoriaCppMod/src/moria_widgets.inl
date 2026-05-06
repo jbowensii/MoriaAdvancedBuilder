@@ -4,14 +4,11 @@
 // Crosshair reticle: T_UI_Bow_Reticle centered on screen, 40s auto-hide, resolution-scaled via uiScale
 // F12 panel: 1540px width, wLeft corrected for alignment, Environment tab grouped by bubble with icon click narrowed to 64px
 
-        // ---- Deferred Widget Removal (prevents Slate PaintFastPath crash) ----
-        // Widgets are hidden immediately but removed from viewport on next frame tick.
         std::vector<UObject*> m_pendingWidgetRemovals;
 
         void deferRemoveWidget(UObject* widget)
         {
             if (!widget) return;
-            // Hide immediately (prevents interaction and visual this frame)
             auto* visFn = widget->GetFunctionByNameInChain(STR("SetVisibility"));
             if (visFn) { uint8_t p[8]{}; p[0] = 1; safeProcessEvent(widget, visFn, p); }
             m_pendingWidgetRemovals.push_back(widget);
@@ -32,7 +29,6 @@
             }
             m_pendingWidgetRemovals.clear();
         }
-        // ---- End Deferred Widget Removal ----
 
         void umgSetBrush(UObject* img, UObject* texture, UFunction* setBrushFn)
         {
@@ -217,13 +213,11 @@
         }
 
 
-        // all toolbar state images gone; stub returns nullptr.
+        // No-op stub: toolbar state images removed; callers retained.
         UObject* getSlotStateImage(int /*tb*/, int /*slot*/) { return nullptr; }
 
 
-        // all toolbar widgets removed (UMG QB v6.21.5, AB v6.21.15,
-        // MC v6.21.19). hitTestToolbarSlot now always reports no-hit. Stub
-        // kept so callers (click handler in dllmain.cpp) compile.
+        // No-op stub: toolbars removed; callers retained.
         bool hitTestToolbarSlot(float /*curFracX*/, float /*curFracY*/, int& outTB, int& outSlot)
         {
             outTB = -1; outSlot = -1;
@@ -347,18 +341,8 @@
         }
 
 
-        void refreshKeyLabels()
-        {
-            // all toolbar key-label widgets gone; this function
-            // is now a no-op stub kept for callers (config save/load wiring).
-            // QB labels removed v6.21.4, AB labels v6.21.15, MC labels v6.21.19.
-        }
-
-
-        // updateMcRotationLabel removed (m_mcRotationLabel never
-        // set; rotation display has its own widget tickRotationDisplay).
-
-
+        // No-op stub kept for config save/load callers; toolbar key-labels removed.
+        void refreshKeyLabels() {}
 
 
         void umgSetBrushNoMatch(UObject* img, UObject* texture, UFunction* setBrushFn)
@@ -530,7 +514,6 @@
             UObject* rootBorder = UObjectGlobals::StaticConstructObject(borderP);
             if (!rootBorder) return;
 
-            // SizeBox > frameBorder > rootBorder
             if (rootSizeBox && frameBorder)
             {
                 auto* setContentFn2 = rootSizeBox->GetFunctionByNameInChain(STR("SetContent"));
@@ -930,11 +913,6 @@
                 VLOG(STR("[MoriaCppMod] Target info copied to clipboard\n"));
             }
 
-            // Reverted inspect-notification add. The home-rolled
-            // panel already shows the data the user wants; doubling up
-            // with a transient notification was redundant and the
-            // fallback (red box) appeared on top of the panel.
-
             m_tiShowTick = GetTickCount64();
             // auto-hide 10s after most-recent show update
             m_tiAutoHideAtMs = m_tiShowTick + 10000ull;
@@ -1010,8 +988,6 @@
                 hideTargetInfo();
                 return;
             }
-            // In reposition mode, treat overClose ALSO as drag - effectively
-            // making the entire title bar a drag handle.
             bool dragHotSpot = m_repositionHudMode ? overTitle : (overTitle && !overClose);
             if (rising && dragHotSpot)
             {
@@ -1233,7 +1209,6 @@
                                 *reinterpret_cast<UObject**>(bb.data() + p->GetOffset_Internal()) = pillOv;
                             safeProcessEvent(pillSb, sf, bb.data());
                         }
-                        // Grey bg image - full pill area.
                         FStaticConstructObjectParameters imgP(imgCls, outer);
                         UObject* pillBg = UObjectGlobals::StaticConstructObject(imgP);
                         if (pillBg)
@@ -1563,9 +1538,6 @@
                 return std::to_wstring(iv) + L"\xB0";
             };
 
-            // Value-only TextBlock - just the number. The static label
-            // ("Pitch" / "Yaw" / etc.) is a separate TextBlock at top of
-            // the circle, set once at create time.
             if (m_rotDisplayStep)
             {
                 int step = s_overlay.rotationStep.load();
@@ -1728,7 +1700,6 @@
             UObject* wblCDO = wblClass->GetClassDefaultObject();
             if (!wblCDO) return;
 
-            // Find texture
             UObject* texReticle = findTexture2DByName(L"T_UI_Bow_Reticle");
             if (!texReticle) texReticle = findTexture2DByName(L"T_UI_Btn_P1_Active");
             if (!texReticle) { Output::send<LogLevel::Warning>(STR("[MoriaCppMod] [CH] No texture\n")); return; }
@@ -1753,13 +1724,11 @@
             UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
             UObject* outer = widgetTree ? widgetTree : userWidget;
 
-            // Create transparent border as root (no background)
             FStaticConstructObjectParameters borderP(borderClass, outer);
             UObject* rootBorder = UObjectGlobals::StaticConstructObject(borderP);
             if (!rootBorder) return;
             if (widgetTree) setRootWidget(widgetTree, rootBorder);
 
-            // Transparent background
             auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
             if (setBrushColorFn) {
                 auto* pColor = findParam(setBrushColorFn, STR("InBrushColor"));
@@ -1772,20 +1741,16 @@
                 }
             }
 
-            // Create image with reticle texture
             FStaticConstructObjectParameters imgP(imageClass, outer);
             UObject* img = UObjectGlobals::StaticConstructObject(imgP);
             if (!img) return;
 
             auto* setBrushFn = img->GetFunctionByNameInChain(STR("SetBrushFromTexture"));
             if (setBrushFn) umgSetBrushNoMatch(img, texReticle, setBrushFn);
-            // Scale icon based on resolution — 128px at 1080p, scales up with uiScale
             float iconSize = 128.0f * m_screen.uiScale;
             umgSetBrushSize(img, iconSize, iconSize);
-            // Bright saturated red so it's visible on any background
             umgSetImageColor(img, 1.0f, 0.0f, 0.0f, 1.0f);
 
-            // Add image as content of the border
             auto* setContentFn = rootBorder->GetFunctionByNameInChain(STR("SetContent"));
             if (setContentFn) {
                 auto* pContent = findParam(setContentFn, STR("Content"));
@@ -1795,7 +1760,6 @@
                 safeProcessEvent(rootBorder, setContentFn, sc.data());
             }
 
-            // Add to viewport
             auto* addFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
             if (addFn) {
                 int sz = addFn->GetParmsSize();
@@ -1805,14 +1769,13 @@
                 safeProcessEvent(userWidget, addFn, ap.data());
             }
 
-            // Position at exact center — same as showInfoMessage
             m_screen.refresh(pc);
             float halfIcon = iconSize / 2.0f;
             float cx = m_screen.fracToPixelX(0.5f) - halfIcon;
             float cy = m_screen.fracToPixelY(0.5f) - halfIcon;
             setWidgetPosition(m_crosshairWidget, cx, cy, true);
 
-            // Start hidden
+            // Start hidden until showCrosshair() is called.
             auto* visFn = userWidget->GetFunctionByNameInChain(STR("SetVisibility"));
             if (visFn) { uint8_t vp[8]{}; vp[0] = 1; safeProcessEvent(userWidget, visFn, vp); }
 
@@ -1824,7 +1787,6 @@
             if (!m_crosshairWidget) createCrosshair();
             if (!m_crosshairWidget) return;
 
-            // Reposition to exact center, scaled for resolution
             UObject* pc = findPlayerController();
             if (pc) {
                 m_screen.refresh(pc);
@@ -1916,7 +1878,6 @@
                     int sz = setBrushColorFn->GetParmsSize();
                     std::vector<uint8_t> cb(sz, 0);
                     auto* c = reinterpret_cast<float*>(cb.data() + pColor->GetOffset_Internal());
-                    // Dark transparent background ~ near-black, 80% opaque.
                     c[0] = 0.05f; c[1] = 0.05f; c[2] = 0.07f; c[3] = 0.82f;
                     safeProcessEvent(rootBorder, setBrushColorFn, cb.data());
                 }
@@ -1930,7 +1891,6 @@
                     int sz = setBorderPadFn->GetParmsSize();
                     std::vector<uint8_t> pp(sz, 0);
                     auto* m = reinterpret_cast<float*>(pp.data() + pPad->GetOffset_Internal());
-                    // More generous padding to feel like a notification panel.
                     m[0] = 20.0f; m[1] = 12.0f; m[2] = 20.0f; m[3] = 12.0f;
                     safeProcessEvent(rootBorder, setBorderPadFn, pp.data());
                 }
@@ -1959,8 +1919,6 @@
             UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
             if (!tb) return;
             umgSetText(tb, L"");
-            // game-gold text (matches the warm cream color used
-            // in the game's UI for highlights / important values).
             umgSetTextColor(tb, 1.0f, 0.82f, 0.45f, 1.0f);
             auto* wrapFn = tb->GetFunctionByNameInChain(STR("SetAutoWrapText"));
             if (wrapFn) { int ws = wrapFn->GetParmsSize(); std::vector<uint8_t> wp(ws, 0); auto* pw = findParam(wrapFn, STR("InAutoWrapText")); if (pw) *reinterpret_cast<bool*>(wp.data() + pw->GetOffset_Internal()) = true; safeProcessEvent(tb, wrapFn, wp.data()); }
@@ -2903,11 +2861,7 @@
                 if (slotInRow) { umgSetVAlign(slotInRow, 0); umgSetSlotPadding(slotInRow, 4, 0, 4, 0); }
             }
 
-            // bottom decorative strip removed per user request.
-
-            // ── Add to viewport at top-center. v6.20.46 — ZOrder bumped
-            // 50 → 100 (matches OLD UMG QuickBuild bar). Bar was likely
-            // being drawn under the game's main HUD which sits at higher Z.
+            // ZOrder=100 keeps NBB above the game's main HUD.
             auto* fnAdd = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
             if (fnAdd)
             {
@@ -2951,8 +2905,7 @@
             // empty.
             populateNewBuildingBarIcons();
 
-            // visible proof that highlight toggling works: leave
-            // slot 0 highlighted ON at create time.
+            // Default selection: slot 0.
             newBuildingBarHighlight(0, true);
 
             showOnScreen(L"New Building Bar created (slot 1 highlighted as test)",
@@ -4578,7 +4531,6 @@
             if (m_ftPeaceBtnLabel)
             {
                 umgSetText(m_ftPeaceBtnLabel, on ? L"PEACE" : L"FIGHT");
-                // Green when PEACE on, red/orange when FIGHT (off)
                 umgSetTextColor(m_ftPeaceBtnLabel,
                                 on ? 0.31f : 0.9f,
                                 on ? 0.86f : 0.45f,
@@ -4907,26 +4859,26 @@
                             }
                         }
 
-                        // DIAGNOSTIC: log every property on the
-                        // EditableTextBox so we can see what's available at
-                        // runtime. Will tell us the exact name of any
-                        // max-chars property and any other settings.
-                        VLOG(STR("[MoriaCppMod] [Rename v2] DIAG editBox properties:\n"));
-                        try {
-                            auto* cls = editBox->GetClassPrivate();
-                            if (cls)
-                            {
-                                int idx = 0;
-                                for (auto* prop : cls->ForEachPropertyInChain())
+                        // EditBox property dump - first-sight diagnostic.
+                        if (s_verbose)
+                        {
+                            VLOG(STR("[MoriaCppMod] [Rename v2] DIAG editBox properties:\n"));
+                            try {
+                                auto* cls = editBox->GetClassPrivate();
+                                if (cls)
                                 {
-                                    if (!prop) continue;
-                                    std::wstring n;
-                                    try { n = std::wstring(prop->GetName()); } catch (...) {}
-                                    VLOG(STR("[MoriaCppMod] [Rename v2] DIAG   prop[{}] = {}\n"), idx, n);
-                                    if (++idx >= 80) break;
+                                    int idx = 0;
+                                    for (auto* prop : cls->ForEachPropertyInChain())
+                                    {
+                                        if (!prop) continue;
+                                        std::wstring n;
+                                        try { n = std::wstring(prop->GetName()); } catch (...) {}
+                                        VLOG(STR("[MoriaCppMod] [Rename v2] DIAG   prop[{}] = {}\n"), idx, n);
+                                        if (++idx >= 80) break;
+                                    }
                                 }
-                            }
-                        } catch (...) {}
+                            } catch (...) {}
+                        }
 
                         // try clearing max-char limits via every
                         // candidate property name. Whichever exists wins;

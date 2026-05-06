@@ -1,4 +1,4 @@
-// MoriaCppMod v6.23.18 - Return to Moria UE4SS C++ mod
+// MoriaCppMod v6.23.19 - Return to Moria UE4SS C++ mod
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -610,14 +610,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.23.18");
+            ModVersion = STR("6.23.19");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.18\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.19\n"));
         }
 
         ~MoriaCppMod() override
@@ -658,7 +658,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.18 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.19 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -1554,7 +1554,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.23.18: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.23.19: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
