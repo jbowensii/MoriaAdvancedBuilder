@@ -1,4 +1,4 @@
-// MoriaCppMod v6.22.3 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.22.4 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -400,6 +400,16 @@ namespace MoriaMods
         // m_mcSlotStates (all bar widget state - widget never spawns). The
         // UmgSlotState enum is also no longer needed (only consumer was
         // m_mcSlotStates) and is removed.
+        // v6.22.4 - Pass 1 comment-out: ENTIRE controller code cluster.
+        // m_controllerEnabled is permanently false (Grep confirmed zero
+        // `=true` writers) since v6.3.5 removed the F12 checkbox UI per
+        // controller-ui-removal.md. With that gate dead, the entire
+        // dispatch loop, PE pre-hook gamepad suppression, PE post-hook
+        // action-bar focus tracking, and DIGamepadReader class are all
+        // unreachable. ~720 LOC total. v6.22.3 already gated DualSenseReader
+        // (the other dead reader); this absorbs that gate too.
+        // Pass 2 deletes after user verifies a session of normal play.
+#if 0  // v6.22.4 Pass 1 - controller cluster fields
         int m_mcFocusedSlot{-1};                  // currently focused MC slot for gamepad
         bool m_gameActionBarFocused{false};       // true when game's built-in action bar has gamepad focus
         int m_gameActionBarIndex{-1};             // current slot index in game's action bar
@@ -414,18 +424,13 @@ namespace MoriaMods
         enum class ControllerProfile : uint8_t { None = 0, Xbox = 1, PS5 = 2 };
         bool m_controllerEnabled{false};          // F12 checkbox: controller input active
         ControllerProfile m_controllerProfile{ControllerProfile::Xbox};  // Xbox or PS5
-        // v6.22.3 - Pass 1 comment-out (matches gate in moria_dualsense.h).
-        // DualSenseReader is dead - only DIGamepadReader/m_diReader is used
-        // per feedback_ps5_controller_input.md (DirectInput is the only path
-        // that works on Epic Games Store). Pass 2 deletes both blocks.
-#if 0  // v6.22.3 Pass 1
-        DualSenseReader m_dsReader;               // PS5 DualSense raw HID reader (fallback)
+        DualSenseReader m_dsReader;               // PS5 DualSense raw HID reader (fallback) - was already #if 0'd in v6.22.3
         DSState m_dsState{};
         DSState m_dsPrevState{};
-#endif
         DIGamepadReader m_diReader;               // DirectInput gamepad reader (works for ALL controllers)
         DIGamepadState m_diState{};               // current DirectInput state
         DIGamepadState m_diPrevState{};           // previous frame
+#endif  // v6.22.4 Pass 1 - end controller cluster fields
 
 
         // v6.21.21 batch 3 Tier 2a - removed m_umgKeyLabels[8] (OLD UMG bar
@@ -678,14 +683,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.22.3");
+            ModVersion = STR("6.22.4");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.3\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.22.4\n"));
         }
 
         ~MoriaCppMod() override
@@ -726,7 +731,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.3 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.22.4 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -964,6 +969,11 @@ namespace MoriaMods
                     return;
                 }
 
+                // v6.22.4 - Pass 1 comment-out: PE pre-hook gamepad
+                // suppression block. Gated on m_modToolbarFocused +
+                // m_controllerEnabled, both inside the dead controller
+                // cluster. Pass 2 deletes.
+#if 0  // v6.22.4 Pass 1 - PE pre-hook gamepad suppression
                 // When mod toolbar is active, suppress ALL game functions triggered by gamepad.
                 if (s_instance->m_modToolbarFocused)
                 {
@@ -1035,6 +1045,7 @@ namespace MoriaMods
                         return;
                     }
                 }
+#endif  // v6.22.4 Pass 1 - end PE pre-hook gamepad suppression
 
                 if (wcscmp(fnStr, STR("RotatePressed")) == 0 || wcscmp(fnStr, STR("RotateCcwPressed")) == 0)
                 {
@@ -1614,6 +1625,11 @@ namespace MoriaMods
                     return;
                 }
 
+                // v6.22.4 - Pass 1 comment-out: PE post-hook action-bar
+                // focus tracking. Sets m_gameActionBarFocused and
+                // m_gameActionBarIndex (both inside dead controller cluster).
+                // Plus the one-shot gamepad-diag block. Pass 2 deletes.
+#if 0  // v6.22.4 Pass 1 - PE post-hook action bar focus
                 // Track game's action bar focus for gamepad toolbar bridging
                 // Try multiple possible function names (C++ delegate vs Blueprint)
                 if (wcscmp(fnStr2, STR("OnHUDActionBarFocusChanged")) == 0 ||
@@ -1648,6 +1664,7 @@ namespace MoriaMods
                         }
                     }
                 }
+#endif  // v6.22.4 Pass 1 - end PE post-hook action bar focus
 
                 if (wcscmp(fnStr2, STR("ServerMoveItem")) == 0 || wcscmp(fnStr2, STR("MoveSwapItem")) == 0 || wcscmp(fnStr2, STR("BroadcastToContainers_OnChanged")) == 0)
                 {
@@ -1750,7 +1767,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.22.3: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.22.4: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -2828,6 +2845,12 @@ namespace MoriaMods
                 }
             }
 
+            // v6.22.4 - Pass 1 comment-out: main gamepad dispatch loop.
+            // Top-level gate is m_controllerEnabled which is permanently
+            // false since v6.3.5 removed the F12 checkbox UI. ~230 LOC of
+            // D-pad-toggle / mod-toolbar focus / gamepad nav / dispatchGP.
+            // Pass 2 deletes after user verifies a session of normal play.
+#if 0  // v6.22.4 Pass 1 - main gamepad dispatch loop
             // Gamepad mod toolbar: D-pad toggle switches between game and mod toolbar control.
             // OFF = all controller input passes to game normally.
             // ON  = all controller input intercepted, game gets nothing, we navigate mod toolbars.
@@ -3068,6 +3091,7 @@ namespace MoriaMods
                     s_lastExit = exitBtn;
                 }
             }
+#endif  // v6.22.4 Pass 1 - end main gamepad dispatch loop
 
             if (m_ftVisible && m_fontTestWidget)
             {

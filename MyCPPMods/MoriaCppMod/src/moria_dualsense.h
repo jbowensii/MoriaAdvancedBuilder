@@ -379,6 +379,12 @@ public:
 #endif  // v6.22.3 Pass 1 - end DualSenseReader gate
 
 
+// v6.22.4 - Pass 1 comment-out: DIGamepadReader was the live reader,
+// but its only call site (m_diReader.poll() in dllmain.cpp) is inside
+// the dead controller dispatch loop gated by permanently-false
+// m_controllerEnabled. Pass 2 deletes after user verifies controller
+// I/O is no longer doing anything meaningful in production.
+#if 0  // v6.22.4 Pass 1 - DIGamepadReader cluster
 // ---- DirectInput-based gamepad reader ----
 // Works with DualSense, DualShock 4, and any DirectInput-compatible controller.
 // Uses shared access so the game and mod can read simultaneously.
@@ -551,3 +557,4 @@ public:
 
     bool isConnected() const { return m_connected; }
 };
+#endif  // v6.22.4 Pass 1 - end DIGamepadReader cluster
