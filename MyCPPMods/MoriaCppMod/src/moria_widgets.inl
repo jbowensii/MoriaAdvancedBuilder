@@ -5554,23 +5554,50 @@
                     }
                 }
 
-                // Last resort: scan FindAllOf for any live instance of the class name,
-                // then derive UClass* from its outer.
+                // v6.21.12 - Smart fallback: scan all UClass objects (not
+                // instances) looking for one named WBP_UI_RenameWorldModal_C.
+                // The class can be loaded in memory even when no instance
+                // has been spawned yet (which is our common in-game case
+                // since the modal is a front-end widget). This is the
+                // correct way to find a loaded-but-uninstantiated class.
                 if (!modalCls)
                 {
-                    std::vector<UObject*> insts;
-                    findAllOfSafe(STR("WBP_UI_RenameWorldModal_C"), insts);
-                    for (UObject* o : insts)
+                    std::vector<UObject*> allClasses;
+                    findAllOfSafe(STR("Class"), allClasses);
+                    for (UObject* c : allClasses)
                     {
-                        if (o && isObjectAlive(o))
-                        {
-                            modalCls = static_cast<UClass*>(o->GetClassPrivate());
-                            if (modalCls) break;
-                        }
+                        if (!c || !isObjectAlive(c)) continue;
+                        try {
+                            if (std::wstring(c->GetName()) == STR("WBP_UI_RenameWorldModal_C"))
+                            { modalCls = static_cast<UClass*>(c); break; }
+                        } catch (...) {}
                     }
                     if (modalCls)
-                        VLOG(STR("[MoriaCppMod] [Rename v2] resolved class via FindAllOf instance-scan: {:p}\n"),
+                        VLOG(STR("[MoriaCppMod] [Rename v2] resolved class via UClass scan: {:p}\n"),
                              (void*)modalCls);
+                    else
+                    {
+                        // Diagnostic: dump every UClass whose name contains
+                        // 'Rename' or 'Modal' so we can see what IS loaded
+                        // and decide where to look next time.
+                        VLOG(STR("[MoriaCppMod] [Rename v2] DIAG - UClass scan found these candidates with 'Rename' or 'Modal' in name:\n"));
+                        int found = 0;
+                        for (UObject* c : allClasses)
+                        {
+                            if (!c || !isObjectAlive(c)) continue;
+                            try {
+                                std::wstring n = std::wstring(c->GetName());
+                                if (n.find(L"Rename") != std::wstring::npos
+                                    || n.find(L"Modal") != std::wstring::npos)
+                                {
+                                    std::wstring path = std::wstring(c->GetPathName());
+                                    VLOG(STR("[MoriaCppMod] [Rename v2] DIAG     {} @ {}\n"), n, path);
+                                    if (++found >= 30) break;
+                                }
+                            } catch (...) {}
+                        }
+                        VLOG(STR("[MoriaCppMod] [Rename v2] DIAG - {} matches (capped at 30)\n"), found);
+                    }
                 }
 
                 if (modalCls) m_renameModalCls = FWeakObjectPtr(modalCls);
