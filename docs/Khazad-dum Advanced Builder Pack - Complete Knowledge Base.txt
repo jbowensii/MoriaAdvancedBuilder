@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.13
+Document Version 6.23.14
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3775,6 +3775,21 @@ over 9 iterations:
              changing FFGKUITab layout no longer breaks the Cheats tab
              injection. Historic shipping fallbacks preserved
              (0xE8/0x00/0x08/0x20/0x48).
+    v6.23.14: Q3 closure - engine-frozen sanity checks.
+             Engine-stable structs FInputChord (0x20) and
+             FInputActionKeyMapping (24) won't get full reflection
+             migration since UE4.27 is frozen, but a one-shot runtime
+             reflection probe at first use confirms the size against
+             the hardcoded constant. If a future engine somehow
+             re-packs either struct, the mismatch is logged loudly
+             so the failure mode shifts from "silent memory
+             corruption" to "obvious VLOG warning". No behavior
+             change in the normal case.
+             Sites:
+               * applyDefaultChordToSelector (FInputChord 0x20 vs
+                 OnKeySelectedBP.SelectedKey FStructProperty)
+               * readGameRotateConstructionKey (FInputActionKeyMapping
+                 24 vs ActionMappings inner struct size)
 
 Each Pass-1 iteration was its own GitHub tag. Recovery to any prior
 state is one `git checkout v6.22.X` (or v6.23.X) away.

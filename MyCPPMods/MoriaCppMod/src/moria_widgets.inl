@@ -1611,6 +1611,35 @@
             //   FName ActionName       (8)
             //   FKey  Key (FName-wrap) (8)
             //   bool  bShift,bCtrl,bAlt,bCmd (4 + 4 padding)
+            //
+            // Engine-frozen sanity check (one-shot): if a future engine
+            // re-packs FInputActionKeyMapping, the per-entry pointer
+            // arithmetic below would walk into the wrong fields. Detect
+            // loudly via reflection on first call. No behavior change in
+            // the normal case.
+            static int s_iakmSizeChecked = 0;
+            if (!s_iakmSizeChecked)
+            {
+                s_iakmSizeChecked = 1;
+                if (auto* prop = pi->GetPropertyByNameInChain(STR("ActionMappings")))
+                {
+                    if (auto* arrProp = CastField<FArrayProperty>(prop))
+                    {
+                        if (auto* innerStruct = CastField<FStructProperty>(arrProp->GetInner()))
+                        {
+                            if (UStruct* st = innerStruct->GetStruct())
+                            {
+                                int sz = static_cast<int>(static_cast<UScriptStruct*>(st)->GetStructureSize());
+                                if (sz != 24)
+                                    VLOG(STR("[Widgets] WARNING: FInputActionKeyMapping size {} != expected 24 — ActionMappings walk may misread\n"),
+                                         sz);
+                                else
+                                    VLOG(STR("[Widgets] FInputActionKeyMapping size 24 confirmed by reflection\n"));
+                            }
+                        }
+                    }
+                }
+            }
             constexpr int kEntrySize = 24;
             for (int i = 0; i < num; i++)
             {

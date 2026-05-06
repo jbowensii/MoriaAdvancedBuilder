@@ -685,6 +685,28 @@
                 auto* p = findParam(fn, STR("SelectedKey"));
                 if (p)
                 {
+                    // Engine-frozen sanity check (one-shot): UE4.27 FInputChord
+                    // is 0x20 bytes. If a future engine somehow re-packs it,
+                    // we'd silently corrupt the OnKeySelectedBP parm buffer —
+                    // detect loudly via reflection on first call. No behavior
+                    // change in the normal case.
+                    static int s_chordSizeChecked = 0;
+                    if (!s_chordSizeChecked)
+                    {
+                        s_chordSizeChecked = 1;
+                        if (auto* sp = CastField<FStructProperty>(p))
+                        {
+                            if (UStruct* st = sp->GetStruct())
+                            {
+                                int sz = static_cast<int>(static_cast<UScriptStruct*>(st)->GetStructureSize());
+                                if (sz != 0x20)
+                                    VLOG(STR("[SettingsUI] WARNING: FInputChord size {:#x} != expected 0x20 — chord stamping may corrupt parm buffer\n"),
+                                         (unsigned)sz);
+                                else
+                                    VLOG(STR("[SettingsUI] FInputChord size 0x20 confirmed by reflection\n"));
+                            }
+                        }
+                    }
                     std::memcpy(buf.data() + p->GetOffset_Internal(), chord, 0x20);
                     safeProcessEvent(selector, fn, buf.data());
                 }
