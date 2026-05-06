@@ -588,14 +588,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.23.21");
+            ModVersion = STR("6.23.22");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.21\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.22\n"));
         }
 
         ~MoriaCppMod() override
@@ -635,7 +635,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.21 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.22 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
@@ -947,13 +947,14 @@ namespace MoriaMods
                     s_instance->maybeFireCarouselRow(context, val);
                 }
 
-                // post-hook on navTabPressed. Pre-hook
-                // rewrites KeyName "Cheats" -> "Gameplay" so the framework
-                // displays the Gameplay widget. After navTabPressed runs,
-                // the framework has set currentTabName + highlighted the
-                // Gameplay button. We patch currentTabName back to "Cheats"
-                // and force the navbar to refresh selection so the visual
-                // highlight matches what the user clicked.
+                // Cheats tab is rendered by piggy-backing the native Gameplay tab:
+                //   pre-hook   navTabPressed: rewrite KeyName "Cheats" -> "Gameplay"
+                //                so the framework displays the Gameplay widget;
+                //   post-hook  navTabPressed: restore currentTabName to "Cheats" and
+                //                refresh navbar selection so the visual highlight matches;
+                //   GetNavBarTabs post-hook appends the Cheats entry to the OutArray
+                //                (modifying tabArray alone is insufficient - BP iterates
+                //                a copy).
                 if (wcscmp(fnStr2, STR("navTabPressed")) == 0 && parms)
                 {
                     s_instance->onNavTabPressedPost(context, func, parms);
@@ -1221,9 +1222,8 @@ namespace MoriaMods
                     {
                         s_instance->onNativeAdvancedJoinShown(context);
                     }
-                    // v6.9.0+ Settings take-over - capture every Settings-related
-                    // widget that fires OnAfterShow so we can plan modifications.
-                    // The main SettingsScreen also queues a tree dump.
+                    // Settings take-over - capture every Settings-related widget
+                    // that fires OnAfterShow. Main SettingsScreen also queues a tree dump.
                     else if (cls == STR("WBP_SettingsScreen_C") ||
                              cls == STR("UI_WBP_EscapeMenu2_C"))
                     {
@@ -1235,23 +1235,22 @@ namespace MoriaMods
                         if (cls == STR("UI_WBP_EscapeMenu2_C"))
                             s_instance->injectPauseMenuButtons(context);
                     }
-                    // when the cheats tab spawns its content widget, inject the cheats UI.
-                    // Native legal tab spawns the same class but for a different tabArray index;
-                    // injectCheatsTabContent uses the m_cheatsTabExpectedNext flag to differentiate.
+                    // Cheats tab content piggy-backs WBP_LegalTab_C; the
+                    // m_cheatsTabExpectedNext flag distinguishes a legal-tab
+                    // open from a cheats-tab open.
                     else if (cls == STR("WBP_LegalTab_C"))
                     {
                         s_instance->onSettingsRelatedShown(context, fnStr2);
                         s_instance->injectCheatsTabContent(context);
                     }
-                    // v6.9.0 CP1 - inject mod keymap rows when the EditMappingTab
-                    // becomes visible. This fires both on first Settings open
-                    // and when the user clicks into the keymap navbar tab.
+                    // EditMappingTab fires on first Settings open AND when the
+                    // user clicks into the keymap navbar tab — inject rows in
+                    // both cases.
                     else if (cls == STR("WBP_EditMappingTab_C"))
                     {
                         s_instance->onSettingsRelatedShown(context, fnStr2);
                         s_instance->injectModKeybindRows(context);
                     }
-                    // v6.9.0 CP4 - inject Mod Game Options section.
                     else if (cls == STR("WBP_GameplayTab_C"))
                     {
                         s_instance->onSettingsRelatedShown(context, fnStr2);
@@ -1274,9 +1273,9 @@ namespace MoriaMods
                 }
 
 
-                // v6.9.0 CP4 + v0.49 - Mod Game Options button clicks.
-                // Catch both BP-level OnMenuButtonClicked AND the lower
-                // BndEvt OnButtonReleasedEvent on FrontEndButton class.
+                // Mod Game Options button clicks — catch both BP-level
+                // OnMenuButtonClicked AND the lower BndEvt OnButtonReleasedEvent
+                // on FrontEndButton.
                 {
                     bool isMenuClick = wcscmp(fnStr2, STR("OnMenuButtonClicked")) == 0;
                     bool isFEReleased = (wcsstr(fnStr2, STR("OnButtonReleasedEvent")) != nullptr);
@@ -1298,21 +1297,15 @@ namespace MoriaMods
                     }
                 }
 
-                // append Cheats entry to GetNavBarTabs OutArray.
-                // The navbar UI calls this UFunction and renders the
-                // returned array. Modifying tabArray alone isn't enough
-                // because BP iterates the OutArray copy. Augmenting the
-                // OutArray here makes every call see 8 tabs.
                 if (wcscmp(fnStr2, STR("GetNavBarTabs")) == 0)
                 {
                     s_instance->onGetNavBarTabsPost(context, func, parms);
                     return;
                 }
 
-                // v6.9.0 CP2 - capture rebinds done via the in-game keymap UI.
-                // OnKeySelectedBP fires on a WBP_SettingsKeySelector_C after
-                // the user picks a new chord. We persist to MoriaCppMod.ini
-                // if the selector is one of ours.
+                // Capture in-game keymap rebinds. OnKeySelectedBP fires on a
+                // WBP_SettingsKeySelector_C after the user picks a new chord;
+                // persist to MoriaCppMod.ini if the selector is one of ours.
                 if (wcscmp(fnStr2, STR("OnKeySelectedBP")) == 0)
                 {
                     std::wstring cls = safeClassName(context);
@@ -1502,8 +1495,8 @@ namespace MoriaMods
             });
 
             m_replayActive = true;
-            VLOG(
-                    STR("[MoriaCppMod] v6.23.21: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+            VLOG(STR("[MoriaCppMod] {}: F1-F8=build | F9=rotate | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"),
+                 ModVersion);
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -1572,15 +1565,9 @@ namespace MoriaMods
                 // is also being removed (batch 3) so this safety call is dead.
 
                 // MC bar create block removed (was gated 'if(false)';
-                // bar disabled since v6.10.0). MC keybinds 8-16 still dispatch
-                // via dispatchMcSlot() polled at the keybind level - those are LIVE.
-                // AB bar create block also removed in v6.21.15.
-
-                // CRITICAL: handle-resolution priming was nested
-                // inside the disabled AB-bar block, blocking F1-F8 USE,
-                // chord polling for SET, and every keybind that gates on
-                // HandleResolvePhase::Done. Move it out so it runs once
-                // per character-load regardless of toolbar state.
+                // Run handle-resolve priming on every character load, independent
+                // of any toolbar widget. F1-F8 USE + chord SET polling all gate
+                // on HandleResolvePhase::Done.
                 if (m_characterLoaded && m_handleResolvePhase == HandleResolvePhase::None)
                 {
                     bool needsResolve = false;
@@ -1627,10 +1614,8 @@ namespace MoriaMods
 
             tickDeferredWidgetRemovals();
 
-            // skip key/mouse polling when the in-game modal is
-            // active; its own BP handles RETURN/ESCAPE/clicks via UWBP
-            // FrontEndButton click events that we already hook in
-            // onModGameOptionClicked.
+            // In-game rename modal owns RETURN/ESCAPE/click handling via its
+            // own BP; double-handling here would fire confirm twice.
             if (m_ftRenameVisible && !m_ftRenameUsingModal)
             {
                 if (GetAsyncKeyState(VK_RETURN) & 1)
@@ -1742,13 +1727,11 @@ namespace MoriaMods
                 clearStabilityHighlights();
 
 
-            // F12 (BIND_CONFIG = MC_BIND_BASE + 5) dispatcher
-            // DISABLED. The legacy F12 config menu has been replaced by the
-            // native pause-menu Settings injection. F12 is now reusable as
-            // the default Save Game keybind (BIND_SAVE_GAME at slot 18 -
-            // dispatched separately below). The toggleFontTestPanel function
-            // still exists for the rare case the menu is needed for testing,
-            // but no live keypress reaches it.
+            // F12 (BIND_CONFIG) dispatcher disabled — the legacy config menu
+            // is replaced by Settings → Gameplay injection, and F12 is now
+            // the default Save Game keybind (dispatched below).
+            // toggleFontTestPanel() retained for ad-hoc testing; no live
+            // keypress reaches it.
             #if 0
             {
                 static bool s_lastCfgKey = false;
@@ -1763,10 +1746,9 @@ namespace MoriaMods
             }
             #endif
 
-            // Save Game keybind dispatcher (BIND_SAVE_GAME, default F12).
-            // Edge-triggered on key down; suppressed while Settings UI or
-            // rename popup is open so a stray F12 in those contexts doesn't
-            // accidentally save. Same pattern as MC keybind polling.
+            // Save Game keybind dispatcher (BIND_SAVE_GAME). Edge-triggered;
+            // suppressed while Settings UI or rename popup is open so a stray
+            // keypress in those contexts doesn't trigger a save.
             {
                 static bool s_lastSaveKey = false;
                 uint8_t svVk = s_bindings[BIND_SAVE_GAME].key;
@@ -1788,9 +1770,8 @@ namespace MoriaMods
                 }
             }
 
-            // Reposition HUD keybind dispatcher (default F10).
-            // Toggle: first press shows the inspect window + rotation
-            // display so the user can drag them with the mouse. Second
+            // Reposition HUD keybind dispatcher (default F10). First press
+            // shows the inspect window + rotation display draggable; second
             // press OR ESC exits and returns visibility to normal rules.
             {
                 static bool s_lastReposKey = false;
@@ -1854,14 +1835,9 @@ namespace MoriaMods
             }
 
 
-            // MC keybind polling. Was previously gated on
-            // `if (m_mcBarWidget)` and v6.10.0 disabled m_mcBarWidget
-            // auto-creation, leaving Set Rotation / Snap / Integrity /
-            // Invisible Dwarf / Target / Remove Single / Undo / Remove
-            // All silent. Ungate so the keypresses fire dispatchMcSlot
-            // regardless of the legacy MC toolbar widget. Also suppress
-            // entirely while Settings UI is open so the user's rebind
-            // keypresses don't trigger gameplay actions.
+            // MC keybind polling: dispatch independent of any toolbar widget.
+            // Suppressed while Settings UI is open so rebind keystrokes don't
+            // double as gameplay actions.
             if (m_characterLoaded && !m_ftVisible
                 && !isSettingsScreenOpen())
             {
@@ -1945,7 +1921,7 @@ namespace MoriaMods
                     s_lastTrashKey = nowDown;
                 }
             }
-            // Num* - reveal map (zones + chapters only) (v6.4.5+)
+            // Num* - reveal map (zones + chapters only)
             {
                 static bool s_lastRevealMapKey = false;
                 bool nowDown = (GetAsyncKeyState(VK_MULTIPLY) & 0x8000) != 0;
@@ -1976,10 +1952,9 @@ namespace MoriaMods
                 }
                 s_lastBubbleInfoKey = nowDown;
             }
-            // N - debug widget harvest (v6.6.0+, dev-only). Constructs the 12 Join World
-            // widget classes off-viewport, walks each WidgetTree, dumps to JSON under
-            // Mods/MoriaCppMod/widget-harvest/. Used to plan C++ duplicates.
-            // Plain N (no modifier) since N isn't bound to any other action.
+            // N - debug widget harvest (dev-only). Constructs the 12 Join World
+            // widget classes off-viewport, walks each WidgetTree, dumps to JSON
+            // under Mods/MoriaCppMod/widget-harvest/. Plain N (no modifier).
             {
                 static bool s_lastHarvestKey = false;
                 bool nowDown = (GetAsyncKeyState('N') & 0x8000) != 0;
@@ -2910,20 +2885,17 @@ namespace MoriaMods
             tickSettingsUI();     // Settings screen take-over (mod keybinds in keymap tab)
             tickReapplyModifierPrefixes(); // keep "L-SHIFT + F1" text on SET rows alive
             tickCaptureSpecialKeys();      // capture DEL/INS/HOME/etc the BP rejects
-            tickSaveAfterMarkRead();       // v6.21.1 - Phase 5 lore persistence
-            tickPendingCraftingMark();     // v6.21.1 - fire MarkAllAsRead when crafting screen opens
-            tickTargetInfoDrag();          // v6.21.1 - inspect window drag + close + auto-hide
-            tickRotationDisplay();         // v6.20.31/34 - rotation display (4-cell pyramid, always-on)
-            tickRenameFocus();             // v6.21.36 - re-assert keyboard focus on rename input
+            tickSaveAfterMarkRead();       // post-MarkAllAsRead lore persistence
+            tickPendingCraftingMark();     // fire MarkAllAsRead when crafting opens
+            tickTargetInfoDrag();          // inspect window drag + close + auto-hide
+            tickRotationDisplay();         // rotation display 4-cell pyramid
+            tickRenameFocus();             // re-assert focus on rename input
 
-            // v6.9.0 CP3 - Quick Build chord-aware dispatch.
-            //   USE (s_bindings[i].key, no modifiers): user-rebound USE
-            //     chord - fires quickBuildSlot on rising edge.
-            //   SET (s_setBindings[i].vk + modBits): user-rebound SET
-            //     chord - fires assignRecipeSlot on rising edge.
-            // Default-bound USE dispatch (F1..F8 alone) still flows
-            // through register_keydown_event for low-latency keystroke;
-            // the polling here handles non-default rebinds.
+            // Quick Build chord-aware dispatch.
+            //   USE (s_bindings[i].key, no modifiers): fires quickBuildSlot
+            //   SET (s_setBindings[i].vk + modBits):   fires assignRecipeSlot
+            // Default F1..F8 USE still goes through register_keydown_event for
+            // low-latency; this polling only handles user rebinds off the F-keys.
             if (!m_ftVisible && !isSettingsScreenOpen() &&
                 m_handleResolvePhase == HandleResolvePhase::Done)
             {
@@ -2966,10 +2938,9 @@ namespace MoriaMods
             }
             tickSessionHistoryDeferredCapture();
 
-            // Esc / close: native flow handles all dismissal - we only modify
-            //   widgets in place, so Esc on the native widget runs the BP's
-            //   own ClosePanel/back-nav logic. We just clear our tracking
-            //   pointers when the widget is no longer alive (handled below).
+            // We modify the native JoinWorld widget in place — Esc on it runs
+            // the BP's own ClosePanel logic; we just clear our tracking
+            // pointers when the widget is no longer alive (handled below).
             if (!m_replayActive) return;
             m_frameCounter++;
 
@@ -3178,25 +3149,23 @@ namespace MoriaMods
                             }
                         }
 
-                        // v6.4.4+ - re-apply persisted Cheats + Tweaks state now that the
-                        // player's ASC + DataTables + world are all ready. No-op if nothing saved.
+                        // Re-apply persisted Cheats + Tweaks state now that the
+                        // player's ASC + DataTables + world are all ready.
                         applySavedCheatsAndTweaks();
 
-                        // auto-spawn the New Building Bar once the
-                        // player + world are ready. One attempt per session.
+                        // Auto-spawn the New Building Bar once player + world are
+                        // ready. One attempt per session.
                         if (!m_newBuildingBarSpawnAttempted)
                         {
                             m_newBuildingBarSpawnAttempted = true;
                             createNewBuildingBar();
                         }
 
-                        // pre-spawn rotation display widget here,
-                        // not lazily on the placement-start edge. Build it
-                        // hidden; tickRotationDisplay handles SetVisibility
-                        // from now on. Eliminates the Slate-Prepass AV at
-                        // 0xFF... seen during quickbuild (root cause: widget
-                        // construction racing concurrent Slate work on the
-                        // exact frame ghost spawn lands).
+                        // Pre-spawn rotation display hidden; tickRotationDisplay
+                        // toggles visibility thereafter. Eliminates the Slate
+                        // Prepass AV at 0xFF... that lazy-create-on-placement-edge
+                        // produced (widget construction racing the Slate frame
+                        // that ghost spawn lands on).
                         if (!m_rotDisplaySpawnAttempted)
                         {
                             m_rotDisplaySpawnAttempted = true;
