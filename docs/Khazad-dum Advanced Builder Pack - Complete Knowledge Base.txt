@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.2
+Document Version 6.23.3
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
