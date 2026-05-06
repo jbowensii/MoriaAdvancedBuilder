@@ -932,7 +932,7 @@
                 { STR("Remove Single"),      14, -1, false, "RemoveTarget" },
                 { STR("Undo Remove"),        15, -1, false, "UndoLast" },
                 { STR("Remove All"),         16, -1, false, "RemoveAll" },
-                // v6.21.30 - Reposition HUD mode toggle (default F10).
+                // Reposition HUD mode toggle (default F10).
                 { STR("Reposition HUD"),     24, -1, false, "RepositionHud" },
             };
             if (UObject* hd = spawnSectionHeading(STR("Mod Key Bindings")))
@@ -973,7 +973,7 @@
                 { STR("Trash Item"),         19, "TrashItem",         STR("EquipmentHeading") },
                 { STR("Replenish Item"),     20, "ReplenishItem",     STR("EquipmentHeading") },
                 { STR("Remove Attributes"),  21, "RemoveAttributes",  STR("EquipmentHeading") },
-                // v6.21.28 - Save Game row injected under native General section.
+                // Save Game row injected under native General section.
                 { STR("Save Game"),          18, "SaveGame",          STR("GeneralHeading") },
             };
             int nativeAdded = 0;
@@ -1769,7 +1769,7 @@
         }
 
         // ────────────────────────────────────────────────────────────────
-        // CP4 — "Mod Game Options" section in Gameplay tab
+        // "Mod Game Options" section in Gameplay tab
         // ────────────────────────────────────────────────────────────────
         // Each entry maps a spawned WBP_FrontEndButton to a kind code so a
         // ProcessEvent post-hook on OnMenuButtonClicked can dispatch.
@@ -2173,7 +2173,7 @@
             // affects which handler fires.
             struct Spec { const wchar_t* label; GameOptKind kind; };
             static const Spec specs[] = {
-                // v6.21.27 - RENAME CHARACTER + SAVE GAME removed from this
+                // RENAME CHARACTER + SAVE GAME removed from this
                 // pause-menu inject list. Rename moved to its own dedicated
                 // popup invoked via the Cheats tab (CheatKind::RenameChar)
                 // and via direct call. Save Game moved to a keybind under
@@ -2882,7 +2882,7 @@
             return false;
         }
 
-        // v0.35+v0.44 — handle BndEvt delegates fired on the carousel
+        // handle BndEvt delegates fired on the carousel
         // widget itself. fnName contains "PrevButton" or "NextButton".
         // Handles BOTH tweak carousels AND ON/OFF toggle carousels.
         bool maybeFireCarouselViaDelegate(UObject* widget, const wchar_t* fnName)
@@ -3330,11 +3330,9 @@
             m_lastApplyCheatsTabActive = m_cheatsTabActive;
         }
 
-        // (v6.23.6: tickReapplyCheatsContext deleted - had no callers post-v6.23.0)
 
-        // (v6.23.6: applyGameplayTabContext deleted - had no callers post-v6.23.0)
 
-        // CP5 v0.8 — pre-hook for navTabPressed.
+        // pre-hook for navTabPressed.
         //
         // The framework's WBP_SettingsScreen has fixed per-tab member
         // widgets (WBP_GameplayTab, WBP_AudioTab, etc.) and switches
@@ -3377,7 +3375,7 @@
             m_cheatsTabActive = false; // never active anymore
         }
 
-        // CP5 v0.16 — post-hook on navTabPressed.
+        // post-hook on navTabPressed.
         //
         // Uses proper UFunction APIs throughout:
         //   - UFGKUIScreen.GetWidgetSwitcher() -> UWidgetSwitcher
@@ -3423,11 +3421,8 @@
             // apply tab-context visibility immediately.
             applyTabContextVisibility();
 
-            // (v6.23.6: onNavTabPressedPost dead block (after if !m_cheatsTabActive return) deleted)
         }
-            // (v6.23.6: #if 0 legacy v0.15 highlight block deleted)
 
-            // (v6.23.6: walkAndUpdateNavButtonHighlight (incl. leading comment) deleted)
 
         // ─────────────────────────────────────────────────────────
         // single-instance dual-content state.
@@ -3733,7 +3728,7 @@
             m_checkBoxLabels.clear();
             m_carouselRows.clear();
             m_carouselToggles.clear();
-            // v0.32+v0.33 — cache the native checkbox + carousel classes
+            // cache the native checkbox + carousel classes
             // via the gameplay tab member widgets.
             ensureSettingsCheckBoxClassCached(gameplayTab);
             ensureSettingsCarouselClassCached(gameplayTab);
@@ -4197,7 +4192,7 @@
         }
 
         // ────────────────────────────────────────────────────────────────
-        // CP5 — repurpose the "legal" tab as our "Cheats" tab.
+        // repurpose the "legal" tab as our "Cheats" tab.
         //
         // Approach:
         //   1. On WBP_SettingsScreen.OnAfterShow, walk tabArray, find the
@@ -4224,7 +4219,7 @@
         // cheats instance" from "this is the actual legal instance".
         bool m_cheatsTabExpectedNext{false};
 
-        // CP5 v0.10 — diagnostic flag set by onNavTabPressedPre when
+        // diagnostic flag set by onNavTabPressedPre when
         // user clicks the "Cheats" navbar button. Used for log
         // correlation; the actual rendering decision is made per-instance
         // (cheats host vs regular Gameplay) in injectModGameOptions.
@@ -4307,9 +4302,7 @@
         std::vector<FWeakObjectPtr> m_cheatsContextWidgets;
         std::vector<FWeakObjectPtr> m_modGameOptWidgets;
 
-        // (v6.23.6: appendCheatsTabToNamedArray deleted - had no callers post-v6.23.0)
 
-        // (v6.23.6: appendCheatsTabToArray deleted - had no callers post-v6.23.0)
 
         // Inject Cheats content into the legal tab's widget tree.
         // Pattern mirrors injectModGameOptions but adds buttons that
@@ -4554,7 +4547,7 @@
             }
         }
 
-        // CP5 v0.4 — pre-hook on UI_WBP_NavBar_Build.InitializeNavBar.
+        // pre-hook on UI_WBP_NavBar_Build.InitializeNavBar.
         // Modifies the input Tabs array BEFORE the function builds the
         // navbar buttons. Param name might be "Tabs" — fallback to scan
         // all params if needed.
@@ -4637,7 +4630,7 @@
             }
         }
 
-        // CP5 v0.3 — post-hook for WBP_SettingsScreen.GetNavBarTabs.
+        // post-hook for WBP_SettingsScreen.GetNavBarTabs.
         //
         // The function signature is:
         //   void GetNavBarTabs(bool InGame, TArray<FFGKUITab>& tabArray);

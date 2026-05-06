@@ -808,7 +808,7 @@
 
             VLOG(STR("[JoinWorldUI] applying in-place modifications to {:p}\n"), (void*)widget);
 
-            // Yellow tint markers — visual proof that modification fired
+            // Sky-blue tint markers — visual proof that modification fired
             for (const wchar_t* nm : { STR("TextBlock_63"), STR("Title"), STR("InviteCodeLabel") })
             {
                 if (UObject* tb = jw_findChildInTree(widget, nm))

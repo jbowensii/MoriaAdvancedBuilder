@@ -1,5 +1,5 @@
 
-// moria_widgets.inl — UMG widget management, F12 config panel, crosshair reticle (v5.5.0)
+// moria_widgets.inl — UMG widget management, F12 config panel, crosshair reticle
 // deferRemoveWidget: hide immediately + remove next frame (prevents Slate PaintFastPath crash)
 // Crosshair reticle: T_UI_Bow_Reticle centered on screen, 40s auto-hide, resolution-scaled via uiScale
 // F12 panel: 1540px width, wLeft corrected for alignment, Environment tab grouped by bubble with icon click narrowed to 64px
@@ -217,11 +217,11 @@
         }
 
 
-        // v6.21.19 - all toolbar state images gone; stub returns nullptr.
+        // all toolbar state images gone; stub returns nullptr.
         UObject* getSlotStateImage(int /*tb*/, int /*slot*/) { return nullptr; }
 
 
-        // v6.21.19 - all toolbar widgets removed (UMG QB v6.21.5, AB v6.21.15,
+        // all toolbar widgets removed (UMG QB v6.21.5, AB v6.21.15,
         // MC v6.21.19). hitTestToolbarSlot now always reports no-hit. Stub
         // kept so callers (click handler in dllmain.cpp) compile.
         bool hitTestToolbarSlot(float /*curFracX*/, float /*curFracY*/, int& outTB, int& outSlot)
@@ -349,13 +349,13 @@
 
         void refreshKeyLabels()
         {
-            // v6.21.19 - all toolbar key-label widgets gone; this function
+            // all toolbar key-label widgets gone; this function
             // is now a no-op stub kept for callers (config save/load wiring).
             // QB labels removed v6.21.4, AB labels v6.21.15, MC labels v6.21.19.
         }
 
 
-        // v6.21.19 - updateMcRotationLabel removed (m_mcRotationLabel never
+        // updateMcRotationLabel removed (m_mcRotationLabel never
         // set; rotation display has its own widget tickRotationDisplay).
 
 
@@ -419,12 +419,6 @@
 
 
 
-        // v6.21.15 - removed Advanced Builder bar functions:
-        //   destroyAdvancedBuilderBar (~9 lines)
-        //   createAdvancedBuilderBar (~462 lines)
-        // The bar was disabled since v6.10.0 (gated if(false) at character
-        // load); replaced by the New Building Bar (NBB) at top of screen.
-        // BIND_AB_OPEN keybind constant kept for config-file compatibility.
 
 
         void destroyTargetInfoWidget()
@@ -1005,7 +999,7 @@
             bool overClose = (curX >= left + wW - closeBtnW && curX <= left + wW &&
                               curY >= top  && curY <= top  + titleH);
 
-            // v6.21.37 - while in F10 reposition mode, the entire title
+            // while in F10 reposition mode, the entire title
             // bar (including the X area) is treated as drag-handle. The
             // close-button click was firing hideTargetInfo() and closing
             // the window mid-reposition (the user kept hitting the close
@@ -1092,7 +1086,7 @@
 
         // Build one cell: SizeBox(48x48) > Overlay > [Image(frame), TextBlock]
         // Returns the SizeBox; outLabel is set to the text block for later updates.
-        // v6.21.33 - cell layout reshaped at user request:
+        // cell layout reshaped at user request:
         //   Outer VerticalBox
         //   |- Circle SizeBox(158x158)            (+10% from 144)
         //   |   `- Overlay
@@ -1161,7 +1155,7 @@
                         addToOverlay(circleOv, frameImg);
                     }
 
-                    // v6.21.37 - Stack label-on-top + value-below as a
+                    // Stack label-on-top + value-below as a
                     // single inner VBox, then anchor that VBox dead-center
                     // inside the circle. Was: label pinned to top with
                     // padding-top 18, value full-center; left both off-
@@ -1222,11 +1216,6 @@
             }
 
             // ---- Key pill SizeBox BELOW the circle ----
-            // v6.21.34 - removed the keyBgTex&&setBrushFn outer guard so the
-            // pill always renders. Falls back to a solid-grey tint when the
-            // texture isn't loaded yet (same fallback NBB uses).
-            // v6.21.36 - bumped pill 88x40 -> 110x50 so font-22 key text
-            // ("F12", longer rebinds) fits without overflow.
             {
                 FStaticConstructObjectParameters pillSbP(sbCls, outer);
                 UObject* pillSb = UObjectGlobals::StaticConstructObject(pillSbP);
@@ -1302,7 +1291,7 @@
                         { std::vector<uint8_t> bb(fnH->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(pillSlot, fnH, bb.data()); }
                         umgSetSlotPadding(pillSlot, 0, 0, 0, 0);
                     }
-                    // v6.21.37 - The frame texture has ~18px transparent
+                    // The frame texture has ~18px transparent
                     // border around the visible circle, so even with zero
                     // VBox padding the pill appears to "hang off" the bottom.
                     // SetRenderTranslation moves the pill up by 18 design
@@ -1371,7 +1360,7 @@
                     nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
             }
 
-            // v6.21.32 - locate the small grey "key rect" texture used by
+            // locate the small grey "key rect" texture used by
             // the NBB toolbar's F# labels - same texture, same look.
             UObject* keyBgTex = findTexture2DByName(L"T_UI_Icon_Input_Blank_Rect");
 
@@ -1457,7 +1446,7 @@
                 }
             }
 
-            // v6.21.37 - Set the cache BEFORE AddToViewport. If a tick re-
+            // Set the cache BEFORE AddToViewport. If a tick re-
             // enters tickRotationDisplay() during the AddToViewport->Slate
             // realize chain (e.g., Slate decides to repaint inline), the
             // null cache caused a second createRotationDisplay() call which
@@ -1498,7 +1487,7 @@
             bool falling = !lmb && m_rotDispLMBPrev;
             m_rotDispLMBPrev = lmb;
 
-            // v6.21.36 - bumped hit-test bounds for the v6.21.33 cell layout:
+            // bumped hit-test bounds for the v6.21.33 cell layout:
             //   each cell is now 158 wide x (158 circle + ~46 pill+pad) tall
             //   top row = 1 cell, bottom row = 3 cells side-by-side
             //   total: 3 * 158 = 474 wide, ~440 tall (2 rows of 220 each).
@@ -1546,7 +1535,7 @@
         void updateRotationDisplay()
         {
             if (!m_rotDisplayWidget || !isObjectAlive(m_rotDisplayWidget)) return;
-            // v6.21.32 - each cell shows two centered lines (label + value)
+            // each cell shows two centered lines (label + value)
             // with the keybind marker rendered as a separate bottom-of-cell
             // grey-bg pill (NBB-toolbar style). Mapping per user direction:
             //   Degrees -> BIND_ROTATION (Set Rotation, default F9)
@@ -1594,7 +1583,7 @@
             if (m_rotDisplayRollKey)  umgSetText(m_rotDisplayRollKey,  kRoll);
         }
 
-        // v6.21.32 - Read the game's native Rotate Construction keybind from
+        // Read the game's native Rotate Construction keybind from
         // the PlayerController's PlayerInput.ActionMappings. Falls back to "R"
         // (default) if anything fails. Called every refresh; cached result not
         // strictly needed since iteration is cheap on a small array.
@@ -1651,7 +1640,7 @@
             return L"R";
         }
 
-        // v6.21.30 - rotation display is now CONDITIONAL: only visible
+        // rotation display is now CONDITIONAL: only visible
         // while a build ghost is active (placement in progress) OR
         // m_repositionHudMode is on (F10 toggle so user can drag it).
         // Throttled to 4 Hz.
@@ -1664,7 +1653,7 @@
 
             if (!m_characterLoaded) return;
 
-            // v6.21.39 - widget is pre-spawned at character-load (see
+            // widget is pre-spawned at character-load (see
             // dllmain.cpp m_rotDisplaySpawnAttempted block). This tick
             // ONLY flips SetVisibility - it MUST NOT call
             // createRotationDisplay any more. The lazy-create path was the
@@ -2071,12 +2060,6 @@
         }
 
 
-        // v6.21.19 - removed Mod Controller bar functions:
-        //   destroyModControllerBar (~14 lines)
-        //   createModControllerBar (~577 lines)
-        // The MC bar widget UI has been disabled since v6.10.0; only its
-        // keybind dispatcher (dispatchMcSlot in moria_debug.inl) is live
-        // and is still polled at the keybind level for slots 8-16.
 
         // ─────────────────────────────────────────────────────────────────
         // "New Building Bar"
@@ -2664,7 +2647,7 @@
             // ── Find the small grey "key rect" texture for F# labels —
             // same texture the bottom MC bar uses.
             //
-            // v6.21.35 - the asset is at
+            // the asset is at
             //   /Game/UI/textures/_Shared/InputGlyphs/Mouse+Keyboard/
             //     T_UI_Icon_Input_Blank_Rect.T_UI_Icon_Input_Blank_Rect
             // (path confirmed via Moria-Replication FModel extraction).
@@ -2801,7 +2784,7 @@
                     // style). Text is read from s_bindings[i].key so it
                     // tracks the user's QuickBuild keymap.
                     //
-                    // v6.21.34 - ALWAYS create the bg image. Previous code
+                    // ALWAYS create the bg image. Previous code
                     // gated on texKeyBg != null, which silently dropped the
                     // grey rect when the T_UI_Icon_Input_Blank_Rect texture
                     // wasn't loaded yet at NBB-creation time (texture loads
@@ -2835,7 +2818,7 @@
                                     }
                                 }
                             }
-                            // v6.21.37 - bumped from 56x32 to 76x44 so the
+                            // bumped from 56x32 to 76x44 so the
                             // grey rect is wider than the F-key text plus a
                             // visible margin on each side. Rotation pill
                             // (110x50) stays as-is.
@@ -4714,7 +4697,7 @@
             if (m_ftRenameVisible) { VLOG(STR("[MoriaCppMod] [Rename] BLOCKED: already visible\n")); return; }
             if (!m_characterLoaded) { showErrorBox(Loc::get("err.character_not_loaded")); return; }
 
-            // v6.21.23 - REWRITTEN. Earlier v6.21.21 spawned the in-game
+            // REWRITTEN. Earlier v6.21.21 spawned the in-game
             // WBP_CharacterCreatorRenameDialog_C directly. That worked
             // visually but the BP expects the main-menu screen-stack
             // context (OnBeforeShow / OnCustomFocusSet / OnActionCalled
@@ -4849,7 +4832,7 @@
                     if (canvas && editBox)
                     {
                         UObject* slot = jw_addToCanvas(canvas, editBox);
-                        // v6.21.27 - bumped to 1100x80 design px so text has
+                        // bumped to 1100x80 design px so text has
                         // ample room. RenderScale was REMOVED (was 1.6 in
                         // v6.21.25): user reported typing stopped at 12
                         // characters - root cause was that SetRenderScale
@@ -4883,7 +4866,7 @@
                             }
                         }
 
-                        // v6.21.28 - DIAGNOSTIC: log every property on the
+                        // DIAGNOSTIC: log every property on the
                         // EditableTextBox so we can see what's available at
                         // runtime. Will tell us the exact name of any
                         // max-chars property and any other settings.
@@ -4904,7 +4887,7 @@
                             }
                         } catch (...) {}
 
-                        // v6.21.28 - try clearing max-char limits via every
+                        // try clearing max-char limits via every
                         // candidate property name. Whichever exists wins;
                         // others no-op safely. This unblocks the 12-char
                         // typing cutoff the user reported.
@@ -4954,7 +4937,7 @@
             // 8. Modal: focus on the input textbox so typing lands there.
             setInputModeUI(editBox ? editBox : popup);
 
-            // v6.21.25 - SetKeyboardFocus on the EditableTextBox so that
+            // SetKeyboardFocus on the EditableTextBox so that
             // typed characters route to the input field. setInputModeUI
             // alone configures input mode but doesn't necessarily transfer
             // keyboard focus to a specific widget within the focused
@@ -4967,7 +4950,7 @@
                     safeProcessEvent(editBox, fn, bb.data());
                 }
             }
-            // v6.21.27 - watchdog DISABLED. Hypothesis from typing-cuts-out-
+            // watchdog DISABLED. Hypothesis from typing-cuts-out-
             // at-12-chars report: SetKeyboardFocus during typing was either
             // committing the partial text or resetting caret state. With
             // RenderScale removed (v6.21.27.A) the root cause may be gone,
@@ -4981,17 +4964,10 @@
                  (void*)popup, (void*)editBox, (void*)inputUW);
         }
 
-        // v6.21.24 - removed legacy home-rolled showRenameDialog (314 lines).
-        // The old from-scratch UMG popup is gone for good. v6.21.23 custom
-        // rename popup (WBP_UI_GenericPopup_C chrome + injected EditableTextBox)
-        // is the only path now. Name-string processing + apply pipeline are
-        // unchanged: confirmRenameDialog reads typed text -> m_pendingCharName
-        // -> game-thread tick at dllmain.cpp:2207 -> applyPendingCharacterName()
-        // -> SetCharacterName UFunction on the player pawn.
 
 
 
-        // v6.21.25 - keyboard-focus watchdog for the rename popup. Hovering
+        // keyboard-focus watchdog for the rename popup. Hovering
         // the popup's Confirm/Cancel buttons steals keyboard focus from the
         // EditableTextBox, which makes typing stop landing in the input
         // after 1-2 keystrokes. We re-assert focus every ~250ms while the
@@ -5034,7 +5010,7 @@
                 deferRemoveWidget(m_ftRenameWidget);
                 m_ftRenameWidget = nullptr;
             }
-            // v6.21.23 - also remove our injected input UserWidget if present
+            // also remove our injected input UserWidget if present
             // (the standalone EditableTextBox host added at ZOrder=501).
             if (UObject* inputUW = m_ftRenameInputUW.Get())
             {
@@ -5080,7 +5056,7 @@
             if (!m_ftRenameVisible) return;
             std::wstring newName;
 
-            // v6.21.21 — when using the in-game modal
+            // when using the in-game modal
             // (WBP_CharacterCreatorRenameDialog_C), read the
             // CharacterNameText FText member. The BP's
             // OnEditableTextBoxChangedEvent BndEvt copies typed text there
@@ -5116,7 +5092,7 @@
             VLOG(STR("[MoriaCppMod] [Rename] confirm read newName='{}' (len={}) usingModal={}\n"),
                  newName, (int)newName.size(), m_ftRenameUsingModal ? STR("Y") : STR("N"));
 
-            // v6.21.26 - rename validation:
+            // rename validation:
             //   1. Reject empty input (long-standing rule).
             //   2. Cap at 22 characters (kRenameMaxLen). Mirrors the
             //      native UMorCharacterCreatorRenameDialog::MaxNameLength

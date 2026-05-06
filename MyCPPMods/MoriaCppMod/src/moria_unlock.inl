@@ -1,5 +1,4 @@
-// moria_unlock.inl — Recipe unlock + read-history clear + buff toggles + peace mode (v6.4.1)
-
+// moria_unlock.inl — Recipe unlock + read-history clear + buff toggles + peace mode
         // Cheats tab buff entry data.
         enum class CheatRowKind { ClearAllBtn, SectionHeader, BuffToggle };
         struct CheatEntry {
@@ -762,7 +761,7 @@
         }
 
 
-// moria_unlock.inl — Recipe unlock + read-history clear (v6.4.1)
+// moria_unlock.inl — Recipe unlock + read-history clear
 //
 // Two features, both operate entirely through game UFUNCTIONs — zero raw memory writes:
 //   1. unlockAllAvailableRecipes()  — iterates recipe DataTables, filters protected/hidden/unfinished/DLC-gated rows,
@@ -1170,7 +1169,7 @@
             int totalMarked = 0;
             bool anyScreenFound = false;
 
-            // Phase 1: Lore screen MarkAllRead (single-call path)
+            // Lore screen MarkAllRead (single-call path)
             {
                 std::vector<UObject*> screens;
                 findAllOfSafe(STR("WBP_LoreScreen_v2_C"), screens);
@@ -1185,7 +1184,7 @@
                 }
             }
 
-            // Phase 2: Goals screen — per-entry mark via SetLoreEntryViewed / SetTutorialEntryViewed / SetTipEntryViewed
+            // Goals screen — per-entry mark via SetLoreEntryViewed / SetTutorialEntryViewed / SetTipEntryViewed
             {
                 std::vector<UObject*> screens;
                 findAllOfSafe(STR("WBP_GoalsScreen_C"), screens);
@@ -1211,7 +1210,7 @@
                 }
             }
 
-            // Phase 3: also run per-entry across the LORE screen (belt-and-suspenders; some
+            // also run per-entry across the LORE screen (belt-and-suspenders; some
             // sub-tables may not be covered by the Blueprint MarkAllRead above).
             {
                 std::vector<UObject*> screens;
@@ -1225,7 +1224,7 @@
                 }
             }
 
-            // Phase 4: Build menu — call UI_WBP_Build_Tab_C::MarkAllAsRead() (one-shot, game-native).
+            // Build menu — call UI_WBP_Build_Tab_C::MarkAllAsRead() (one-shot, game-native).
             // This clears the "NEW!" badges on the construction build menu (the "4 unread building" count).
             {
                 std::vector<UObject*> tabs;
@@ -1319,7 +1318,7 @@
                 VLOG(STR("[MarkRead] Phase 5/6: no live crafting screen — queued for next open\n"));
             }
 
-            // Phase 7: Goals screen — WBP_GoalsScreen_C::MarkAllAsRead() (one-shot, covers goals,
+            // Goals screen — WBP_GoalsScreen_C::MarkAllAsRead() (one-shot, covers goals,
             // mysteries, tutorials, tips categories natively). Must be called in addition to Phase 2's
             // per-entry SetLoreEntryViewed because MarkAllAsRead may persist differently.
             {
@@ -1365,7 +1364,7 @@
             m_saveAfterMarkAtMs = GetTickCount64() + 6000ull;
         }
 
-        // Phase 5: deferred save trigger after markAllLoreRead.
+        // deferred save trigger after markAllLoreRead.
         // Polled from gameThreadTick (see tickSaveAfterMarkRead below).
         uint64_t m_saveAfterMarkAtMs{0};
         void tickSaveAfterMarkRead()

@@ -1232,7 +1232,7 @@
                 return;
             }
 
-            // v6.21.13 - always do a fresh line-trace at the time of SHIFT+]
+            // always do a fresh line-trace at the time of SHIFT+]
             // press so we use current aim, not stale buffer from a previous
             // ] inspect. Suppress UI side effects (no inspect window popup,
             // no on-screen 'no hit' messages, no actor_dump.txt write).

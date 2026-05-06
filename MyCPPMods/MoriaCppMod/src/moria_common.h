@@ -1,4 +1,4 @@
-// moria_common.h — Shared declarations for MoriaCppMod (v5.5.0)
+// moria_common.h — Shared declarations for MoriaCppMod
 // Key exports: safeProcessEvent (SEH-wrapped), modPath (s_ue4ssWorkDir prefix for all file I/O),
 // s_verbose/s_language globals, FWeakObjectPtr via UE4SS header, geometry/hit-result structs
 
@@ -63,7 +63,7 @@ namespace MoriaMods
     using namespace RC;
     using namespace RC::Unreal;
 
-    // v6.22.7 - Moved from moria_common.inl. Lived as MoriaCppMod class
+    // Moved from moria_common.inl. Lived as MoriaCppMod class
     // members because the .inl is included at class scope. That meant any
     // TU that included moria_common.h alone (e.g. moria_keybinds.h - whose
     // isModifierDown/isChordHeld at lines 95/102 call GetAsyncKeyState

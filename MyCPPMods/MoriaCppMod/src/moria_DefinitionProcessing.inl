@@ -1051,7 +1051,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
 
                             if (isReadableMemory(fieldData, 16))
                             {
-                                // v6.22.6 - Same heap-leak fix as
+                                // Same heap-leak fix as
                                 // applyAddRow: free prior TArray Data
                                 // before overwriting. GameplayTagContainer
                                 // tags TArray<FGameplayTag>.
@@ -1185,7 +1185,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         }
 
 
-        // v6.22.6 - Heap-leak fix per code-review-MASTER.md TL;DR #1.
+        // Heap-leak fix per code-review-MASTER.md TL;DR #1.
         // Was: std::memcpy(fieldData, &arrData, 8) overwrote the existing
         // TArray Data pointer without freeing the prior allocation. Every
         // re-apply (e.g. user toggles a definition pack off-and-on in F12

@@ -1,4 +1,4 @@
-// moria_hism.inl — HISM instance removal with bubble-aware save/replay (v5.5.0)
+// moria_hism.inl — HISM instance removal with bubble-aware save/replay
 // Bubble tracking: updateCurrentBubble() via GetBubbleAt with 30s fallback poll
 // Save format: meshName|posX|posY|posZ|bubbleId (auto-tagged on save, bubble-filtered on replay)
 // Helpers: readBubbleDisplayName (reflection-based), bubbleNameToId (ASCII-safe), duplicate detection on load
@@ -1070,7 +1070,7 @@
             VLOG(STR("[MoriaCppMod] Fly mode = {}, noCollision = {}\n"), m_flyMode ? 1 : 0, m_noCollisionWhileFlying ? 1 : 0);
         }
 
-        // v6.21.13 - showUI=false used by SHIFT+] auto-inspect path:
+        // showUI=false used by SHIFT+] auto-inspect path:
         // refreshes m_targetBuild* fields via fresh line-trace without
         // popping the inspect window or showing 'no hit' error UI.
         void dumpAimedActor(bool showUI = true)
@@ -1125,7 +1125,7 @@
             {
                 VLOG(STR("[MoriaCppMod] No hit\n"));
                 if (showUI) showErrorBox(Loc::get("msg.actor_dump_no_hit"));
-                // v6.21.13 - clear stale buffer so SHIFT+] caller sees the no-hit state.
+                // clear stale buffer so SHIFT+] caller sees the no-hit state.
                 m_lastTargetBuildable = false;
                 m_targetBuildName.clear();
                 m_targetBuildRecipeRef.clear();
@@ -1255,7 +1255,7 @@
             VLOG(STR("[MoriaCppMod] Buildable: {} Recipe: {}\n"), isBuildable ? STR("Yes") : STR("No"), recipeRef);
 
 
-            // v6.21.6 — DT_Constructions scan ALWAYS runs (was previously
+            // DT_Constructions scan ALWAYS runs (was previously
             // gated on actor_dump.txt opening — when file write failed for
             // any reason, m_targetBuildRowName stayed empty and SHIFT+]
             // DIRECT path silently fell through to fragile name-based
@@ -1264,7 +1264,7 @@
             std::wstring dtDisplayName;
             std::wstring dtRowName;
             {
-                // v6.21.13 - skip the actor_dump.txt write entirely on
+                // skip the actor_dump.txt write entirely on
                 // showUI=false (SHIFT+] auto-inspect - file write is pure
                 // diagnostic, not needed for build dispatch).
                 std::wofstream dumpFile;

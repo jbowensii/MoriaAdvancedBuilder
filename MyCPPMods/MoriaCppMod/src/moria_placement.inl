@@ -1,4 +1,4 @@
-// moria_placement.inl — Build placement, quick-build caches, pitch/roll rotation (v5.5.0)
+// moria_placement.inl — Build placement, quick-build caches, pitch/roll rotation
 // CancelTargeting: ProcessEvent on CancelPlacement (replaces keybd_event VK_ESCAPE)
 // 500ms settle delay after OnAfterShow before blockSelectedEvent dispatches
 // Pitch/roll: BuildNewConstruction ProcessEvent intercept patches FTransform quaternion
@@ -241,7 +241,7 @@
         }
 
 
-        // v6.21.19 - setMcSlotState removed entirely with the MC bar widget.
+        // setMcSlotState removed entirely with the MC bar widget.
         // Function had been a no-op since v6.10.0 (m_mcBarWidget null check
         // returned early on every call). Callers in this file simplified.
 
@@ -949,7 +949,7 @@
             return true;
         }
 
-        // v6.21.9 — getActiveBuildHUD removed. Was an unintentional
+        // getActiveBuildHUD removed. Was an unintentional
         // duplicate of getCachedBuildHUD that lacked caching + the
         // findWidgetByClass(UI_WBP_BuildHUDv2_C) fallback. As a result
         // GetActiveBuildingWidget returning null (its normal state when
@@ -1354,7 +1354,7 @@
             m_pendingQuickBuildSlot = -1;
             m_qbStartTime = GetTickCount64();
 
-            // v6.21.40 - DIRECT path REMOVED from SHIFT+] (target-build).
+            // DIRECT path REMOVED from SHIFT+] (target-build).
             // v6.7.0 had no DIRECT path here; it always routed through the
             // state machine and was reliable. v6.20.44 added DIRECT to mirror
             // the F-key path, but reports of "ghost sometimes doesn't appear
@@ -1468,7 +1468,7 @@
                 {
                     s_overlay.totalRotation = 0;
                     s_overlay.needsUpdate = true;
-                    // v6.21.19 - updateMcRotationLabel call removed (no-op fn deleted)
+                    // updateMcRotationLabel call removed (no-op fn deleted)
                     m_pendingQuickBuildSlot = -1;
                     m_isTargetBuild = false;
                     m_qbPhase = PlacePhase::Idle;

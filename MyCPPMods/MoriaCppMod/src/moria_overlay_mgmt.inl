@@ -155,12 +155,6 @@
         }
 
 
-        // v6.21.8 batch 3 Tier 2 - removed reposition mode entirely:
-        // createRepositionMessage / destroyRepositionMessage /
-        // createPlaceholderInfoBox / destroyPlaceholderInfoBox /
-        // toggleRepositionMode (335 lines). Only entry point was the
-        // disabled NUM+/AB toggle block (also removed). Inspect window
-        // and rotation display have their own independent drag systems.
 
         void undoLast()
         {

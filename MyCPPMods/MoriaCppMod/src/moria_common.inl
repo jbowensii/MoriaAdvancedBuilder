@@ -1,7 +1,7 @@
 
 
 
-// v6.22.7 - isGameWindowFocused / focusedAsyncKeyState / the
+// isGameWindowFocused / focusedAsyncKeyState / the
 // `#define GetAsyncKeyState focusedAsyncKeyState` macro all moved to
 // moria_common.h (free-function namespace scope) so every TU that
 // includes the header sees the override - not just dllmain.cpp via
@@ -92,7 +92,7 @@ struct ScreenCoords
 };
 
 
-// v6.20.1 — SEH-wrapped helper. `safeClassName` is called from EVERY
+// SEH-wrapped helper. `safeClassName` is called from EVERY
 // ProcessEvent pre-hook in the mod, which fires once per UFunction call
 // in the entire game. Some of those calls happen on objects mid-
 // destruction whose vtables are garbage; the virtual dispatches through
@@ -157,7 +157,7 @@ static bool isObjectAlive(UObject* obj)
 }
 
 
-// v6.20.17 — true if a widget is currently displayed (parent slot non-null OR
+// true if a widget is currently displayed (parent slot non-null OR
 // IsInViewport returns true). Used to filter stale ghost UMG widgets returned
 // by FindAllOf that linger between GC passes after the screen was closed.
 // Calling BP MarkAllAsRead on a stale widget is a silent no-op, which is what
@@ -200,7 +200,7 @@ static bool seh_findAllOf(const wchar_t* className, std::vector<UObject*>* out) 
     }
 }
 
-// v6.20.1 — Convenience wrapper around seh_findAllOf. Cherry-picked from
+// Convenience wrapper around seh_findAllOf. Cherry-picked from
 // v6.11.0. Use this in place of raw `UObjectGlobals::FindAllOf` so we
 // get SEH protection against vtable-AV during world-unload (when
 // GUObjectArray entries are mid-destruction with garbage vtables).

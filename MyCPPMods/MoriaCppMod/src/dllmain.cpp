@@ -1,4 +1,4 @@
-// MoriaCppMod v6.23.6 - Return to Moria UE4SS C++ mod (~15,500 lines after v6.23.6 Pass 2 cleanup)
+// MoriaCppMod v6.23.7 - Return to Moria UE4SS C++ mod
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -336,34 +336,22 @@ namespace MoriaMods
         std::wstring m_pendingCharName;
 
 
-        // v6.21.21 batch 3 Tier 2b - removed m_umgBarWidget. The OLD UMG
-        // QuickBuild bar widget is gone; all toolbar-array slot 0 entries
-        // are now nullptr literals (TB_COUNT=4 retained because indices 1-3
-        // are still active for AB/MC bars + reposition info box).
-        // v6.21.21 batch 3 Tier 2a - removed m_umgSlotButtons[8] (OLD UMG bar
-        // gamepad nav - bar is gone; gamepad QB polling block also removed).
-        // v6.21.21 batch 3 Tier 2c - removed all OLD-UMG-bar leftover state
-        // (m_umgStateImages[8], m_umgSlotStates[8], m_umgTexEmpty/Inactive/Active,
-        // m_umgSetBrushFn). Readers in setMcSlotState/getSlotStateImage/getGPImg
-        // were dead branches (MC bar always-null + tb=0 paths unreachable).
-        // v6.21.21 - UmgSlotState enum removed (only consumers were
-        // m_mcSlotStates and setMcSlotState arg type, both gone).
         int m_activeBuilderSlot{-1};
 
 
-        // v6.21.21 - MC bar widget infrastructure removed. MC_SLOTS=9 KEPT
+        // MC bar widget infrastructure removed. MC_SLOTS=9 KEPT
         // because dispatchMcSlot, keybind polling (s_lastMcKey[MC_SLOTS]),
         // s_bindings[MC_BIND_BASE..MC_BIND_BASE+8] all reference it.
         // m_mcBarWidget removed (bar never spawned).
         static constexpr int MC_SLOTS = 9;
-        // v6.21.1 - "New Building Bar": cloned WBP_UI_ActionBar_C instance,
+        // "New Building Bar": cloned WBP_UI_ActionBar_C instance,
         // chrome only (look). Tame-spawned at top of HUD with the 4 special
         // slots (Epic/HeavyCarry/MainHand/Offhand) and inventory wiring
         // hidden/disabled. Phase 2 wires our 8 builder slots to its 8
         // numbered slot widgets.
         UObject* m_newBuildingBar{nullptr};
         bool m_newBuildingBarSpawnAttempted{false};
-        // v6.21.39 - pre-spawn the rotation display widget once at
+        // pre-spawn the rotation display widget once at
         // character-load (same pattern as NBB above). The previous design
         // created the widget on the first tick that isPlacementActive()
         // flipped true - i.e., the same Slate frame as ghost spawn -
@@ -372,7 +360,7 @@ namespace MoriaMods
         // when the world is ready; tickRotationDisplay only flips
         // SetVisibility from then on.
         bool m_rotDisplaySpawnAttempted{false};
-        // v6.21.1 - per-slot widget pointers for the New Building Bar.
+        // per-slot widget pointers for the New Building Bar.
         // Set during createNewBuildingBar(); used for highlight + Phase 2
         // icon/label updates. 8 slots = 8 indexed entries.
         UObject* m_nbbSlotEmpty[8]{};   // empty-state UImage
@@ -396,24 +384,8 @@ namespace MoriaMods
         UObject*  m_nbbCachedTexChromeMiddle{nullptr};
         UObject*  m_nbbCachedTexChromeBottom{nullptr};
         bool      m_nbbHudTexturesDumped{false};
-        // v6.21.21 - removed m_mcSlotButtons/m_mcStateImages/m_mcIconImages/
-        // m_mcSlotStates (all bar widget state - widget never spawns). The
-        // UmgSlotState enum is also no longer needed (only consumer was
-        // m_mcSlotStates) and is removed.
-        // v6.23.6 - The controller cluster (~720 LOC: DualSenseReader +
-        // DIGamepadReader + dispatch loop + PE hooks + 13 fields) was
-        // gated as v6.22.3+v6.22.4 #if 0 and is now deleted. Entry point
-        // m_controllerEnabled has been permanently false since v6.3.5
-        // removed the F12 checkbox UI. To revive controller support, see
-        // git tag v6.22.4 - the entire infrastructure is preserved there.
 
 
-        // v6.21.21 batch 3 Tier 2a - removed m_umgKeyLabels[8] (OLD UMG bar
-        // F-key labels) + m_umgKeyBgImages[8] (orphan, never read).
-        // v6.21.21 - removed m_mcKeyLabels, m_mcKeyBgImages, m_mcRotationLabel,
-        // m_mcSlot0/6/8Overlay - all MC bar widget pointers, never set since
-        // the bar widget never spawns. updateMcRotationLabel was the only
-        // reader of m_mcRotationLabel and is also gone.
 
         UObject* m_fontTestWidget{nullptr};
         bool m_ftVisible{false};
@@ -472,11 +444,11 @@ namespace MoriaMods
         UObject* m_ftRenameWidget{nullptr};
         UObject* m_ftRenameInput{nullptr};
         UObject* m_ftRenameConfirmLabel{nullptr};
-        // v6.21.36 - dedicated UserWidget hosting our standalone EditableTextBox
+        // dedicated UserWidget hosting our standalone EditableTextBox
         // for the in-game rename popup (GenericPopup-chrome + injected input).
         // Released alongside m_ftRenameWidget on hideRenameDialog.
         FWeakObjectPtr m_ftRenameInputUW;
-        // v6.21.36 - watchdog flag: hovering the popup's Confirm/Cancel
+        // watchdog flag: hovering the popup's Confirm/Cancel
         // buttons can steal keyboard focus from the EditableTextBox, which
         // makes typing stop landing in the input field after 1-2 keystrokes.
         // Each frame while the rename popup is visible, tickRenameFocus()
@@ -484,7 +456,7 @@ namespace MoriaMods
         bool m_renameFocusReassertNeeded{false};
         ULONGLONG m_renameFocusLastReassertMs{0};
 
-        // v6.21.36 - HUD reposition mode (BIND_REPOSITION_HUD, default F10).
+        // HUD reposition mode (BIND_REPOSITION_HUD, default F10).
         // While true: inspect window + 4-circle rotation display are forced
         // visible so the user can drag them. ESC or another F10 press exits.
         bool m_repositionHudMode{false};
@@ -506,7 +478,7 @@ namespace MoriaMods
         // v6.20.31/32/33/34 - Rotation display: 4-cell pyramid (1 top, 3 below)
         // showing current rotation step + Yaw/Pitch/Roll. Top cell: F9 step
         // (5°..90°). Bottom row: Yaw/Pitch/Roll of active build piece (GATA).
-        // v6.21.1 - always visible once character loaded (was conditional on
+        // always visible once character loaded (was conditional on
         // build mode, but the user can't get cursor focus while building so
         // they couldn't drag the widget). Throttled to 4 Hz.
         // 3× cell size (48→144), draggable from any cell, position
@@ -516,7 +488,7 @@ namespace MoriaMods
         UObject* m_rotDisplayYaw{nullptr};
         UObject* m_rotDisplayPitch{nullptr};
         UObject* m_rotDisplayRoll{nullptr};
-        // v6.21.36 - per-cell key marker TextBlocks. Refreshed each tick from
+        // per-cell key marker TextBlocks. Refreshed each tick from
         // current bindings so rebinds reflect live. Styled NBB-toolbar-style
         // (white text on small grey background image, bottom-center of cell).
         UObject* m_rotDisplayStepKey{nullptr};
@@ -544,14 +516,6 @@ namespace MoriaMods
         std::vector<GameModEntry> m_ftGameModEntries;
 
 
-        // v6.21.21 - removed Advanced Builder bar (m_abBarWidget,
-        // m_abSlotButton, m_abKeyLabel, m_abStateImage). Bar was disabled
-        // since v6.10.0 (gated 'if(false)' in character-load create block);
-        // NBB at top-of-screen replaced it. BIND_AB_OPEN keybind constant
-        // KEPT for s_bindings[] config-file compatibility (slot 17).
-        // v6.21.1 - was {false}, but the only path that flipped it true was
-        // the NUM+ toggle disabled in v6.10.0. Result: OLD UMG QuickBuild bar
-        // got created then immediately collapsed at line ~2193, never visible.
         bool m_toolbarsVisible{true};
         bool m_characterHidden{false};
         bool m_flyMode{false};
@@ -570,11 +534,6 @@ namespace MoriaMods
         ScreenCoords m_screen;
 
 
-        // v6.21.21 batch 3 Tier 2 - removed reposition mode
-        // (m_repositionMode, m_dragToolbar, m_dragOffsetX/Y,
-        //  m_repositionMsgWidget, m_repositionInfoBoxWidget). Only entry
-        // point was the disabled NUM+/AB toggle block. Inspect window and
-        // rotation display have their own independent drag systems.
         UClass* m_wllClass{nullptr};
 
         // TB_COUNT=4 retained: index 3 (m_toolbarPosX/Y[3], TB_DEF_X/Y[3])
@@ -612,7 +571,7 @@ namespace MoriaMods
         UObject* m_tiBuildLabel{nullptr};
         UObject* m_tiRecipeLabel{nullptr};
         ULONGLONG m_tiShowTick{0};
-        // v6.21.1 - title bar / drag / close
+        // title bar / drag / close
         UObject* m_tiTitleBar{nullptr};
         UObject* m_tiCloseButton{nullptr};
         bool     m_tiDragActive{false};
@@ -658,14 +617,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.23.6");
+            ModVersion = STR("6.23.7");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.6\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.7\n"));
         }
 
         ~MoriaCppMod() override
@@ -706,7 +665,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.6 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.7 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -792,7 +751,7 @@ namespace MoriaMods
             {
                 // USE chord (F-key alone or with modifier that doesn't conflict
                 // with the slot's SET chord).
-                // v6.21.1 - narrowed modifier filter. Was: bail on ANY modifier.
+                // narrowed modifier filter. Was: bail on ANY modifier.
                 // Now: only bail if the held modifier+key combo IS this slot's
                 // SET chord. Fixes "F1 sometimes shows no ghost" caused by
                 // Discord push-to-talk / Steam overlay / etc. briefly holding
@@ -843,8 +802,6 @@ namespace MoriaMods
             });
 
 
-            // v6.21.21 - removed NUM_7 -> createModControllerBar debug
-            // keybind (function deleted along with the MC bar widget).
 
             // Recipe unlock + Mark-all-read features moved to the F12 Cheats tab.
             // See moria_unlock.inl for unlockAllAvailableRecipes() + markAllLoreRead() entry points.
@@ -888,7 +845,7 @@ namespace MoriaMods
                 const auto fnName = func->GetName();
                 const wchar_t* fnStr = fnName.c_str();
 
-                // CP5 v0.5 - pre-hook WBP_SettingsScreen.PreConstruct or
+                // pre-hook WBP_SettingsScreen.PreConstruct or
                 // Construct or OnInitialized. Append Cheats to tabArray
                 // BEFORE the navbar's Construct runs (navbar reads tabArray
                 // directly during its own Construct).
@@ -896,7 +853,7 @@ namespace MoriaMods
                 // PreConstruct/Construct/OnInitialized hook. The Option-C
                 // merge ships cheats inside the existing native Gameplay /
                 // Game Options tabs; no separate tab is added.
-                // CP5 v0.7 - when user clicks the Cheats tab in the navbar,
+                // when user clicks the Cheats tab in the navbar,
                 // redirect the tab name to "Gameplay" so the framework
                 // displays the Gameplay tab content. Set a flag so the
                 // Gameplay tab's OnAfterShow hook injects cheats content
@@ -960,7 +917,7 @@ namespace MoriaMods
                             else
                                 s_overlay.totalRotation = (s_overlay.totalRotation.load() - step + 360) % 360;
                             s_overlay.needsUpdate = true;
-                    // v6.21.21 - updateMcRotationLabel call removed (no-op fn deleted)
+                    // updateMcRotationLabel call removed (no-op fn deleted)
                         }
                     }
                 }
@@ -1046,7 +1003,7 @@ namespace MoriaMods
                     s_instance->maybeFireCarouselRow(context, val);
                 }
 
-                // CP5 v0.12 - post-hook on navTabPressed. Pre-hook
+                // post-hook on navTabPressed. Pre-hook
                 // rewrites KeyName "Cheats" -> "Gameplay" so the framework
                 // displays the Gameplay widget. After navTabPressed runs,
                 // the framework has set currentTabName + highlighted the
@@ -1257,7 +1214,7 @@ namespace MoriaMods
 
                 if (wcscmp(fnStr2, STR("OnAfterShow")) == 0)
                 {
-                    // v6.22.8 - per code-review-MASTER.md cross-cutting #8.
+                    // per code-review-MASTER.md cross-cutting #8.
                     // Was: three sequential safeClassName(context) calls
                     // (popup tracker, rename-dialog patch, build-tab gate)
                     // ran on EVERY OnAfterShow PE. safeClassName is a
@@ -1285,7 +1242,7 @@ namespace MoriaMods
                              cls.c_str(), path.c_str());
                     }
 
-                    // v6.21.36 - Patch the native CharacterCreator rename
+                    // Patch the native CharacterCreator rename
                     // dialog at every show: bump MaxNameLength to 22 (was 12
                     // per the BP CDO override) and clear DisallowedWords.
                     // The BP's CheckNewCharacterName reads `this.MaxNameLength`
@@ -1351,7 +1308,7 @@ namespace MoriaMods
                         if (cls == STR("UI_WBP_EscapeMenu2_C"))
                             s_instance->injectPauseMenuButtons(context);
                     }
-                    // CP5 - when the cheats tab spawns its content widget, inject the cheats UI.
+                    // when the cheats tab spawns its content widget, inject the cheats UI.
                     // Native legal tab spawns the same class but for a different tabArray index;
                     // injectCheatsTabContent uses the m_cheatsTabExpectedNext flag to differentiate.
                     else if (cls == STR("WBP_LegalTab_C"))
@@ -1413,7 +1370,7 @@ namespace MoriaMods
                     }
                 }
 
-                // CP5 v0.3 - append Cheats entry to GetNavBarTabs OutArray.
+                // append Cheats entry to GetNavBarTabs OutArray.
                 // The navbar UI calls this UFunction and renders the
                 // returned array. Modifying tabArray alone isn't enough
                 // because BP iterates the OutArray copy. Augmenting the
@@ -1435,7 +1392,7 @@ namespace MoriaMods
                          cls.c_str(), (void*)context);
                     if (cls.find(STR("KeySelector")) != std::wstring::npos)
                     {
-                        // CP5 - first try cheats dispatch. Cheat rows are
+                        // first try cheats dispatch. Cheat rows are
                         // KeySelectors with our cheats label; clicks fire
                         // the cheat action and we IGNORE the captured key.
                         if (s_instance->maybeFireCheatFromSelector(context))
@@ -1447,7 +1404,7 @@ namespace MoriaMods
 
                 if (wcscmp(fnStr2, STR("OnAfterHide")) == 0)
                 {
-                    // v6.22.8 - hoisted single safeClassName call (was two
+                    // hoisted single safeClassName call (was two
                     // sequential calls: settings-hide gate + build-tab gate).
                     std::wstring cls = safeClassName(context);
 
@@ -1597,7 +1554,7 @@ namespace MoriaMods
 
                 s_overlay.totalRotation = 0;
                 s_overlay.needsUpdate = true;
-                    // v6.21.21 - updateMcRotationLabel call removed (no-op fn deleted)
+                    // updateMcRotationLabel call removed (no-op fn deleted)
 
 
                 if (s_off_bLock == -2)
@@ -1621,7 +1578,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.23.6: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.23.7: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -1679,10 +1636,10 @@ namespace MoriaMods
             // Skip ALL UI creation on dedicated servers (no display)
             if (!m_isDedicatedServer)
             {
-                // v6.21.21 - 'justCreated' bool removed (no setters left after
+                // 'justCreated' bool removed (no setters left after
                 // MC + AB create blocks were deleted; visibility-restore block
                 // below is also gone).
-                // v6.21.1 - UMG QuickBuild bar (m_umgBarWidget) RE-ENABLED.
+                // UMG QuickBuild bar (m_umgBarWidget) RE-ENABLED.
                 // The from-scratch top-of-screen New Building Bar in
                 // v6.10.0 never reliably displayed icons or F-key labels,
                 // and several iterations of fix attempts (v6.19→v6.21-wip)
@@ -1694,13 +1651,13 @@ namespace MoriaMods
                 // MC bar (m_mcBarWidget) and Advanced Builder (m_abBarWidget)
                 // remain disabled - their dispatch is restored separately
                 // via the gameThreadTick MC polling block (planned fix #1).
-                // v6.21.21 - MC bar destroy removed (bar gone)
-                // v6.21.21 - AB bar destroy removed (bar gone)
-                // v6.21.1 - OLD UMG bar code removed entirely (batch 2).
+                // MC bar destroy removed (bar gone)
+                // AB bar destroy removed (bar gone)
+                // OLD UMG bar code removed entirely (batch 2).
                 // NBB at top of screen is the only toolbar. m_umgBarWidget
                 // is also being removed (batch 3) so this safety call is dead.
 
-                // v6.21.21 - MC bar create block removed (was gated 'if(false)';
+                // MC bar create block removed (was gated 'if(false)';
                 // bar disabled since v6.10.0). MC keybinds 8-16 still dispatch
                 // via dispatchMcSlot() polled at the keybind level - those are LIVE.
                 // AB bar create block also removed in v6.21.15.
@@ -1740,9 +1697,6 @@ namespace MoriaMods
                     createErrorBox();
 
 
-                // v6.21.21 - removed justCreated visibility-restore block
-                // (justCreated never becomes true since MC + AB create blocks
-                // are gone).
             } // end if (!m_isDedicatedServer) - skip UI on headless server
 
 
@@ -1862,7 +1816,7 @@ namespace MoriaMods
             }
 
 
-            // v6.21.38 - inspect window auto-hide was duplicated here AND
+            // inspect window auto-hide was duplicated here AND
             // inside tickTargetInfoDrag (the latter uses m_tiAutoHideAtMs
             // and is the canonical path - it has the F10 / drag gates and
             // gets reset on every drag tick). Removed this duplicate so
@@ -1880,7 +1834,7 @@ namespace MoriaMods
                 clearStabilityHighlights();
 
 
-            // v6.21.36 - F12 (BIND_CONFIG = MC_BIND_BASE + 5) dispatcher
+            // F12 (BIND_CONFIG = MC_BIND_BASE + 5) dispatcher
             // DISABLED. The legacy F12 config menu has been replaced by the
             // native pause-menu Settings injection. F12 is now reusable as
             // the default Save Game keybind (BIND_SAVE_GAME at slot 18 -
@@ -1901,7 +1855,7 @@ namespace MoriaMods
             }
             #endif
 
-            // v6.21.36 - Save Game keybind dispatcher (BIND_SAVE_GAME, default F12).
+            // Save Game keybind dispatcher (BIND_SAVE_GAME, default F12).
             // Edge-triggered on key down; suppressed while Settings UI or
             // rename popup is open so a stray F12 in those contexts doesn't
             // accidentally save. Same pattern as MC keybind polling.
@@ -1926,7 +1880,7 @@ namespace MoriaMods
                 }
             }
 
-            // v6.21.36 - Reposition HUD keybind dispatcher (default F10).
+            // Reposition HUD keybind dispatcher (default F10).
             // Toggle: first press shows the inspect window + rotation
             // display so the user can drag them with the mouse. Second
             // press OR ESC exits and returns visibility to normal rules.
@@ -1992,7 +1946,7 @@ namespace MoriaMods
             }
 
 
-            // v6.21.1 - MC keybind polling. Was previously gated on
+            // MC keybind polling. Was previously gated on
             // `if (m_mcBarWidget)` and v6.10.0 disabled m_mcBarWidget
             // auto-creation, leaving Set Rotation / Snap / Integrity /
             // Invisible Dwarf / Target / Remove Single / Undo / Remove
@@ -2030,14 +1984,8 @@ namespace MoriaMods
             }
 
 
-            // v6.21.21 - removed reposition-mode block. Toolbar drag/drop
-            // logic was for the OLD UMG/AB/MC bars (all gone). Inspect
-            // window has its own drag in tickTargetInfoDrag; rotation
-            // display has tickRotationDisplayDrag.
 
 
-            // v6.21.21 - removed disabled NUM+/AB toggle block (was the only
-            // entry point to toggleRepositionMode; reposition removed).
 
 
             // skip single-key action binds (trash/replenish/remove-attrs) when ANY modifier
@@ -2299,16 +2247,8 @@ namespace MoriaMods
                         return justPressed;
                     };
 
-                    // v6.21.21 - removed MC gamepad poll block (m_mcBarWidget +
-                    // m_mcSlotButtons gone; keyboard polling at MC_BIND_BASE
-                    // remains the live dispatch path for slots 8-16).
 
-                    // v6.21.21 batch 3 Tier 2a - removed Quick Build gamepad
-                    // polling block (used m_umgBarWidget + m_umgSlotButtons,
-                    // both gone with the OLD UMG bar).
 
-                    // v6.21.21 - removed Advanced Builder gamepad poll block
-                    // (bar widget + slot button gone).
                 }
             }
 
@@ -3049,13 +2989,13 @@ namespace MoriaMods
 
             if (m_deferRemovalRebuild == 2)
             {
-                // Phase 1: close the F12 panel via toggle (deferred removal)
+                // close the F12 panel via toggle (deferred removal)
                 m_deferRemovalRebuild = 1;
                 if (m_ftVisible) toggleFontTestPanel(); // closes it
             }
             else if (m_deferRemovalRebuild == 1)
             {
-                // Phase 2: reopen - toggle creates fresh panel with updated data
+                // reopen - toggle creates fresh panel with updated data
                 m_deferRemovalRebuild = 0;
                 if (!m_ftVisible) toggleFontTestPanel(); // reopens it
             }
@@ -3272,8 +3212,8 @@ namespace MoriaMods
                     m_trashDlgVisible = false;
                     m_trashDlgOpenTick = 0;
 
-                    // v6.21.21 - MC bar nullptr clears removed (all fields gone)
-                    // v6.21.21 - AB bar nullptr clears removed (fields gone)
+                    // MC bar nullptr clears removed (all fields gone)
+                    // AB bar nullptr clears removed (fields gone)
                     m_toolbarsVisible = false;
 
                     m_hoveredToolbar = -1;
@@ -3341,7 +3281,7 @@ namespace MoriaMods
                         // player's ASC + DataTables + world are all ready. No-op if nothing saved.
                         applySavedCheatsAndTweaks();
 
-                        // v6.21.1 - auto-spawn the New Building Bar once the
+                        // auto-spawn the New Building Bar once the
                         // player + world are ready. One attempt per session.
                         if (!m_newBuildingBarSpawnAttempted)
                         {
@@ -3349,7 +3289,7 @@ namespace MoriaMods
                             createNewBuildingBar();
                         }
 
-                        // v6.21.39 - pre-spawn rotation display widget here,
+                        // pre-spawn rotation display widget here,
                         // not lazily on the placement-start edge. Build it
                         // hidden; tickRotationDisplay handles SetVisibility
                         // from now on. Eliminates the Slate-Prepass AV at

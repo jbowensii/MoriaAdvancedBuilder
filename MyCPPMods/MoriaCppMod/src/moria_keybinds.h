@@ -16,7 +16,7 @@ namespace MoriaMods
     static constexpr int BIND_TARGET    = 12;
     static constexpr int BIND_CONFIG    = 13;
     static constexpr int BIND_AB_OPEN   = 17;
-    // v6.21.27 - slot 18 repurposed from "Reserved/Diagnostics" to Save Game
+    // slot 18 repurposed from "Reserved/Diagnostics" to Save Game
     // (defaults to F12, freed up after the legacy F12 menu dispatcher was
     // disabled in this version). Live keybind: triggers triggerSaveGame().
     static constexpr int BIND_SAVE_GAME = 18;
@@ -25,7 +25,7 @@ namespace MoriaMods
     static constexpr int BIND_REMOVE_ATTRS   = 21;
     static constexpr int BIND_PITCH_ROTATE   = 22;
     static constexpr int BIND_ROLL_ROTATE    = 23;
-    // v6.21.30 - HUD reposition mode toggle. Default F10. When pressed,
+    // HUD reposition mode toggle. Default F10. When pressed,
     // forces the inspect window + 4-circle rotation display visible so
     // the user can drag them. ESC or another F10 press exits the mode.
     static constexpr int BIND_REPOSITION_HUD = 24;

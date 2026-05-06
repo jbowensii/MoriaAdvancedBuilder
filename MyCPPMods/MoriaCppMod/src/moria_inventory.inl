@@ -1,4 +1,4 @@
-// moria_inventory.inl — Inventory helpers: component lookup, tint/effects, trash/replenish/remove-attrs (v5.5.0)
+// moria_inventory.inl — Inventory helpers: component lookup, tint/effects, trash/replenish/remove-attrs
 // SEH wrapper via safeProcessEvent from moria_common.h (shadowed local copy removed — was infinite recursion bug)
 // callServerTintItem centralizes 5 formerly copy-pasted tint blocks
 
@@ -526,7 +526,7 @@
             }
 
 
-            // v6.23.5 - INS replenish: bump JUST the targeted stack to
+            // INS replenish: bump JUST the targeted stack to
             // MaxStack. NO MERGING with other stacks of the same class.
             //
             // Why we don't use ServerDebugSetItem(ItemClass, Count): it's
@@ -690,7 +690,7 @@
         }
 
 
-        // v6.20.4 — Phase 4 fix: replaced home-rolled UMG dialog with the
+        // Phase 4 fix: replaced home-rolled UMG dialog with the
         // game's own WBP_UI_GenericPopup_C template (same one used by the
         // session-history delete confirm in moria_session_history.inl). The
         // home-rolled version had no font setup so text didn't render in
@@ -795,7 +795,7 @@
             m_trashCursorWasVisible = false;
             if (auto* pc2 = findPlayerController())
                 m_trashCursorWasVisible = getBoolProp(pc2, L"bShowMouseCursor");
-            // v6.23.1 - only switch to UI-only input mode if cursor was
+            // only switch to UI-only input mode if cursor was
             // hidden (i.e. user pressed DEL while in pure gameplay). When
             // an existing UI (inventory) is already up, leave its input
             // mode alone - the popup buttons are polled via cursor pixel
@@ -807,7 +807,7 @@
             VLOG(STR("[MoriaCppMod] [Trash] GenericPopup opened for {}\n"), m_lastPickedUpItemName);
         }
 
-        // v6.20.4 — Called from the global ProcessEvent post-hook on
+        // Called from the global ProcessEvent post-hook on
         // OnButtonReleasedEvent / OnMenuButtonClicked. Compares the firing
         // button to the trash popup's ConfirmButton/CancelButton members
         // and dispatches confirmTrashItem() or hideTrashDialog().
@@ -841,7 +841,7 @@
             if (!m_trashDlgVisible) return;
             if (m_trashDlgWidget)
             {
-                // v6.20.4 — popup is now WBP_UI_GenericPopup_C. Try its
+                // popup is now WBP_UI_GenericPopup_C. Try its
                 // built-in Hide animation first (plays the Outro), then
                 // RemoveFromParent for cleanup.
                 if (auto* hideFn = m_trashDlgWidget->GetFunctionByNameInChain(STR("Hide")))
@@ -856,7 +856,7 @@
             m_pendingTrashPopup = FWeakObjectPtr();
             m_trashDlgVisible = false;
 
-            // v6.23.1 - cursor-stuck-after-trash bug fix.
+            // cursor-stuck-after-trash bug fix.
             // Old code path "m_trashCursorWasVisible == true": called
             // setInputModeGame() and then forced bShowMouseCursor=true,
             // creating a broken hybrid where input went to the character
