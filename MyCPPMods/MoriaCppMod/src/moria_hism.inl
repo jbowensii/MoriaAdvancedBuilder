@@ -1070,9 +1070,12 @@
             VLOG(STR("[MoriaCppMod] Fly mode = {}, noCollision = {}\n"), m_flyMode ? 1 : 0, m_noCollisionWhileFlying ? 1 : 0);
         }
 
-        void dumpAimedActor()
+        // v6.21.13 - showUI=false used by SHIFT+] auto-inspect path:
+        // refreshes m_targetBuild* fields via fresh line-trace without
+        // popping the inspect window or showing 'no hit' error UI.
+        void dumpAimedActor(bool showUI = true)
         {
-            VLOG(STR("[MoriaCppMod] === AIMED ACTOR DUMP ===\n"));
+            VLOG(STR("[MoriaCppMod] === AIMED ACTOR DUMP === (showUI={})\n"), showUI ? 1 : 0);
 
             FVec3f start{}, end{};
             if (!getCameraRay(start, end))
@@ -1121,7 +1124,12 @@
             if (!bHit)
             {
                 VLOG(STR("[MoriaCppMod] No hit\n"));
-                showErrorBox(Loc::get("msg.actor_dump_no_hit"));
+                if (showUI) showErrorBox(Loc::get("msg.actor_dump_no_hit"));
+                // v6.21.13 - clear stale buffer so SHIFT+] caller sees the no-hit state.
+                m_lastTargetBuildable = false;
+                m_targetBuildName.clear();
+                m_targetBuildRecipeRef.clear();
+                m_targetBuildRowName.clear();
                 return;
             }
 
@@ -1154,7 +1162,11 @@
             if (!actor)
             {
                 VLOG(STR("[MoriaCppMod] No owning actor found\n"));
-                showOnScreen(L"[ActorDump] Component: " + compName + L" (" + compClass + L")\nNo owning actor", 5.0f);
+                if (showUI) showOnScreen(L"[ActorDump] Component: " + compName + L" (" + compClass + L")\nNo owning actor", 5.0f);
+                m_lastTargetBuildable = false;
+                m_targetBuildName.clear();
+                m_targetBuildRecipeRef.clear();
+                m_targetBuildRowName.clear();
                 return;
             }
 
@@ -1252,7 +1264,11 @@
             std::wstring dtDisplayName;
             std::wstring dtRowName;
             {
-                std::wofstream dumpFile(modPath("Mods/MoriaCppMod/actor_dump.txt"), std::ios::trunc);
+                // v6.21.13 - skip the actor_dump.txt write entirely on
+                // showUI=false (SHIFT+] auto-inspect - file write is pure
+                // diagnostic, not needed for build dispatch).
+                std::wofstream dumpFile;
+                if (showUI) dumpFile.open(modPath("Mods/MoriaCppMod/actor_dump.txt"), std::ios::trunc);
                 bool fOK = dumpFile.is_open();
 
                 if (fOK)
@@ -1412,14 +1428,14 @@
                         VLOG(STR("[MoriaCppMod] [F10] Non-buildable inspect: {} | HISM={} | MeshID={}\n"),
                                                         inspCompName, inspIsHISM, inspMeshIdW);
 
-                        showTargetInfoUMG(inspCompName, friendlyName, inspMeshIdW, inspClassName, false, posInfo, L"");
+                        if (showUI) showTargetInfoUMG(inspCompName, friendlyName, inspMeshIdW, inspClassName, false, posInfo, L"");
                         VLOG(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
                         return;
                     }
                 }
             }
 
-            showTargetInfoUMG(actorName, displayName, assetPath, actorClassName, isBuildable, recipeRef, dtRowName);
+            if (showUI) showTargetInfoUMG(actorName, displayName, assetPath, actorClassName, isBuildable, recipeRef, dtRowName);
 
             VLOG(STR("[MoriaCppMod] === END AIMED ACTOR DUMP ===\n"));
         }
