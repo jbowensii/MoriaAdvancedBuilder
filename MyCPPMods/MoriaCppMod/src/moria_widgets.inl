@@ -2610,14 +2610,22 @@
 
             // ── Find the small grey "key rect" texture for F# labels —
             // same texture the bottom MC bar uses.
+            //
+            // v6.21.35 - the asset is at
+            //   /Game/UI/textures/_Shared/InputGlyphs/Mouse+Keyboard/
+            //     T_UI_Icon_Input_Blank_Rect.T_UI_Icon_Input_Blank_Rect
+            // (path confirmed via Moria-Replication FModel extraction).
+            // At NBB-create time the input subsystem hasn't fired yet so
+            // the texture isn't resident; force-load it via the proven
+            // jw_loadAssetBlocking helper. The buildRotCell key pill
+            // (which spawns later) gets it for free as side-effect.
             UObject* texKeyBg = nullptr;
+            try { texKeyBg = findTexture2DByName(L"T_UI_Icon_Input_Blank_Rect"); } catch (...) {}
+            if (!texKeyBg)
             {
-                std::vector<UObject*> textures;
-                try { findAllOfSafe(STR("Texture2D"), textures); } catch (...) {}
-                for (auto* t : textures) {
-                    if (!t) continue;
-                    if (t->GetName() == STR("T_UI_Icon_Input_Blank_Rect")) { texKeyBg = t; break; }
-                }
+                jw_loadAssetBlocking(STR("/Game/UI/textures/_Shared/InputGlyphs/Mouse+Keyboard/T_UI_Icon_Input_Blank_Rect.T_UI_Icon_Input_Blank_Rect"));
+                try { texKeyBg = findTexture2DByName(L"T_UI_Icon_Input_Blank_Rect"); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [NBB] keyBg post-load -> {:p}\n"), (void*)texKeyBg);
             }
 
             // Chrome backdrop REMOVED entirely per user request.
