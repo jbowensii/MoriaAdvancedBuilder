@@ -4743,8 +4743,32 @@
             VLOG(STR("[MoriaCppMod] [Rename] confirm read newName='{}' (len={}) usingModal={}\n"),
                  newName, (int)newName.size(), m_ftRenameUsingModal ? STR("Y") : STR("N"));
 
-            if (newName.empty()) { showErrorBox(Loc::get("err.rename_name_empty")); return; }
-
+            // v6.21.26 - rename validation:
+            //   1. Reject empty input (long-standing rule).
+            //   2. Cap at 22 characters (kRenameMaxLen). Mirrors the
+            //      native UMorCharacterCreatorRenameDialog::MaxNameLength
+            //      ballpark while still allowing room for longer Tolkien
+            //      names like "Galadriel" (9), "Aragorn" (7), and dwarven
+            //      compounds. The cap is enforced at confirm time, not
+            //      at keystroke time, so the user can paste/type freely
+            //      and just see the error if they exceed.
+            //   3. NO disallowed-words filter. The native BP has a
+            //      DisallowedWords FText UPROPERTY for profanity-style
+            //      filtering; we deliberately bypass it. User wanted
+            //      this cleared in v6.21.26.
+            if (newName.empty())
+            {
+                showErrorBox(Loc::get("err.rename_name_empty"));
+                return;
+            }
+            constexpr size_t kRenameMaxLen = 22;
+            if (newName.size() > kRenameMaxLen)
+            {
+                std::wstring msg = L"Name too long: " + std::to_wstring(newName.size())
+                                 + L" characters (max " + std::to_wstring(kRenameMaxLen) + L")";
+                showErrorBox(msg);
+                return;
+            }
 
             {
                 std::scoped_lock lock(m_charNameMutex);

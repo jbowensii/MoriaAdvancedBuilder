@@ -1,4 +1,4 @@
-// MoriaCppMod v6.21.25 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.21.26 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -477,11 +477,11 @@ namespace MoriaMods
         UObject* m_ftRenameWidget{nullptr};
         UObject* m_ftRenameInput{nullptr};
         UObject* m_ftRenameConfirmLabel{nullptr};
-        // v6.21.25 - dedicated UserWidget hosting our standalone EditableTextBox
+        // v6.21.26 - dedicated UserWidget hosting our standalone EditableTextBox
         // for the in-game rename popup (GenericPopup-chrome + injected input).
         // Released alongside m_ftRenameWidget on hideRenameDialog.
         FWeakObjectPtr m_ftRenameInputUW;
-        // v6.21.25 - watchdog flag: hovering the popup's Confirm/Cancel
+        // v6.21.26 - watchdog flag: hovering the popup's Confirm/Cancel
         // buttons can steal keyboard focus from the EditableTextBox, which
         // makes typing stop landing in the input field after 1-2 keystrokes.
         // Each frame while the rename popup is visible, tickRenameFocus()
@@ -650,14 +650,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.21.25");
+            ModVersion = STR("6.21.26");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.25\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.26\n"));
         }
 
         ~MoriaCppMod() override
@@ -698,7 +698,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.25 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.26 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -1691,7 +1691,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.21.25: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.21.26: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -3673,7 +3673,7 @@ namespace MoriaMods
             tickPendingCraftingMark();     // v6.21.1 - fire MarkAllAsRead when crafting screen opens
             tickTargetInfoDrag();          // v6.21.1 - inspect window drag + close + auto-hide
             tickRotationDisplay();         // v6.20.31/34 - rotation display (4-cell pyramid, always-on)
-            tickRenameFocus();             // v6.21.25 - re-assert keyboard focus on rename input
+            tickRenameFocus();             // v6.21.26 - re-assert keyboard focus on rename input
 
             // v6.9.0 CP3 - Quick Build chord-aware dispatch.
             //   USE (s_bindings[i].key, no modifiers): user-rebound USE
