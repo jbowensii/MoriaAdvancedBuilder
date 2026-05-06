@@ -1,7 +1,5 @@
-// MoriaCppMod v6.23.20 - Return to Moria UE4SS C++ mod
-// Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
-// definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
-// Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
+// MoriaCppMod - Return to Moria UE4SS C++ mod.
+// Top-level mod class lives here; subsystem implementations are #included via .inl files.
 
 #include "moria_common.h"
 #include "moria_reflection.h"
@@ -340,21 +338,13 @@ namespace MoriaMods
 
 
         static constexpr int MC_SLOTS = 9;
-        // "New Building Bar": cloned WBP_UI_ActionBar_C instance,
-        // chrome only (look). Tame-spawned at top of HUD with the 4 special
-        // slots (Epic/HeavyCarry/MainHand/Offhand) and inventory wiring
-        // hidden/disabled. Phase 2 wires our 8 builder slots to its 8
-        // numbered slot widgets.
+        // New Building Bar — clone of WBP_UI_ActionBar_C used as visual chrome
+        // for our 8 builder slots; native inventory wiring is suppressed.
         UObject* m_newBuildingBar{nullptr};
         bool m_newBuildingBarSpawnAttempted{false};
-        // pre-spawn the rotation display widget once at
-        // character-load (same pattern as NBB above). The previous design
-        // created the widget on the first tick that isPlacementActive()
-        // flipped true - i.e., the same Slate frame as ghost spawn -
-        // racing the game's own UMG work and producing SWidget::Prepass
-        // AVs at 0xFF... during quickbuild. Now the widget is built once
-        // when the world is ready; tickRotationDisplay only flips
-        // SetVisibility from then on.
+        // Pre-spawned at character-load (NOT lazily on first placement tick) —
+        // constructing this widget on the same Slate frame as ghost spawn races
+        // the engine's UMG work and produces SWidget::Prepass AVs at 0xFF...
         bool m_rotDisplaySpawnAttempted{false};
         UObject* m_nbbSlotEmpty[8]{};   // empty-state UImage
         UObject* m_nbbSlotFocus[8]{};   // focused-state UImage (visibility toggled for highlight)
@@ -363,10 +353,8 @@ namespace MoriaMods
         UObject* m_nbbSlotMarker[8]{};  // numbered marker UImage above each slot
         UObject* m_nbbSlotButton[8]{};  // UButton wrapper (Phase 2 - for clicks)
         UObject* m_nbbSlotKeyBg[8]{};   // grey rect under the F# label
-        // Texture cache. Populated ONCE per session via
-        // nbbDiscoverAssets; subsequent createNewBuildingBar calls reuse
-        // these pointers without re-scanning. Resolved-texture ptrs are
-        // stable within a session.
+        // Per-session texture cache. Resolved once in nbbDiscoverAssets;
+        // pointers are stable for the lifetime of the session.
         bool      m_nbbAssetsCached{false};
         UObject*  m_nbbCachedSlotEmpty{nullptr};
         UObject*  m_nbbCachedSlotFocus{nullptr};
@@ -390,20 +378,20 @@ namespace MoriaMods
         UObject* m_ftScrollBox{nullptr};
         UObject* m_ftTabContent[6]{};
 
-        // v6.4.1 Cheats tab - widget refs for action buttons and toggle state
+        // Cheats tab - widget refs for action buttons and toggle state
         UObject* m_ftCheatsUnlockBtnImg{nullptr};
         UObject* m_ftCheatsReadBtnImg{nullptr};
 
-        // v6.4.1 Peace Mode - zero MaxSpawnLimit on AMorAISpawnManager to suppress new spawns.
+        // Peace Mode - zero MaxSpawnLimit on AMorAISpawnManager to suppress new spawns.
         bool m_peaceModeEnabled{false};
-        bool m_pendingPeaceMode{false};                // v6.4.4+ - loaded from INI, applied on char load
+        bool m_pendingPeaceMode{false};                // loaded from INI, applied on char load
         float m_savedMaxSpawnLimit{-1.0f};             // -1 = not yet captured
         UObject* m_ftPeaceCheckImg{nullptr};           // check icon (visible when enabled)
         UObject* m_ftPeaceBtnLabel{nullptr};           // button text ("PEACE"/"FIGHT")
         UObject* m_ftPeaceCheckBoxOl{nullptr};         // checkbox hit-test ref
         UObject* m_ftPeaceBtnImg{nullptr};             // button hit-test ref
 
-        // v6.4.1 Cheats tab buff toggles - parallel arrays to cheatEntries().
+        // Cheats tab buff toggles - parallel arrays to cheatEntries().
         std::vector<bool>      m_buffStates;             // active/inactive state per entry
         std::vector<UObject*>  m_ftBuffCheckImgs;        // checkbox mark widget per entry
         std::vector<UObject*>  m_ftBuffBtnLabels;        // ON/OFF label per entry (nullptr for headers)
@@ -411,7 +399,7 @@ namespace MoriaMods
         std::vector<int>       m_buffRowHeights;         // row height (px, at 1x scale)
         int m_cheatsContentTotalHeight{0};               // total rendered height of the cheat entries area
 
-        // v6.4.1 Tweaks tab - parallel arrays to tweakEntries(). Each entry cycles through a set
+        // Tweaks tab - parallel arrays to tweakEntries(). Each entry cycles through a set
         // of integer values; applyFieldTweak modifies all DataTable rows whose RowStruct has the field.
         std::vector<int>       m_tweakCurrentIdx;        // current index in cycleValues (0 = DEFAULT)
         std::vector<UObject*>  m_ftTweakBtnLabels;       // button text widget per entry
@@ -437,15 +425,12 @@ namespace MoriaMods
         UObject* m_ftRenameWidget{nullptr};
         UObject* m_ftRenameInput{nullptr};
         UObject* m_ftRenameConfirmLabel{nullptr};
-        // dedicated UserWidget hosting our standalone EditableTextBox
-        // for the in-game rename popup (GenericPopup-chrome + injected input).
+        // UserWidget host for our standalone EditableTextBox in the rename popup.
         // Released alongside m_ftRenameWidget on hideRenameDialog.
         FWeakObjectPtr m_ftRenameInputUW;
-        // watchdog flag: hovering the popup's Confirm/Cancel
-        // buttons can steal keyboard focus from the EditableTextBox, which
-        // makes typing stop landing in the input field after 1-2 keystrokes.
-        // Each frame while the rename popup is visible, tickRenameFocus()
-        // re-asserts focus on m_ftRenameInput if it drifted.
+        // Hovering the popup's Confirm/Cancel buttons steals keyboard focus
+        // from the EditableTextBox after 1-2 keystrokes; tickRenameFocus
+        // re-asserts focus on m_ftRenameInput each frame while visible.
         bool m_renameFocusReassertNeeded{false};
         ULONGLONG m_renameFocusLastReassertMs{0};
 
@@ -455,35 +440,28 @@ namespace MoriaMods
         bool m_repositionHudMode{false};
         bool m_repositionHudPrevTargetInfoVisible{false};
         bool m_ftRenameVisible{false};
-        // distinguishes the in-game modal path
-        // (WBP_UI_RenameWorldModal_C) from the legacy home-rolled dialog. The
-        // modal handles its own keyboard input via BP - we must NOT also poll
-        // RETURN/ESCAPE/LBUTTON because doubling up causes the BP confirm to
-        // fire twice or fight the modal's own focus chain. Set true in
-        // showRenameDialog_v2; cleared in hideRenameDialog.
+        // True when the in-game native modal (WBP_UI_RenameWorldModal_C) is
+        // up. The modal owns its own keyboard input — we must NOT poll
+        // RETURN/ESCAPE/LBUTTON or the BP confirm fires twice / focus chain
+        // fights itself. Set in showRenameDialog_v2; cleared in hideRenameDialog.
         bool m_ftRenameUsingModal{false};
-        // cached rename modal UClass (force-loaded once, kept warm
-        // across the session). Stops the asset from being GC-unloaded between
-        // rename opens which causes StaticFindObject to return null on the
-        // second open.
+        // Force-loaded once and held across the session. The modal asset
+        // gets GC-unloaded between opens otherwise; StaticFindObject would
+        // return null on the second open.
         FWeakObjectPtr m_renameModalCls;
 
-        // v6.20.31/32/33/34 - Rotation display: 4-cell pyramid (1 top, 3 below)
-        // showing current rotation step + Yaw/Pitch/Roll. Top cell: F9 step
-        // (5°..90°). Bottom row: Yaw/Pitch/Roll of active build piece (GATA).
-        // always visible once character loaded (was conditional on
-        // build mode, but the user can't get cursor focus while building so
-        // they couldn't drag the widget). Throttled to 4 Hz.
-        // 3× cell size (48→144), draggable from any cell, position
-        // persisted to ini under [Positions] RotDisplayX/Y.
+        // Rotation display: 4-cell pyramid (top: F9 step 5°-90°; bottom row:
+        // Yaw/Pitch/Roll of active build piece). Always visible after character
+        // load — the player has no cursor focus while building so a build-mode-
+        // only widget couldn't be dragged. Throttled to 4 Hz.
+        // Position persisted to ini under [Positions] RotDisplayX/Y.
         UObject* m_rotDisplayWidget{nullptr};
         UObject* m_rotDisplayStep{nullptr};
         UObject* m_rotDisplayYaw{nullptr};
         UObject* m_rotDisplayPitch{nullptr};
         UObject* m_rotDisplayRoll{nullptr};
-        // per-cell key marker TextBlocks. Refreshed each tick from
-        // current bindings so rebinds reflect live. Styled NBB-toolbar-style
-        // (white text on small grey background image, bottom-center of cell).
+        // Per-cell key marker TextBlocks; refreshed each tick from current
+        // bindings so rebinds reflect live.
         UObject* m_rotDisplayStepKey{nullptr};
         UObject* m_rotDisplayYawKey{nullptr};
         UObject* m_rotDisplayPitchKey{nullptr};
@@ -529,9 +507,9 @@ namespace MoriaMods
 
         UClass* m_wllClass{nullptr};
 
-        // TB_COUNT=4 retained: index 3 (m_toolbarPosX/Y[3], TB_DEF_X/Y[3])
-        // is LIVE - used by tickTargetInfoDrag for inspect window position.
-        // Indices 0/1/2 are phantom slots from removed bars (24 bytes total).
+        // TB_COUNT=4 retained for ABI of m_toolbarPosX/Y/SizeW/H + TB_DEF_X/Y.
+        // Only index 3 is live (inspect window position via tickTargetInfoDrag);
+        // indices 0-2 are unused. Do not compress - other code indexes by [3].
         static constexpr int TB_COUNT = 4;
         float m_toolbarPosX[TB_COUNT]{-1, -1, -1, -1};
         float m_toolbarPosY[TB_COUNT]{-1, -1, -1, -1};
@@ -610,14 +588,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.23.20");
+            ModVersion = STR("6.23.21");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.20\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.21\n"));
         }
 
         ~MoriaCppMod() override
@@ -636,13 +614,12 @@ namespace MoriaMods
 
         auto on_unreal_init() -> void override
         {
-            // Resolve UE4SS working directory for all file I/O (process CWD may differ)
+            // UE4SS working dir is the canonical I/O root - process CWD may differ.
+            // Path must be converted via WideCharToMultiByte(CP_UTF8); never
+            // static_cast<char> on wchar_t - U+2122 (™) in Steam's folder collapses
+            // to 0x22 (") and silently corrupts every file path.
             {
                 auto wd = UE4SSProgram::get_program().get_working_directory();
-                // Convert wchar_t path to UTF-8 std::string.
-                // The old static_cast<char> approach truncated Unicode characters -
-                // the ™ in Steam's folder name (U+2122) became 0x22 (double-quote),
-                // corrupting the path and silently breaking ALL file I/O.
                 s_ue4ssWorkDir.clear();
                 if (!wd.empty())
                 {
@@ -658,13 +635,11 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.20 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.21 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
-            // startup diagnostics for Steam ™ path troubleshooting.
-            // These tell the user exactly which paths the mod is trying to read and whether
-            // they exist. If the log shows a path containing â„¢ or other mangled chars, the
-            // wide-path fix didn't take effect (wrong DLL loaded, or Windows still coerced).
+            // Startup diag: log resolved paths + GetFileAttributes result.
+            // Mangled chars in the logged path indicate a wide-path conversion regression.
             {
                 std::string gmIni = modPath("Mods/GameMods.ini");
                 std::string defs  = modPath("Mods/MoriaCppMod/definitions");
@@ -742,13 +717,10 @@ namespace MoriaMods
             const Input::Key fkeys[] = {Input::Key::F1, Input::Key::F2, Input::Key::F3, Input::Key::F4, Input::Key::F5, Input::Key::F6, Input::Key::F7, Input::Key::F8};
             for (int i = 0; i < 8; i++)
             {
-                // USE chord (F-key alone or with modifier that doesn't conflict
-                // with the slot's SET chord).
-                // narrowed modifier filter. Was: bail on ANY modifier.
-                // Now: only bail if the held modifier+key combo IS this slot's
-                // SET chord. Fixes "F1 sometimes shows no ghost" caused by
-                // Discord push-to-talk / Steam overlay / etc. briefly holding
-                // shift and the v6.9.0 filter swallowing the press.
+                // Quick Build USE: F-key alone fires quickBuildSlot. Skip ONLY if the
+                // currently-held modifier+key combo is this slot's SET chord (avoid
+                // double-firing). Generic modifier filtering breaks F-keys when overlays
+                // like Discord/Steam transiently hold SHIFT.
                 register_keydown_event(fkeys[i], [this, i]() {
                     if (m_ftVisible) {
                         VLOG(STR("[QuickBuild] F{} BP-USE dropped: m_ftVisible\n"), i+1);
@@ -794,18 +766,16 @@ namespace MoriaMods
 
 
 
-            // Pitch/Roll rotation - uses keybind system (BIND_PITCH_ROTATE, BIND_ROLL_ROTATE)
-            // Registered dynamically after config load via registerPitchRollKeys()
+            // Pitch/Roll keybinds register lazily after config load (registerPitchRollKeys).
 
             s_instance = this;
 
-            // MP helper: check if a UWidget context belongs to the local player.
-            // Uses UWidget::GetOwningPlayer() UFUNCTION and compares against findPlayerController().
-            // Returns true if context is local or if we can't determine ownership (fail-open for single-player).
-            // MP helper: check if a UObject context belongs to the local player.
-            // Uses cached m_localPC/m_localPawn (set at character load) - no FindAllOf or
-            // ProcessEvent re-entrancy on the hot path. Walks the Outer chain to match ownership.
-            // Returns true if local or indeterminate (fail-open for single-player safety).
+            // MP helper: walk a UObject's Outer chain looking for the local PC or
+            // pawn (cached at character load). Fail-open (returns true) when the
+            // local PC isn't cached yet, so single-player isn't gated.
+            // Note: UMG widgets have a WidgetTree Outer, not a PC/Pawn — UI hooks
+            // below don't (and shouldn't) use this; on a client only the local
+            // player's UMG instances exist.
             static auto isLocalContext = [](UObject* context) -> bool {
                 if (!context || !s_instance) return true;
                 if (!s_instance->m_localPC) return true;  // not cached yet - fail-open
@@ -875,9 +845,6 @@ namespace MoriaMods
                 if (wcscmp(fnStr, STR("RotatePressed")) == 0 || wcscmp(fnStr, STR("RotateCcwPressed")) == 0)
                 {
                     if (s_instance->m_isDedicatedServer) return;
-                    // isLocalContext removed - BuildHUD is a UMG widget whose Outer chain
-                    // goes to WidgetTree/GameInstance, not PC/Pawn. On a client only the
-                    // local player's BuildHUD exists, so no cross-player bleed.
                     std::wstring cls = safeClassName(context);
                     if (!cls.empty() && cls.find(STR("BuildHUD")) != std::wstring::npos)
                     {
@@ -992,12 +959,10 @@ namespace MoriaMods
                     s_instance->onNavTabPressedPost(context, func, parms);
                 }
 
-                // Diagnostic popup-trace - gated behind s_verbose AND filters
-                // BEFORE the expensive Outer-chain walk, so production builds
-                // pay nothing here. The Outer walk only runs when (a) the
-                // popup is up, (b) the fn name passes the noise filter, AND
-                // (c) verbose logging is on. Original unfiltered version flooded
-                // ProcessEvent + caused IsInViewport-style input interference.
+                // Popup-trace: gated by s_verbose AND fn-name filter BEFORE the
+                // Outer-chain walk so production cost is zero. The filter list
+                // excludes IsInViewport/IsHovered/Tick/mouse callbacks: walking
+                // on those drove input interference in earlier builds.
                 if (s_verbose &&
                     s_instance->m_pendingDeletePopup.Get() != nullptr &&
                     wcscmp(fnStr2, STR("IsInViewport")) != 0 &&
@@ -1042,12 +1007,9 @@ namespace MoriaMods
                     s_instance->queueManualJoinCapture(context, isLocal);
                 }
 
-                // Hook BP-level join events. We listen for any UFunction whose
-                // name contains a Join keyword as a coarse first filter, then
-                // narrow by signature inside. Earlier we tried direct C++
-                // function names (DirectJoinSessionWithPassword) but those may
-                // not be UFunctions exposed to ProcessEvent. The BP events are
-                // always UFunctions and reliably fire.
+                // BP join events: coarse name-match first, then narrow by parameter
+                // signature. Direct C++ functions like DirectJoinSessionWithPassword
+                // are not always UFunction-exposed; BP delegates always are.
                 if (parms && (wcsstr(fnStr2, STR("JoinSession")) != nullptr ||
                               wcsstr(fnStr2, STR("DirectJoin")) != nullptr ||
                               wcsstr(fnStr2, STR("TryJoinPreviousSession")) != nullptr ||
@@ -1189,19 +1151,13 @@ namespace MoriaMods
 
                 if (wcscmp(fnStr2, STR("OnAfterShow")) == 0)
                 {
-                    // per code-review-MASTER.md cross-cutting #8.
-                    // Was: three sequential safeClassName(context) calls
-                    // (popup tracker, rename-dialog patch, build-tab gate)
-                    // ran on EVERY OnAfterShow PE. safeClassName is a
-                    // SEH-wrapped per-call resolve - non-trivial cost.
-                    // Hoist to a single call shared across all three gates.
+                    // Single safeClassName per OnAfterShow shared across all gates below;
+                    // it's SEH-wrapped (per-call cost is non-trivial).
                     std::wstring cls = safeClassName(context);
 
                     // Popup tracker: log any widget whose class name contains
                     // Popup/Confirm/Dialog so we can discover the real class
-                    // path of game-native confirmation popups (e.g. for our
-                    // session-history delete confirm). User triggers quit-game
-                    // confirm or similar, we log it.
+                    // path of game-native confirmation popups.
                     if (cls.find(STR("Popup")) != std::wstring::npos ||
                         cls.find(STR("PopUp")) != std::wstring::npos ||
                         cls.find(STR("Confirm")) != std::wstring::npos ||
@@ -1217,16 +1173,13 @@ namespace MoriaMods
                              cls.c_str(), path.c_str());
                     }
 
-                    // Patch the native CharacterCreator rename
-                    // dialog at every show: bump MaxNameLength to 22 (was 12
-                    // per the BP CDO override) and clear DisallowedWords.
-                    // The BP's CheckNewCharacterName reads `this.MaxNameLength`
-                    // (instance member inherited from native parent
-                    // UMorCharacterCreatorRenameDialog), so writing on the
-                    // instance is enough - no CDO patching required, no pak
-                    // mod, no asset edit. Patch on every OnAfterShow because
-                    // the BP may re-construct the instance from CDO between
-                    // shows (resetting our patch).
+                    // Patch the native CharacterCreator rename dialog at every
+                    // show: bump MaxNameLength to 22 (BP CDO ships 12) and clear
+                    // DisallowedWords. The BP's CheckNewCharacterName reads
+                    // `this.MaxNameLength` so writing on the instance is enough —
+                    // no CDO patching, no pak mod. Re-applied on every
+                    // OnAfterShow because the BP can re-construct from CDO
+                    // between shows.
                     if (cls == STR("WBP_CharacterCreatorRenameDialog_C"))
                     {
                         if (auto* mnlPtr = context->GetValuePtrByPropertyNameInChain<int32_t>(STR("MaxNameLength")))
@@ -1244,7 +1197,6 @@ namespace MoriaMods
                             VLOG(STR("[MoriaCppMod] [Rename] cleared DisallowedWords on native dialog\n"));
                         }
                     }
-                    // isLocalContext removed - UMG widgets have WidgetTree Outer, not PC/Pawn
                     if (cls == STR("UI_WBP_Build_Tab_C"))
                     {
                         s_instance->m_buildTabAfterShowFired = true;
@@ -1387,7 +1339,6 @@ namespace MoriaMods
                     if (cls == STR("WBP_SettingsScreen_C"))
                         s_instance->onNativeSettingsScreenHidden();
 
-                    // isLocalContext removed - UMG widgets have WidgetTree Outer, not PC/Pawn
                     if (cls == STR("UI_WBP_BuildHUDv2_C") || cls == STR("UI_WBP_Build_Tab_C"))
                     {
                         QBLOG(STR("[MoriaCppMod] [Placement] OnAfterHide fired on {}\n"), cls);
@@ -1552,7 +1503,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.23.20: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.23.21: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread

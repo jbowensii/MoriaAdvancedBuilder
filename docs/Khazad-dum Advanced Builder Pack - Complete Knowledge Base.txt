@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.20
+Document Version 6.23.21
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3802,6 +3802,28 @@ over 9 iterations:
                * generic createImageWithBrush helper
                * keybind label rect (76x44)
              No behavior change in the normal case.
+    v6.23.21: Comment audit chunk 5 (first half) - dllmain.cpp REWRITEs.
+             Net -49 LOC across dllmain.cpp from prose-tightening.
+             File header banner replaced with 2-line summary
+             ("Top-level mod class lives here..."). Field-declaration
+             paragraphs trimmed: m_newBuildingBar / rotation display
+             pre-spawn / NBB texture cache / m_ftRenameInputUW /
+             m_renameFocusReassertNeeded / m_ftRenameUsingModal /
+             m_renameModalCls / rotation display block / TB_COUNT.
+             Hook handlers tightened: UE4SS workdir / Steam ™ note,
+             startup diagnostic, Quick Build USE chord (4 lines ->
+             1), Pitch/Roll keybind (2->1), isLocalContext lambda
+             (3 paragraphs -> 1 with embedded UMG-callers note),
+             popup-trace gating, BP join events, OnAfterShow
+             safeClassName hoist, CharacterCreator rename patch.
+             Plus 4 duplicate "isLocalContext removed - UMG widgets
+             have WidgetTree Outer" tombstones consolidated to a
+             single note in the lambda definition. Build clean.
+             No behavior change.
+
+             Note: deploy step deferred (game running, DLL locked).
+             User can manually copy build artifact when game closes.
+
     v6.23.20: Comment audit chunk 4 - medium/small file REMOVEs.
              Stripped ~30 stale tombstone / WHAT-comment / dev-
              scaffolding lines across 7 source files per
