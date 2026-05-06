@@ -1344,17 +1344,11 @@
         void updateRotationDisplay()
         {
             if (!m_rotDisplayWidget || !isObjectAlive(m_rotDisplayWidget)) return;
-            // v6.21.20 - each cell now shows a label on top + value below
-            // (separated by newline). Top circle: "Degrees\n<step>°".
-            // Bottom three: "Pitch\nN°", "Yaw\nN°", "Roll\nN°".
-            // Yaw is the same value pilots/games call "rotation" (vertical-axis spin).
-            if (m_rotDisplayStep)
-            {
-                int step = s_overlay.rotationStep.load();
-                std::wstring s = L"Degrees\n" + std::to_wstring(step) + L"\xB0";
-                umgSetText(m_rotDisplayStep, s);
-            }
-            // Read TargetRotation from GATA's TraceResults struct (offsets resolved in resolveGATAOffsets).
+            // v6.21.30 - each cell now shows three centered lines:
+            //   label  (Pitch / Yaw / Roll / Degrees)
+            //   value  (the number - center-stage)
+            //   keybind marker (live from current bindings)
+            // Pulled from bindings every refresh so rebinds reflect immediately.
             float pitch = 0.0f, yaw = 0.0f, roll = 0.0f;
             UObject* gata = resolveGATA();
             if (gata && m_offTraceResults >= 0 && m_offTargetRotation >= 0 && resolveGATAOffsets(gata))
@@ -1371,16 +1365,25 @@
                 if (iv < 0) iv += 360;
                 return std::to_wstring(iv) + L"\xB0";
             };
-            if (m_rotDisplayYaw)   umgSetText(m_rotDisplayYaw,   L"Yaw\n"   + fmt(yaw));
-            if (m_rotDisplayPitch) umgSetText(m_rotDisplayPitch, L"Pitch\n" + fmt(pitch));
-            if (m_rotDisplayRoll)  umgSetText(m_rotDisplayRoll,  L"Roll\n"  + fmt(roll));
+            std::wstring kPitch = keyName(s_bindings[BIND_PITCH_ROTATE].key);
+            std::wstring kYaw   = keyName(s_bindings[BIND_ROTATION].key);
+            std::wstring kRoll  = keyName(s_bindings[BIND_ROLL_ROTATE].key);
+            std::wstring kStep  = L"SHIFT+" + kYaw;
+            if (m_rotDisplayStep)
+            {
+                int step = s_overlay.rotationStep.load();
+                std::wstring s = L"Degrees\n" + std::to_wstring(step) + L"\xB0\n" + kStep;
+                umgSetText(m_rotDisplayStep, s);
+            }
+            if (m_rotDisplayYaw)   umgSetText(m_rotDisplayYaw,   L"Yaw\n"   + fmt(yaw)   + L"\n" + kYaw);
+            if (m_rotDisplayPitch) umgSetText(m_rotDisplayPitch, L"Pitch\n" + fmt(pitch) + L"\n" + kPitch);
+            if (m_rotDisplayRoll)  umgSetText(m_rotDisplayRoll,  L"Roll\n"  + fmt(roll)  + L"\n" + kRoll);
         }
 
-        // always-visible (user can't get mouse cursor while
-        // building, so hiding the widget when not-building made it
-        // un-draggable). Widget stays visible all the time once character
-        // is loaded; YPR values just show last-known when not actively
-        // placing. Throttled to 4 Hz.
+        // v6.21.30 - rotation display is now CONDITIONAL: only visible
+        // while a build ghost is active (placement in progress) OR
+        // m_repositionHudMode is on (F10 toggle so user can drag it).
+        // Throttled to 4 Hz.
         ULONGLONG m_rotDispLastTickMs{0};
         void tickRotationDisplay()
         {
@@ -1390,17 +1393,26 @@
 
             if (!m_characterLoaded) return;
 
-            if (!m_rotDisplayWidget) {
-                VLOG(STR("[MoriaCppMod] [RotDisp] creating widget (always-on)...\n"));
+            // Decide whether the widget should be on screen this tick.
+            bool shouldShow = m_repositionHudMode || isPlacementActive() || isBuildTabShowing();
+
+            if (!m_rotDisplayWidget && shouldShow)
+            {
+                VLOG(STR("[MoriaCppMod] [RotDisp] creating widget (shouldShow=1)...\n"));
                 createRotationDisplay();
                 if (!m_rotDisplayWidget) return;
             }
             if (m_rotDisplayWidget && isObjectAlive(m_rotDisplayWidget))
             {
+                // SetVisibility: 0 = Visible, 1 = Collapsed, 2 = Hidden
+                uint8_t visEnum = shouldShow ? 0 : 1;
                 if (auto* fn = m_rotDisplayWidget->GetFunctionByNameInChain(STR("SetVisibility")))
-                { uint8_t p[8]{}; p[0] = 0; safeProcessEvent(m_rotDisplayWidget, fn, p); }
-                updateRotationDisplay();
-                tickRotationDisplayDrag();
+                { uint8_t p[8]{}; p[0] = visEnum; safeProcessEvent(m_rotDisplayWidget, fn, p); }
+                if (shouldShow)
+                {
+                    updateRotationDisplay();
+                    tickRotationDisplayDrag();
+                }
             }
         }
 

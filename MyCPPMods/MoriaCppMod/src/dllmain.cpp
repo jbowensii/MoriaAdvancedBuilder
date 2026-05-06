@@ -1,4 +1,4 @@
-// MoriaCppMod v6.21.29 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.21.30 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -477,17 +477,23 @@ namespace MoriaMods
         UObject* m_ftRenameWidget{nullptr};
         UObject* m_ftRenameInput{nullptr};
         UObject* m_ftRenameConfirmLabel{nullptr};
-        // v6.21.29 - dedicated UserWidget hosting our standalone EditableTextBox
+        // v6.21.30 - dedicated UserWidget hosting our standalone EditableTextBox
         // for the in-game rename popup (GenericPopup-chrome + injected input).
         // Released alongside m_ftRenameWidget on hideRenameDialog.
         FWeakObjectPtr m_ftRenameInputUW;
-        // v6.21.29 - watchdog flag: hovering the popup's Confirm/Cancel
+        // v6.21.30 - watchdog flag: hovering the popup's Confirm/Cancel
         // buttons can steal keyboard focus from the EditableTextBox, which
         // makes typing stop landing in the input field after 1-2 keystrokes.
         // Each frame while the rename popup is visible, tickRenameFocus()
         // re-asserts focus on m_ftRenameInput if it drifted.
         bool m_renameFocusReassertNeeded{false};
         ULONGLONG m_renameFocusLastReassertMs{0};
+
+        // v6.21.30 - HUD reposition mode (BIND_REPOSITION_HUD, default F10).
+        // While true: inspect window + 4-circle rotation display are forced
+        // visible so the user can drag them. ESC or another F10 press exits.
+        bool m_repositionHudMode{false};
+        bool m_repositionHudPrevTargetInfoVisible{false};
         bool m_ftRenameVisible{false};
         // distinguishes the in-game modal path
         // (WBP_UI_RenameWorldModal_C) from the legacy home-rolled dialog. The
@@ -650,14 +656,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.21.29");
+            ModVersion = STR("6.21.30");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.29\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.30\n"));
         }
 
         ~MoriaCppMod() override
@@ -698,7 +704,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.29 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.30 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -1345,7 +1351,7 @@ namespace MoriaMods
                              clsForPopup.c_str(), path.c_str());
                     }
 
-                    // v6.21.29 - Patch the native CharacterCreator rename
+                    // v6.21.30 - Patch the native CharacterCreator rename
                     // dialog at every show: bump MaxNameLength to 22 (was 12
                     // per the BP CDO override) and clear DisallowedWords.
                     // The BP's CheckNewCharacterName reads `this.MaxNameLength`
@@ -1722,7 +1728,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.21.29: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.21.30: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -2365,7 +2371,7 @@ namespace MoriaMods
                 clearStabilityHighlights();
 
 
-            // v6.21.29 - F12 (BIND_CONFIG = MC_BIND_BASE + 5) dispatcher
+            // v6.21.30 - F12 (BIND_CONFIG = MC_BIND_BASE + 5) dispatcher
             // DISABLED. The legacy F12 config menu has been replaced by the
             // native pause-menu Settings injection. F12 is now reusable as
             // the default Save Game keybind (BIND_SAVE_GAME at slot 18 -
@@ -2386,7 +2392,7 @@ namespace MoriaMods
             }
             #endif
 
-            // v6.21.29 - Save Game keybind dispatcher (BIND_SAVE_GAME, default F12).
+            // v6.21.30 - Save Game keybind dispatcher (BIND_SAVE_GAME, default F12).
             // Edge-triggered on key down; suppressed while Settings UI or
             // rename popup is open so a stray F12 in those contexts doesn't
             // accidentally save. Same pattern as MC keybind polling.
@@ -2408,6 +2414,71 @@ namespace MoriaMods
                 else
                 {
                     s_lastSaveKey = false;
+                }
+            }
+
+            // v6.21.30 - Reposition HUD keybind dispatcher (default F10).
+            // Toggle: first press shows the inspect window + rotation
+            // display so the user can drag them with the mouse. Second
+            // press OR ESC exits and returns visibility to normal rules.
+            {
+                static bool s_lastReposKey = false;
+                static bool s_lastReposEsc = false;
+                uint8_t reposVk = s_bindings[BIND_REPOSITION_HUD].key;
+                bool gateOK = m_characterLoaded && !m_ftVisible && !m_ftRenameVisible
+                              && !isSettingsScreenOpen();
+                if (reposVk != 0 && s_bindings[BIND_REPOSITION_HUD].enabled && gateOK)
+                {
+                    bool nowDown = (GetAsyncKeyState(reposVk) & 0x8000) != 0;
+                    if (nowDown && !s_lastReposKey)
+                    {
+                        m_repositionHudMode = !m_repositionHudMode;
+                        VLOG(STR("[MoriaCppMod] [ReposHUD] toggled -> {}\n"),
+                             m_repositionHudMode ? STR("ON") : STR("OFF"));
+                        if (m_repositionHudMode)
+                        {
+                            // Force inspect window visible so it can be dragged.
+                            if (!m_targetInfoWidget) createTargetInfoWidget();
+                            if (m_targetInfoWidget && isObjectAlive(m_targetInfoWidget))
+                            {
+                                showTargetInfoUMG(L"Reposition", L"Drag me", L"", L"", false, L"", L"");
+                                m_tiAutoHideAtMs = 0;  // disable auto-hide while in mode
+                            }
+                            // Switch to UI input mode so the mouse cursor
+                            // appears and clicks reach the widgets.
+                            setInputModeUI(m_targetInfoWidget ? m_targetInfoWidget : nullptr);
+                        }
+                        else
+                        {
+                            // Exiting: hide the inspect chrome; the rotation
+                            // display returns to its conditional rule
+                            // (only visible while building/ghost active).
+                            hideTargetInfo();
+                            setInputModeGame();
+                        }
+                    }
+                    s_lastReposKey = nowDown;
+                }
+                else
+                {
+                    s_lastReposKey = false;
+                }
+                // ESC also exits the mode (alongside the F10 toggle).
+                if (m_repositionHudMode)
+                {
+                    bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+                    if (escDown && !s_lastReposEsc)
+                    {
+                        m_repositionHudMode = false;
+                        hideTargetInfo();
+                        setInputModeGame();
+                        VLOG(STR("[MoriaCppMod] [ReposHUD] ESC pressed - exiting mode\n"));
+                    }
+                    s_lastReposEsc = escDown;
+                }
+                else
+                {
+                    s_lastReposEsc = false;
                 }
             }
 
@@ -3738,7 +3809,7 @@ namespace MoriaMods
             tickPendingCraftingMark();     // v6.21.1 - fire MarkAllAsRead when crafting screen opens
             tickTargetInfoDrag();          // v6.21.1 - inspect window drag + close + auto-hide
             tickRotationDisplay();         // v6.20.31/34 - rotation display (4-cell pyramid, always-on)
-            tickRenameFocus();             // v6.21.29 - re-assert keyboard focus on rename input
+            tickRenameFocus();             // v6.21.30 - re-assert keyboard focus on rename input
 
             // v6.9.0 CP3 - Quick Build chord-aware dispatch.
             //   USE (s_bindings[i].key, no modifiers): user-rebound USE

@@ -932,6 +932,8 @@
                 { STR("Remove Single"),      14, -1, false, "RemoveTarget" },
                 { STR("Undo Remove"),        15, -1, false, "UndoLast" },
                 { STR("Remove All"),         16, -1, false, "RemoveAll" },
+                // v6.21.30 - Reposition HUD mode toggle (default F10).
+                { STR("Reposition HUD"),     24, -1, false, "RepositionHud" },
             };
             if (UObject* hd = spawnSectionHeading(STR("Mod Key Bindings")))
                 addToScrollBox(scrollBox, hd);

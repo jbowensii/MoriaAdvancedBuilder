@@ -25,6 +25,10 @@ namespace MoriaMods
     static constexpr int BIND_REMOVE_ATTRS   = 21;
     static constexpr int BIND_PITCH_ROTATE   = 22;
     static constexpr int BIND_ROLL_ROTATE    = 23;
+    // v6.21.30 - HUD reposition mode toggle. Default F10. When pressed,
+    // forces the inspect window + 4-circle rotation display visible so
+    // the user can drag them. ESC or another F10 press exits the mode.
+    static constexpr int BIND_REPOSITION_HUD = 24;
 
     struct KeyBind
     {
@@ -59,6 +63,7 @@ namespace MoriaMods
             {L"Remove Attributes", L"Game Options", VK_END},
             {L"Pitch Rotate", L"Game Options", Input::Key::OEM_PERIOD},
             {L"Roll Rotate", L"Game Options", Input::Key::OEM_COMMA},
+            {L"Reposition HUD", L"Mod Controller", Input::Key::F10},
     };
 
     inline std::atomic<int> s_capturingBind{-1};
