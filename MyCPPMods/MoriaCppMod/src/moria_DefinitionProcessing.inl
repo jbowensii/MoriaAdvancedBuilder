@@ -1051,6 +1051,14 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
 
                             if (isReadableMemory(fieldData, 16))
                             {
+                                // v6.22.6 - Same heap-leak fix as
+                                // applyAddRow: free prior TArray Data
+                                // before overwriting. GameplayTagContainer
+                                // tags TArray<FGameplayTag>.
+                                uint8_t* priorTagData = nullptr;
+                                std::memcpy(&priorTagData, fieldData, 8);
+                                if (priorTagData) FMemory::Free(priorTagData);
+
                                 std::memcpy(fieldData, &tagData, 8);
                                 std::memcpy(fieldData + 8, &tagCount, 4);
                                 std::memcpy(fieldData + 12, &tagCount, 4);
@@ -1176,6 +1184,21 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
             }
         }
 
+
+        // v6.22.6 - Heap-leak fix per code-review-MASTER.md TL;DR #1.
+        // Was: std::memcpy(fieldData, &arrData, 8) overwrote the existing
+        // TArray Data pointer without freeing the prior allocation. Every
+        // re-apply (e.g. user toggles a definition pack off-and-on in F12
+        // Game Mods) leaked count*elemSize bytes. Fix: read prior Data
+        // pointer first; if non-null, FMemory::Free it (UE4 default
+        // allocator for TArray<T> with FHeapAllocator is FMemory_Malloc,
+        // so FMemory::Free matches). Defensive: skip the call when prior
+        // is null to avoid hypothetical corruption from non-default
+        // allocators (TInlineAllocator etc.) which would never have a
+        // non-null Data with Num=0 anyway.
+        uint8_t* priorData = nullptr;
+        std::memcpy(&priorData, fieldData, 8);
+        if (priorData) FMemory::Free(priorData);
 
         std::memcpy(fieldData, &arrData, 8);
         std::memcpy(fieldData + 8, &count, 4);
