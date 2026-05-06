@@ -1,4 +1,4 @@
-// MoriaCppMod v6.22.7 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.22.8 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -683,14 +683,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.22.7");
+            ModVersion = STR("6.22.8");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.7\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.22.8\n"));
         }
 
         ~MoriaCppMod() override
@@ -731,7 +731,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.22.7 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.22.8 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -1370,16 +1370,23 @@ namespace MoriaMods
 
                 if (wcscmp(fnStr2, STR("OnAfterShow")) == 0)
                 {
+                    // v6.22.8 - per code-review-MASTER.md cross-cutting #8.
+                    // Was: three sequential safeClassName(context) calls
+                    // (popup tracker, rename-dialog patch, build-tab gate)
+                    // ran on EVERY OnAfterShow PE. safeClassName is a
+                    // SEH-wrapped per-call resolve - non-trivial cost.
+                    // Hoist to a single call shared across all three gates.
+                    std::wstring cls = safeClassName(context);
+
                     // Popup tracker: log any widget whose class name contains
                     // Popup/Confirm/Dialog so we can discover the real class
                     // path of game-native confirmation popups (e.g. for our
                     // session-history delete confirm). User triggers quit-game
                     // confirm or similar, we log it.
-                    std::wstring clsForPopup = safeClassName(context);
-                    if (clsForPopup.find(STR("Popup")) != std::wstring::npos ||
-                        clsForPopup.find(STR("PopUp")) != std::wstring::npos ||
-                        clsForPopup.find(STR("Confirm")) != std::wstring::npos ||
-                        clsForPopup.find(STR("Dialog")) != std::wstring::npos)
+                    if (cls.find(STR("Popup")) != std::wstring::npos ||
+                        cls.find(STR("PopUp")) != std::wstring::npos ||
+                        cls.find(STR("Confirm")) != std::wstring::npos ||
+                        cls.find(STR("Dialog")) != std::wstring::npos)
                     {
                         std::wstring path;
                         try
@@ -1388,7 +1395,7 @@ namespace MoriaMods
                             if (uc) path = uc->GetFullName();
                         } catch (...) {}
                         VLOG(STR("[PopupTracker] OnAfterShow on cls='{}' fullClassPath='{}'\n"),
-                             clsForPopup.c_str(), path.c_str());
+                             cls.c_str(), path.c_str());
                     }
 
                     // v6.21.36 - Patch the native CharacterCreator rename
@@ -1401,28 +1408,24 @@ namespace MoriaMods
                     // mod, no asset edit. Patch on every OnAfterShow because
                     // the BP may re-construct the instance from CDO between
                     // shows (resetting our patch).
+                    if (cls == STR("WBP_CharacterCreatorRenameDialog_C"))
                     {
-                        std::wstring renameCls = safeClassName(context);
-                        if (renameCls == STR("WBP_CharacterCreatorRenameDialog_C"))
+                        if (auto* mnlPtr = context->GetValuePtrByPropertyNameInChain<int32_t>(STR("MaxNameLength")))
                         {
-                            if (auto* mnlPtr = context->GetValuePtrByPropertyNameInChain<int32_t>(STR("MaxNameLength")))
-                            {
-                                int32_t prev = *mnlPtr;
-                                *mnlPtr = 22;
-                                VLOG(STR("[MoriaCppMod] [Rename] patched MaxNameLength on native dialog: {} -> 22\n"),
-                                     prev);
-                            }
-                            if (auto* dwPtr = context->GetValuePtrByPropertyNameInChain<FText>(STR("DisallowedWords")))
-                            {
-                                // Empty FText = no filter. Leave the existing
-                                // FText shell intact and reset its content.
-                                try { *dwPtr = FText(STR("")); } catch (...) {}
-                                VLOG(STR("[MoriaCppMod] [Rename] cleared DisallowedWords on native dialog\n"));
-                            }
+                            int32_t prev = *mnlPtr;
+                            *mnlPtr = 22;
+                            VLOG(STR("[MoriaCppMod] [Rename] patched MaxNameLength on native dialog: {} -> 22\n"),
+                                 prev);
+                        }
+                        if (auto* dwPtr = context->GetValuePtrByPropertyNameInChain<FText>(STR("DisallowedWords")))
+                        {
+                            // Empty FText = no filter. Leave the existing
+                            // FText shell intact and reset its content.
+                            try { *dwPtr = FText(STR("")); } catch (...) {}
+                            VLOG(STR("[MoriaCppMod] [Rename] cleared DisallowedWords on native dialog\n"));
                         }
                     }
                     // isLocalContext removed - UMG widgets have WidgetTree Outer, not PC/Pawn
-                    std::wstring cls = safeClassName(context);
                     if (cls == STR("UI_WBP_Build_Tab_C"))
                     {
                         s_instance->m_buildTabAfterShowFired = true;
@@ -1563,15 +1566,16 @@ namespace MoriaMods
 
                 if (wcscmp(fnStr2, STR("OnAfterHide")) == 0)
                 {
+                    // v6.22.8 - hoisted single safeClassName call (was two
+                    // sequential calls: settings-hide gate + build-tab gate).
+                    std::wstring cls = safeClassName(context);
+
                     // Clear settings-screen-open gate when SettingsScreen
                     // hides so mod input handlers resume normal operation.
-                    {
-                        std::wstring cls2 = safeClassName(context);
-                        if (cls2 == STR("WBP_SettingsScreen_C"))
-                            s_instance->onNativeSettingsScreenHidden();
-                    }
+                    if (cls == STR("WBP_SettingsScreen_C"))
+                        s_instance->onNativeSettingsScreenHidden();
+
                     // isLocalContext removed - UMG widgets have WidgetTree Outer, not PC/Pawn
-                    std::wstring cls = safeClassName(context);
                     if (cls == STR("UI_WBP_BuildHUDv2_C") || cls == STR("UI_WBP_Build_Tab_C"))
                     {
                         QBLOG(STR("[MoriaCppMod] [Placement] OnAfterHide fired on {}\n"), cls);
@@ -1777,7 +1781,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.22.7: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.22.8: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
