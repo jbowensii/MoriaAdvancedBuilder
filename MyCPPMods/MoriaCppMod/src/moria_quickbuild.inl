@@ -42,14 +42,14 @@
             for (int i = 0; i < OVERLAY_BUILD_SLOTS; i++)
             {
                 if (!m_recipeSlots[i].used) continue;
-                std::string narrowName, narrowTex, narrowRow;
-                for (wchar_t c : m_recipeSlots[i].displayName)
-                    narrowName.push_back(static_cast<char>(c));
-                for (wchar_t c : m_recipeSlots[i].textureName)
-                    narrowTex.push_back(static_cast<char>(c));
-                for (wchar_t c : m_recipeSlots[i].rowName)
-                    narrowRow.push_back(static_cast<char>(c));
-                file << i << "|" << narrowName << "|" << narrowTex << "|" << narrowRow << "\n";
+                // UTF-8 encode each wstring. The previous static_cast<char>
+                // per code point zero-extended each UTF-16 unit and corrupted
+                // any character above 0x7F (accented names, non-Latin
+                // titles, the Steam ™ character in localized recipes).
+                file << i << "|"
+                     << wideToUtf8(m_recipeSlots[i].displayName) << "|"
+                     << wideToUtf8(m_recipeSlots[i].textureName) << "|"
+                     << wideToUtf8(m_recipeSlots[i].rowName) << "\n";
             }
 
         }
@@ -65,9 +65,13 @@
                 auto parsed = parseSlotLine(line);
                 if (auto* slot = std::get_if<ParsedSlot>(&parsed))
                 {
-                    m_recipeSlots[slot->slotIndex].displayName = std::wstring(slot->displayName.begin(), slot->displayName.end());
-                    m_recipeSlots[slot->slotIndex].textureName = std::wstring(slot->textureName.begin(), slot->textureName.end());
-                    m_recipeSlots[slot->slotIndex].rowName = std::wstring(slot->rowName.begin(), slot->rowName.end());
+                    // UTF-8 decode the on-disk strings. The previous
+                    // wstring(s.begin(), s.end()) round-trip mangled any
+                    // multi-byte UTF-8 character into garbage UTF-16
+                    // surrogates (the high bytes were sign-extended).
+                    m_recipeSlots[slot->slotIndex].displayName = utf8ToWide(slot->displayName);
+                    m_recipeSlots[slot->slotIndex].textureName = utf8ToWide(slot->textureName);
+                    m_recipeSlots[slot->slotIndex].rowName     = utf8ToWide(slot->rowName);
                     m_recipeSlots[slot->slotIndex].used = true;
                     loaded++;
                 }
@@ -97,10 +101,7 @@
             {
                 const char* iniKey = bindIndexToIniKey(i);
                 if (!iniKey) continue;
-                std::wstring wname = keyName(s_bindings[i].key);
-                std::string name;
-                for (auto wc : wname) name += static_cast<char>(wc);
-                file << iniKey << " = " << name << "\n";
+                file << iniKey << " = " << wideToUtf8(keyName(s_bindings[i].key)) << "\n";
                 if (!s_bindings[i].enabled)
                     file << iniKey << "_Enabled = false\n";
             }
@@ -115,10 +116,8 @@
                 if (s_setBindings[i].modBits & 0x01) prefix += "SHIFT+";
                 if (s_setBindings[i].modBits & 0x02) prefix += "CTRL+";
                 if (s_setBindings[i].modBits & 0x04) prefix += "ALT+";
-                std::wstring wname = keyName(s_setBindings[i].vk);
-                std::string name;
-                for (auto wc : wname) name += static_cast<char>(wc);
-                file << "QuickBuild" << (i + 1) << "Set = " << prefix << name << "\n";
+                file << "QuickBuild" << (i + 1) << "Set = " << prefix
+                     << wideToUtf8(keyName(s_setBindings[i].vk)) << "\n";
             }
 
             file << "\n[Preferences]\n";

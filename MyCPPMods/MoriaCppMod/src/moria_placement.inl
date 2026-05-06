@@ -1258,8 +1258,13 @@
             // valid rowName + freshly-bound DT. Same code path target-build uses.
             if (!m_recipeSlots[slot].rowName.empty())
             {
+                // 400ms cooldown gives the previous SelectRecipe RPC time to
+                // replicate fully (server flip of recipeSelectMode + ghost
+                // realize) before another press fires. Was 150ms — too tight
+                // for the round-trip; produced "occasionally ghost doesn't
+                // appear" when two presses landed in the same RPC window.
                 ULONGLONG now = GetTickCount64();
-                if (now - m_lastDirectSelectTime < 150)
+                if (now - m_lastDirectSelectTime < 400)
                 {
                     QBLOG(STR("[MoriaCppMod] [QuickBuild] F{} DIRECT path cooldown ({}ms since last)\n"),
                           slot + 1, now - m_lastDirectSelectTime);

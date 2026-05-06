@@ -1814,7 +1814,12 @@ void loadAndApplyDefinitions()
     }
 
 
-    if (!tablesWithAddRows.empty())
+    // The post-apply add-row verification dump below is a ~280-line
+    // diagnostic block (hex dumps, ID round-trip checks, RowMap walks).
+    // Useful when wiring up new definition tables, but every shipped run
+    // hits it on every world load. Gated on s_verbose so production
+    // (debug-off) builds skip it entirely.
+    if (s_verbose && !tablesWithAddRows.empty())
     {
 
         auto hexDump = [](const uint8_t* data, int len) -> std::wstring {

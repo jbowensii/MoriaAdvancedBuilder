@@ -1132,6 +1132,18 @@
                 showOnScreen(L"MaxSpawnLimit not found", 3.0f, 1.0f, 0.3f, 0.3f);
                 return;
             }
+            // Type-check the property: a float* write to a non-FFloatProperty
+            // field would corrupt adjacent struct memory if a future patch
+            // retypes MaxSpawnLimit to int32 / double / etc. This is a Critical
+            // sev / low exposure check (the field has been float since the
+            // game shipped) but cheap insurance.
+            if (!CastField<FFloatProperty>(prop))
+            {
+                VLOG(STR("[PeaceMode] MaxSpawnLimit is not FFloatProperty (type={}); aborting write\n"),
+                     prop->GetClass().GetName());
+                showOnScreen(L"MaxSpawnLimit type changed; refusing to write", 3.0f, 1.0f, 0.3f, 0.3f);
+                return;
+            }
             uint8_t* base = reinterpret_cast<uint8_t*>(mgr) + prop->GetOffset_Internal();
             if (!isReadableMemory(base, sizeof(float))) return;
             float* cur = reinterpret_cast<float*>(base);

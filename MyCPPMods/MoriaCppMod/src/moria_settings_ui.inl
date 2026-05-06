@@ -3269,10 +3269,14 @@
             }
         }
 
+        // Cheats merged into the Gameplay tab via Option-C - no separate
+        // Cheats tab. The function used to swap visibility between gpVB
+        // (Gameplay scroll) and chVB (Cheats scroll); now it just keeps
+        // gpVB visible and chVB collapsed unconditionally. The dirty-cache
+        // (m_lastApplyValid / m_lastApplyCheatsTabActive) was an
+        // optimization for the dead toggle path; removed.
         void applyTabContextVisibility()
         {
-            if (m_lastApplyValid && m_lastApplyCheatsTabActive == m_cheatsTabActive)
-                return;
             UObject* gpVB = m_dualGameplayScroll.Get();
             UObject* chVB = m_dualCheatsScroll.Get();
             // if VBox refs went null (GC), re-find by walking
@@ -3320,14 +3324,12 @@
                     if (foundSecond && !chVB) { chVB = foundSecond; m_dualCheatsScroll   = FWeakObjectPtr(chVB); }
                 }
             }
-            VLOG(STR("[SettingsUI] CP5 — applyTabContext cheats={}, gpVB={:p}, chVB={:p}\n"),
-                 m_cheatsTabActive ? L"YES" : L"no", (void*)gpVB, (void*)chVB);
+            VLOG(STR("[SettingsUI] applyTabContext gpVB={:p}, chVB={:p}\n"),
+                 (void*)gpVB, (void*)chVB);
             if (gpVB && isObjectAlive(gpVB))
-                setWidgetVisibilityForce(gpVB, m_cheatsTabActive ? 1 : 0);
+                setWidgetVisibilityForce(gpVB, 0);  // Visible
             if (chVB && isObjectAlive(chVB))
-                setWidgetVisibilityForce(chVB, m_cheatsTabActive ? 0 : 1);
-            m_lastApplyValid = true;
-            m_lastApplyCheatsTabActive = m_cheatsTabActive;
+                setWidgetVisibilityForce(chVB, 1);  // Collapsed
         }
 
 
@@ -3362,17 +3364,14 @@
         // the highlight. GetWidgetSwitcher isn't a UFunction in this
         // binary so the SetActiveWidget approach was unreachable — we
         // go back to KeyName rewrite which is the only working path.
-        void onNavTabPressedPre(UObject* /*context*/, UFunction* fn, void* parms)
+        // Cheats tab removed (Option-C merge). The pre-hook used to
+        // intercept "Cheats" KeyName and rewrite it to "Gameplay" to
+        // route the framework's tab switcher; with Option-C there's
+        // no separate Cheats tab to redirect, so the body is empty.
+        // The hook itself is still registered because dllmain.cpp
+        // routes navTabPressed PE callbacks here unconditionally.
+        void onNavTabPressedPre(UObject* /*context*/, UFunction* /*fn*/, void* /*parms*/)
         {
-            // Cheats tab removed. Just track the flag for
-            // legacy code paths; no KeyName rewrite.
-            if (!fn || !parms) return;
-            auto* p = findParam(fn, STR("KeyName"));
-            if (!p) return;
-            FName* pName = reinterpret_cast<FName*>(static_cast<uint8_t*>(parms) + p->GetOffset_Internal());
-            std::wstring name;
-            try { name = pName->ToString(); } catch (...) { return; }
-            m_cheatsTabActive = false; // never active anymore
         }
 
         // post-hook on navTabPressed.
@@ -3401,9 +3400,6 @@
             }
             if (!settingsScreen) settingsScreen = m_settingsScreenAppendedFor.Get();
             if (!settingsScreen || !isObjectAlive(settingsScreen)) return;
-
-            VLOG(STR("[SettingsUI] CP5 — post-hook: cheats={}\n"),
-                 m_cheatsTabActive ? L"YES" : L"no");
 
             auto* gpPtr = settingsScreen->GetValuePtrByPropertyNameInChain<UObject*>(STR("WBP_GameplayTab"));
             UObject* gameplayTab = gpPtr ? *gpPtr : nullptr;
@@ -4102,20 +4098,15 @@
         }
 
         // Toggle visibility of the three widget sets (native gameplay
-        // children, Mod Game Options, Cheats) based on m_cheatsTabActive.
-        // Uses the proper UWidget::SetVisibility(ESlateVisibility) UFunction.
-        // ESlateVisibility values: 0=Visible, 1=Collapsed, 2=Hidden,
-        //                          3=HitTestInvisible, 4=SelfHitTestInvisible.
+        // children, Mod Game Options) on the Gameplay tab. Cheats live in
+        // the Gameplay tab via the Option-C merge - they don't get their
+        // own ESlateVisibility cycle here. Uses
+        // UWidget::SetVisibility(ESlateVisibility): 0=Visible, 1=Collapsed.
         void applyDualContent()
         {
             constexpr uint8_t SHOW = 0; // ESlateVisibility::Visible
-            constexpr uint8_t HIDE = 1; // ESlateVisibility::Collapsed
-            const uint8_t nativeV  = m_cheatsTabActive ? HIDE : SHOW;
-            const uint8_t modGameV = m_cheatsTabActive ? HIDE : SHOW;
-            const uint8_t cheatsV  = m_cheatsTabActive ? SHOW : HIDE;
-            for (auto& wp : m_dualNativeChildren)  setWidgetVisibility(wp.Get(), nativeV);
-            for (auto& wp : m_dualModGameWidgets)  setWidgetVisibility(wp.Get(), modGameV);
-            for (auto& wp : m_dualCheatsWidgets)   setWidgetVisibility(wp.Get(), cheatsV);
+            for (auto& wp : m_dualNativeChildren)  setWidgetVisibility(wp.Get(), SHOW);
+            for (auto& wp : m_dualModGameWidgets)  setWidgetVisibility(wp.Get(), SHOW);
         }
 
         // Dispatch CP4 button clicks. Called from ProcessEvent post-hook
