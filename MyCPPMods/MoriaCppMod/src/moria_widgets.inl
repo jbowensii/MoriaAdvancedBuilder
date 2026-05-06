@@ -1203,7 +1203,7 @@
             {
                 UObject* stepCell = buildRotCell(outer, sizeBoxClass, overlayClass,
                                                  imageClass, textBlockClass,
-                                                 frameTex, setBrushFn, L"5°",
+                                                 frameTex, setBrushFn, L"Degrees\n0°",
                                                  m_rotDisplayStep);
                 if (stepCell)
                 {
@@ -1250,11 +1250,11 @@
                     safeProcessEvent(botHBox, addFn, bb.data());
                 };
                 addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass,
-                                            frameTex, setBrushFn, L"Y", m_rotDisplayYaw));
+                                            frameTex, setBrushFn, L"Yaw\n0°", m_rotDisplayYaw));
                 addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass,
-                                            frameTex, setBrushFn, L"P", m_rotDisplayPitch));
+                                            frameTex, setBrushFn, L"Pitch\n0°", m_rotDisplayPitch));
                 addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass,
-                                            frameTex, setBrushFn, L"R", m_rotDisplayRoll));
+                                            frameTex, setBrushFn, L"Roll\n0°", m_rotDisplayRoll));
                 auto* vbAdd = vbox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
                 if (vbAdd) {
                     auto* p = findParam(vbAdd, STR("Content"));
@@ -1344,11 +1344,14 @@
         void updateRotationDisplay()
         {
             if (!m_rotDisplayWidget || !isObjectAlive(m_rotDisplayWidget)) return;
-            // Step
+            // v6.21.20 - each cell now shows a label on top + value below
+            // (separated by newline). Top circle: "Degrees\n<step>°".
+            // Bottom three: "Pitch\nN°", "Yaw\nN°", "Roll\nN°".
+            // Yaw is the same value pilots/games call "rotation" (vertical-axis spin).
             if (m_rotDisplayStep)
             {
                 int step = s_overlay.rotationStep.load();
-                std::wstring s = std::to_wstring(step) + L"\xB0"; // °
+                std::wstring s = L"Degrees\n" + std::to_wstring(step) + L"\xB0";
                 umgSetText(m_rotDisplayStep, s);
             }
             // Read TargetRotation from GATA's TraceResults struct (offsets resolved in resolveGATAOffsets).
@@ -1368,9 +1371,9 @@
                 if (iv < 0) iv += 360;
                 return std::to_wstring(iv) + L"\xB0";
             };
-            if (m_rotDisplayYaw)   umgSetText(m_rotDisplayYaw,   fmt(yaw));
-            if (m_rotDisplayPitch) umgSetText(m_rotDisplayPitch, fmt(pitch));
-            if (m_rotDisplayRoll)  umgSetText(m_rotDisplayRoll,  fmt(roll));
+            if (m_rotDisplayYaw)   umgSetText(m_rotDisplayYaw,   L"Yaw\n"   + fmt(yaw));
+            if (m_rotDisplayPitch) umgSetText(m_rotDisplayPitch, L"Pitch\n" + fmt(pitch));
+            if (m_rotDisplayRoll)  umgSetText(m_rotDisplayRoll,  L"Roll\n"  + fmt(roll));
         }
 
         // v6.20.34 — always-visible (user can't get mouse cursor while
