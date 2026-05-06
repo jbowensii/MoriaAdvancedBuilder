@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.17
+Document Version 6.23.18
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3802,6 +3802,23 @@ over 9 iterations:
                * generic createImageWithBrush helper
                * keybind label rect (76x44)
              No behavior change in the normal case.
+    v6.23.18: Comment audit chunk 2 - moria_settings_ui.inl REMOVEs.
+             Stripped ~50 lines of stale tombstone / WHAT-comments /
+             dev-scaffolding prose per comment-audit-settings_ui.md.
+             Two diagnostic dumps (KeySelector internal-tree + Vibration
+             CheckIcon comparison) gated behind s_verbose so they only
+             fire in verbose mode (release stays silent). Also dropped
+             m_lastCheatsReapplyMs - dead variable orphaned when
+             tickReapplyCheatsContext was deleted earlier (only 1
+             reference: the declaration itself). Net -45 LOC across
+             moria_settings_ui.inl. No behavior change in normal
+             (non-verbose) operation. Build clean.
+
+             Two diagnostics in dllmain.cpp also retro-actively gated
+             behind s_verbose: navbar UFunction discovery dump and
+             CP4-CLICK click trace. Per user direction: keep diagnostics
+             but only fire when debug/verbose is on.
+
     v6.23.17: Comment audit chunk 1 - dllmain.cpp REMOVEs. Stripped
              ~78 lines of stale tombstone / dev-scaffolding / debug
              prose comments per comment-audit-dllmain.md. Pure
