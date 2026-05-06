@@ -1,4 +1,4 @@
-// MoriaCppMod v6.23.2 - Return to Moria UE4SS C++ mod (~15,500 lines after v6.23.2 Pass 2 cleanup)
+// MoriaCppMod v6.23.4 - Return to Moria UE4SS C++ mod (~15,500 lines after v6.23.4 Pass 2 cleanup)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -400,7 +400,7 @@ namespace MoriaMods
         // m_mcSlotStates (all bar widget state - widget never spawns). The
         // UmgSlotState enum is also no longer needed (only consumer was
         // m_mcSlotStates) and is removed.
-        // v6.23.2 - The controller cluster (~720 LOC: DualSenseReader +
+        // v6.23.4 - The controller cluster (~720 LOC: DualSenseReader +
         // DIGamepadReader + dispatch loop + PE hooks + 13 fields) was
         // gated as v6.22.3+v6.22.4 #if 0 and is now deleted. Entry point
         // m_controllerEnabled has been permanently false since v6.3.5
@@ -658,14 +658,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.23.2");
+            ModVersion = STR("6.23.4");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.2\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.4\n"));
         }
 
         ~MoriaCppMod() override
@@ -706,7 +706,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.23.2 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.23.4 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -892,7 +892,7 @@ namespace MoriaMods
                 // Construct or OnInitialized. Append Cheats to tabArray
                 // BEFORE the navbar's Construct runs (navbar reads tabArray
                 // directly during its own Construct).
-                // v6.22.5+v6.23.2: appendCheatsTabToArray call removed from
+                // v6.22.5+v6.23.4: appendCheatsTabToArray call removed from
                 // PreConstruct/Construct/OnInitialized hook. The Option-C
                 // merge ships cheats inside the existing native Gameplay /
                 // Game Options tabs; no separate tab is added.
@@ -938,7 +938,7 @@ namespace MoriaMods
                     return;
                 }
 
-                // (v6.22.4+v6.23.2: PE pre-hook gamepad suppression and
+                // (v6.22.4+v6.23.4: PE pre-hook gamepad suppression and
                 //  emote-on-Dpad-Left suppression deleted with the rest of
                 //  the controller cluster.)
                 if (wcscmp(fnStr, STR("RotatePressed")) == 0 || wcscmp(fnStr, STR("RotateCcwPressed")) == 0)
@@ -1621,7 +1621,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.23.2: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.23.4: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -1643,14 +1643,14 @@ namespace MoriaMods
                         catch (...) { RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Exception during definition loading\n")); }
                     }
                     // (FGK DynamicTableAsset one-shot diagnostic removed in
-                    //  v6.23.2 along with the rest of the FGK runtime-injection
+                    //  v6.23.4 along with the rest of the FGK runtime-injection
                     //  investigation. Per closed-features-2026-05-04.md, FGK
                     //  injection is ABANDONED.)
                     return {false, false};
                 });
         }
 
-        // (v6.23.2: FGK runtime-injection diagnostics deleted -
+        // (v6.23.4: FGK runtime-injection diagnostics deleted -
         //  dumpFGKWrapperDiagnostic, resolveHandleDataTableChanged,
         //  tickFGKInjectionTest, tickActorLookupDiag, tickFGKDiscoveryDiag,
         //  m_fgkDiagDone, m_pfHandleDataTableChanged, m_fgkInjectionTestDone
