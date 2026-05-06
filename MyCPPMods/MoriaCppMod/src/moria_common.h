@@ -63,6 +63,45 @@ namespace MoriaMods
     using namespace RC;
     using namespace RC::Unreal;
 
+    // v6.22.7 - Moved from moria_common.inl. Lived as MoriaCppMod class
+    // members because the .inl is included at class scope. That meant any
+    // TU that included moria_common.h alone (e.g. moria_keybinds.h - whose
+    // isModifierDown/isChordHeld at lines 95/102 call GetAsyncKeyState
+    // directly) saw the raw Win32 API and silently bypassed the focus
+    // filter. Promoting both helpers to free functions at namespace scope
+    // here makes the macro override visible everywhere moria_common.h is
+    // included, closing the alt-tab spurious-keypress hole.
+
+    // Returns true when our process owns the foreground (focused) window.
+    // Used to gate GetAsyncKeyState-based input polling so the mod doesn't
+    // react to keystrokes the user typed into another app while alt-tabbed.
+    inline bool isGameWindowFocused()
+    {
+        HWND fg = ::GetForegroundWindow();
+        if (!fg) return false;
+        DWORD fgPid = 0;
+        ::GetWindowThreadProcessId(fg, &fgPid);
+        return fgPid == ::GetCurrentProcessId();
+    }
+
+    // Focus-aware wrapper around the Win32 GetAsyncKeyState. Returns 0 when
+    // the game isn't the foreground process, suppressing every keybind /
+    // modifier check the mod performs while alt-tabbed.
+    inline SHORT focusedAsyncKeyState(int vk)
+    {
+        if (!isGameWindowFocused()) return 0;
+        return ::GetAsyncKeyState(vk);
+    }
+
+    // Macro-replace every GetAsyncKeyState call in our codebase that
+    // follows this include so the focus guard kicks in automatically.
+    // Win32 API calls outside our mod (UE4SS internals, system code) are
+    // unaffected because they don't include this header.
+#ifdef GetAsyncKeyState
+#  undef GetAsyncKeyState
+#endif
+#define GetAsyncKeyState ::MoriaMods::focusedAsyncKeyState
+
 
     inline bool s_verbose = true;
     inline std::string s_language = "en";

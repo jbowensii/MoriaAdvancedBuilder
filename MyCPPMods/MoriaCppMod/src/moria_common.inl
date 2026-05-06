@@ -1,37 +1,12 @@
 
 
 
-// Returns true when our process owns the foreground (focused) window.
-// Used to gate GetAsyncKeyState-based input polling so the mod doesn't
-// react to keystrokes the user typed into another app while alt-tabbed.
-// UE4SS-registered keydown events (`register_keydown_event`) already
-// respect engine focus, so they don't need this guard.
-inline bool isGameWindowFocused()
-{
-    HWND fg = ::GetForegroundWindow();
-    if (!fg) return false;
-    DWORD fgPid = 0;
-    ::GetWindowThreadProcessId(fg, &fgPid);
-    return fgPid == ::GetCurrentProcessId();
-}
-
-// Focus-aware wrapper around the Win32 GetAsyncKeyState. Returns 0 when
-// the game isn't the foreground process, suppressing every keybind /
-// modifier check the mod performs while alt-tabbed.
-inline SHORT focusedAsyncKeyState(int vk)
-{
-    if (!isGameWindowFocused()) return 0;
-    return ::GetAsyncKeyState(vk);
-}
-
-// Macro-replace every GetAsyncKeyState call in our codebase that follows
-// this include so the focus guard kicks in automatically. Win32 API calls
-// outside our mod (UE4SS internals, system code) are unaffected because
-// they don't include this header.
-#ifdef GetAsyncKeyState
-#  undef GetAsyncKeyState
-#endif
-#define GetAsyncKeyState focusedAsyncKeyState
+// v6.22.7 - isGameWindowFocused / focusedAsyncKeyState / the
+// `#define GetAsyncKeyState focusedAsyncKeyState` macro all moved to
+// moria_common.h (free-function namespace scope) so every TU that
+// includes the header sees the override - not just dllmain.cpp via
+// the .inl-at-class-scope inclusion path. See the comment block in
+// moria_common.h for the bug history.
 
 struct ScreenCoords
 {
