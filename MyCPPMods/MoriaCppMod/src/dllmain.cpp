@@ -1,4 +1,4 @@
-// MoriaCppMod v6.21.38 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.21.39 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -363,6 +363,15 @@ namespace MoriaMods
         // numbered slot widgets.
         UObject* m_newBuildingBar{nullptr};
         bool m_newBuildingBarSpawnAttempted{false};
+        // v6.21.39 - pre-spawn the rotation display widget once at
+        // character-load (same pattern as NBB above). The previous design
+        // created the widget on the first tick that isPlacementActive()
+        // flipped true - i.e., the same Slate frame as ghost spawn -
+        // racing the game's own UMG work and producing SWidget::Prepass
+        // AVs at 0xFF... during quickbuild. Now the widget is built once
+        // when the world is ready; tickRotationDisplay only flips
+        // SetVisibility from then on.
+        bool m_rotDisplaySpawnAttempted{false};
         // v6.21.1 - per-slot widget pointers for the New Building Bar.
         // Set during createNewBuildingBar(); used for highlight + Phase 2
         // icon/label updates. 8 slots = 8 indexed entries.
@@ -663,14 +672,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.21.38");
+            ModVersion = STR("6.21.39");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.38\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.39\n"));
         }
 
         ~MoriaCppMod() override
@@ -711,7 +720,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.38 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.39 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // startup diagnostics for Steam ™ path troubleshooting.
@@ -1735,7 +1744,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.21.38: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.21.39: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -4093,6 +4102,24 @@ namespace MoriaMods
                         {
                             m_newBuildingBarSpawnAttempted = true;
                             createNewBuildingBar();
+                        }
+
+                        // v6.21.39 - pre-spawn rotation display widget here,
+                        // not lazily on the placement-start edge. Build it
+                        // hidden; tickRotationDisplay handles SetVisibility
+                        // from now on. Eliminates the Slate-Prepass AV at
+                        // 0xFF... seen during quickbuild (root cause: widget
+                        // construction racing concurrent Slate work on the
+                        // exact frame ghost spawn lands).
+                        if (!m_rotDisplaySpawnAttempted)
+                        {
+                            m_rotDisplaySpawnAttempted = true;
+                            createRotationDisplay();
+                            if (m_rotDisplayWidget && isObjectAlive(m_rotDisplayWidget))
+                            {
+                                if (auto* fn = m_rotDisplayWidget->GetFunctionByNameInChain(STR("SetVisibility")))
+                                { uint8_t p[8]{}; p[0] = 1; safeProcessEvent(m_rotDisplayWidget, fn, p); }
+                            }
                         }
                     }
                 }

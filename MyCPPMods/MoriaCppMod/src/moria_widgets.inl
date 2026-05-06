@@ -1664,26 +1664,24 @@
 
             if (!m_characterLoaded) return;
 
-            // Decide whether the widget should be on screen this tick.
-            bool shouldShow = m_repositionHudMode || isPlacementActive() || isBuildTabShowing();
+            // v6.21.39 - widget is pre-spawned at character-load (see
+            // dllmain.cpp m_rotDisplaySpawnAttempted block). This tick
+            // ONLY flips SetVisibility - it MUST NOT call
+            // createRotationDisplay any more. The lazy-create path was the
+            // root cause of the Slate Prepass AV at 0xFF... during
+            // quickbuild: widget construction was racing the Slate frame
+            // that ghost spawn lands on. Toggling visibility on a fully-
+            // realized widget is safe.
+            if (!m_rotDisplayWidget || !isObjectAlive(m_rotDisplayWidget)) return;
 
-            if (!m_rotDisplayWidget && shouldShow)
+            bool shouldShow = m_repositionHudMode || isPlacementActive() || isBuildTabShowing();
+            uint8_t visEnum = shouldShow ? 0 : 1;
+            if (auto* fn = m_rotDisplayWidget->GetFunctionByNameInChain(STR("SetVisibility")))
+            { uint8_t p[8]{}; p[0] = visEnum; safeProcessEvent(m_rotDisplayWidget, fn, p); }
+            if (shouldShow)
             {
-                VLOG(STR("[MoriaCppMod] [RotDisp] creating widget (shouldShow=1)...\n"));
-                createRotationDisplay();
-                if (!m_rotDisplayWidget) return;
-            }
-            if (m_rotDisplayWidget && isObjectAlive(m_rotDisplayWidget))
-            {
-                // SetVisibility: 0 = Visible, 1 = Collapsed, 2 = Hidden
-                uint8_t visEnum = shouldShow ? 0 : 1;
-                if (auto* fn = m_rotDisplayWidget->GetFunctionByNameInChain(STR("SetVisibility")))
-                { uint8_t p[8]{}; p[0] = visEnum; safeProcessEvent(m_rotDisplayWidget, fn, p); }
-                if (shouldShow)
-                {
-                    updateRotationDisplay();
-                    tickRotationDisplayDrag();
-                }
+                updateRotationDisplay();
+                tickRotationDisplayDrag();
             }
         }
 
