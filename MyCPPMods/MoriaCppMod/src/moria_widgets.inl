@@ -5577,8 +5577,8 @@
             }
             if (!modalCls)
             {
-                VLOG(STR("[MoriaCppMod] [Rename v2] WBP_UI_RenameWorldModal_C class not found across all candidate paths\n"));
-                showErrorBox(L"Rename: in-game modal asset could not be located. Please report.");
+                VLOG(STR("[MoriaCppMod] [Rename v2] in-game modal not resolvable - falling back to legacy dialog\n"));
+                showRenameDialog();
                 return;
             }
 
@@ -5586,8 +5586,8 @@
             UObject* modal = jw_createGameWidget(modalCls);
             if (!modal)
             {
-                VLOG(STR("[MoriaCppMod] [Rename v2] jw_createGameWidget failed\n"));
-                showErrorBox(L"Rename: failed to spawn modal widget. Please report.");
+                VLOG(STR("[MoriaCppMod] [Rename v2] jw_createGameWidget failed - falling back to legacy\n"));
+                showRenameDialog();
                 return;
             }
 
@@ -5687,11 +5687,321 @@
                  (void*)modal, (void*)input, (void*)confirmBtn, (void*)cancelBtn);
         }
 
-        // v6.21.10 - removed legacy showRenameDialog() (305 lines).
-        // The v6.21.6 multi-path resolver in showRenameDialog_v2 has
-        // been reliable in production; v2 now shows an error box if
-        // resolution fails instead of falling through to the home-rolled
-        // UMG popup. The legacy function had no remaining live callers.
+        // v6.21.11 - restored legacy home-rolled showRenameDialog as
+        // fallback. v6.21.10 removed it but in-game-modal multi-path
+        // resolver started failing in production (asset not loaded
+        // in-world). Legacy popup is reliable; v2 falls back to it
+        // when WBP_UI_RenameWorldModal_C cannot be located.
+        // Legacy home-rolled rename dialog. Dead code in v6.20.30 — left in
+        // place as fallback during transition (showRenameDialog_v2 calls it
+        // if the modal class can't be resolved). Will be removed in the
+        // cleanup batch.
+        void showRenameDialog()
+        {
+            if (m_ftRenameVisible) { VLOG(STR("[MoriaCppMod] [Rename] BLOCKED: already visible\n")); return; }
+            if (!m_characterLoaded) { showErrorBox(Loc::get("err.character_not_loaded")); return; }
+            VLOG(STR("[MoriaCppMod] [Rename] Starting dialog creation...\n"));
+
+            auto* userWidgetClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.UserWidget"));
+            auto* imageClass      = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Image"));
+            auto* overlayClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.Overlay"));
+            auto* hboxClass       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.HorizontalBox"));
+            auto* vboxClass       = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.VerticalBox"));
+            auto* textBlockClass  = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.TextBlock"));
+            auto* sizeBoxClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.SizeBox"));
+            auto* editBoxClass    = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.EditableTextBox"));
+            if (!userWidgetClass || !imageClass || !overlayClass || !hboxClass || !vboxClass ||
+                !textBlockClass || !sizeBoxClass || !editBoxClass) { showErrorBox(L"Rename: missing UMG classes"); return; }
+
+            auto* pc = findPlayerController();
+            if (!pc) { showErrorBox(L"Rename: no PlayerController"); return; }
+            auto* createFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary:Create"));
+            auto* wblClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/UMG.WidgetBlueprintLibrary"));
+            if (!createFn || !wblClass) { VLOG(STR("[MoriaCppMod] [Rename] FAIL: createFn={} wblClass={}\n"), (void*)createFn, (void*)wblClass); return; }
+            UObject* wblCDO = wblClass->GetClassDefaultObject();
+            if (!wblCDO) { VLOG(STR("[MoriaCppMod] [Rename] FAIL: wblCDO is null\n")); return; }
+
+            int sz = createFn->GetParmsSize();
+            std::vector<uint8_t> cp(sz, 0);
+            auto* pOwner = findParam(createFn, STR("WorldContextObject"));
+            auto* pClass = findParam(createFn, STR("WidgetType"));
+            auto* pOP    = findParam(createFn, STR("OwningPlayer"));
+            auto* pRet   = findParam(createFn, STR("ReturnValue"));
+            if (!pOwner || !pClass || !pRet) { VLOG(STR("[MoriaCppMod] [Rename] FAIL: pOwner={} pClass={} pRet={}\n"), (void*)pOwner, (void*)pClass, (void*)pRet); return; }
+            *reinterpret_cast<UObject**>(cp.data() + pOwner->GetOffset_Internal()) = pc;
+            *reinterpret_cast<UObject**>(cp.data() + pClass->GetOffset_Internal()) = userWidgetClass;
+            if (pOP) *reinterpret_cast<UObject**>(cp.data() + pOP->GetOffset_Internal()) = pc;
+            safeProcessEvent(wblCDO, createFn, cp.data());
+            UObject* userWidget = pRet ? *reinterpret_cast<UObject**>(cp.data() + pRet->GetOffset_Internal()) : nullptr;
+            if (!userWidget) { VLOG(STR("[MoriaCppMod] [Rename] FAIL: userWidget is null\n")); return; }
+            VLOG(STR("[MoriaCppMod] [Rename] CP1: userWidget created\n"));
+
+            UObject* outer = userWidget;
+            auto* wtSlot = userWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = (wtSlot && *wtSlot) ? *wtSlot : nullptr;
+
+            auto* setBrushFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.Image:SetBrushFromTexture"));
+
+
+            UObject* texBG = findTexture2DByName(L"T_UI_Pnl_Background_Base");
+            UObject* texSectionBg = findTexture2DByName(L"T_UI_Pnl_TabSelected");
+
+            VLOG(STR("[MoriaCppMod] [Rename] CP2: textures done\n"));
+
+            FStaticConstructObjectParameters olP(overlayClass, outer);
+            UObject* rootOl = UObjectGlobals::StaticConstructObject(olP);
+            if (!rootOl) { VLOG(STR("[MoriaCppMod] [Rename] FAIL: rootOl is null\n")); return; }
+            if (widgetTree) setRootWidget(widgetTree, rootOl);
+
+
+            {
+                auto* setClipFn = rootOl->GetFunctionByNameInChain(STR("SetClipping"));
+                if (setClipFn) { int sz2 = setClipFn->GetParmsSize(); std::vector<uint8_t> cp2(sz2, 0); auto* p = findParam(setClipFn, STR("InClipping")); if (p) *reinterpret_cast<uint8_t*>(cp2.data() + p->GetOffset_Internal()) = 1; safeProcessEvent(rootOl, setClipFn, cp2.data()); }
+            }
+
+            VLOG(STR("[MoriaCppMod] [Rename] CP3: rootOl + clipping done\n"));
+            const float dlgW = 700.0f, dlgH = 220.0f;
+
+
+            {
+                FStaticConstructObjectParameters bfP(imageClass, outer);
+                UObject* bf = UObjectGlobals::StaticConstructObject(bfP);
+                if (bf) { umgSetBrushSize(bf, dlgW, dlgH); umgSetImageColor(bf, 0.08f, 0.14f, 0.32f, 1.0f); addToOverlay(rootOl, bf); }
+            }
+
+
+            if (texBG && setBrushFn)
+            {
+                FStaticConstructObjectParameters bgP(imageClass, outer);
+                UObject* bg = UObjectGlobals::StaticConstructObject(bgP);
+                if (bg)
+                {
+                    umgSetBrush(bg, texBG, setBrushFn);
+                    umgSetBrushSize(bg, dlgW - 2.0f, dlgH - 2.0f);
+                    umgSetOpacity(bg, 1.0f);
+                    UObject* s = addToOverlay(rootOl, bg);
+                    if (s) { umgSetHAlign(s, 2); umgSetVAlign(s, 2); }
+                }
+            }
+
+
+            FStaticConstructObjectParameters cvP(vboxClass, outer);
+            UObject* contentVBox = UObjectGlobals::StaticConstructObject(cvP);
+            if (contentVBox)
+            {
+                UObject* cvSlot = addToOverlay(rootOl, contentVBox);
+                if (cvSlot) umgSetSlotPadding(cvSlot, 20.0f, 10.0f, 20.0f, 10.0f);
+
+
+                if (texSectionBg && setBrushFn)
+                {
+                    FStaticConstructObjectParameters secOlP(overlayClass, outer);
+                    UObject* secOl = UObjectGlobals::StaticConstructObject(secOlP);
+                    if (secOl)
+                    {
+                        FStaticConstructObjectParameters secImgP(imageClass, outer);
+                        UObject* secImg = UObjectGlobals::StaticConstructObject(secImgP);
+                        if (secImg) { umgSetBrushNoMatch(secImg, texSectionBg, setBrushFn); umgSetBrushSize(secImg, dlgW - 40.0f, 50.0f); addToOverlay(secOl, secImg); }
+                        UObject* secLabel = createTextBlock(Loc::get("ui.rename_character"), 0.78f, 0.86f, 1.0f, 1.0f, 24);
+                        if (secLabel) { umgSetBold(secLabel); UObject* ts = addToOverlay(secOl, secLabel); if (ts) { umgSetHAlign(ts, 2); umgSetVAlign(ts, 2); } }
+                        addToVBox(contentVBox, secOl);
+                    }
+                }
+
+                VLOG(STR("[MoriaCppMod] [Rename] CP4: header section done\n"));
+
+                {
+                    std::wstring currentName = L"(unknown)";
+
+                    std::vector<UObject*> mgrs;
+                    findAllOfSafe(STR("CustomizationManager"), mgrs);
+                    UObject* pawn = getPawn();
+                    UObject* target = nullptr;
+                    for (auto* mgr : mgrs) { if (!mgr) continue; if (mgr->GetOuterPrivate() == pawn) { target = mgr; break; } }
+                    if (!target && !mgrs.empty()) target = mgrs[0];
+                    VLOG(STR("[MoriaCppMod] [Rename] CP4a: FindAllOf done, target={}\n"), (void*)target);
+                    if (target)
+                    {
+                        auto* getFn = target->GetFunctionByNameInChain(STR("GetCharacterName"));
+                        if (getFn)
+                        {
+
+                            int gsz = getFn->GetParmsSize();
+                            std::vector<uint8_t> gbuf(gsz, 0);
+                            safeProcessEvent(target, getFn, gbuf.data());
+                            auto* retProp = findParam(getFn, STR("ReturnValue"));
+                            if (retProp)
+                            {
+
+                                uintptr_t strPtr = *reinterpret_cast<uintptr_t*>(gbuf.data() + retProp->GetOffset_Internal());
+                                int32_t strLen = *reinterpret_cast<int32_t*>(gbuf.data() + retProp->GetOffset_Internal() + 8);
+                                if (strPtr && strLen > 0)
+                                    currentName = reinterpret_cast<const wchar_t*>(strPtr);
+                            }
+                        }
+                    }
+
+                    FStaticConstructObjectParameters nameHbP(hboxClass, outer);
+                    UObject* nameRow = UObjectGlobals::StaticConstructObject(nameHbP);
+                    if (nameRow)
+                    {
+                        UObject* curLbl = createTextBlock(Loc::get("ui.current_name_prefix"), 0.55f, 0.55f, 0.6f, 0.8f, 22);
+                        if (curLbl) { UObject* ls = addToHBox(nameRow, curLbl); if (ls) { umgSetSlotPadding(ls, 0.0f, 10.0f, 0.0f, 5.0f); umgSetVAlign(ls, 2); } }
+                        UObject* nameLbl = createTextBlock(currentName, 0.9f, 0.75f, 0.2f, 1.0f, 22);
+                        if (nameLbl) { umgSetBold(nameLbl); UObject* ls = addToHBox(nameRow, nameLbl); if (ls) { umgSetSlotPadding(ls, 0.0f, 10.0f, 0.0f, 5.0f); umgSetVAlign(ls, 2); } }
+                        addToVBox(contentVBox, nameRow);
+                    }
+                }
+
+                VLOG(STR("[MoriaCppMod] [Rename] CP5: current name label done\n"));
+
+                {
+                    VLOG(STR("[MoriaCppMod] [Rename] CP5a: about to create EditableTextBox...\n"));
+                    FStaticConstructObjectParameters sbP(sizeBoxClass, outer);
+                    UObject* editSizeBox = UObjectGlobals::StaticConstructObject(sbP);
+                    FStaticConstructObjectParameters etP(editBoxClass, outer);
+                    UObject* editBox = UObjectGlobals::StaticConstructObject(etP);
+                    VLOG(STR("[MoriaCppMod] [Rename] CP5b: EditableTextBox created sb={} eb={}\n"), (void*)editSizeBox, (void*)editBox);
+                    if (editSizeBox && editBox)
+                    {
+                        m_ftRenameInput = editBox;
+
+                        {
+                            UObject* defaultFont = nullptr;
+                            std::vector<UObject*> fonts;
+                            findAllOfSafe(STR("Font"), fonts);
+                            for (auto* f : fonts) { if (f && std::wstring(f->GetName()) == L"DefaultRegularFont") { defaultFont = f; break; } }
+                            if (defaultFont)
+                            {
+                                uint8_t* raw = reinterpret_cast<uint8_t*>(editBox);
+                                int32_t fontSize = 24;
+
+                                constexpr int STYLE_FONT_OFF = 0x0368;
+                                *reinterpret_cast<UObject**>(raw + STYLE_FONT_OFF) = defaultFont;
+                                std::memcpy(raw + STYLE_FONT_OFF + fontSizeOff(), &fontSize, sizeof(int32_t));
+
+                                constexpr int EDITBOX_FONT_OFF = 0x0958;
+                                *reinterpret_cast<UObject**>(raw + EDITBOX_FONT_OFF) = defaultFont;
+                                std::memcpy(raw + EDITBOX_FONT_OFF + fontSizeOff(), &fontSize, sizeof(int32_t));
+                            }
+                        }
+
+                        auto* setWOvFn = editSizeBox->GetFunctionByNameInChain(STR("SetWidthOverride"));
+                        if (setWOvFn) { int wsz = setWOvFn->GetParmsSize(); std::vector<uint8_t> wp(wsz, 0); auto* p = findParam(setWOvFn, STR("InWidthOverride")); if (p) *reinterpret_cast<float*>(wp.data() + p->GetOffset_Internal()) = dlgW - 40.0f; safeProcessEvent(editSizeBox, setWOvFn, wp.data()); }
+                        auto* setHOvFn = editSizeBox->GetFunctionByNameInChain(STR("SetHeightOverride"));
+                        if (setHOvFn) { int hsz = setHOvFn->GetParmsSize(); std::vector<uint8_t> hp(hsz, 0); auto* p = findParam(setHOvFn, STR("InHeightOverride")); if (p) *reinterpret_cast<float*>(hp.data() + p->GetOffset_Internal()) = 50.0f; safeProcessEvent(editSizeBox, setHOvFn, hp.data()); }
+
+                        auto* setChildFn = editSizeBox->GetFunctionByNameInChain(STR("SetContent"));
+                        if (!setChildFn) setChildFn = editSizeBox->GetFunctionByNameInChain(STR("AddChild"));
+                        if (setChildFn) { auto* pChild = findParam(setChildFn, STR("Content")); if (!pChild) pChild = findParam(setChildFn, STR("InContent")); if (pChild) { int csz = setChildFn->GetParmsSize(); std::vector<uint8_t> cbuf(csz, 0); *reinterpret_cast<UObject**>(cbuf.data() + pChild->GetOffset_Internal()) = editBox; safeProcessEvent(editSizeBox, setChildFn, cbuf.data()); } }
+                        VLOG(STR("[MoriaCppMod] [Rename] CP5c: SizeBox configured, about to SetHintText...\n"));
+
+                        auto* setHintFn = editBox->GetFunctionByNameInChain(STR("SetHintText"));
+                        if (setHintFn)
+                        {
+                            auto* pHint = findParam(setHintFn, STR("InText"));
+                            if (!pHint) pHint = findParam(setHintFn, STR("InHintText"));
+                            if (pHint)
+                            {
+                                int hsz = setHintFn->GetParmsSize();
+                                std::vector<uint8_t> hbuf(hsz, 0);
+                                FText hintText(STR("Enter new name..."));
+                                std::memcpy(hbuf.data() + pHint->GetOffset_Internal(), &hintText, sizeof(FText));
+                                safeProcessEvent(editBox, setHintFn, hbuf.data());
+                            }
+                        }
+                        UObject* editSlot = addToVBox(contentVBox, editSizeBox);
+                        if (editSlot) umgSetSlotPadding(editSlot, 0.0f, 8.0f, 0.0f, 10.0f);
+                    }
+                }
+
+                VLOG(STR("[MoriaCppMod] [Rename] CP6: EditableTextBox section done\n"));
+
+                {
+                    FStaticConstructObjectParameters btnHbP(hboxClass, outer);
+                    UObject* btnRow = UObjectGlobals::StaticConstructObject(btnHbP);
+                    if (btnRow)
+                    {
+
+                        {
+                            FStaticConstructObjectParameters cOlP(overlayClass, outer);
+                            UObject* cancelOl = UObjectGlobals::StaticConstructObject(cOlP);
+                            if (cancelOl)
+                            {
+                                FStaticConstructObjectParameters cImgP(imageClass, outer);
+                                UObject* cImg = UObjectGlobals::StaticConstructObject(cImgP);
+                                if (cImg) { umgSetBrushSize(cImg, 250.0f, 55.0f); umgSetImageColor(cImg, 0.6f, 0.12f, 0.12f, 1.0f); addToOverlay(cancelOl, cImg); }
+                                UObject* cLbl = createTextBlock(Loc::get("ui.button_cancel"), 1.0f, 1.0f, 1.0f, 1.0f, 22);
+                                if (cLbl) { umgSetBold(cLbl); UObject* cs = addToOverlay(cancelOl, cLbl); if (cs) { umgSetHAlign(cs, 2); umgSetVAlign(cs, 2); } }
+                                UObject* cSlot = addToHBox(btnRow, cancelOl);
+                                if (cSlot) umgSetSlotPadding(cSlot, 20.0f, 0.0f, 30.0f, 0.0f);
+                            }
+                        }
+
+                        {
+                            FStaticConstructObjectParameters cfOlP(overlayClass, outer);
+                            UObject* confirmOl = UObjectGlobals::StaticConstructObject(cfOlP);
+                            if (confirmOl)
+                            {
+                                FStaticConstructObjectParameters cfImgP(imageClass, outer);
+                                UObject* cfImg = UObjectGlobals::StaticConstructObject(cfImgP);
+                                if (cfImg) { umgSetBrushSize(cfImg, 250.0f, 55.0f); umgSetImageColor(cfImg, 0.12f, 0.5f, 0.15f, 1.0f); addToOverlay(confirmOl, cfImg); }
+                                UObject* cfLbl = createTextBlock(Loc::get("ui.button_confirm"), 1.0f, 1.0f, 1.0f, 1.0f, 22);
+                                if (cfLbl) { umgSetBold(cfLbl); m_ftRenameConfirmLabel = cfLbl; UObject* cs = addToOverlay(confirmOl, cfLbl); if (cs) { umgSetHAlign(cs, 2); umgSetVAlign(cs, 2); } }
+                                UObject* cfSlot = addToHBox(btnRow, confirmOl);
+                                if (cfSlot) umgSetSlotPadding(cfSlot, 0.0f, 0.0f, 20.0f, 0.0f);
+                            }
+                        }
+                        UObject* btnSlot = addToVBox(contentVBox, btnRow);
+                        if (btnSlot) { umgSetHAlign(btnSlot, 2); }
+                    }
+                }
+            }
+
+            VLOG(STR("[MoriaCppMod] [Rename] CP7: all widgets built, about to AddToViewport...\n"));
+
+            auto* addToViewportFn = userWidget->GetFunctionByNameInChain(STR("AddToViewport"));
+            if (addToViewportFn)
+            {
+                auto* pZOrder = findParam(addToViewportFn, STR("ZOrder"));
+                int avSz = addToViewportFn->GetParmsSize();
+                std::vector<uint8_t> vp(avSz, 0);
+                if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 300;
+                safeProcessEvent(userWidget, addToViewportFn, vp.data());
+            }
+
+
+            auto* setDesiredSizeFn = userWidget->GetFunctionByNameInChain(STR("SetDesiredSizeInViewport"));
+            if (setDesiredSizeFn)
+            {
+                auto* pSize = findParam(setDesiredSizeFn, STR("Size"));
+                if (pSize) { int ssz = setDesiredSizeFn->GetParmsSize(); std::vector<uint8_t> sb(ssz, 0); auto* v = reinterpret_cast<float*>(sb.data() + pSize->GetOffset_Internal()); v[0] = dlgW; v[1] = dlgH; safeProcessEvent(userWidget, setDesiredSizeFn, sb.data()); }
+            }
+
+
+            auto* setAlignFn = userWidget->GetFunctionByNameInChain(STR("SetAlignmentInViewport"));
+            if (setAlignFn) { auto* pAlign = findParam(setAlignFn, STR("Alignment")); if (pAlign) { int asz = setAlignFn->GetParmsSize(); std::vector<uint8_t> ab(asz, 0); auto* a = reinterpret_cast<float*>(ab.data() + pAlign->GetOffset_Internal()); a[0] = 0.5f; a[1] = 0.5f; safeProcessEvent(userWidget, setAlignFn, ab.data()); } }
+
+
+            setWidgetPosition(userWidget, m_screen.fracToPixelX(0.5f), m_screen.fracToPixelY(0.5f), true);
+
+            VLOG(STR("[MoriaCppMod] [Rename] CP8: AddToViewport + sizing done\n"));
+            m_ftRenameWidget = userWidget;
+            m_ftRenameVisible = true;
+            setInputModeUI(userWidget);
+
+            // v6.20.24 — clear pending bit-0 latch on RETURN/ESCAPE/LBUTTON
+            // before entering poll loop. Without this, ESCAPE-to-open-pause-menu
+            // OR ENTER-to-click-RENAME-button leaves a pending press latched in
+            // GetAsyncKeyState; the next poll inside the dialog sees it and
+            // immediately closes/confirms the dialog (28ms after open).
+            (void)GetAsyncKeyState(VK_RETURN);
+            (void)GetAsyncKeyState(VK_ESCAPE);
+            (void)GetAsyncKeyState(VK_LBUTTON);
+
+            VLOG(STR("[MoriaCppMod] [Rename] Dialog opened\n"));
+        }
+
 
         void hideRenameDialog()
         {

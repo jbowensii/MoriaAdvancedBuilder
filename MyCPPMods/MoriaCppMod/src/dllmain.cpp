@@ -1,4 +1,4 @@
-// MoriaCppMod v6.21.10 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.21.11 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -336,13 +336,13 @@ namespace MoriaMods
         std::wstring m_pendingCharName;
 
 
-        // v6.21.10 batch 3 Tier 2b - removed m_umgBarWidget. The OLD UMG
+        // v6.21.11 batch 3 Tier 2b - removed m_umgBarWidget. The OLD UMG
         // QuickBuild bar widget is gone; all toolbar-array slot 0 entries
         // are now nullptr literals (TB_COUNT=4 retained because indices 1-3
         // are still active for AB/MC bars + reposition info box).
-        // v6.21.10 batch 3 Tier 2a - removed m_umgSlotButtons[8] (OLD UMG bar
+        // v6.21.11 batch 3 Tier 2a - removed m_umgSlotButtons[8] (OLD UMG bar
         // gamepad nav - bar is gone; gamepad QB polling block also removed).
-        // v6.21.10 batch 3 Tier 2c - removed all OLD-UMG-bar leftover state
+        // v6.21.11 batch 3 Tier 2c - removed all OLD-UMG-bar leftover state
         // (m_umgStateImages[8], m_umgSlotStates[8], m_umgTexEmpty/Inactive/Active,
         // m_umgSetBrushFn). Readers in setMcSlotState/getSlotStateImage/getGPImg
         // were dead branches (MC bar always-null + tb=0 paths unreachable).
@@ -410,11 +410,11 @@ namespace MoriaMods
         DIGamepadState m_diPrevState{};           // previous frame
 
 
-        // v6.21.10 batch 3 Tier 2a - removed m_umgKeyLabels[8] (OLD UMG bar
+        // v6.21.11 batch 3 Tier 2a - removed m_umgKeyLabels[8] (OLD UMG bar
         // F-key labels) + m_umgKeyBgImages[8] (orphan, never read).
         UObject* m_mcKeyLabels[MC_SLOTS]{};
         UObject* m_mcKeyBgImages[MC_SLOTS]{};
-        // v6.21.10 batch 3 Tier 2c - removed m_umgTexBlankRect (only captured
+        // v6.21.11 batch 3 Tier 2c - removed m_umgTexBlankRect (only captured
         // in dead createModControllerBar; never read).
         UObject* m_mcRotationLabel{nullptr};
         UObject* m_mcSlot0Overlay{nullptr};
@@ -551,7 +551,7 @@ namespace MoriaMods
         ScreenCoords m_screen;
 
 
-        // v6.21.10 batch 3 Tier 2 - removed reposition mode
+        // v6.21.11 batch 3 Tier 2 - removed reposition mode
         // (m_repositionMode, m_dragToolbar, m_dragOffsetX/Y,
         //  m_repositionMsgWidget, m_repositionInfoBoxWidget). Only entry
         // point was the disabled NUM+/AB toggle block. Inspect window and
@@ -639,14 +639,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.21.10");
+            ModVersion = STR("6.21.11");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.10\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.11\n"));
         }
 
         ~MoriaCppMod() override
@@ -687,7 +687,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.10 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.11 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // v6.4.4 - startup diagnostics for Steam ™ path troubleshooting.
@@ -1683,7 +1683,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.21.10: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.21.11: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -2382,13 +2382,13 @@ namespace MoriaMods
             }
 
 
-            // v6.21.10 - removed reposition-mode block. Toolbar drag/drop
+            // v6.21.11 - removed reposition-mode block. Toolbar drag/drop
             // logic was for the OLD UMG/AB/MC bars (all gone). Inspect
             // window has its own drag in tickTargetInfoDrag; rotation
             // display has tickRotationDisplayDrag.
 
 
-            // v6.21.10 - removed disabled NUM+/AB toggle block (was the only
+            // v6.21.11 - removed disabled NUM+/AB toggle block (was the only
             // entry point to toggleRepositionMode; reposition removed).
 
 
@@ -2671,7 +2671,7 @@ namespace MoriaMods
                         }
                     }
 
-                    // v6.21.10 batch 3 Tier 2a - removed Quick Build gamepad
+                    // v6.21.11 batch 3 Tier 2a - removed Quick Build gamepad
                     // polling block (used m_umgBarWidget + m_umgSlotButtons,
                     // both gone with the OLD UMG bar).
 
@@ -2817,13 +2817,13 @@ namespace MoriaMods
                     if (m_toolbarsVisible && m_mcBarWidget)
                         for (int i = 0; i < MC_SLOTS; i++)
                             gpSlots[gpCount++] = {1, i};
-                    // v6.21.10 batch 3 Tier 2b - OLD UMG QB bar gone; tbId=0 gpSlots
+                    // v6.21.11 batch 3 Tier 2b - OLD UMG QB bar gone; tbId=0 gpSlots
                     // population removed.
 
                     // Helper: get state image for highlighting
                     auto getGPImg = [this](int tbId, int slot) -> UObject* {
                         switch (tbId) {
-                        // case 0 (OLD UMG QB bar) removed v6.21.10 - gpSlots no longer populates tbId=0.
+                        // case 0 (OLD UMG QB bar) removed v6.21.11 - gpSlots no longer populates tbId=0.
                         case 1: return (slot >= 0 && slot < MC_SLOTS) ? m_mcStateImages[slot] : nullptr;
                         case 2: return (slot == 0) ? m_abStateImage : nullptr;
                         default: return nullptr;
