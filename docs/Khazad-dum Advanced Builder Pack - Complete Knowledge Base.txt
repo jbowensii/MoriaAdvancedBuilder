@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.9
+Document Version 6.23.10
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3724,6 +3724,20 @@ over 9 iterations:
              warning); moria_inventory.inl FItemInstance + FItemHandle
              layout maps inline at the replenishLastItem direct-write
              site.
+    v6.23.10: handle/offset validation hardening - 3 fixes from the
+             dedicated Opus validation audit (handle-offset-validation
+             -audit.md). (A) callAddRowInternal in moria_datatable.inl
+             now goes through a noexcept SEH wrapper + isObjectAlive
+             precheck on the cached UDataTable* (closes the dangling-
+             pointer-during-world-transition AV vector that the prior
+             try/catch couldn't catch). (B) Two s_off_bLock memcpy
+             sites in moria_placement.inl now isReadableMemory-gate the
+             read (defense against stale process-global offset cache
+             across BP class reload). (C) m_replay.compQueue[i].Get()
+             in moria_hism.inl gets isObjectAlive in addition to the
+             FWeakObjectPtr serial check (catches mid-BeginDestroy
+             during world transition replay). All 3 are pure defensive
+             - no behavior change in the normal case.
 
 Each Pass-1 iteration was its own GitHub tag. Recovery to any prior
 state is one `git checkout v6.22.X` (or v6.23.X) away.

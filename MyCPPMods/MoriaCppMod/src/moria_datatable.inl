@@ -289,23 +289,53 @@ struct DataTableUtil
     static constexpr uint32_t VTABLE_AddRowInternal = 0x278;
 
 
+    // SEH guard: this function does a raw vtable dispatch on `table` (a
+    // cached UDataTable*). DataTableUtil instances live at module scope
+    // and never `unbind()` on world transition, so `table` can become a
+    // dangling pointer between worlds. The previous try/catch only
+    // caught std::exception, which is useless for an AV (Windows raises
+    // SEH, not a C++ exception). Three layers of defense now:
+    //   1. isObjectAlive precheck filters RF_BeginDestroyed/FinishDestroyed
+    //      and Unreachable - rejects the common GC-flagged case before
+    //      we read the vtable pointer at all.
+    //   2. seh_callAddRowInternal wraps the vtable dispatch in __try
+    //      (no C++ destructors in scope; the FName is constructed in
+    //      the caller and lives on caller's stack, not in this helper).
+    //   3. The C++ try/catch outside catches anything seh_ rethrows for
+    //      logging consistency.
+    static bool seh_callAddRowInternal(UObject* tbl, FName fname, uint8_t* rowData) noexcept
+    {
+        __try {
+            std::byte* vt = std::bit_cast<std::byte*>(*std::bit_cast<std::byte**>(tbl));
+            void* rawFunc = *std::bit_cast<void**>(vt + VTABLE_AddRowInternal);
+            if (!rawFunc) return false;
+            using MFP = void(UObject::*)(FName, uint8_t*);
+            auto func = std::bit_cast<MFP>(rawFunc);
+            (tbl->*func)(fname, rowData);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
     bool callAddRowInternal(const wchar_t* rowName, uint8_t* rowData)
     {
         if (!table || !rowData) return false;
+        if (!isObjectAlive(table))
+        {
+            RC::Output::send<RC::LogLevel::Warning>(
+                STR("[MoriaCppMod] [DT] callAddRowInternal: cached table is dead (RF flags or unreachable); refusing dispatch\n"));
+            return false;
+        }
         FName fname(rowName, FNAME_Add);
         try {
-            std::byte* vt = std::bit_cast<std::byte*>(*std::bit_cast<std::byte**>(table));
-            void* rawFunc = *std::bit_cast<void**>(vt + VTABLE_AddRowInternal);
-            if (!rawFunc)
+            if (!seh_callAddRowInternal(table, fname, rowData))
             {
                 RC::Output::send<RC::LogLevel::Warning>(
-                    STR("[MoriaCppMod] [DT] callAddRowInternal: vtable slot 0x{:X} is null!\n"),
-                    VTABLE_AddRowInternal);
+                    STR("[MoriaCppMod] [DT] callAddRowInternal: SEH-caught AV or null vtable slot 0x{:X} for '{}'\n"),
+                    VTABLE_AddRowInternal, std::wstring(rowName));
                 return false;
             }
-            using MFP = void(UObject::*)(FName, uint8_t*);
-            auto func = std::bit_cast<MFP>(rawFunc);
-            (table->*func)(fname, rowData);
             return true;
         } catch (const std::exception& e) {
             RC::Output::send<RC::LogLevel::Warning>(

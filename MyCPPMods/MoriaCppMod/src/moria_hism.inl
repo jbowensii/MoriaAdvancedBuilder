@@ -572,8 +572,15 @@
 
             while (m_replay.compIdx < m_replay.compQueue.size())
             {
+                // FWeakObjectPtr.Get() catches serial-number staleness
+                // (the GC slot was reused) but NOT mid-BeginDestroy
+                // (RF_BeginDestroyed flagged but not yet swept). Replay
+                // can run during a world transition where HISM
+                // components are tearing down; the follow-up GetName()
+                // and GetFunctionByNameInChain dispatch through the
+                // vtable. isObjectAlive adds the missing flag check.
                 UObject* comp = m_replay.compQueue[m_replay.compIdx].Get();
-                if (!comp)
+                if (!comp || !isObjectAlive(comp))
                 {
                     m_replay.compIdx++;
                     m_replay.instanceIdx = 0;
