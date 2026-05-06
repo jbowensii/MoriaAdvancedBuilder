@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.10
+Document Version 6.23.11
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3738,6 +3738,16 @@ over 9 iterations:
              FWeakObjectPtr serial check (catches mid-BeginDestroy
              during world transition replay). All 3 are pure defensive
              - no behavior change in the normal case.
+    v6.23.11: Q3 offset reflection - moria_inventory.inl FActiveItemEffect
+             cluster migrated from hardcoded offsets to reflection.
+             Added s_off_aieStride/aieOnItem/aieEffect sentinels +
+             ensureActiveItemEffectOffsets() probe + generic
+             resolveArrayStructLayout / resolveStructLayout helpers
+             in moria_reflection.h. Both removeItemEffectFromList AND
+             dumpItemEffects now use the reflection-resolved offsets
+             with the previously-hardcoded 0x30/0x0C/0x10/0x18 values
+             as fallback. Game-struct migration; future patches can
+             shift FActiveItemEffect layout without breaking the mod.
 
 Each Pass-1 iteration was its own GitHub tag. Recovery to any prior
 state is one `git checkout v6.22.X` (or v6.23.X) away.

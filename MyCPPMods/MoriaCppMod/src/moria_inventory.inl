@@ -43,6 +43,64 @@
         }
 
 
+        // Lazy probe of the FActiveItemEffect struct layout. The Effects
+        // member on a MorInventoryComponent is an FFastArraySerializer
+        // whose `List` field is a TArray<FActiveItemEffect>. We need:
+        //   - sizeof(FActiveItemEffect)            (the entry stride)
+        //   - offset of OnItem (int32 itemID)
+        //   - offset of Effect (UObject* effect class)
+        // Falls back to the previously-hardcoded values (stride 0x30,
+        // OnItem 0x0C, Effect 0x10) on any reflection failure - those
+        // values are stable across the game's life today.
+        bool ensureActiveItemEffectOffsets(UObject* invComp)
+        {
+            if (s_off_aieStride > 0 && s_off_aieOnItem >= 0 && s_off_aieEffect >= 0)
+                return true;
+            if (!invComp) return false;
+            int stride = -1;
+            int offOnItem = resolveArrayStructLayout(invComp, STR("Effects.List"), STR("OnItem"), &stride);
+            // FFastArraySerializer.List isn't directly addressable as a
+            // dotted property on most UE4SS reflection paths, so fall back
+            // to walking via the Effects FStructProperty.
+            if (offOnItem < 0)
+            {
+                if (auto* eProp = invComp->GetPropertyByNameInChain(STR("Effects")))
+                {
+                    if (auto* sProp = CastField<FStructProperty>(eProp))
+                    {
+                        UStruct* fastArrStruct = sProp->GetStruct();
+                        if (fastArrStruct)
+                        {
+                            if (auto* listProp = fastArrStruct->GetPropertyByNameInChain(STR("List")))
+                            {
+                                if (auto* listArrProp = CastField<FArrayProperty>(listProp))
+                                {
+                                    auto* innerProp = listArrProp->GetInner();
+                                    if (auto* innerStructProp = CastField<FStructProperty>(innerProp))
+                                    {
+                                        UStruct* aieStruct = innerStructProp->GetStruct();
+                                        if (aieStruct)
+                                        {
+                                            if (auto* sStruct = static_cast<UScriptStruct*>(aieStruct))
+                                                stride = static_cast<int>(sStruct->GetStructureSize());
+                                            if (auto* onItemProp = aieStruct->GetPropertyByNameInChain(STR("OnItem")))
+                                                offOnItem = onItemProp->GetOffset_Internal();
+                                            if (auto* effectProp = aieStruct->GetPropertyByNameInChain(STR("Effect")))
+                                                s_off_aieEffect = effectProp->GetOffset_Internal();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            s_off_aieStride = (stride > 0) ? stride : 0x30;
+            s_off_aieOnItem = (offOnItem >= 0) ? offOnItem : 0x0C;
+            if (s_off_aieEffect < 0) s_off_aieEffect = 0x10;
+            return true;
+        }
+
         // WARNING [W4]: Direct TArray memory manipulation — no UFUNCTION alternative exists.
         // Bypasses replication/internal bookkeeping. Bounds-checked. Single-player context only.
         // See memory/deferred-fixes.md for rationale.
@@ -52,23 +110,30 @@
             FProperty* effectsProp = invComp->GetPropertyByNameInChain(STR("Effects"));
             if (!effectsProp) return false;
 
+            ensureActiveItemEffectOffsets(invComp);
             int effectsOff = effectsProp->GetOffset_Internal();
+            // The FFastArraySerializer.List inner offset (0x0110 in this
+            // game's UE4.27 build) is engine-stable — not reflected, just
+            // used as a constant. The interesting layout is the inner
+            // FActiveItemEffect, which we DO resolve via reflection above.
             uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp) + effectsOff + 0x0110;
             if (!isReadableMemory(listBase, 16)) return false;
 
             uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
             int32_t& arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
-            constexpr int kStride = 0x30;
+            const int stride   = s_off_aieStride;
+            const int offOnItem = s_off_aieOnItem;
+            const int offEffect = s_off_aieEffect;
 
             for (int32_t j = arrNum - 1; j >= 0; j--)
             {
-                uint8_t* e = arrData + j * kStride;
-                if (!isReadableMemory(e, kStride)) continue;
+                uint8_t* e = arrData + j * stride;
+                if (!isReadableMemory(e, stride)) continue;
 
-                int32_t onItem = *reinterpret_cast<int32_t*>(e + 0x0C);
+                int32_t onItem = *reinterpret_cast<int32_t*>(e + offOnItem);
                 if (onItem != itemID) continue;
 
-                UObject* effect = *reinterpret_cast<UObject**>(e + 0x10);
+                UObject* effect = *reinterpret_cast<UObject**>(e + offEffect);
                 if (!effect || !isReadableMemory(reinterpret_cast<uint8_t*>(effect), 64)) continue;
 
                 std::wstring cls = safeClassName(effect);
@@ -76,7 +141,7 @@
 
                 VLOG(STR("[MoriaCppMod] [RemoveEffect] Removing {} at index {} (OnItem={}) from Effects.List\n"), effectClassName, j, onItem);
                 if (j < arrNum - 1)
-                    std::memcpy(e, arrData + (arrNum - 1) * kStride, kStride);
+                    std::memcpy(e, arrData + (arrNum - 1) * stride, stride);
                 arrNum--;
                 return true;
             }
@@ -171,6 +236,7 @@
             FProperty* effectsProp = invComp->GetPropertyByNameInChain(STR("Effects"));
             if (effectsProp)
             {
+                ensureActiveItemEffectOffsets(invComp);
                 int effectsOff = effectsProp->GetOffset_Internal();
 
                 uint8_t* effectsBase = reinterpret_cast<uint8_t*>(invComp) + effectsOff + 0x0110;
@@ -178,19 +244,26 @@
                 {
                     uint8_t* arrData = *reinterpret_cast<uint8_t**>(effectsBase);
                     int32_t arrNum = *reinterpret_cast<int32_t*>(effectsBase + 8);
-                    VLOG(STR("[MoriaCppMod] [EffectDump] InvComp Effects.List count={} (effectsOff=0x{:X})\n"), arrNum, effectsOff);
+                    VLOG(STR("[MoriaCppMod] [EffectDump] InvComp Effects.List count={} (effectsOff=0x{:X} stride=0x{:X})\n"),
+                         arrNum, effectsOff, s_off_aieStride);
 
-
-                    constexpr int kStride = 0x30;
+                    const int stride    = s_off_aieStride;
+                    const int offOnItem = s_off_aieOnItem;
+                    const int offEffect = s_off_aieEffect;
+                    // EndTime + AssetId offsets aren't reflected by name in
+                    // this build; keep diagnostic-only hardcoded fallbacks.
+                    constexpr int offEndTime    = 0x18;
+                    constexpr int offAssetIdLo  = 0x1C;
+                    constexpr int offAssetIdHi  = 0x20;
 
                     for (int32_t j = 0; j < arrNum && j < 50; j++)
                     {
-                        uint8_t* e = arrData + j * kStride;
-                        if (!isReadableMemory(e, kStride)) { VLOG(STR("[MoriaCppMod] [EffectDump]   [{}] <unreadable>\n"), j); continue; }
+                        uint8_t* e = arrData + j * stride;
+                        if (!isReadableMemory(e, stride)) { VLOG(STR("[MoriaCppMod] [EffectDump]   [{}] <unreadable>\n"), j); continue; }
 
-                        int32_t onItem = *reinterpret_cast<int32_t*>(e + 0x0C);
-                        UObject* effect = *reinterpret_cast<UObject**>(e + 0x10);
-                        float endTime = *reinterpret_cast<float*>(e + 0x18);
+                        int32_t onItem = *reinterpret_cast<int32_t*>(e + offOnItem);
+                        UObject* effect = *reinterpret_cast<UObject**>(e + offEffect);
+                        float endTime = *reinterpret_cast<float*>(e + offEndTime);
 
                         std::wstring effectName = L"nullptr";
                         if (effect)
@@ -207,8 +280,8 @@
                         }
 
 
-                        uint32_t assetIdWord0 = *reinterpret_cast<uint32_t*>(e + 0x1C);
-                        uint32_t assetIdWord1 = *reinterpret_cast<uint32_t*>(e + 0x20);
+                        uint32_t assetIdWord0 = *reinterpret_cast<uint32_t*>(e + offAssetIdLo);
+                        uint32_t assetIdWord1 = *reinterpret_cast<uint32_t*>(e + offAssetIdHi);
 
                         bool isOurs = (onItem == itemID);
                         VLOG(STR("[MoriaCppMod] [EffectDump]   [{}] OnItem={}{} Effect=0x{:X} (class={}) EndTime={} AssetId=[0x{:X},0x{:X}]\n"),

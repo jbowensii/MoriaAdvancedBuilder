@@ -72,6 +72,32 @@ namespace MoriaMods
 
     inline int s_off_iiaList = -2;
 
+    // Active-item-effect cluster (FActiveItemEffect on FFastArraySerializer).
+    inline int s_off_aieListOff      = -2;  // Effects.List inner offset (FFastArray header size; usually 0x0110)
+    inline int s_off_aieStride       = -2;  // sizeof(FActiveItemEffect) (typ. 0x30)
+    inline int s_off_aieOnItem       = -2;  // FActiveItemEffect.OnItem (typ. 0x0C)
+    inline int s_off_aieEffect       = -2;  // FActiveItemEffect.Effect (typ. 0x10)
+    inline int s_off_aieEndTime      = -2;  // FActiveItemEffect.EndTime (typ. 0x18)
+    inline int s_off_aieAssetIdLo    = -2;  // FActiveItemEffect.AssetId word0 (typ. 0x1C)
+    inline int s_off_aieAssetIdHi    = -2;  // FActiveItemEffect.AssetId word1 (typ. 0x20)
+
+    // FMorConnectionHistoryItem cluster (game struct in moria_session_history.inl).
+    inline int s_off_chiStride       = -2;  // sizeof(FMorConnectionHistoryItem) (typ. 0x58)
+    inline int s_off_chiWorldName    = -2;  // typ. 0x00
+    inline int s_off_chiConnType     = -2;  // typ. 0x10
+    inline int s_off_chiInviteString = -2;  // typ. 0x18
+    inline int s_off_chiUniqueInvite = -2;  // typ. 0x28
+    inline int s_off_chiPassword     = -2;  // typ. 0x38
+    inline int s_off_chiIsDedicated  = -2;  // typ. 0x48
+    inline int s_off_chiCreated      = -2;  // typ. 0x50
+
+    // FFGKUITab cluster (game struct in moria_settings_ui.inl tabArray walk).
+    inline int s_off_uitStride       = -2;  // sizeof(FFGKUITab) (typ. 0xE8)
+    inline int s_off_uitName         = -2;  // typ. 0x00
+    inline int s_off_uitDisplayName  = -2;  // typ. 0x08
+    inline int s_off_uitWidgetClass  = -2;  // typ. 0x20
+    inline int s_off_uitTabConfig    = -2;  // typ. 0x48
+
 
     inline int brushImageSizeX() { return (s_off_brushImageSize >= 0) ? s_off_brushImageSize     : BRUSH_IMAGE_SIZE_X; }
     inline int brushImageSizeY() { return (s_off_brushImageSize >= 0) ? s_off_brushImageSize + 4 : BRUSH_IMAGE_SIZE_Y; }
@@ -696,6 +722,60 @@ namespace MoriaMods
     inline bool bseOffsetsValid()
     {
         return s_bse.resolved && s_bse.bLock >= 0 && s_bse.selfRef >= 0;
+    }
+
+    // Resolves the size + a property offset of a UScriptStruct that's the
+    // element type of a TArray<FStructXxx> property on `owner`. Used to
+    // back-fill stride + inner-field offsets via reflection rather than
+    // hardcoding them.
+    //
+    //   owner          : the UObject whose TArray<FStructXxx> we walk
+    //   arrayPropName  : name of the TArray property on owner
+    //   fieldName      : name of an inner field on FStructXxx (or nullptr
+    //                    to only resolve stride)
+    // Returns the inner field's offset, or -1 if any step failed.
+    // Always also writes the struct stride into outStride if the struct
+    // was found (even when fieldName is null or fieldName lookup fails).
+    inline int resolveArrayStructLayout(UObject* owner,
+                                        const wchar_t* arrayPropName,
+                                        const wchar_t* fieldName,
+                                        int* outStride)
+    {
+        if (outStride) *outStride = -1;
+        if (!owner || !arrayPropName) return -1;
+        auto* prop = owner->GetPropertyByNameInChain(arrayPropName);
+        if (!prop) return -1;
+        auto* arrProp = CastField<FArrayProperty>(prop);
+        if (!arrProp) return -1;
+        FProperty* inner = arrProp->GetInner();
+        if (!inner) return -1;
+        auto* sProp = CastField<FStructProperty>(inner);
+        if (!sProp) return -1;
+        UScriptStruct* sStruct = sProp->GetStruct();
+        if (!sStruct) return -1;
+        if (outStride) *outStride = static_cast<int>(sStruct->GetStructureSize());
+        if (!fieldName) return -1;
+        auto* fProp = sStruct->GetPropertyByNameInChain(fieldName);
+        return fProp ? fProp->GetOffset_Internal() : -1;
+    }
+
+    // Same as resolveArrayStructLayout but for a single FStructProperty
+    // (not a TArray). Used for FMorConnectionHistoryItem etc. that
+    // appear as struct-typed UFunction parms.
+    //
+    // Returns the inner field's offset, or -1 on failure. outStride gets
+    // the struct's GetStructureSize() if the struct was located.
+    inline int resolveStructLayout(UStruct* sStruct,
+                                   const wchar_t* fieldName,
+                                   int* outStride)
+    {
+        if (outStride) *outStride = -1;
+        if (!sStruct) return -1;
+        if (auto* ss = sStruct->IsA<UScriptStruct>() ? static_cast<UScriptStruct*>(sStruct) : nullptr)
+            if (outStride) *outStride = static_cast<int>(ss->GetStructureSize());
+        if (!fieldName) return -1;
+        auto* fProp = sStruct->GetPropertyByNameInChain(fieldName);
+        return fProp ? fProp->GetOffset_Internal() : -1;
     }
 
 }
