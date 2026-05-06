@@ -1369,6 +1369,20 @@
             std::wstring kYaw   = keyName(s_bindings[BIND_ROTATION].key);
             std::wstring kRoll  = keyName(s_bindings[BIND_ROLL_ROTATE].key);
             std::wstring kStep  = L"SHIFT+" + kYaw;
+            // v6.21.31 - one-shot DIAG to verify which slots / VKs are read.
+            // Logs once per session; flag flips on first call.
+            static bool s_rotDispDiagLogged = false;
+            if (!s_rotDispDiagLogged)
+            {
+                s_rotDispDiagLogged = true;
+                VLOG(STR("[MoriaCppMod] [RotDisp] DIAG slot keys: "
+                         "Pitch[{}].key=0x{:02X} '{}' | "
+                         "Yaw[{}].key=0x{:02X} '{}' | "
+                         "Roll[{}].key=0x{:02X} '{}'\n"),
+                     BIND_PITCH_ROTATE, s_bindings[BIND_PITCH_ROTATE].key, kPitch.c_str(),
+                     BIND_ROTATION,     s_bindings[BIND_ROTATION].key,     kYaw.c_str(),
+                     BIND_ROLL_ROTATE,  s_bindings[BIND_ROLL_ROTATE].key,  kRoll.c_str());
+            }
             if (m_rotDisplayStep)
             {
                 int step = s_overlay.rotationStep.load();
