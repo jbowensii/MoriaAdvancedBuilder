@@ -230,7 +230,6 @@
 
             showOnScreen(m_snapEnabled ? L"Snap: ON" : L"Snap: OFF",
                          2.0f, 0.4f, 0.6f, 1.0f);
-            setMcSlotState(1, m_snapEnabled ? UmgSlotState::Active : UmgSlotState::Inactive);
         }
 
 
@@ -242,34 +241,9 @@
         }
 
 
-        void setMcSlotState(int slot, UmgSlotState state)
-        {
-            if (slot < 0 || slot >= MC_SLOTS) return;
-            if (!m_mcBarWidget) return;
-            if (m_mcSlotStates[slot] == state) return;
-            m_mcSlotStates[slot] = state;
-
-            UObject* stateImg = m_mcStateImages[slot];
-            UObject* iconImg = m_mcIconImages[slot];
-            if (stateImg && !isObjectAlive(stateImg)) { m_mcStateImages[slot] = nullptr; stateImg = nullptr; }
-            if (iconImg && !isObjectAlive(iconImg)) { m_mcIconImages[slot] = nullptr; iconImg = nullptr; }
-
-            // v6.21.7 — state-image brush updates removed (textures + brushFn
-            // captures lived in dead createModControllerBar; MC bar itself is
-            // dead so this whole function early-returns at the m_mcBarWidget
-            // null check above. Icon dimming retained in case MC bar is ever
-            // resurrected.
-            if (state == UmgSlotState::Disabled)
-            {
-                if (iconImg)
-                    umgSetImageColor(iconImg, 0.3f, 0.3f, 0.3f, 0.4f);
-            }
-            else if (iconImg)
-            {
-                umgSetImageColor(iconImg, 1.0f, 1.0f, 1.0f, 1.0f);
-            }
-            (void)stateImg;
-        }
+        // v6.21.19 - setMcSlotState removed entirely with the MC bar widget.
+        // Function had been a no-op since v6.10.0 (m_mcBarWidget null check
+        // returned early on every call). Callers in this file simplified.
 
 
         void onGhostAppeared()
@@ -279,7 +253,6 @@
             {
                 VLOG(STR("[MoriaCppMod] [Placement] onGhostAppeared: resolveGATA returned nullptr (ghost not yet spawned)\n"));
 
-                setMcSlotState(1, m_snapEnabled ? UmgSlotState::Active : UmgSlotState::Inactive);
                 return;
             }
 
@@ -294,7 +267,6 @@
                 }
             }
             setGATARotation(gata, static_cast<float>(s_overlay.rotationStep.load()));
-            setMcSlotState(1, m_snapEnabled ? UmgSlotState::Active : UmgSlotState::Inactive);
         }
 
 
@@ -822,7 +794,6 @@
             if (now - m_lastQBSelectTime < 500)
                 return;
             VLOG(STR("[MoriaCppMod] [Placement] onGhostDisappeared: greying out snap slot\n"));
-            setMcSlotState(1, UmgSlotState::Disabled);
         }
 
 
@@ -1541,7 +1512,7 @@
                 {
                     s_overlay.totalRotation = 0;
                     s_overlay.needsUpdate = true;
-                    updateMcRotationLabel();
+                    // v6.21.19 - updateMcRotationLabel call removed (no-op fn deleted)
                     m_pendingQuickBuildSlot = -1;
                     m_isTargetBuild = false;
                     m_qbPhase = PlacePhase::Idle;

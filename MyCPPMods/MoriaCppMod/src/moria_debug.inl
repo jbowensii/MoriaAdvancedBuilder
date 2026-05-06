@@ -285,7 +285,7 @@
                 setGATARotation(gata, static_cast<float>(next));
                 std::wstring msg = L"Rotation step: " + std::to_wstring(next) + L"\xB0";
                 showOnScreen(msg, 2.0f, 0.0f, 1.0f, 0.0f);
-                updateMcRotationLabel();
+                    // v6.21.19 - updateMcRotationLabel call removed (no-op fn deleted)
                 break;
             }
             case 1:
