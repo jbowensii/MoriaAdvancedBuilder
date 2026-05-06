@@ -208,16 +208,21 @@
                 int n = tabArrFnameBased->Num();
                 VLOG(STR("[SettingsUI]   tabArray.Num() = {}\n"), n);
 
-                // The TArray is read as bytes; each element is 0xE8 long.
-                // Walk by manual stride and decode FName at offset 0.
+                // Reflection-resolve FFGKUITab layout from the tabArray
+                // property (stride + Name field offset).
+                ensureFGKUITabOffsets(w->GetPropertyByNameInChain(STR("tabArray")));
+
+                // The TArray is read as bytes; each element is FFGKUITab-sized.
+                // Walk by reflected stride and decode FName at the reflected
+                // Name offset.
                 if (uint8_t* base = tabArrFnameBased->GetData())
                 {
-                    constexpr int kStride = 0xE8;
+                    const int kStride = s_off_uitStride;
                     for (int i = 0; i < n && i < 16; ++i)
                     {
                         uint8_t* entry = base + (size_t)i * kStride;
                         // FName is 8 bytes — 4 ComparisonIndex + 4 Number
-                        FName* fn = reinterpret_cast<FName*>(entry + 0x00);
+                        FName* fn = reinterpret_cast<FName*>(entry + s_off_uitName);
                         std::wstring nameStr;
                         try { nameStr = fn->ToString(); } catch (...) {}
                         VLOG(STR("[SettingsUI]     tabArray[{}].Name = '{}'\n"),
@@ -4538,6 +4543,55 @@
             }
         }
 
+        // Resolve FFGKUITab layout via reflection. Probe walks the supplied
+        // FArrayProperty -> inner FStructProperty -> UScriptStruct, reads
+        // stride and the field offsets we touch (Name, DisplayName).
+        // Stores results in s_off_uit* sentinels (in moria_reflection.h).
+        // Falls back to historic shipping layout (stride 0xE8, Name 0x00,
+        // DisplayName 0x08, WidgetClass 0x20, TabConfig 0x48) on failure.
+        bool ensureFGKUITabOffsets(FProperty* pArrProp)
+        {
+            if (s_off_uitStride > 0
+                && s_off_uitName        >= 0
+                && s_off_uitDisplayName >= 0)
+                return true;
+            int stride = -1;
+            int offName = -1, offDisplay = -1, offWidgetCls = -1, offTabCfg = -1;
+            if (pArrProp)
+            {
+                if (auto* arrProp = CastField<FArrayProperty>(pArrProp))
+                {
+                    if (auto* innerStructProp = CastField<FStructProperty>(arrProp->GetInner()))
+                    {
+                        if (UStruct* sStruct = innerStructProp->GetStruct())
+                        {
+                            if (auto* ss = static_cast<UScriptStruct*>(sStruct))
+                                stride = static_cast<int>(ss->GetStructureSize());
+                            if (auto* p = sStruct->GetPropertyByNameInChain(STR("Name")))
+                                offName = p->GetOffset_Internal();
+                            if (auto* p = sStruct->GetPropertyByNameInChain(STR("DisplayName")))
+                                offDisplay = p->GetOffset_Internal();
+                            if (auto* p = sStruct->GetPropertyByNameInChain(STR("WidgetClass")))
+                                offWidgetCls = p->GetOffset_Internal();
+                            if (auto* p = sStruct->GetPropertyByNameInChain(STR("TabConfig")))
+                                offTabCfg = p->GetOffset_Internal();
+                        }
+                    }
+                }
+            }
+            s_off_uitStride      = (stride       > 0) ? stride       : 0xE8;
+            s_off_uitName        = (offName      >= 0) ? offName      : 0x00;
+            s_off_uitDisplayName = (offDisplay   >= 0) ? offDisplay   : 0x08;
+            s_off_uitWidgetClass = (offWidgetCls >= 0) ? offWidgetCls : 0x20;
+            s_off_uitTabConfig   = (offTabCfg    >= 0) ? offTabCfg    : 0x48;
+            VLOG(STR("[SettingsUI] FFGKUITab layout resolved: stride={:#x} Name={:#x} "
+                     "Display={:#x} Widget={:#x} TabCfg={:#x}\n"),
+                 (unsigned)s_off_uitStride, (unsigned)s_off_uitName,
+                 (unsigned)s_off_uitDisplayName, (unsigned)s_off_uitWidgetClass,
+                 (unsigned)s_off_uitTabConfig);
+            return true;
+        }
+
         // pre-hook on UI_WBP_NavBar_Build.InitializeNavBar.
         // Modifies the input Tabs array BEFORE the function builds the
         // navbar buttons. Param name might be "Tabs" — fallback to scan
@@ -4563,13 +4617,14 @@
                 VLOG(STR("[SettingsUI] CP5 — InitializeNavBar Tabs is empty (Num={})\n"), n);
                 return;
             }
-            constexpr int kStride = 0xE8;
+            ensureFGKUITabOffsets(p);
+            const int kStride = s_off_uitStride;
 
             int legalIdx = -1;
             for (int i = 0; i < n && i < 16; ++i)
             {
                 uint8_t* entry = base + (size_t)i * kStride;
-                FName* fnEntry = reinterpret_cast<FName*>(entry + 0x00);
+                FName* fnEntry = reinterpret_cast<FName*>(entry + s_off_uitName);
                 std::wstring name;
                 try { name = fnEntry->ToString(); } catch (...) { continue; }
                 if (name == L"Cheats") return; // already augmented
@@ -4607,9 +4662,9 @@
             uint8_t* src = writeBase + (size_t)legalIdx * kStride;
             std::memcpy(dst, src, kStride);
             RC::Unreal::FName cheatsName(STR("Cheats"), RC::Unreal::FNAME_Add);
-            std::memcpy(dst + 0x00, &cheatsName, sizeof(RC::Unreal::FName));
+            std::memcpy(dst + s_off_uitName, &cheatsName, sizeof(RC::Unreal::FName));
             FText cheatsDisplay(L"Cheats");
-            std::memcpy(dst + 0x08, &cheatsDisplay, sizeof(FText));
+            std::memcpy(dst + s_off_uitDisplayName, &cheatsDisplay, sizeof(FText));
             tabs->SetNum(n + 1, false);
 
             static int s_loggedTimes = 0;
@@ -4646,7 +4701,8 @@
             int maxN = outArr->Max();
             uint8_t* base = outArr->GetData();
             if (!base || n <= 0) return;
-            constexpr int kStride = 0xE8;
+            ensureFGKUITabOffsets(p);
+            const int kStride = s_off_uitStride;
 
             // Skip if Cheats already in this array (double-add guard).
             // Also find legal entry to clone from.
@@ -4654,7 +4710,7 @@
             for (int i = 0; i < n && i < 16; ++i)
             {
                 uint8_t* entry = base + (size_t)i * kStride;
-                FName* fnEntry = reinterpret_cast<FName*>(entry + 0x00);
+                FName* fnEntry = reinterpret_cast<FName*>(entry + s_off_uitName);
                 std::wstring name;
                 try { name = fnEntry->ToString(); } catch (...) { continue; }
                 if (name == L"Cheats") return;
@@ -4685,9 +4741,9 @@
             uint8_t* src = writeBase + (size_t)legalIdx * kStride;
             std::memcpy(dst, src, kStride);
             RC::Unreal::FName cheatsName(STR("Cheats"), RC::Unreal::FNAME_Add);
-            std::memcpy(dst + 0x00, &cheatsName, sizeof(RC::Unreal::FName));
+            std::memcpy(dst + s_off_uitName, &cheatsName, sizeof(RC::Unreal::FName));
             FText cheatsDisplay(L"Cheats");
-            std::memcpy(dst + 0x08, &cheatsDisplay, sizeof(FText));
+            std::memcpy(dst + s_off_uitDisplayName, &cheatsDisplay, sizeof(FText));
             outArr->SetNum(n + 1, false);
 
             static int s_loggedTimes = 0;

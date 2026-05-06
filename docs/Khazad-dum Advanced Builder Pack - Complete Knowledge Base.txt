@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.12
+Document Version 6.23.13
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3762,6 +3762,19 @@ over 9 iterations:
              memset stride is also reflection-driven. Game-struct
              migration; protects session-history injection against
              future game patches that re-pack FMorConnectionHistoryItem.
+    v6.23.13: Q3 offset reflection - moria_settings_ui.inl FFGKUITab
+             (0xE8 byte struct) migrated from constexpr int kStride = 0xE8
+             to reflection-resolved sentinels at all 3 sites:
+               * tabArray dump in onSettingsScreenAfterShow (read-only)
+               * onInitializeNavBarPre (write - append Cheats tab)
+               * onGetNavBarTabsPost   (write - append Cheats tab)
+             New ensureFGKUITabOffsets(pArrProp) probe walks an
+             FArrayProperty -> inner FStructProperty -> UScriptStruct
+             and resolves stride + Name + DisplayName + WidgetClass +
+             TabConfig offsets. Sentinels stored in s_off_uit*. Game
+             changing FFGKUITab layout no longer breaks the Cheats tab
+             injection. Historic shipping fallbacks preserved
+             (0xE8/0x00/0x08/0x20/0x48).
 
 Each Pass-1 iteration was its own GitHub tag. Recovery to any prior
 state is one `git checkout v6.22.X` (or v6.23.X) away.
