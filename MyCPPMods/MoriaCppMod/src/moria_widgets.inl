@@ -1079,121 +1079,184 @@
 
         // Build one cell: SizeBox(48x48) > Overlay > [Image(frame), TextBlock]
         // Returns the SizeBox; outLabel is set to the text block for later updates.
+        // v6.21.33 - cell layout reshaped at user request:
+        //   Outer VerticalBox
+        //   |- Circle SizeBox(158x158)            (+10% from 144)
+        //   |   `- Overlay
+        //   |       |- Frame image (T_UI_Btn_Inv_Armor_Hover, full)
+        //   |       |- Label TextBlock  (e.g., "Pitch") top-center
+        //   |       `- Value TextBlock  (e.g., "45deg")  full center
+        //   `- Key pill SizeBox(88x40) below the circle (outside its bounds)
+        //       `- Overlay
+        //           |- Grey bg image (T_UI_Icon_Input_Blank_Rect)
+        //           `- Key TextBlock (the bound key, larger font)
+        // outLabel    = value TextBlock (the dynamic number - inside circle)
+        // outKeyLbl   = key TextBlock   (the bound-key text - in pill below)
+        // labelText is the static cell name written ONCE on the label
+        // TextBlock; updateRotationDisplay only touches outLabel/outKeyLbl.
         UObject* buildRotCell(UObject* outer, UClass* sbCls, UClass* ovCls,
-                              UClass* imgCls, UClass* tbCls,
+                              UClass* imgCls, UClass* tbCls, UClass* vboxCls,
                               UObject* frameTex, UFunction* setBrushFn,
-                              const wchar_t* initialText, UObject*& outLabel,
+                              const wchar_t* labelText,
+                              const wchar_t* initialValueText, UObject*& outLabel,
                               UObject* keyBgTex,
                               const wchar_t* initialKeyText,
                               UObject*& outKeyLbl)
         {
             outLabel = nullptr;
             outKeyLbl = nullptr;
+
+            // Outer VBox: stacks circle on top, key pill below.
+            FStaticConstructObjectParameters vbP(vboxCls, outer);
+            UObject* vbox = UObjectGlobals::StaticConstructObject(vbP);
+            if (!vbox) return nullptr;
+
+            // ---- Circle SizeBox(158x158) with frame + label + value ----
             FStaticConstructObjectParameters sbP(sbCls, outer);
-            UObject* sb = UObjectGlobals::StaticConstructObject(sbP);
-            if (!sb) return nullptr;
-            jw_setSizeBoxOverride(sb, 144.0f, 144.0f);
-
-            FStaticConstructObjectParameters ovP(ovCls, outer);
-            UObject* ov = UObjectGlobals::StaticConstructObject(ovP);
-            if (!ov) return sb;
-            if (auto* sf = sb->GetFunctionByNameInChain(STR("SetContent")))
+            UObject* circleSb = UObjectGlobals::StaticConstructObject(sbP);
+            if (circleSb)
             {
-                auto* p = findParam(sf, STR("Content"));
-                int sz = sf->GetParmsSize();
-                std::vector<uint8_t> bb(sz, 0);
-                if (p) *reinterpret_cast<UObject**>(bb.data() + p->GetOffset_Internal()) = ov;
-                safeProcessEvent(sb, sf, bb.data());
-            }
-
-            // Frame image (or fallback solid color if texture missing).
-            FStaticConstructObjectParameters imgP(imgCls, outer);
-            UObject* img = UObjectGlobals::StaticConstructObject(imgP);
-            if (img)
-            {
-                if (frameTex && setBrushFn) umgSetBrush(img, frameTex, setBrushFn);
-                if (auto* fn = img->GetFunctionByNameInChain(STR("SetColorAndOpacity")))
+                jw_setSizeBoxOverride(circleSb, 158.0f, 158.0f);
+                FStaticConstructObjectParameters ovP(ovCls, outer);
+                UObject* circleOv = UObjectGlobals::StaticConstructObject(ovP);
+                if (circleOv)
                 {
-                    int sz = fn->GetParmsSize();
-                    std::vector<uint8_t> bb(sz, 0);
-                    auto* p = findParam(fn, STR("InColorAndOpacity"));
-                    if (p) {
-                        auto* c = reinterpret_cast<float*>(bb.data() + p->GetOffset_Internal());
-                        c[0] = 1.0f; c[1] = 1.0f; c[2] = 1.0f; c[3] = 1.0f;
-                        safeProcessEvent(img, fn, bb.data());
+                    if (auto* sf = circleSb->GetFunctionByNameInChain(STR("SetContent")))
+                    {
+                        std::vector<uint8_t> bb(sf->GetParmsSize(), 0);
+                        if (auto* p = findParam(sf, STR("Content")))
+                            *reinterpret_cast<UObject**>(bb.data() + p->GetOffset_Internal()) = circleOv;
+                        safeProcessEvent(circleSb, sf, bb.data());
+                    }
+
+                    // Frame image (full).
+                    FStaticConstructObjectParameters imgP(imgCls, outer);
+                    UObject* frameImg = UObjectGlobals::StaticConstructObject(imgP);
+                    if (frameImg)
+                    {
+                        if (frameTex && setBrushFn) umgSetBrush(frameImg, frameTex, setBrushFn);
+                        if (auto* fn = frameImg->GetFunctionByNameInChain(STR("SetColorAndOpacity")))
+                        {
+                            std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
+                            if (auto* p = findParam(fn, STR("InColorAndOpacity")))
+                            {
+                                auto* c = reinterpret_cast<float*>(bb.data() + p->GetOffset_Internal());
+                                c[0] = 1.0f; c[1] = 1.0f; c[2] = 1.0f; c[3] = 1.0f;
+                                safeProcessEvent(frameImg, fn, bb.data());
+                            }
+                        }
+                        addToOverlay(circleOv, frameImg);
+                    }
+
+                    // Label TextBlock - top-center inside circle.
+                    FStaticConstructObjectParameters tbLP(tbCls, outer);
+                    UObject* labelTb = UObjectGlobals::StaticConstructObject(tbLP);
+                    if (labelTb)
+                    {
+                        umgSetText(labelTb, labelText);
+                        umgSetTextColor(labelTb, 1.0f, 0.95f, 0.78f, 1.0f);
+                        UObject* sl = addToOverlay(circleOv, labelTb);
+                        if (sl)
+                        {
+                            if (auto* fnH = sl->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                            { std::vector<uint8_t> bb(fnH->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(sl, fnH, bb.data()); }
+                            if (auto* fnV = sl->GetFunctionByNameInChain(STR("SetVerticalAlignment")))
+                            { std::vector<uint8_t> bb(fnV->GetParmsSize(), 0); bb[0] = 0; safeProcessEvent(sl, fnV, bb.data()); }
+                            umgSetSlotPadding(sl, 0, 18, 0, 0);
+                        }
+                    }
+
+                    // Value TextBlock - full-center (the number).
+                    FStaticConstructObjectParameters tbVP(tbCls, outer);
+                    UObject* valueTb = UObjectGlobals::StaticConstructObject(tbVP);
+                    if (valueTb)
+                    {
+                        umgSetText(valueTb, initialValueText);
+                        umgSetTextColor(valueTb, 1.0f, 1.0f, 1.0f, 1.0f);
+                        UObject* sl = addToOverlay(circleOv, valueTb);
+                        if (sl)
+                        {
+                            if (auto* fnH = sl->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                            { std::vector<uint8_t> bb(fnH->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(sl, fnH, bb.data()); }
+                            if (auto* fnV = sl->GetFunctionByNameInChain(STR("SetVerticalAlignment")))
+                            { std::vector<uint8_t> bb(fnV->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(sl, fnV, bb.data()); }
+                        }
+                        outLabel = valueTb;
                     }
                 }
-                addToOverlay(ov, img);
-            }
 
-            // Main label+value text - centered. Now contains just
-            // "label\nvalue" (no key suffix - the key marker is its own
-            // textblock at the bottom of the cell, NBB-toolbar style).
-            FStaticConstructObjectParameters tbP(tbCls, outer);
-            UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
-            if (tb)
-            {
-                umgSetText(tb, initialText);
-                umgSetTextColor(tb, 1.0f, 0.95f, 0.78f, 1.0f);
-                UObject* tbSlot = addToOverlay(ov, tb);
-                if (tbSlot)
+                // Add circle to outer VBox - center horizontally.
+                UObject* circleSlot = addToVBox(vbox, circleSb);
+                if (circleSlot)
                 {
-                    if (auto* fnH = tbSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
-                    { int sz = fnH->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 2; /*Center*/ safeProcessEvent(tbSlot, fnH, bb.data()); }
-                    if (auto* fnV = tbSlot->GetFunctionByNameInChain(STR("SetVerticalAlignment")))
-                    { int sz = fnV->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 2; /*Center*/ safeProcessEvent(tbSlot, fnV, bb.data()); }
+                    if (auto* fnH = circleSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                    { std::vector<uint8_t> bb(fnH->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(circleSlot, fnH, bb.data()); }
                 }
-                outLabel = tb;
             }
 
-            // v6.21.32 - Key marker, bottom-center. NBB-toolbar style:
-            // small grey rect background image (T_UI_Icon_Input_Blank_Rect)
-            // with a white TextBlock overlaid. Both anchored bottom-center
-            // of the cell so they stack visually.
+            // ---- Key pill SizeBox(88x40) BELOW the circle ----
             if (keyBgTex && setBrushFn)
             {
-                FStaticConstructObjectParameters kbP(imgCls, outer);
-                UObject* kbImg = UObjectGlobals::StaticConstructObject(kbP);
-                if (kbImg)
+                FStaticConstructObjectParameters pillSbP(sbCls, outer);
+                UObject* pillSb = UObjectGlobals::StaticConstructObject(pillSbP);
+                if (pillSb)
                 {
-                    umgSetBrush(kbImg, keyBgTex, setBrushFn);
-                    if (s_off_brush >= 0)
+                    jw_setSizeBoxOverride(pillSb, 88.0f, 40.0f);
+                    FStaticConstructObjectParameters pillOvP(ovCls, outer);
+                    UObject* pillOv = UObjectGlobals::StaticConstructObject(pillOvP);
+                    if (pillOv)
                     {
-                        uint8_t* base = reinterpret_cast<uint8_t*>(kbImg);
-                        *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 64.0f;
-                        *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 28.0f;
+                        if (auto* sf = pillSb->GetFunctionByNameInChain(STR("SetContent")))
+                        {
+                            std::vector<uint8_t> bb(sf->GetParmsSize(), 0);
+                            if (auto* p = findParam(sf, STR("Content")))
+                                *reinterpret_cast<UObject**>(bb.data() + p->GetOffset_Internal()) = pillOv;
+                            safeProcessEvent(pillSb, sf, bb.data());
+                        }
+                        // Grey bg image - full pill area.
+                        FStaticConstructObjectParameters imgP(imgCls, outer);
+                        UObject* pillBg = UObjectGlobals::StaticConstructObject(imgP);
+                        if (pillBg)
+                        {
+                            umgSetBrush(pillBg, keyBgTex, setBrushFn);
+                            if (s_off_brush >= 0)
+                            {
+                                uint8_t* base = reinterpret_cast<uint8_t*>(pillBg);
+                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeX()) = 88.0f;
+                                *reinterpret_cast<float*>(base + s_off_brush + brushImageSizeY()) = 40.0f;
+                            }
+                            umgSetOpacity(pillBg, 0.9f);
+                            addToOverlay(pillOv, pillBg);
+                        }
+                        // Key TextBlock - center, larger font.
+                        FStaticConstructObjectParameters tbKP(tbCls, outer);
+                        UObject* keyTb = UObjectGlobals::StaticConstructObject(tbKP);
+                        if (keyTb)
+                        {
+                            umgSetText(keyTb, initialKeyText);
+                            umgSetTextColor(keyTb, 1.0f, 1.0f, 1.0f, 1.0f);
+                            umgSetFontSize(keyTb, 22);  // larger than default
+                            UObject* sl = addToOverlay(pillOv, keyTb);
+                            if (sl)
+                            {
+                                if (auto* fnH = sl->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                                { std::vector<uint8_t> bb(fnH->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(sl, fnH, bb.data()); }
+                                if (auto* fnV = sl->GetFunctionByNameInChain(STR("SetVerticalAlignment")))
+                                { std::vector<uint8_t> bb(fnV->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(sl, fnV, bb.data()); }
+                            }
+                            outKeyLbl = keyTb;
+                        }
                     }
-                    umgSetOpacity(kbImg, 0.85f);
-                    UObject* ks = addToOverlay(ov, kbImg);
-                    if (ks)
+                    UObject* pillSlot = addToVBox(vbox, pillSb);
+                    if (pillSlot)
                     {
-                        if (auto* fnH = ks->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
-                        { int sz = fnH->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 2; /*Center*/ safeProcessEvent(ks, fnH, bb.data()); }
-                        if (auto* fnV = ks->GetFunctionByNameInChain(STR("SetVerticalAlignment")))
-                        { int sz = fnV->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 3; /*Bottom*/ safeProcessEvent(ks, fnV, bb.data()); }
-                        umgSetSlotPadding(ks, 0, 0, 0, 8);
+                        if (auto* fnH = pillSlot->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
+                        { std::vector<uint8_t> bb(fnH->GetParmsSize(), 0); bb[0] = 2; safeProcessEvent(pillSlot, fnH, bb.data()); }
+                        umgSetSlotPadding(pillSlot, 0, 6, 0, 0);
                     }
                 }
             }
-            // Key text (white, on top of the grey bg) - bottom center.
-            FStaticConstructObjectParameters tbKP(tbCls, outer);
-            UObject* tbKey = UObjectGlobals::StaticConstructObject(tbKP);
-            if (tbKey)
-            {
-                umgSetText(tbKey, initialKeyText);
-                umgSetTextColor(tbKey, 1.0f, 1.0f, 1.0f, 1.0f);
-                UObject* ks = addToOverlay(ov, tbKey);
-                if (ks)
-                {
-                    if (auto* fnH = ks->GetFunctionByNameInChain(STR("SetHorizontalAlignment")))
-                    { int sz = fnH->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 2; /*Center*/ safeProcessEvent(ks, fnH, bb.data()); }
-                    if (auto* fnV = ks->GetFunctionByNameInChain(STR("SetVerticalAlignment")))
-                    { int sz = fnV->GetParmsSize(); std::vector<uint8_t> bb(sz, 0); bb[0] = 3; /*Bottom*/ safeProcessEvent(ks, fnV, bb.data()); }
-                    umgSetSlotPadding(ks, 0, 0, 0, 10);
-                }
-                outKeyLbl = tbKey;
-            }
-            return sb;
+            return vbox;
         }
 
         void createRotationDisplay()
@@ -1260,9 +1323,9 @@
             if (topHBox)
             {
                 UObject* stepCell = buildRotCell(outer, sizeBoxClass, overlayClass,
-                                                 imageClass, textBlockClass,
-                                                 frameTex, setBrushFn, L"Degrees\n0°",
-                                                 m_rotDisplayStep,
+                                                 imageClass, textBlockClass, vboxClass,
+                                                 frameTex, setBrushFn,
+                                                 L"Degrees", L"0°", m_rotDisplayStep,
                                                  keyBgTex, L"F9", m_rotDisplayStepKey);
                 if (stepCell)
                 {
@@ -1308,14 +1371,17 @@
                     if (p) *reinterpret_cast<UObject**>(bb.data() + p->GetOffset_Internal()) = cell;
                     safeProcessEvent(botHBox, addFn, bb.data());
                 };
-                addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass,
-                                            frameTex, setBrushFn, L"Yaw\n0°", m_rotDisplayYaw,
+                addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass, vboxClass,
+                                            frameTex, setBrushFn,
+                                            L"Yaw", L"0°", m_rotDisplayYaw,
                                             keyBgTex, L"R", m_rotDisplayYawKey));
-                addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass,
-                                            frameTex, setBrushFn, L"Pitch\n0°", m_rotDisplayPitch,
+                addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass, vboxClass,
+                                            frameTex, setBrushFn,
+                                            L"Pitch", L"0°", m_rotDisplayPitch,
                                             keyBgTex, L"T", m_rotDisplayPitchKey));
-                addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass,
-                                            frameTex, setBrushFn, L"Roll\n0°", m_rotDisplayRoll,
+                addCellToHbox(buildRotCell(outer, sizeBoxClass, overlayClass, imageClass, textBlockClass, vboxClass,
+                                            frameTex, setBrushFn,
+                                            L"Roll", L"0°", m_rotDisplayRoll,
                                             keyBgTex, L"Y", m_rotDisplayRollKey));
                 auto* vbAdd = vbox->GetFunctionByNameInChain(STR("AddChildToVerticalBox"));
                 if (vbAdd) {
@@ -1431,16 +1497,17 @@
                 return std::to_wstring(iv) + L"\xB0";
             };
 
-            // Main label+value lines (no key suffix - key is in the
-            // bottom-of-cell pill).
+            // Value-only TextBlock - just the number. The static label
+            // ("Pitch" / "Yaw" / etc.) is a separate TextBlock at top of
+            // the circle, set once at create time.
             if (m_rotDisplayStep)
             {
                 int step = s_overlay.rotationStep.load();
-                umgSetText(m_rotDisplayStep, L"Degrees\n" + std::to_wstring(step) + L"\xB0");
+                umgSetText(m_rotDisplayStep, std::to_wstring(step) + L"\xB0");
             }
-            if (m_rotDisplayYaw)   umgSetText(m_rotDisplayYaw,   L"Yaw\n"   + fmt(yaw));
-            if (m_rotDisplayPitch) umgSetText(m_rotDisplayPitch, L"Pitch\n" + fmt(pitch));
-            if (m_rotDisplayRoll)  umgSetText(m_rotDisplayRoll,  L"Roll\n"  + fmt(roll));
+            if (m_rotDisplayYaw)   umgSetText(m_rotDisplayYaw,   fmt(yaw));
+            if (m_rotDisplayPitch) umgSetText(m_rotDisplayPitch, fmt(pitch));
+            if (m_rotDisplayRoll)  umgSetText(m_rotDisplayRoll,  fmt(roll));
 
             // Bottom-of-cell key markers - refresh from current bindings.
             std::wstring kStep  = keyName(s_bindings[BIND_ROTATION].key);
