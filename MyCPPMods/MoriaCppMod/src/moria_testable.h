@@ -27,7 +27,7 @@ namespace MoriaMods
 {
 
 
-    // v6.4.2 — UTF-8 conversion helper for bubble display names.
+    // UTF-8 conversion helper for bubble display names.
     static std::string wideToUtf8(const std::wstring& w)
     {
         if (w.empty()) return {};
@@ -40,7 +40,7 @@ namespace MoriaMods
         return out;
     }
 
-    // v6.4.3 — Wide-path file I/O helpers. Windows std::ifstream/ofstream interpret
+    // Wide-path file I/O helpers. Windows std::ifstream/ofstream interpret
     // const char* paths as the active code page (CP_ACP / CP_1252), NOT UTF-8. Steam's
     // folder name "Return to Moria™" produces UTF-8 bytes 0xE2 0x84 0xA2 that decode as
     // garbage in CP_1252, so file-open silently fails. Convert UTF-8 → UTF-16 and use the

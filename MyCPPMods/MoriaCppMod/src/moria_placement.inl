@@ -926,7 +926,7 @@
         }
 
 
-        // v6.20.26 — build a 16-byte FMor*RecipeRowHandle from a row name + DT.
+        // build a 16-byte FMor*RecipeRowHandle from a row name + DT.
         // Layout: [DT* 8 bytes][FName.CI 4][FName.Number 4]. Returns true on success.
         // Used by both F-key and target-build DIRECT paths so they share one
         // robust path: rebuilds the handle from the still-valid row name on
@@ -1248,7 +1248,7 @@
                                             m_recipeSlots[slot].hasHandle);
 
 
-            // v6.20.26 — DIRECT path: always rebuild handle from rowName.
+            // DIRECT path: always rebuild handle from rowName.
             // Was: trusted cached recipeHandle (with raw DT pointer that ages out
             // across world transitions / GC). User reported "occasionally F#
             // does nothing" — consistent with stale DT pointer in cached handle:
@@ -1354,7 +1354,7 @@
             m_pendingQuickBuildSlot = -1;
             m_qbStartTime = GetTickCount64();
 
-            // v6.20.44 — DIRECT path UNIFIED with F1-F8 startOrSwitchBuild.
+            // DIRECT path UNIFIED with F1-F8 startOrSwitchBuild.
             // Previously SHIFT+] success path skipped m_deferHideAndRefresh /
             // m_buildMenuWasOpen / updateBuildersBar / cooldown gate, which
             // user reports caused inconsistent ghost spawning. This now

@@ -290,7 +290,7 @@
             }
         }
 
-        // v6.4.2 — Compute bubble-local coords from world coords by subtracting the current
+        // Compute bubble-local coords from world coords by subtracting the current
         // bubble's WorldTransform.Translation. FTransform layout in UE4.27:
         //   0x00..0x0F FQuat Rotation    (16 bytes, SSE-aligned)
         //   0x10..0x1F FVector Translation (12 bytes + 4 padding)
@@ -839,7 +839,7 @@
                         sr.posZ = pz;
                         sr.bubbleId = m_currentBubbleId;
                         sr.bubbleName = wideToUtf8(m_currentBubbleName);
-                        // v6.4.2 — capture bubble-local coords (relative to bubble origin)
+                        // capture bubble-local coords (relative to bubble origin)
                         computeBubbleLocal(m_currentBubble, px, py, pz, sr.localX, sr.localY, sr.localZ);
                         m_savedRemovals.push_back(sr);
                         m_appliedRemovals.push_back(true);

@@ -47,7 +47,7 @@
         // (Quick Build F-keys, etc.) check this and bail out so user
         // keypresses for rebind don't trigger gameplay actions.
         bool m_settingsScreenOpen{false};
-        // v6.20.21 — auto-recover from missed Hide hook. If flag is set but the
+        // auto-recover from missed Hide hook. If flag is set but the
         // native widget pointer is dead, the OnAfterHide hook didn't fire
         // (sometimes happens during world transition / unusual screen close).
         // Without this, F-keys silently swallow forever after that.
@@ -69,9 +69,9 @@
         // Cached UClasses used to spawn rows in the keymap tab.
         UClass* m_settingsKeySelectorCls{nullptr};
         UClass* m_settingsSectionHeadingCls{nullptr};
-        UClass* m_settingsCheckBoxCls{nullptr};   // v0.32 — for ON/OFF toggles
-        UClass* m_settingsCarouselCls{nullptr};   // v0.33 — for cycle rows (tweaks)
-        // v0.37 — captured FSlateBrush bytes from a native CheckIcon
+        UClass* m_settingsCheckBoxCls{nullptr};   // for ON/OFF toggles
+        UClass* m_settingsCarouselCls{nullptr};   // for cycle rows (tweaks)
+        // captured FSlateBrush bytes from a native CheckIcon
         // (MinimapLock or StreamerMode). Pasted onto each spawned
         // checkbox's CheckIcon so the check graphic actually displays.
         // FSlateBrush is ~136 bytes in UE 4.27.
@@ -360,7 +360,7 @@
         // (Flying Dwarf, Duplicate Target — new in v6.8.0) show "(unbound)".
         std::vector<ModKeymapRow> buildModKeymapRows()
         {
-            // v0.28 — six binds (Set Rotation, Pitch Rotate, Roll Rotate,
+            // six binds (Set Rotation, Pitch Rotate, Roll Rotate,
             // Trash Item, Replenish Item, Remove Attributes) MOVED into
             // native sections (Building / Inventory and Items) via
             // injectIntoNativeSection(). This MOD KEY BINDINGS section
@@ -906,7 +906,7 @@
             }
 
             // ── Mod Key Bindings section ───────────────────────────────
-            // v6.20.24 — siblingIdx + withShift fields:
+            // siblingIdx + withShift fields:
             //   - "Flying Dwarf"     = SHIFT + s_bindings[11].key  (\ default)
             //   - "Duplicate Target" = SHIFT + s_bindings[12].key  (] default)
             // Previously these rows had bindIdx=-1 and vk=0, which caused
@@ -947,7 +947,7 @@
                 if (row) {
                     addToScrollBox(scrollBox, row);
                     applyDefaultChordToSelector(row, vk, m.withShift);
-                    // v6.20.25 — modBits must reflect withShift so
+                    // modBits must reflect withShift so
                     // tickReapplyModifierPrefixes draws the SHIFT glyph.
                     // Was 0 in v6.20.24 — Flying Dwarf / Duplicate Target
                     // rows showed bare key without the SHIFT prefix.
@@ -962,7 +962,7 @@
             // Inventory and Items (EquipmentHeading): Trash Item, Replenish Item, Remove Attributes
             struct NativeMove { const wchar_t* label; int bindIdx; const char* iniKey;
                                 const wchar_t* headingMember; };
-            // v0.30 — Snap Toggle added under Building.
+            // Snap Toggle added under Building.
             static const NativeMove moves[] = {
                 { STR("Set Rotation"),       8,  "Rotation",          STR("ConstructionHeading") },
                 { STR("Snap Toggle"),        9,  "SnapToggle",        STR("ConstructionHeading") },
@@ -1001,7 +1001,7 @@
             m_keymapInjectedFor = FWeakObjectPtr(editMapTab);
         }
 
-        // v0.28 — Insert a row into the keymap ScrollBox right before the
+        // Insert a row into the keymap ScrollBox right before the
         // next SectionHeading after `headingMemberName` — i.e. at the end
         // of that heading's section. Public-API path: collect the tail
         // starting at insertion index, RemoveChildAt them (highest first
@@ -1393,7 +1393,7 @@
 
                 UObject* glyph = r.modGlyphImg.Get();
 
-                // v6.20.3 — fix #3a (white squares on Trash/Replenish/RemoveAttrs).
+                // fix #3a (white squares on Trash/Replenish/RemoveAttrs).
                 // The lazy-create below always built the ScaleBox+Image
                 // scaffold then relied on Collapsed visibility to hide it
                 // for plain-key rows. The Image had no Brush.ResourceObject
@@ -1576,7 +1576,7 @@
                      std::wstring(r.iniKey.begin(), r.iniKey.end()).c_str(),
                      keyStr.c_str(), isShift ? STR("Y") : STR("N"));
 
-                // v6.20.3 — fix #3b (bare-modifier capture). The BP's
+                // fix #3b (bare-modifier capture). The BP's
                 // UInputKeySelector captures bare Shift/Ctrl/Alt instantly
                 // and exits selecting mode, firing OnKeySelectedBP with
                 // key="Shift" (no modifier flags). The user expected to
@@ -1771,14 +1771,14 @@
         // ProcessEvent post-hook on OnMenuButtonClicked can dispatch.
         enum class GameOptKind { None, Rename, Save, Unlock, ReadAll, ClearBuffs,
                                   ToggleNoCollision, TogglePeace,
-                                  // v6.20.30 — Confirm/Cancel buttons on the in-game
+                                  // Confirm/Cancel buttons on the in-game
                                   // WBP_UI_RenameWorldModal_C used as our character
                                   // rename UI (replaces the home-rolled dialog).
                                   RenameModalConfirm, RenameModalCancel };
         struct GameOptButton {
             FWeakObjectPtr widget;
             GameOptKind    kind;
-            bool           fromPauseMenu{false}; // v6.20.27 — protect from Gameplay-tab clear
+            bool           fromPauseMenu{false}; // protect from Gameplay-tab clear
         };
         std::vector<GameOptButton> m_gameOptButtons;
         UClass* m_frontEndButtonCls{nullptr};
@@ -2048,7 +2048,7 @@
             // ─────────────────────────────────────────────────────────
             if (m_gameplayTabInjectedFor.Get() == gameplayTab) return; // idempotent
 
-            // v6.20.27 — preserve pause-menu entries (same reason as Gameplay-Cheats path).
+            // preserve pause-menu entries (same reason as Gameplay-Cheats path).
             std::erase_if(m_gameOptButtons,
                 [](const GameOptButton& g) { return !g.fromPauseMenu; });
 
@@ -2057,7 +2057,7 @@
                 if (UObject* hd = spawnSectionHeading(STR("Mod Game Options")))
                     appendToVerticalBox(parentPanel, hd);
             }
-            // v0.50 — 5 action buttons (Rename/Save/Unlock/Read All/
+            // 5 action buttons (Rename/Save/Unlock/Read All/
             // Clear All Buffs) moved to the in-game pause menu
             // (UI_WBP_EscapeMenu2_C → injectPauseMenuButtons). Only the
             // two toggle buttons remain on the Gameplay tab here.
@@ -2080,7 +2080,7 @@
             m_gameplayTabInjectedFor = FWeakObjectPtr(gameplayTab);
         }
 
-        // v0.50 — Insert child into a UVerticalBox at a specific index.
+        // Insert child into a UVerticalBox at a specific index.
         // Uses InsertChildAt UFunction so we can place mod buttons in the
         // middle of the native button stack (e.g. above LeaveButton).
         // Falls back to AddChild on failure.
@@ -2107,7 +2107,7 @@
             safeProcessEvent(vbox, fn, b.data());
         }
 
-        // v0.50 — find the slot index of a named child widget within a
+        // find the slot index of a named child widget within a
         // UPanelWidget's Slots array. Used to position our injected
         // buttons relative to known native buttons (e.g. before LeaveButton).
         // Returns -1 if not found.
@@ -2126,7 +2126,7 @@
             return -1;
         }
 
-        // v0.50 — Inject the 5 mod action buttons into the pause menu
+        // Inject the 5 mod action buttons into the pause menu
         // (UI_WBP_EscapeMenu2_C → VerticalBox_0). Buttons reuse the same
         // spawnGameOptButton path as the (former) Gameplay-tab buttons,
         // so click dispatch flows through the existing
@@ -2163,7 +2163,7 @@
             auto* wtPtr = escapeMenu->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
             UObject* outer = (wtPtr && *wtPtr) ? *wtPtr : escapeMenu;
 
-            // v0.56 — ALL CAPS labels for uniformity with native buttons
+            // ALL CAPS labels for uniformity with native buttons
             // ("RETURN TO GAME", "SETTINGS", "FREE CAM"). Click dispatch
             // matches by widget pointer, not by label, so casing never
             // affects which handler fires.
@@ -2203,14 +2203,14 @@
             int added = 0;
             for (const auto& s : specs)
             {
-                // v6.20.27 — fromPauseMenu=true so Settings → Gameplay tab's
+                // fromPauseMenu=true so Settings → Gameplay tab's
                 // m_gameOptButtons.clear() doesn't wipe these out (caused
                 // SAVE GAME / RENAME / etc. to silently no-op after the user
                 // opened the Gameplay tab).
                 UObject* btn = spawnGameOptButton(outer, s.label, s.kind, /*fromPauseMenu=*/true);
                 if (!btn) continue;
                 if (auto* smPtr = btn->GetValuePtrByPropertyNameInChain<bool>(STR("SmallText")))
-                    *smPtr = true; // v0.56 — match SETTINGS/FREE CAM size
+                    *smPtr = true; // match SETTINGS/FREE CAM size
                 modButtons.push_back(btn);
                 ++added;
             }
@@ -2301,7 +2301,7 @@
         // re-showing the native children we want hidden in Cheats mode.
         // Throttled to ~5 Hz to keep CPU low.
         uint64_t m_lastCheatsReapplyMs{0};
-        // v0.32 — Spawn a buff toggle row using the native
+        // Spawn a buff toggle row using the native
         // WBP_SettingsCheckBox_C widget (same as Crossplay/Vibration).
         // Visual is a real checkbox; click flips state via toggleBuffEntry.
         // Falls back to KeySelector if checkbox class isn't cached yet.
@@ -2345,7 +2345,7 @@
             return row;
         }
 
-        // v0.27 — Spawn a row for a tweak cycle. Status text shows the
+        // Spawn a row for a tweak cycle. Status text shows the
         // current value label (e.g. "DEFAULT", "99", "999", "2x").
         UObject* spawnTweakCycleRow(int tweakIdx)
         {
@@ -2393,7 +2393,7 @@
             return row;
         }
 
-        // v0.32 — Cache the WBP_SettingsCheckBox_C UClass by probing the
+        // Cache the WBP_SettingsCheckBox_C UClass by probing the
         // Gameplay tab's `MinimapLock` (or `StreamerMode`) member. Same
         // technique used for KeySelector / SectionHeading classes.
         bool ensureSettingsCheckBoxClassCached(UObject* gameplayTabAny)
@@ -2422,7 +2422,7 @@
                 {
                     if (!m_settingsCheckBoxCls)
                         m_settingsCheckBoxCls = static_cast<UClass*>(w->GetClassPrivate());
-                    // v0.37 — also capture the CheckIcon brush bytes so
+                    // also capture the CheckIcon brush bytes so
                     // we can paste them onto our spawned checkboxes.
                     if (!m_checkIconBrushCaptured)
                     {
@@ -2450,7 +2450,7 @@
             return false;
         }
 
-        // v0.32 — CheckBox toggle row tracking. Each entry maps the
+        // CheckBox toggle row tracking. Each entry maps the
         // spawned WBP_SettingsCheckBox_C to a callback fired on state
         // change. Status text is gone — the native checkbox visual IS
         // the status indicator (checked = ON).
@@ -2462,7 +2462,7 @@
         };
         std::vector<CheckBoxRow> m_checkBoxRows;
 
-        // v0.44 — replace native checkbox with a 2-option carousel
+        // replace native checkbox with a 2-option carousel
         // (OFF / ON). The carousel widget actually works (we use it for
         // tweaks). Each toggle row tracks the carousel + an onChanged
         // callback. Click prev/next arrow → flip state.
@@ -2473,7 +2473,7 @@
         };
         std::vector<CarouselToggleRow> m_carouselToggles;
 
-        // v0.44 — toggle row spawned as a 2-option Carousel (OFF/ON).
+        // toggle row spawned as a 2-option Carousel (OFF/ON).
         // The native checkbox widget never showed its check mark for our
         // dynamically-spawned instances; the carousel always works.
         UObject* spawnCheckBoxRow(const wchar_t* label,
@@ -2570,7 +2570,7 @@
                     }
                 }
             }
-            // v0.41 — diagnostic: dump Vibration's CheckIcon (a known
+            // diagnostic: dump Vibration's CheckIcon (a known
             // working native checkbox on the Controller tab) and
             // compare to ours after spawn so we can see what's different.
             static bool s_dumpedVibrationCompare = false;
@@ -2616,7 +2616,7 @@
                 }
             }
 
-            // v0.39 — set CheckIcon's brush via SetBrushFromTexture
+            // set CheckIcon's brush via SetBrushFromTexture
             // UFunction with the F12 menu's known-good T_UI_Icon_Check
             // texture. The byte-copy approach didn't render properly.
             if (auto* iconPtr = row->GetValuePtrByPropertyNameInChain<UObject*>(STR("CheckIcon")))
@@ -2666,7 +2666,7 @@
             for (auto& cbr : m_checkBoxRows)
             {
                 if (cbr.widget.Get() != widget) continue;
-                // v0.42 — swallow the delegate when the change came from
+                // swallow the delegate when the change came from
                 // our own SetIsChecked call. Prevents user-state ping-pong.
                 if (cbr.ignoreNextStateChange) {
                     cbr.ignoreNextStateChange = false;
@@ -2680,7 +2680,7 @@
             return false;
         }
 
-        // v0.40 — also store the original label per checkbox so we can
+        // also store the original label per checkbox so we can
         // prepend "✓ " when on. The native CheckIcon UImage approach
         // didn't render reliably (4 attempts), so we take the visual
         // signal into the OptionNameTextBlock label itself.
@@ -2695,14 +2695,14 @@
                 if (!w || !isObjectAlive(w)) continue;
                 bool on = cbr.getCurrent ? cbr.getCurrent() : false;
 
-                // v0.42 — DO NOT call SetIsChecked here. It fires the
+                // DO NOT call SetIsChecked here. It fires the
                 // OnCheckBoxStateChanged delegate which would ping-pong
                 // user toggles. The user sees the gold ring (UCheckBox's
                 // own visual) which reflects the actual click state.
                 // We only update the LABEL prefix and CheckIcon UImage
                 // visibility based on m_buffStates.
 
-                // v0.43 — no label prefix (user explicitly didn't want it).
+                // no label prefix (user explicitly didn't want it).
                 // Just keep the inner UCheckBox.CheckedState in sync via
                 // direct property write + SynchronizeProperties so the
                 // Slate widget renders the proper checkmark.
@@ -2734,7 +2734,7 @@
             }
         }
 
-        // v0.33 — Carousel row tracking + helpers. Each row maps to a
+        // Carousel row tracking + helpers. Each row maps to a
         // tweakIdx; the carousel exposes preset values, click on
         // </> arrow buttons cycles to next/prev option which fires
         // CarouselValueChanged with the new value string.
@@ -2838,7 +2838,7 @@
                     safeProcessEvent(row, svFn, b.data());
                 }
             }
-            // v0.36 — also write OptionText directly so the displayed
+            // also write OptionText directly so the displayed
             // label matches the current INI selection on first paint.
             // (The BP's display logic depends on ValueArray which our
             // dynamic Add Option calls may not populate cleanly.)
@@ -2930,7 +2930,7 @@
             return false;
         }
 
-        // v0.34 — fallback for when the BP carousel doesn't fire its
+        // fallback for when the BP carousel doesn't fire its
         // CarouselValueChanged delegate (e.g. ValueArray not populated).
         // Detects raw clicks on the inner Prev/Next UButtons by walking
         // the click target's Outer chain to find one of our tracked
@@ -3034,7 +3034,7 @@
             return true;
         }
 
-        // v0.33 — Build a label-left + button-right row for action items
+        // Build a label-left + button-right row for action items
         // (Rename Character, Save Game, Unlock Recipes, Read All, Clear
         // All Buffs). Returns the HBox row; the inner FrontEndButton is
         // tracked as the click target in m_gameOptButtons.
@@ -3058,7 +3058,7 @@
             UObject* row = UObjectGlobals::StaticConstructObject(hP);
             if (!row) return nullptr;
 
-            // v0.35 — two equal-width columns. Each column fills 50% of
+            // two equal-width columns. Each column fills 50% of
             // the row; content within each is centered horizontally and
             // vertically. Label uses size 32 (larger), button keeps its
             // own BP-default font (looks smaller relative to the label).
@@ -3078,7 +3078,7 @@
                 }
             }
 
-            // v0.38 — use spawnGameOptButton (the proven path) so the
+            // use spawnGameOptButton (the proven path) so the
             // button registers in m_gameOptButtons exactly like CP4 used
             // to. Then put it inside our HBox row.
             UObject* btn = spawnGameOptButton(outer, buttonText, kind);
@@ -3086,7 +3086,7 @@
             if (UObject* innerTb = jw_findChildInTree(btn, STR("ButtonText")))
                 umgSetFontSize(innerTb, 18);
 
-            // v0.35 — narrow SizeBox so the button is smaller than the
+            // narrow SizeBox so the button is smaller than the
             // 50% column width, then center it within the right column.
             UObject* btnContainer = btn;
             if (sbCls)
@@ -3120,7 +3120,7 @@
             return row;
         }
 
-        // v0.32 — ModPack row uses native checkbox.
+        // ModPack row uses native checkbox.
         UObject* spawnModPackRow(int modIdx, const std::wstring& displayName, bool /*enabled*/)
         {
             if (m_settingsCheckBoxCls)
@@ -3187,7 +3187,7 @@
             }
         }
 
-        // v0.36 — force-set Visibility via BOTH the UFunction AND a direct
+        // force-set Visibility via BOTH the UFunction AND a direct
         // byte write on the property. Some BP-managed widgets (e.g. our
         // composite HBox rows) ignore SetVisibility because their parent
         // re-applies a different value each tick.
@@ -3199,7 +3199,7 @@
             setWidgetVisibility(w, vis);
         }
 
-        // v0.40 — recursive visibility hiding. For composite HBox rows
+        // recursive visibility hiding. For composite HBox rows
         // the parent's Collapsed visibility wasn't hiding the contents,
         // so we walk the Slots chain and force every child Collapsed too.
         void setRowVisibilityDeep(UObject* w, uint8_t vis)
@@ -3223,7 +3223,7 @@
                 setRowVisibilityDeep(*singleC, vis);
         }
 
-        // v0.41 — move widgets between scrollbox (visible) and a hidden
+        // move widgets between scrollbox (visible) and a hidden
         // stash VerticalBox. Each panel keeps a slot that GC-roots the
         // widget, so swapping doesn't destroy them. Only runs on tab
         // state change (not every tick) so RemoveChild/AddChild aren't
@@ -3268,7 +3268,7 @@
                 return;
             UObject* gpVB = m_dualGameplayScroll.Get();
             UObject* chVB = m_dualCheatsScroll.Get();
-            // v0.45 — if VBox refs went null (GC), re-find by walking
+            // if VBox refs went null (GC), re-find by walking
             // scrollbox children. The first two VerticalBox children we
             // injected are gpVB then chVB, in order.
             if ((!gpVB || !chVB))
@@ -3424,7 +3424,7 @@
         //      and renders cheats-only content (native Gameplay UI +
         //      Mod Game Options collapsed; Cheats section visible).
         // For any other tab, clear the flag.
-        // v0.11 — when "Cheats" is clicked:
+        // when "Cheats" is clicked:
         //   1. Find the SettingsScreen's WBP_GameplayTab member
         //   2. Force-inject our cheats content into it (if not already)
         //   3. Hide all native gameplay children + Mod Game Options
@@ -3434,7 +3434,7 @@
         //      we've now turned into a cheats panel).
         // When any other tab is clicked: restore native children and
         // hide cheats content.
-        // v0.17 — pre-hook rewrites KeyName "Cheats" -> "Gameplay" so
+        // pre-hook rewrites KeyName "Cheats" -> "Gameplay" so
         // the framework's tab switcher displays the Gameplay widget
         // (which we visibility-swap to show cheats content). Post-hook
         // then calls navbar.SelectThisTab("Cheats") UFunction to fix
@@ -3443,7 +3443,7 @@
         // go back to KeyName rewrite which is the only working path.
         void onNavTabPressedPre(UObject* /*context*/, UFunction* fn, void* parms)
         {
-            // v0.48 — Cheats tab removed. Just track the flag for
+            // Cheats tab removed. Just track the flag for
             // legacy code paths; no KeyName rewrite.
             if (!fn || !parms) return;
             auto* p = findParam(fn, STR("KeyName"));
@@ -3488,7 +3488,7 @@
             UObject* gameplayTab = gpPtr ? *gpPtr : nullptr;
             if (!gameplayTab || !isObjectAlive(gameplayTab)) return;
 
-            // v0.46 — Option B: rebuild context content on every tab
+            // Option B: rebuild context content on every tab
             // click. forceInjectDualContent now sets up the panel
             // scaffolding (idempotent) AND respawns the active context's
             // widgets every call.
@@ -3497,7 +3497,7 @@
             // Apply visibility per active context.
             applyDualContent();
 
-            // v0.35 — apply tab-context visibility immediately.
+            // apply tab-context visibility immediately.
             applyTabContextVisibility();
 
             if (!m_cheatsTabActive) return;
@@ -3654,7 +3654,7 @@
         }
 
         // ─────────────────────────────────────────────────────────
-        // v0.11 — single-instance dual-content state.
+        // single-instance dual-content state.
         // We use the SettingsScreen's existing WBP_GameplayTab as the
         // host, and toggle two parallel widget sets (Mod Game Options
         // vs Cheats) plus the original native children.
@@ -3722,7 +3722,7 @@
                 return;
             }
 
-            // v0.48 — Option C: single Gameplay tab, all content cached.
+            // Option C: single Gameplay tab, all content cached.
             // After first inject for THIS gameplayTab, subsequent calls
             // early-return (no re-injection — duplicates eliminated).
             // If gameplayTab differs (new SettingsScreen instance), reset
@@ -3852,7 +3852,7 @@
                     injectTarget = scrollBox;
                     m_dualScrollBox = FWeakObjectPtr(scrollBox);
 
-                    // v0.43 — two VerticalBox containers inside the
+                    // two VerticalBox containers inside the
                     // ScrollBox. Tab swap = toggle visibility of these
                     // two single widgets (reliable for single-widget
                     // hide; the previous per-row HBox visibility-collapse
@@ -3908,13 +3908,13 @@
                          reparented);
                 }
             }
-            // v0.46 — record that panel setup is done so subsequent
+            // record that panel setup is done so subsequent
             // tab-swap calls skip the scrollbox creation.
             m_panelSetupFor = FWeakObjectPtr(gameplayTab);
             m_cachedOuter   = FWeakObjectPtr(outer);
         skip_panel_setup:;
 
-            // v0.43 — route widgets to one of two context containers.
+            // route widgets to one of two context containers.
             // addToGameplayCtx → gameplay tab content (native sliders +
             // Combat + Game Settings + Loaded Mods + No Coll/Peace).
             // addToCheatsCtx → cheats tab content (action buttons + God
@@ -3926,7 +3926,7 @@
                 else if (injectTarget == panel) appendToVerticalBox(panel, child);
                 else addToScrollBox(injectTarget, child);
             };
-            // v0.51 — Cheats tab is gone (Option C). Route everything
+            // Cheats tab is gone (Option C). Route everything
             // that previously went to the cheats context onto the
             // Gameplay tab instead, so God Mode + Buffs become visible.
             auto addToCheatsCtx = [&](UObject* child) {
@@ -3940,7 +3940,7 @@
 
             m_dualModGameWidgets.clear();
             m_dualCheatsWidgets.clear();
-            // v6.20.27 — preserve pause-menu entries so SAVE GAME / RENAME /
+            // preserve pause-menu entries so SAVE GAME / RENAME /
             // UNLOCK / READ ALL / CLEAR BUFFS still dispatch after the user
             // opens Settings → Gameplay tab. Was: m_gameOptButtons.clear()
             // wiped EVERYTHING including the pause-menu entries; clicks on
@@ -3992,7 +3992,7 @@
             // handlers no-op gracefully if no session.
             if (isInGame)
             {
-                // v0.48 — All content merged onto Gameplay tab, no
+                // All content merged onto Gameplay tab, no
                 // Cheats context. "Game Options" header + action buttons.
                 if (m_settingsSectionHeadingCls)
                     if (UObject* hd = spawnSectionHeading(STR("Game Options"))) {
@@ -4008,9 +4008,9 @@
                     const wchar_t* statusText;
                     float r, g, b;
                 };
-                // v0.30 — labels per user spec: Title-Case button text,
+                // labels per user spec: Title-Case button text,
                 // toggleables show ON/OFF (no PEACE/FIGHT, no SAVE NOW).
-                // v0.51 — 5 action buttons (Rename/Save/Unlock/Read All/
+                // 5 action buttons (Rename/Save/Unlock/Read All/
                 // Clear All Buffs) moved to the in-game pause menu
                 // (UI_WBP_EscapeMenu2_C → injectPauseMenuButtons). Only
                 // the two toggle rows remain on the Gameplay tab.
@@ -4020,10 +4020,10 @@
                 };
                 for (const auto& s : gSpecs)
                 {
-                    // v0.48 — spawn ALL gSpecs items (toggles + actions)
+                    // spawn ALL gSpecs items (toggles + actions)
                     // since everything lives on the Gameplay tab now.
                     UObject* row = nullptr;
-                    // v0.32 — toggle rows use native checkbox.
+                    // toggle rows use native checkbox.
                     if (s.kind == GameOptKind::ToggleNoCollision)
                     {
                         row = spawnCheckBoxRow(s.label,
@@ -4045,21 +4045,21 @@
                     }
                     else
                     {
-                        // v0.33 — action button rows use a custom HBox
+                        // action button rows use a custom HBox
                         // with a real WBP_FrontEndButton on the right.
                         row = spawnActionButtonRow(outer, s.label,
                                                    s.statusText ? s.statusText : s.label,
                                                    s.kind);
                     }
                     if (!row) continue;
-                    // v0.48 — all rows go to Gameplay panel.
+                    // all rows go to Gameplay panel.
                     addToTarget(row);
                     m_dualModGameWidgets.push_back(FWeakObjectPtr(row));
                 }
-            // v0.48 — same isInGame branch continues here. NoColl/Peace
+            // same isInGame branch continues here. NoColl/Peace
             // toggles already handled in the gSpecs loop above. Below
             // adds NoCost/Instant Craft + Combat + Game Settings + Loaded Mods.
-                // v0.32 — No Cost + Instant Craft as native checkboxes.
+                // No Cost + Instant Craft as native checkboxes.
                 {
                     int nT = 0;
                     const TweakEntry* tw = tweakEntries(nT);
@@ -4085,7 +4085,7 @@
                     }
                 }
 
-                // v0.27 — Combat section (5 buff toggles from F12 Combat).
+                // Combat section (5 buff toggles from F12 Combat).
                 if (m_settingsSectionHeadingCls)
                     if (UObject* hd = spawnSectionHeading(STR("Combat"))) {
                         addToTarget(hd);
@@ -4111,7 +4111,7 @@
                     }
                 }
 
-                // v0.27 — Game Settings section (tweak cycles, excluding
+                // Game Settings section (tweak cycles, excluding
                 // the SpecialNoCost / SpecialInstantCraft already placed
                 // in Mod Game Options).
                 if (m_settingsSectionHeadingCls)
@@ -4138,7 +4138,7 @@
                             continue;
                         }
                         if (tw[i].kind != TweakKind::TweakRow) continue; // skip Specials
-                        // v0.33 — try carousel first, fall back to keymap-row.
+                        // try carousel first, fall back to keymap-row.
                         UObject* row = nullptr;
                         if (m_settingsCarouselCls)
                         {
@@ -4166,7 +4166,7 @@
                     }
                 }
 
-                // v0.51 — God Mode + Buffs sections (relocated to land
+                // God Mode + Buffs sections (relocated to land
                 // BEFORE the "Loaded Mods" section per user request).
                 {
                     int nCheatEntries = 0;
@@ -4194,7 +4194,7 @@
                             {
                                 inGodModeSection = true;
                                 if (UObject* hd = spawnSectionHeading(STR("God Mode"))) {
-                                    addToTarget(hd); // v0.53 — direct to gpVB, no Cheats indirection
+                                    addToTarget(hd); // direct to gpVB, no Cheats indirection
                                     m_dualModGameWidgets.push_back(FWeakObjectPtr(hd));
                                 }
                             }
@@ -4216,14 +4216,14 @@
                         if (inCombatSection) continue; // Gameplay Combat section handles these
                         UObject* row = spawnBuffToggleRow(i);
                         if (!row) continue;
-                        addToTarget(row); // v0.53 — guaranteed gameplay tab
+                        addToTarget(row); // guaranteed gameplay tab
                         m_dualModGameWidgets.push_back(FWeakObjectPtr(row));
                     }
                     VLOG(STR("[SettingsUI] v0.53 — God Mode + Buffs block ran: nCheatEntries={}\n"),
                          nCheatEntries);
                 }
 
-                // v0.27 — Loaded Mods section (per-pack toggles).
+                // Loaded Mods section (per-pack toggles).
                 if (m_settingsSectionHeadingCls)
                     if (UObject* hd = spawnSectionHeading(STR("Loaded Mods"))) {
                         addToTarget(hd);
@@ -4327,7 +4327,7 @@
                  (int)m_dualModGameWidgets.size(),
                  (int)m_dualCheatsWidgets.size());
             m_dualInjectedFor = FWeakObjectPtr(gameplayTab);
-            m_dualContentCached = true; // v0.48 — early-return on repeat calls
+            m_dualContentCached = true; // early-return on repeat calls
         }
 
         // Toggle visibility of the three widget sets (native gameplay
@@ -4352,7 +4352,7 @@
         void onModGameOptionClicked(UObject* clickedButton)
         {
             if (!clickedButton) return;
-            // v0.49 — match by direct widget OR by outer-chain (when the
+            // match by direct widget OR by outer-chain (when the
             // event fires on the inner UButton, walk up to find the
             // FrontEndButton we tracked).
             UObject* matched = nullptr;
@@ -4384,13 +4384,13 @@
                 switch (g.kind)
                 {
                     case GameOptKind::Rename:
-                        showRenameDialog_v2();   // v6.20.30 — uses in-game modal
+                        showRenameDialog_v2();   // uses in-game modal
                         break;
                     case GameOptKind::RenameModalConfirm:
-                        confirmRenameDialog();   // v6.20.30 — Confirm in modal
+                        confirmRenameDialog();   // Confirm in modal
                         break;
                     case GameOptKind::RenameModalCancel:
-                        hideRenameDialog();      // v6.20.30 — Cancel in modal
+                        hideRenameDialog();      // Cancel in modal
                         break;
                     case GameOptKind::Save:
                         triggerSaveGame();
@@ -4457,7 +4457,7 @@
         // into. Idempotent guard.
         FWeakObjectPtr m_cheatsHostInjectedFor;
 
-        // v0.26 — F12-style status text for action rows. Each row using
+        // F12-style status text for action rows. Each row using
         // WBP_SettingsKeySelector_C as its visual base has its keyText
         // TextBlock overridden with a contextual word ("RENAME", "SAVE NOW",
         // "UNLOCK", "ON"/"OFF", "PEACE"/"FIGHT", etc.) instead of a key
@@ -4473,14 +4473,14 @@
         };
         std::vector<RowStatus> m_rowStatus;
 
-        // v0.37 — track the ScrollBox we inject content into so tab
+        // track the ScrollBox we inject content into so tab
         // context switches can RemoveChild / AddChild widgets directly
         // (visibility swap was unreliable).
         FWeakObjectPtr m_dualScrollBox;
-        // v0.46 — Option B: rebuild context content on every tab swap.
+        // Option B: rebuild context content on every tab swap.
         FWeakObjectPtr m_panelSetupFor;
         FWeakObjectPtr m_cachedOuter;
-        // v0.47 — Cached UWidgetSwitcher containing two VBoxes
+        // Cached UWidgetSwitcher containing two VBoxes
         // (gameplay context + cheats context). Tab swap = single
         // SetActiveWidgetIndex call. Content stays cached after first
         // injection.
@@ -4489,31 +4489,31 @@
         // v0.49b — Pause menu (UI_WBP_EscapeMenu2_C) injection. Tracks
         // which menu instance we've injected mod action buttons into.
         FWeakObjectPtr m_pauseMenuInjectedFor;
-        // v0.41 — hidden VerticalBox where we park widgets that should
+        // hidden VerticalBox where we park widgets that should
         // not be visible in the current tab context. Sibling of the
         // ScrollBox, has Visibility=Collapsed so its contents don't
         // render. Acts as a GC root for the parked widgets.
         FWeakObjectPtr m_dualHiddenStash;
-        // v0.43 — two-ScrollBox approach. Gameplay-context content goes
+        // two-ScrollBox approach. Gameplay-context content goes
         // in m_dualGameplayScroll, Cheats-context in m_dualCheatsScroll.
         // Tab swap = toggle visibility on these two single widgets,
         // which is reliable (single-widget hide vs composite-row hide).
         FWeakObjectPtr m_dualGameplayScroll;
         FWeakObjectPtr m_dualCheatsScroll;
 
-        // v0.27 — buff toggle rows (Cheats God Mode + Buffs sections,
+        // buff toggle rows (Cheats God Mode + Buffs sections,
         // and Gameplay Combat section). Each row maps to an index in
         // cheatEntries[]. Click → toggleBuffEntry(idx).
         struct BuffToggleRow { FWeakObjectPtr selector; int cheatEntryIdx; };
         std::vector<BuffToggleRow> m_buffToggleRows;
 
-        // v0.27 — tweak cycle rows (Gameplay Game Settings section).
+        // tweak cycle rows (Gameplay Game Settings section).
         // Each row maps to an index in tweakEntries[]. Click →
         // cycleTweakValue(idx).
         struct TweakCycleRow { FWeakObjectPtr selector; int tweakIdx; };
         std::vector<TweakCycleRow> m_tweakCycleRows;
 
-        // v0.27 — Loaded Mods rows (Gameplay Loaded Mods section).
+        // Loaded Mods rows (Gameplay Loaded Mods section).
         // Each row maps to an index in m_ftGameModEntries.
         struct ModPackRow { FWeakObjectPtr selector; int modIdx; };
         std::vector<ModPackRow> m_modPackRows;
@@ -4643,7 +4643,7 @@
 
         void appendCheatsTabToArray(UObject* settingsScreen)
         {
-            // v0.48 — Option C: Cheats tab removed entirely. All cheat
+            // Option C: Cheats tab removed entirely. All cheat
             // settings merged into the Gameplay tab. No tabArray
             // modification needed.
             (void)settingsScreen;
@@ -4839,7 +4839,7 @@
                     std::memset(curPtr, 0, 32);
                 return true;
             }
-            // v0.27 — Buff toggle rows (Cheats / Combat).
+            // Buff toggle rows (Cheats / Combat).
             for (auto& b : m_buffToggleRows)
             {
                 if (b.selector.Get() != selector) continue;
@@ -4849,7 +4849,7 @@
                     std::memset(curPtr, 0, 32);
                 return true;
             }
-            // v0.27 — Tweak cycle rows (Game Settings).
+            // Tweak cycle rows (Game Settings).
             for (auto& t : m_tweakCycleRows)
             {
                 if (t.selector.Get() != selector) continue;
@@ -4859,7 +4859,7 @@
                     std::memset(curPtr, 0, 32);
                 return true;
             }
-            // v0.27 — Loaded Mods rows.
+            // Loaded Mods rows.
             for (auto& m : m_modPackRows)
             {
                 if (m.selector.Get() != selector) continue;

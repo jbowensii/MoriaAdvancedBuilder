@@ -1,6 +1,6 @@
 // moria_unlock.inl — Recipe unlock + read-history clear + buff toggles + peace mode (v6.4.1)
 
-        // v6.4.1 — Cheats tab buff entry data.
+        // Cheats tab buff entry data.
         enum class CheatRowKind { ClearAllBtn, SectionHeader, BuffToggle };
         struct CheatEntry {
             CheatRowKind kind;
@@ -57,7 +57,7 @@
             return entries;
         }
 
-        // v6.4.1 — Tweaks tab entries. Each row cycles through a preset list of integer values.
+        // Tweaks tab entries. Each row cycles through a preset list of integer values.
         // Index 0 is always 0 == DEFAULT (restore originals). Multiplier tweaks interpret the
         // remaining values as "N× original"; absolute tweaks use the value directly.
         enum class TweakKind { SectionHeader, TweakRow, SpecialNoCost, SpecialInstantCraft };
@@ -705,7 +705,7 @@
             if (twApplied > 0) VLOG(STR("[Tweaks] Re-applied {} tweaks from INI\n"), twApplied);
         }
 
-        // v6.4.1 — Buff refresh tick. Re-applies every toggled-on buff every BUFF_REFRESH_MS
+        // Buff refresh tick. Re-applies every toggled-on buff every BUFF_REFRESH_MS
         // milliseconds so duration-based effects (HasDuration policy) never expire naturally.
         // Called from the main tick; cheap no-op when no buffs are active.
         // v6.6.0 fix — gate on m_characterLoaded so the timer doesn't tick before world
@@ -1355,17 +1355,17 @@
             VLOG(STR("[MarkRead] Complete — total entries marked across all phases: {}\n"), totalMarked);
             showOnScreen(L"All categories marked as read", 3.0f, 0.3f, 1.0f, 0.3f);
 
-            // v6.20.15 — chain a save so read state actually persists. Without an
+            // chain a save so read state actually persists. Without an
             // explicit save the BP-set flags don't survive a reload.
-            // v6.20.16 — delay 1s → 3s (lore BP iterates hundreds of entries).
-            // v6.20.17 — delay 3s → 6s. Crafting BP MarkAllAsRead is heavier and
+            // delay 1s → 3s (lore BP iterates hundreds of entries).
+            // delay 3s → 6s. Crafting BP MarkAllAsRead is heavier and
             // we now also chain a "pending mark on next open" pump that may fire
             // a second save. Keeping the cooldown=0 bypass.
             m_lastSaveTime = 0;
             m_saveAfterMarkAtMs = GetTickCount64() + 6000ull;
         }
 
-        // v6.20.15 — Phase 5: deferred save trigger after markAllLoreRead.
+        // Phase 5: deferred save trigger after markAllLoreRead.
         // Polled from gameThreadTick (see tickSaveAfterMarkRead below).
         uint64_t m_saveAfterMarkAtMs{0};
         void tickSaveAfterMarkRead()
@@ -1378,7 +1378,7 @@
             triggerSaveGame();
         }
 
-        // v6.20.17 — pending crafting mark-as-read. Set when markAllLoreRead found
+        // pending crafting mark-as-read. Set when markAllLoreRead found
         // no live crafting screens at press time. Poller retries every 1s for up to
         // 1h; fires MarkAllAsRead the moment a live screen appears, then schedules
         // another deferred save so the BP-side viewed flags persist.
@@ -1398,7 +1398,7 @@
             if (now - m_pendingCraftingMarkLastPollMs < 1000) return;
             m_pendingCraftingMarkLastPollMs = now;
 
-            // v6.20.20 — bulk MarkAllAsRead on live screens (BndEvt approach reverted).
+            // bulk MarkAllAsRead on live screens (BndEvt approach reverted).
             int marked = 0;
             {
                 std::vector<UObject*> screens;

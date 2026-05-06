@@ -22,7 +22,7 @@
             if (m_pendingWidgetRemovals.empty()) return;
             for (auto* w : m_pendingWidgetRemovals)
             {
-                // v6.20.23 — alive-check before deref. Between deferRemoveWidget
+                // alive-check before deref. Between deferRemoveWidget
                 // (this frame) and tick (next frame) a world transition can GC
                 // the widget. Without this, GetFunctionByNameInChain AVs.
                 if (!w || !isObjectAlive(w)) continue;
@@ -408,7 +408,7 @@
 
         void updateBuildersBar()
         {
-            // v6.20.49 — sole bar is NBB (top-of-screen). OLD UMG bar
+            // sole bar is NBB (top-of-screen). OLD UMG bar
             // removed in v6.20.48. Refresh icons + active-slot highlight.
             if (!m_newBuildingBar || !isObjectAlive(m_newBuildingBar)) return;
             populateNewBuildingBarIcons();
@@ -499,7 +499,7 @@
             }
 
 
-            // v6.20.29 — outer frame border (gold-ish line, ~2 px) wraps the
+            // outer frame border (gold-ish line, ~2 px) wraps the
             // dark panel for a game-window look. Two-Border sandwich:
             //   rootSizeBox > frameBorder (gold) > rootBorder (dark) > VBox
             // The frame's padding doubles as the visible outline width.
@@ -575,7 +575,7 @@
                 setRootWidget(widgetTree, rootBorder);
             }
 
-            // v6.20.28 — popup-style chrome: dark panel background.
+            // popup-style chrome: dark panel background.
             // Match WBP_UI_GenericPopup look: very dark blue-grey, ~88% opacity,
             // subtle inset padding. Real chrome capture deferred.
             auto* setBrushColorFn = rootBorder->GetFunctionByNameInChain(STR("SetBrushColor"));
@@ -693,7 +693,7 @@
                                 safeProcessEvent(hbox, addFn, ap.data());
                                 if (pRet) hSlot = *reinterpret_cast<UObject**>(ap.data() + pRet->GetOffset_Internal());
                                 if (hSlot) {
-                                    // v6.20.29 — write FSlateChildSize directly:
+                                    // write FSlateChildSize directly:
                                     // {float Value=1.0, uint8 SizeRule=Fill(1)}.
                                     // Earlier "InSize" UFunction call was packing the
                                     // uint8 enum incorrectly, leaving the title slot
@@ -748,7 +748,7 @@
                                 safeProcessEvent(hbox, addFn, ap.data());
                                 if (pRet2) xSlot = *reinterpret_cast<UObject**>(ap.data() + pRet2->GetOffset_Internal());
                                 if (xSlot) {
-                                    // v6.20.29 — X stays at right, takes only its
+                                    // X stays at right, takes only its
                                     // own desired size. SizeRule=Auto (0) is default
                                     // but explicitly set HAlign=Right so the X is
                                     // pinned against the title-bar's right edge.
@@ -880,7 +880,7 @@
             if (!m_targetInfoWidget) return;
 
 
-            // v6.20.28 — title bar shows "Inspect: <display name>"
+            // title bar shows "Inspect: <display name>"
             std::wstring titleText = L"Inspect";
             if (!display.empty())      titleText = L"Inspect: " + display;
             else if (!name.empty())    titleText = L"Inspect: " + name;
@@ -936,17 +936,17 @@
                 VLOG(STR("[MoriaCppMod] Target info copied to clipboard\n"));
             }
 
-            // v6.20.6 — Reverted inspect-notification add. The home-rolled
+            // Reverted inspect-notification add. The home-rolled
             // panel already shows the data the user wants; doubling up
             // with a transient notification was redundant and the
             // fallback (red box) appeared on top of the panel.
 
             m_tiShowTick = GetTickCount64();
-            // v6.20.28 — auto-hide 10s after most-recent show update
+            // auto-hide 10s after most-recent show update
             m_tiAutoHideAtMs = m_tiShowTick + 10000ull;
         }
 
-        // v6.20.28 — drag inspect window from title bar; click X to close.
+        // drag inspect window from title bar; click X to close.
         // Also handles the auto-hide timeout. Called from gameThreadTick.
         // Mouse polling because we don't have a click delegate on bare UButton
         // here — and drag tracking needs every-frame updates anyway.
@@ -1088,7 +1088,7 @@
             FStaticConstructObjectParameters sbP(sbCls, outer);
             UObject* sb = UObjectGlobals::StaticConstructObject(sbP);
             if (!sb) return nullptr;
-            jw_setSizeBoxOverride(sb, 144.0f, 144.0f); // v6.20.33 — 3× from 48
+            jw_setSizeBoxOverride(sb, 144.0f, 144.0f); // 3× from 48
 
             FStaticConstructObjectParameters ovP(ovCls, outer);
             UObject* ov = UObjectGlobals::StaticConstructObject(ovP);
@@ -1275,7 +1275,7 @@
                 safeProcessEvent(userWidget, fn, bb.data());
             }
             m_screen.refresh(findPlayerController());
-            // v6.20.33 — use saved position if any, else default (15%, 65%) —
+            // use saved position if any, else default (15%, 65%) —
             // moved away from 10%/85% which overlapped the armor HUD.
             float fX = (m_rotDispPosX >= 0.0f) ? m_rotDispPosX : 0.15f;
             float fY = (m_rotDispPosY >= 0.0f) ? m_rotDispPosY : 0.65f;
@@ -1287,7 +1287,7 @@
                  frameTex ? STR("YES") : STR("NO"), fX, fY);
         }
 
-        // v6.20.33 — Drag handling. Mouse-down on any rotation cell starts
+        // Drag handling. Mouse-down on any rotation cell starts
         // drag; LMB held updates position; falling-edge saves to ini.
         void tickRotationDisplayDrag()
         {
@@ -1376,7 +1376,7 @@
             if (m_rotDisplayRoll)  umgSetText(m_rotDisplayRoll,  L"Roll\n"  + fmt(roll));
         }
 
-        // v6.20.34 — always-visible (user can't get mouse cursor while
+        // always-visible (user can't get mouse cursor while
         // building, so hiding the widget when not-building made it
         // un-draggable). Widget stays visible all the time once character
         // is loaded; YPR values just show last-known when not actively
@@ -1599,7 +1599,7 @@
             if (widgetTree)
                 setRootWidget(widgetTree, rootBorder);
 
-            // v6.20.13 — Restyled from white-on-red error look to game-
+            // Restyled from white-on-red error look to game-
             // native dark-transparent panel with gold text. The
             // UI_WBP_NotificationFeed approach didn't work — the BP
             // renders item/recipe/lore-specific layouts, not arbitrary
@@ -1657,7 +1657,7 @@
             UObject* tb = UObjectGlobals::StaticConstructObject(tbP);
             if (!tb) return;
             umgSetText(tb, L"");
-            // v6.20.13 — game-gold text (matches the warm cream color used
+            // game-gold text (matches the warm cream color used
             // in the game's UI for highlights / important values).
             umgSetTextColor(tb, 1.0f, 0.82f, 0.45f, 1.0f);
             auto* wrapFn = tb->GetFunctionByNameInChain(STR("SetAutoWrapText"));
@@ -1677,7 +1677,7 @@
                 auto* pZOrder = findParam(addToViewportFn, STR("ZOrder"));
                 int vsz = addToViewportFn->GetParmsSize();
                 std::vector<uint8_t> vp(vsz, 0);
-                // v6.20.6 — raised from 110 to 800 so the error-box (used
+                // raised from 110 to 800 so the error-box (used
                 // as the fallback when UI_WBP_NotificationFeed isn't found)
                 // appears ABOVE the pause menu blur (~ZOrder 100-200).
                 if (pZOrder) *reinterpret_cast<int32_t*>(vp.data() + pZOrder->GetOffset_Internal()) = 800;
@@ -1798,7 +1798,7 @@
         // and is still polled at the keybind level for slots 8-16.
 
         // ─────────────────────────────────────────────────────────────────
-        // v6.10.0 — "New Building Bar"
+        // "New Building Bar"
         //
         // Spawns one extra UWBP_UI_ActionBar_C instance, anchored to the
         // top-center of the HUD, and tames it so that:
@@ -1834,7 +1834,7 @@
             VLOG(STR("[MoriaCppMod] [NewBuildingBar] removed\n"));
         }
 
-        // v6.10.0 — Highlight/un-highlight a slot by toggling its
+        // Highlight/un-highlight a slot by toggling its
         // "focused" overlay's Visibility. Phase 2 wires this to clicks +
         // F# key presses. Slot range 0..7.
         void newBuildingBarHighlight(int slot, bool on)
@@ -1847,7 +1847,7 @@
             setWidgetVisibility(fx, on ? 0 : 1);
         }
 
-        // v0.10 — Populate each slot icon from m_recipeSlots[i].textureName
+        // Populate each slot icon from m_recipeSlots[i].textureName
         // — the QuickBuild assignments loaded from the INI. Walks the
         // global Texture2D set once, then SetBrushFromTexture on each
         // slot icon image. Slots without an assignment stay invisible.
@@ -1900,7 +1900,7 @@
             VLOG(STR("[NewBuildingBar] populated {} slot icons from m_recipeSlots\n"), filled);
         }
 
-        // v6.10.0 — Re-read s_bindings[0..7].key and update each slot's
+        // Re-read s_bindings[0..7].key and update each slot's
         // F# label. Call this after the user rebinds a QuickBuild key
         // in Settings → Key Mapping so the bar reflects the new chord.
         void refreshNewBuildingBarKeyLabels()
@@ -1951,7 +1951,7 @@
             UObject* texSlotDisabled{nullptr};
             UObject* texSlotFrame{nullptr};
             float sizeSlot[2]{96, 96};
-            // v0.4 — proper slot textures captured from the slot widget
+            // proper slot textures captured from the slot widget
             // (UI_WBP_Inventory_ActionBar_Item_1 → nestedInventoryItem,
             // a UUI_WBP_Inventory_Item_AB_C with emptyFullSlot /
             // buttonFocused / FocusedCorners UImages). Way better visual
@@ -1964,7 +1964,7 @@
             float sizeFocusedCorners[2]{0,0};
         };
 
-        // v0.8 — Cached fast-path: if we already discovered textures
+        // Cached fast-path: if we already discovered textures
         // earlier in this session, just hand back the cache. No re-scan,
         // no re-spawn. Bar construction skips straight to layout.
         bool nbbDiscoverAssetsCached(NbbDiscoveredAssets& out)
@@ -1984,7 +1984,7 @@
         {
             if (nbbDiscoverAssetsCached(out)) return true;
 
-            // v0.7 — Read from a LIVE native HUD ActionBar instance
+            // Read from a LIVE native HUD ActionBar instance
             // (preferred), falling back to a fresh spawn if no live
             // instance exists yet. The live HUD instance has its
             // textures wired; the fresh spawn does not — but we still
@@ -2095,7 +2095,7 @@
                 }
             }
 
-            // v0.4 — Walk into one of the spawned numbered slot widgets
+            // Walk into one of the spawned numbered slot widgets
             // (UI_WBP_Inventory_ActionBar_Item_1 → nestedInventoryItem,
             // a UUI_WBP_Inventory_Item_AB_C). Capture the proper slot
             // textures from there (emptyFullSlot / buttonFocused /
@@ -2135,7 +2135,7 @@
                  (void*)out.texBottomRight, (void*)out.texSlotEmpty,
                  (void*)out.texSlotFocus);
 
-            // v0.5 — DEEP DIVE: walk the spawned ActionBar's WidgetTree
+            // DEEP DIVE: walk the spawned ActionBar's WidgetTree
             // and log every UImage we see, with its texture name + brush
             // size + parent slot type + canvas-slot Position/Size if it
             // lives in a CanvasPanel. Lets us understand exactly how the
@@ -2209,7 +2209,7 @@
             if (tRoot) dump(tRoot, 0);
             VLOG(STR("[NBB-DUMP] === END dump ===\n"));
 
-            // v0.8 — Populate the persistent texture cache so subsequent
+            // Populate the persistent texture cache so subsequent
             // createNewBuildingBar calls (e.g. after destroyNewBuildingBar)
             // skip the entire discovery + spawn + tree-walk path. This is
             // the user's "remember and display them ourselves" — discover
@@ -2242,7 +2242,7 @@
             NbbDiscoveredAssets a;
             (void)nbbDiscoverAssets(a); // OK to fail — we'll fall through to FindAllOf below
 
-            // v0.10 — Use the PROPER numbered-slot textures we found via
+            // Use the PROPER numbered-slot textures we found via
             // the [NBB-TEX] inventory dump. T_UI_Btn_HUD_AB_* (no Epic
             // prefix) is what the native ActionBar uses for slots 1-8.
             // Plus discovered the actual chrome assets:
@@ -2366,14 +2366,14 @@
                 return t;
             };
 
-            // v0.4 — bumped to 192×192 per user feedback (140 still too
+            // bumped to 192×192 per user feedback (140 still too
             // small). Marker scaled accordingly.
             const float slotW   = 192.0f;
             const float slotH   = 192.0f;
             const float markerW = 128.0f;
             const float markerH = 40.0f;
 
-            // v0.4 — prefer the proper slot textures captured from
+            // prefer the proper slot textures captured from
             // emptyFullSlot / buttonFocused / FocusedCorners over the
             // EpicAB fallback textures.
             UObject* useEmptyTex = a.texEmptyFullSlot ? a.texEmptyFullSlot : a.texSlotEmpty;
@@ -2392,7 +2392,7 @@
                 }
             }
 
-            // v0.11 — Chrome backdrop REMOVED entirely per user request.
+            // Chrome backdrop REMOVED entirely per user request.
             // The Top/Middle/Bottom textures we found ARE the right
             // assets but their layout/scaling looked wrong without the
             // exact native CanvasPanel positions, and the user prefers
@@ -2403,7 +2403,7 @@
             UObject* slotRowSlot = addToVBox(root, slotRow);
             if (slotRowSlot) umgSetHAlign(slotRowSlot, 2); // Center
 
-            // v0.9 — One-shot diagnostic: enumerate every Texture2D whose
+            // One-shot diagnostic: enumerate every Texture2D whose
             // name contains "HUD" or "ActionBar" and log it. This gives
             // us the inventory of HUD-related textures so we can
             // identify the actual chrome assets (middleFrame, topFrame,
@@ -2559,7 +2559,7 @@
                 if (slotInRow) { umgSetVAlign(slotInRow, 0); umgSetSlotPadding(slotInRow, 4, 0, 4, 0); }
             }
 
-            // v0.11 — bottom decorative strip removed per user request.
+            // bottom decorative strip removed per user request.
 
             // ── Add to viewport at top-center. v6.20.46 — ZOrder bumped
             // 50 → 100 (matches OLD UMG QuickBuild bar). Bar was likely
@@ -2586,7 +2586,7 @@
             {
                 m_screen.refresh(findPlayerController());
                 float centerX = static_cast<float>(m_screen.viewW) * 0.5f;
-                float topY    = 10.0f; // v0.12 — 10 px from top edge
+                float topY    = 10.0f; // 10 px from top edge
                 std::vector<uint8_t> b(fnPos->GetParmsSize(), 0);
                 if (auto* p = findParam(fnPos, STR("Position")))
                 {
@@ -2602,12 +2602,12 @@
             m_newBuildingBar = userWidget;
             VLOG(STR("[NewBuildingBar] === built from-scratch with discovered assets ===\n"));
 
-            // v0.10 — Pull QuickBuild icons from m_recipeSlots and apply
+            // Pull QuickBuild icons from m_recipeSlots and apply
             // to each slot icon image. Slots without an assignment stay
             // empty.
             populateNewBuildingBarIcons();
 
-            // v0.4 — visible proof that highlight toggling works: leave
+            // visible proof that highlight toggling works: leave
             // slot 0 highlighted ON at create time.
             newBuildingBarHighlight(0, true);
 
@@ -3432,7 +3432,7 @@
                         }
 
 
-                        // v6.4.1 — Cheats tab (index 4). Two action buttons styled exactly like
+                        // Cheats tab (index 4). Two action buttons styled exactly like
                         // the Rename Character / Save Game buttons in the Game Options tab:
                         //   HBox: [Label stretched, pad L=92 T=24 B=24 VAlign=Center]
                         //         [ texKeyBox overlay 400x128 with centered bold text, pad R=50 ]
@@ -3576,7 +3576,7 @@
                                 }
                             }
 
-                            // v6.4.1 — populate the cheat entries table (Clear All + categories + toggles)
+                            // populate the cheat entries table (Clear All + categories + toggles)
                             // IMPORTANT: m_buffStates persists across F12 open/close cycles so toggles
                             // stay "on" when the player reopens the panel. Only widget-ref arrays
                             // (which point to freshly-built widgets) are reset each rebuild.
@@ -3739,7 +3739,7 @@
                         }
 
 
-                        // v6.4.1 — Tweaks tab (index 5). Same row layout as Cheats: label + cycling value button.
+                        // Tweaks tab (index 5). Same row layout as Cheats: label + cycling value button.
                         // Each row is 128 tall (button). Category headers are 80 tall.
                         if (m_ftTabContent[5])
                         {
@@ -4278,7 +4278,7 @@
 
         ULONGLONG m_lastSaveTime{0};
 
-        // v6.20.13 — Reverted UI_WBP_NotificationFeed approach. The feed's
+        // Reverted UI_WBP_NotificationFeed approach. The feed's
         // UI_WBP_Notification_Generic_C BP renders item/recipe/lore-specific
         // layouts and won't display arbitrary text via SetData. v6.20.4-12
         // confirmed the technical pieces fired (feed found, class resolved,
@@ -4287,7 +4287,7 @@
         // empty. Now showGameNotification is a thin wrapper around the
         // restyled showInfoMessage (game-gold on dark transparent), which
         // works reliably in pause AND in-world.
-        // v6.20.13 — Thin wrapper around restyled showInfoMessage.
+        // Thin wrapper around restyled showInfoMessage.
         // Body parameter is appended to title with a newline if present.
         // Duration is ignored (showInfoMessage has its own auto-hide).
         // The UI_WBP_NotificationFeed approach was abandoned in v6.20.13;
@@ -4376,7 +4376,7 @@
         }
 
 
-        // v6.20.30 — spawn the in-game WBP_UI_RenameWorldModal_C as our
+        // spawn the in-game WBP_UI_RenameWorldModal_C as our
         // character rename dialog. Reuses the game's native chrome (heading,
         // editable text box, Confirm/Cancel buttons, modal backdrop) so it
         // looks consistent with the world-rename screen. ConfirmButton +
@@ -4489,7 +4489,7 @@
                 if (p) *reinterpret_cast<int32_t*>(bb.data() + p->GetOffset_Internal()) = 200;
                 safeProcessEvent(modal, fn, bb.data());
             }
-            // v6.20.32 — call BP lifecycle entry points so the modal's own
+            // call BP lifecycle entry points so the modal's own
             // input bindings wire up. Without OnBeforeShow, the BP's BndEvt
             // for the EditableTextBox change event never fires, so typed
             // text never lands in WorldNameText member, and confirm sees
@@ -4835,7 +4835,7 @@
             m_ftRenameVisible = true;
             setInputModeUI(userWidget);
 
-            // v6.20.24 — clear pending bit-0 latch on RETURN/ESCAPE/LBUTTON
+            // clear pending bit-0 latch on RETURN/ESCAPE/LBUTTON
             // before entering poll loop. Without this, ESCAPE-to-open-pause-menu
             // OR ENTER-to-click-RENAME-button leaves a pending press latched in
             // GetAsyncKeyState; the next poll inside the dialog sees it and
@@ -4862,7 +4862,7 @@
             m_ftRenameVisible = false;
             m_ftRenameUsingModal = false; // v6.20.30
 
-            // v6.20.25 — if the rename dialog was opened from the pause menu
+            // if the rename dialog was opened from the pause menu
             // (typical), the pause menu is still on screen and needs UI input.
             // Falling through to setInputModeGame leaves the user locked out
             // (game paused, pause menu visible but non-interactive — only ESC

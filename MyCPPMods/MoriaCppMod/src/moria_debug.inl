@@ -266,7 +266,7 @@
             {
             case 0:
             {
-                // v0.30 — gate Set Rotation to ghost-visible only.
+                // gate Set Rotation to ghost-visible only.
                 UObject* gata = resolveGATA();
                 if (!gata) {
                     showOnScreen(L"Place a build piece first", 2.0f, 1.0f, 0.5f, 0.2f);

@@ -1,4 +1,4 @@
-// MoriaCppMod v6.21.21 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
+// MoriaCppMod v6.21.22 - Return to Moria UE4SS C++ mod (~17,000 lines across dllmain.cpp + 15 .inl files)
 // Features: quick-build system, HISM removal with bubble tracking, inventory management (trash/replenish/remove-attrs),
 // definition processing, pitch/roll placement, crosshair reticle, Win32 overlay toolbar, F12 config panel, localization
 // Stability: FWeakObjectPtr caches, CancelTargeting via ProcessEvent, deferRemoveWidget, 350ms settle delays
@@ -41,7 +41,7 @@ namespace MoriaMods
         UObject* m_worldLayout{nullptr};
         std::string m_currentBubbleId;
         std::wstring m_currentBubbleName;
-        UObject* m_currentBubble{nullptr};  // v6.4.2 - cached for bubble-local coord calc
+        UObject* m_currentBubble{nullptr};  // cached for bubble-local coord calc
         PSOffsets m_ps;
         std::vector<bool> m_appliedRemovals;
 
@@ -138,7 +138,7 @@ namespace MoriaMods
 
             VLOG(STR("[MoriaCppMod] Loaded {} position removals + {} type rules\n"), m_savedRemovals.size(), m_typeRemovals.size());
 
-            // v6.4.2 - auto-migrate legacy pipe-delimited or @-prefixed entries to JSON format.
+            // auto-migrate legacy pipe-delimited or @-prefixed entries to JSON format.
             if (sawLegacyLine)
             {
                 VLOG(STR("[MoriaCppMod] Detected legacy-format entries - rewriting save file as JSON Lines\n"));
@@ -253,7 +253,7 @@ namespace MoriaMods
 
         static inline MoriaCppMod* s_instance{nullptr};
 
-        // v6.4.1 - Recipe unlock queue state (drained by main tick at UNLOCK_BATCH_SIZE/frame)
+        // Recipe unlock queue state (drained by main tick at UNLOCK_BATCH_SIZE/frame)
         static constexpr int UNLOCK_BATCH_SIZE = 50;
         std::vector<std::wstring> m_unlockQueue;
         UObject*   m_unlockDiscoveryMgr{nullptr};
@@ -373,7 +373,7 @@ namespace MoriaMods
         UObject* m_nbbSlotMarker[8]{};  // numbered marker UImage above each slot
         UObject* m_nbbSlotButton[8]{};  // UButton wrapper (Phase 2 - for clicks)
         UObject* m_nbbSlotKeyBg[8]{};   // grey rect under the F# label
-        // v0.8 - Texture cache. Populated ONCE per session via
+        // Texture cache. Populated ONCE per session via
         // nbbDiscoverAssets; subsequent createNewBuildingBar calls reuse
         // these pointers without re-scanning. Resolved-texture ptrs are
         // stable within a session.
@@ -478,14 +478,14 @@ namespace MoriaMods
         UObject* m_ftRenameInput{nullptr};
         UObject* m_ftRenameConfirmLabel{nullptr};
         bool m_ftRenameVisible{false};
-        // v6.20.30 - distinguishes the in-game modal path
+        // distinguishes the in-game modal path
         // (WBP_UI_RenameWorldModal_C) from the legacy home-rolled dialog. The
         // modal handles its own keyboard input via BP - we must NOT also poll
         // RETURN/ESCAPE/LBUTTON because doubling up causes the BP confirm to
         // fire twice or fight the modal's own focus chain. Set true in
         // showRenameDialog_v2; cleared in hideRenameDialog.
         bool m_ftRenameUsingModal{false};
-        // v6.20.33 - cached rename modal UClass (force-loaded once, kept warm
+        // cached rename modal UClass (force-loaded once, kept warm
         // across the session). Stops the asset from being GC-unloaded between
         // rename opens which causes StaticFindObject to return null on the
         // second open.
@@ -497,7 +497,7 @@ namespace MoriaMods
         // v6.21.1 - always visible once character loaded (was conditional on
         // build mode, but the user can't get cursor focus while building so
         // they couldn't drag the widget). Throttled to 4 Hz.
-        // v6.20.33 - 3× cell size (48→144), draggable from any cell, position
+        // 3× cell size (48→144), draggable from any cell, position
         // persisted to ini under [Positions] RotDisplayX/Y.
         UObject* m_rotDisplayWidget{nullptr};
         UObject* m_rotDisplayStep{nullptr};
@@ -639,14 +639,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("6.21.21");
+            ModVersion = STR("6.21.22");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.21\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.22\n"));
         }
 
         ~MoriaCppMod() override
@@ -687,10 +687,10 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v6.21.21 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v6.21.22 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
-            // v6.4.4 - startup diagnostics for Steam ™ path troubleshooting.
+            // startup diagnostics for Steam ™ path troubleshooting.
             // These tell the user exactly which paths the mod is trying to read and whether
             // they exist. If the log shows a path containing â„¢ or other mangled chars, the
             // wide-path fix didn't take effect (wrong DLL loaded, or Windows still coerced).
@@ -827,7 +827,7 @@ namespace MoriaMods
             // v6.21.21 - removed NUM_7 -> createModControllerBar debug
             // keybind (function deleted along with the MC bar widget).
 
-            // v6.4.1 - Recipe unlock + Mark-all-read features moved to the F12 Cheats tab.
+            // Recipe unlock + Mark-all-read features moved to the F12 Cheats tab.
             // See moria_unlock.inl for unlockAllAvailableRecipes() + markAllLoreRead() entry points.
             // Keybinds removed; buttons in F12 > Cheats tab are the only entry now.
 
@@ -1072,13 +1072,13 @@ namespace MoriaMods
                     s_instance->onAnyMenuButtonClicked(context, fnStr2);
                     s_instance->onTrashPopupButtonClicked(context); // v6.21.1 - Phase 4 trash popup
                     s_instance->maybeFireCarouselButton(context);
-                    // v0.35 - BndEvt_..._{Prev,Next}Button_..._OnButton...
+                    // BndEvt_..._{Prev,Next}Button_..._OnButton...
                     // delegates fire on the carousel itself; the fn name
                     // contains "PrevButton" or "NextButton".
                     s_instance->maybeFireCarouselViaDelegate(context, fnStr2);
                 }
 
-                // v0.32 - Native settings checkbox state-change.
+                // Native settings checkbox state-change.
                 // BP delegate name: BndEvt__WBP_SettingsCheckBox_OptionCheckBox_K2Node_..._OnCheckBoxComponentStateChanged__DelegateSignature
                 // The C++-level event UMorSettingsCheckBox::OnCheckBoxStateChanged is also fine.
                 if ((wcsstr(fnStr2, STR("OnCheckBoxComponentStateChanged")) != nullptr ||
@@ -1089,7 +1089,7 @@ namespace MoriaMods
                     s_instance->maybeFireCheckBoxRow(context, newState);
                 }
 
-                // v0.33 - Native settings carousel value changed.
+                // Native settings carousel value changed.
                 // Delegate signature: CarouselValueChanged(FString SelectedValue)
                 if (wcscmp(fnStr2, STR("CarouselValueChanged")) == 0 && parms)
                 {
@@ -1370,7 +1370,7 @@ namespace MoriaMods
                         // CP5 - append a NEW "Cheats" tab to tabArray (don't replace legal).
                         if (cls == STR("WBP_SettingsScreen_C"))
                             s_instance->appendCheatsTabToArray(context);
-                        // v0.50 - inject mod action buttons (Rename/Save/Unlock/
+                        // inject mod action buttons (Rename/Save/Unlock/
                         // Read All/Clear All Buffs) into the pause menu's
                         // VerticalBox_0 right above LeaveButton.
                         if (cls == STR("UI_WBP_EscapeMenu2_C"))
@@ -1680,7 +1680,7 @@ namespace MoriaMods
 
             m_replayActive = true;
             VLOG(
-                    STR("[MoriaCppMod] v6.21.21: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
+                    STR("[MoriaCppMod] v6.21.22: F1-F8=build | F9=rotate | F12=config | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"));
 
 
             // Register game thread tick - fires once per frame ON the game thread
@@ -1701,7 +1701,7 @@ namespace MoriaMods
                         try { loadAndApplyDefinitions(); }
                         catch (...) { RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Exception during definition loading\n")); }
                     }
-                    // v6.9.0 - one-shot FGK DynamicTableAsset diagnostic.
+                    // one-shot FGK DynamicTableAsset diagnostic.
                     // Logs each FGK wrapper's TableAsset, TestTableAsset, and
                     // DynamicTableAsset pointers + RowMap counts to determine
                     // whether DynamicTableAsset is initialized at runtime
@@ -2151,7 +2151,7 @@ namespace MoriaMods
                 // via dispatchMcSlot() polled at the keybind level - those are LIVE.
                 // AB bar create block also removed in v6.21.15.
 
-                // v0.14 - CRITICAL: handle-resolution priming was nested
+                // CRITICAL: handle-resolution priming was nested
                 // inside the disabled AB-bar block, blocking F1-F8 USE,
                 // chord polling for SET, and every keybind that gates on
                 // HandleResolvePhase::Done. Move it out so it runs once
@@ -2205,7 +2205,7 @@ namespace MoriaMods
 
             tickDeferredWidgetRemovals();
 
-            // v6.20.30 - skip key/mouse polling when the in-game modal is
+            // skip key/mouse polling when the in-game modal is
             // active; its own BP handles RETURN/ESCAPE/clicks via UWBP
             // FrontEndButton click events that we already hook in
             // onModGameOptionClicked.
@@ -2384,7 +2384,7 @@ namespace MoriaMods
             // entry point to toggleRepositionMode; reposition removed).
 
 
-            // v6.4.1 - skip single-key action binds (trash/replenish/remove-attrs) when ANY modifier
+            // skip single-key action binds (trash/replenish/remove-attrs) when ANY modifier
             // is held. Prevents Ctrl+Shift+L etc. from accidentally triggering the trash dialog when
             // the player just presses a modifier-combo key meant for something else.
             const bool modDown =
@@ -2482,7 +2482,7 @@ namespace MoriaMods
             }
             // Pitch rotation (,  / SHIFT+,)
             // Pitch rotation (. / SHIFT+.) - BIND_PITCH_ROTATE defaults to '.'
-            // v0.30 - gated to ghost-visible (resolveGATA returns non-null).
+            // gated to ghost-visible (resolveGATA returns non-null).
             {
                 static bool s_lastPitchKey = false;
                 uint8_t vk = s_bindings[BIND_PITCH_ROTATE].key;
@@ -2505,7 +2505,7 @@ namespace MoriaMods
                 }
             }
             // Roll rotation (, / SHIFT+,) - BIND_ROLL_ROTATE defaults to ','
-            // v0.30 - gated to ghost-visible.
+            // gated to ghost-visible.
             {
                 static bool s_lastRollKey = false;
                 uint8_t vk = s_bindings[BIND_ROLL_ROTATE].key;
@@ -3265,7 +3265,7 @@ namespace MoriaMods
                         }
 
 
-                        // v6.4.1 - Cheats tab (index 4): existing 3 rows (Unlock/Read/Peace) at
+                        // Cheats tab (index 4): existing 3 rows (Unlock/Read/Peace) at
                         // contentY + 0/128/256, plus the buff entries table beneath starting at
                         // contentY + 384. All entries at 1x-scale Y offsets are in m_buffRowTopYs +
                         // m_buffRowHeights; multiply by s2p and add scrollOff.
@@ -3362,7 +3362,7 @@ namespace MoriaMods
                             }
                         }
 
-                        // v6.4.1 - Tweaks tab (index 5). Click on a row's value button cycles.
+                        // Tweaks tab (index 5). Click on a row's value button cycles.
                         if (m_ftSelectedTab == 5)
                         {
                             // Read scroll offset (same pattern as tab 4)
@@ -3647,17 +3647,17 @@ namespace MoriaMods
 
             placementTick();
             tickPitchRoll();
-            drainUnlockQueue();   // v6.4.1 - process 50 recipe-discovery calls per frame (no-op when queue empty)
-            refreshActiveBuffs(); // v6.4.1 - re-apply toggled-on buffs every 5s so they don't expire
-            tickJoinWorldUI();    // v6.6.0 - consume pending show/hide flags for mod-owned Join World UI
-            tickAdvancedJoinUI(); // v6.6.0 - consume pending show/hide flags for mod-owned Advanced Join Options UI
-            tickSettingsUI();     // v6.9.0 - Settings screen take-over (mod keybinds in keymap tab)
-            tickReapplyModifierPrefixes(); // v6.9.0 - keep "L-SHIFT + F1" text on SET rows alive
-            tickCaptureSpecialKeys();      // v6.9.0 - capture DEL/INS/HOME/etc the BP rejects
-            tickReapplyCheatsContext();    // v6.9.0 - keep Cheats-tab visibility swap stable
-            tickFGKDiscoveryDiag();        // v6.9.0 - one-shot probe of AMorDiscoveryManager.Recipes
-            tickActorLookupDiag();         // v6.9.0 - Path #5 ActorRowNameLookup TMap byte-layout dump
-            tickFGKInjectionTest();        // v6.9.0 - runtime AddRow + HandleDataTableChanged test
+            drainUnlockQueue();   // process 50 recipe-discovery calls per frame (no-op when queue empty)
+            refreshActiveBuffs(); // re-apply toggled-on buffs every 5s so they don't expire
+            tickJoinWorldUI();    // consume pending show/hide flags for mod-owned Join World UI
+            tickAdvancedJoinUI(); // consume pending show/hide flags for mod-owned Advanced Join Options UI
+            tickSettingsUI();     // Settings screen take-over (mod keybinds in keymap tab)
+            tickReapplyModifierPrefixes(); // keep "L-SHIFT + F1" text on SET rows alive
+            tickCaptureSpecialKeys();      // capture DEL/INS/HOME/etc the BP rejects
+            tickReapplyCheatsContext();    // keep Cheats-tab visibility swap stable
+            tickFGKDiscoveryDiag();        // one-shot probe of AMorDiscoveryManager.Recipes
+            tickActorLookupDiag();         // Path #5 ActorRowNameLookup TMap byte-layout dump
+            tickFGKInjectionTest();        // runtime AddRow + HandleDataTableChanged test
             tickSaveAfterMarkRead();       // v6.21.1 - Phase 5 lore persistence
             tickPendingCraftingMark();     // v6.21.1 - fire MarkAllAsRead when crafting screen opens
             tickTargetInfoDrag();          // v6.21.1 - inspect window drag + close + auto-hide
