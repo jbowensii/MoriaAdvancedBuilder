@@ -1,7 +1,5 @@
-// moria_hism.inl — HISM instance removal with bubble-aware save/replay
-// Bubble tracking: updateCurrentBubble() via GetBubbleAt with 30s fallback poll
-// Save format: meshName|posX|posY|posZ|bubbleId (auto-tagged on save, bubble-filtered on replay)
-// Helpers: readBubbleDisplayName (reflection-based), bubbleNameToId (ASCII-safe), duplicate detection on load
+// moria_hism.inl — HISM instance removal: line-trace + UpdateInstanceTransform;
+// bubble-aware persistence via JSON Lines; type-rule replay across components.
 
         // Convert a bubble DisplayName wstring to a safe ASCII ID (spaces→underscores, alphanumeric only)
         static std::string bubbleNameToId(const std::wstring& name)
@@ -1075,9 +1073,8 @@
             VLOG(STR("[MoriaCppMod] Fly mode = {}, noCollision = {}\n"), m_flyMode ? 1 : 0, m_noCollisionWhileFlying ? 1 : 0);
         }
 
-        // showUI=false used by SHIFT+] auto-inspect path:
-        // refreshes m_targetBuild* fields via fresh line-trace without
-        // popping the inspect window or showing 'no hit' error UI.
+        // showUI=false: refresh m_targetBuild* via fresh line-trace without
+        // popping the inspect window or 'no hit' UI. Used by SHIFT+] auto-inspect.
         void dumpAimedActor(bool showUI = true)
         {
             VLOG(STR("[MoriaCppMod] === AIMED ACTOR DUMP === (showUI={})\n"), showUI ? 1 : 0);
@@ -1259,12 +1256,9 @@
             VLOG(STR("[MoriaCppMod] Buildable: {} Recipe: {}\n"), isBuildable ? STR("Yes") : STR("No"), recipeRef);
 
 
-            // DT_Constructions scan ALWAYS runs (was previously
-            // gated on actor_dump.txt opening — when file write failed for
-            // any reason, m_targetBuildRowName stayed empty and SHIFT+]
-            // DIRECT path silently fell through to fragile name-based
-            // selectRecipeByTargetName. Scan is independent now; file
-            // writes are best-effort.
+            // DT_Constructions scan runs unconditionally — actor_dump.txt
+            // write is best-effort and must not gate m_targetBuildRowName
+            // population (SHIFT+] DIRECT path depends on it).
             std::wstring dtDisplayName;
             std::wstring dtRowName;
             {

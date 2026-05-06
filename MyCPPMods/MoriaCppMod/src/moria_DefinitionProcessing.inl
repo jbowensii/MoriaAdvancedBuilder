@@ -295,8 +295,8 @@ static XmlElement xmlParse(const std::string& xml)
 
 static std::vector<std::string> listFiles(const std::string& dir, const std::string& pattern = "*")
 {
-    // v6.4.3 (hotfix) — use wide Windows API. FindFirstFileA interprets the path as the
-    // active code page, which mangles UTF-8 bytes like the ™ in Steam's folder name.
+    // Use wide Windows API. FindFirstFileA interprets the path as the active
+    // code page, which mangles UTF-8 bytes like the ™ in Steam's folder name.
     std::vector<std::string> files;
     WIN32_FIND_DATAW fd;
     std::string searchPathUtf8 = dir;

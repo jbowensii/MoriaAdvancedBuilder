@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.25
+Document Version 6.23.26
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3802,6 +3802,52 @@ over 9 iterations:
                * generic createImageWithBrush helper
                * keybind label rect (76x44)
              No behavior change in the normal case.
+    v6.23.26: Comment audit chunk 8 - medium/small REWRITEs.
+             Concludes the 9-iteration comment audit (chunks 1-8 covering
+             4 audit files, ~250 individual edits, ~750 LOC removed).
+
+             File header rewrites (4 files):
+               * moria_placement.inl v5.5.0 banner -> 2-line scope description
+               * moria_unlock.inl v6.4.1 -> 2-line current-state
+               * moria_hism.inl v5.5.0 -> 2-line current-state
+               * moria_inventory.inl v5.5.0 -> 2-line current-state
+
+             Inline rewrites:
+               * Inventory audit comment (verbose-vs-corrections clarification)
+               * Trash confirm popup 8-line "Phase 4 fix: replaced home-rolled
+                 UMG dialog" history -> 3-line current-state describing the
+                 GenericPopup approach + onTrashPopupButtonClicked wiring
+               * Trash popup Hide() animation comment trimmed
+               * cycleTweakValue header (clarified DEFAULT slot semantics)
+               * Mid-file moria_unlock.inl duplicate banner -> simple section divider
+               * Peace Mode toggle 3-line history -> 2-line current state
+               * Pending crafting mark-as-read 4-line -> 3-line poller contract
+               * dumpAimedActor showUI=false 3-line -> 2-line behavior contract
+               * DT_Constructions scan 6-line bug-history -> 3-line invariant
+               * listFiles wide-API hotfix tag stripped (kept WHY)
+               * sanitizeIniKey version stripped
+               * Legacy-format pre-v6.4.2 markers stripped (timeless contract)
+               * getRowNamesRaw v6.4.5+ tag stripped
+               * onNativeJoinWorldShown 7-line architecture-pivot history ->
+                 3-line current-state
+               * hideModJoinWorldUI 4-line "now mostly a no-op" -> 3-line
+                 tracking-pointer description
+               * hideModAdvancedJoinUI tightened
+
+             Build clean. Net diff this iteration: ~80 LOC removed across
+             7 source files.
+
+             Comment audit GRAND TOTAL across chunks 1-8:
+               * REMOVE chunks (1-4):  ~247 LOC removed
+               * REWRITE chunks (5-8): ~520 LOC removed (rewriting + trimming)
+               * Diagnostics gated behind s_verbose: 6
+               * Stale tombstones eliminated: ~50
+               * Dead variable cleanups: 2
+               * Files touched: 11 (dllmain + 10 .inl/.h)
+
+             ~750 LOC of stale tombstone / WHAT-comment / dev-scaffolding /
+             investigation prose / version-stamp rot eliminated.
+
     v6.23.25: Comment audit chunk 7 - moria_widgets.inl REWRITEs (high-
              leverage subset). Concludes settings_ui REWRITE pass and starts
              widgets cleanup. Highlights:

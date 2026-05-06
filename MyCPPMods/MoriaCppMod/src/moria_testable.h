@@ -78,9 +78,9 @@ namespace MoriaMods
         return _wrename(wf.c_str(), wt.c_str()) == 0;
     }
 
-    // v6.4.4+ — sanitize a wide label into an INI-key-safe ASCII string.
-    // Spaces → underscore; non-alphanumeric-non-underscore chars dropped.
-    // Used to turn cheat/tweak display labels ("Ring of Power") into INI keys ("Ring_of_Power").
+    // Sanitize a wide label into an INI-key-safe ASCII string.
+    // Spaces -> underscore; non-alphanumeric-non-underscore chars dropped.
+    // Turns display labels ("Ring of Power") into INI keys ("Ring_of_Power").
     inline std::string sanitizeIniKey(const std::wstring& label)
     {
         std::string out;
@@ -972,11 +972,11 @@ namespace MoriaMods
             return result;
         }
 
-        // Legacy @ prefix for type rules (pre-v6.4.2)
+        // Legacy @ prefix for type rules.
         if (line[0] == '@')
             return ParsedRemovalTypeRule{line.substr(1)};
 
-        // Legacy pipe-delimited format (pre-v6.4.2). Parsed for backwards compat; rewritten as JSON on next save.
+        // Legacy pipe-delimited format; parsed for backwards compat, rewritten as JSON on next save.
         std::istringstream ss(line);
         ParsedRemovalPosition result;
         std::string token;

@@ -1,4 +1,5 @@
-// moria_unlock.inl — Recipe unlock + read-history clear + buff toggles + peace mode
+// moria_unlock.inl — Recipe unlock, mark-all-read, peace mode, cheats tab
+// buffs, tweaks tab DT field cycling.
         // Cheats tab buff entry data.
         enum class CheatRowKind { ClearAllBtn, SectionHeader, BuffToggle };
         struct CheatEntry {
@@ -431,9 +432,9 @@
                  totalRows, totalTables);
         }
 
-        // Cycle one tweak entry forward. cycleValues[0] is always the DEFAULT slot (its numeric
-        // value is ignored); the tweak restores originals when curIdx==0 and otherwise applies
-        // cycleValues[curIdx].
+        // Cycle one tweak entry forward. cycleValues[0] is the DEFAULT slot
+        // (its numeric value is ignored, it's a sentinel). useDefault=true
+        // restores originals captured into m_tweakOriginals.
         void cycleTweakValue(int idx)
         {
             int count = 0;
@@ -761,13 +762,7 @@
         }
 
 
-// moria_unlock.inl — Recipe unlock + read-history clear
-//
-// Two features, both operate entirely through game UFUNCTIONs — zero raw memory writes:
-//   1. unlockAllAvailableRecipes()  — iterates recipe DataTables, filters protected/hidden/unfinished/DLC-gated rows,
-//                                     and paces DiscoverRecipe calls across frames (50/frame) to avoid
-//                                     FFastArraySerializer burst-flood that breaks worlds with the built-in cheat menu.
-//   2. markAllLoreRead()            — one ProcessEvent call on WBP_LoreScreen_v2_C::MarkAllRead (Blueprint-native).
+// ---- Recipe unlock + read-history clear ----
 
         // Returns true if the row name matches a hidden/dev/test prefix — those
         // rows are NOT to be unlocked by the "Unlock All Recipes" feature.
@@ -1109,9 +1104,8 @@
             return marked;
         }
 
-        // v6.4.1 Peace Mode — toggle AMorAISpawnManager.MaxSpawnLimit between its saved-original
-        // value and 0. When enabled: no new orcs/goblins/trolls spawn. Existing enemies remain.
-        // When disabled: spawn cap restored. State persists across F12 open/close.
+        // Toggle AMorAISpawnManager.MaxSpawnLimit between saved-original and 0.
+        // Existing enemies remain; only new spawns are gated.
         void togglePeaceMode()
         {
             std::vector<UObject*> mgrs;
@@ -1389,10 +1383,9 @@
             triggerSaveGame();
         }
 
-        // pending crafting mark-as-read. Set when markAllLoreRead found
-        // no live crafting screens at press time. Poller retries every 1s for up to
-        // 1h; fires MarkAllAsRead the moment a live screen appears, then schedules
-        // another deferred save so the BP-side viewed flags persist.
+        // Polled at 1Hz for up to 1h after a markAllLoreRead with no live
+        // crafting screens; fires MarkAllAsRead the moment one appears, then
+        // chains another deferred save.
         uint64_t m_pendingCraftingMarkUntilMs{0};
         uint64_t m_pendingCraftingMarkLastPollMs{0};
         void tickPendingCraftingMark()

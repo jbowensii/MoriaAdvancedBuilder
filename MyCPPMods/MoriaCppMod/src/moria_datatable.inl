@@ -125,8 +125,9 @@ struct DataTableUtil
         return names;
     }
 
-    // v6.4.5+ — Return raw FName values from the RowMap without string round-tripping.
-    // Preserves any Number suffix on auto-incremented FNames (e.g. Zone_5 vs FName("Zone", 5)).
+    // Return raw FName values from the RowMap without string round-tripping.
+    // Preserves any Number suffix on auto-incremented FNames
+    // (e.g. Zone_5 vs FName("Zone", 5)).
     std::vector<FName> getRowNamesRaw() const
     {
         std::vector<FName> out;

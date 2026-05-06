@@ -1,6 +1,5 @@
-// moria_inventory.inl — Inventory helpers: component lookup, tint/effects, trash/replenish/remove-attrs
-// SEH wrapper via safeProcessEvent from moria_common.h (shadowed local copy removed — was infinite recursion bug)
-// callServerTintItem centralizes 5 formerly copy-pasted tint blocks
+// moria_inventory.inl — Inventory helpers: component lookup, tint/effects,
+// replenish/trash/remove-attrs.
 
         UObject* findActorComponentByClass(UObject* owner, const wchar_t* className)
         {
@@ -297,8 +296,8 @@
         }
 
 
-        // Inventory audit: detect/remove orphaned items at invalid slots, verify Body Inventory size.
-        // Verbose logging only when s_verbose is true; corrections always run.
+        // Audit: detect+remove orphaned items not contained in any container.
+        // Logs only when verbose; corrections always run. Local player only (MP fix).
         void auditInventory()
         {
             // MP fix: audit local player's inventory only, not first dwarf found
@@ -783,14 +782,9 @@
         }
 
 
-        // Phase 4 fix: replaced home-rolled UMG dialog with the
-        // game's own WBP_UI_GenericPopup_C template (same one used by the
-        // session-history delete confirm in moria_session_history.inl). The
-        // home-rolled version had no font setup so text didn't render in
-        // certain conditions, and clicks went through cursor-rect math
-        // that was fragile against pause-menu input mode and DPI scaling.
-        // The GenericPopup uses real game UButtons whose OnButtonReleased
-        // delegates we hook in the existing PE post-hook chain.
+        // Trash confirm uses WBP_UI_GenericPopup_C (game-native template).
+        // Buttons fire OnButtonReleasedEvent / OnMenuButtonClicked into our
+        // PE post-hook chain — see onTrashPopupButtonClicked.
         FWeakObjectPtr m_pendingTrashPopup;
 
         void showTrashDialog()
@@ -934,9 +928,8 @@
             if (!m_trashDlgVisible) return;
             if (m_trashDlgWidget)
             {
-                // popup is now WBP_UI_GenericPopup_C. Try its
-                // built-in Hide animation first (plays the Outro), then
-                // RemoveFromParent for cleanup.
+                // Hide() plays the BP's Outro animation; RemoveFromParent
+                // then drops the widget.
                 if (auto* hideFn = m_trashDlgWidget->GetFunctionByNameInChain(STR("Hide")))
                 {
                     std::vector<uint8_t> b(hideFn->GetParmsSize(), 0);

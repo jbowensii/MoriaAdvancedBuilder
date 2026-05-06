@@ -95,7 +95,7 @@
             }
         }
 
-        // hideModAdvancedJoinUI is now a no-op — native flow handles closing.
+        // Clears tracking pointers; native flow handles widget cleanup.
         void hideModAdvancedJoinUI()
         {
             VLOG(STR("[AdvancedJoinUI] hideModAdvancedJoinUI() — clearing tracking (native handles cleanup)\n"));

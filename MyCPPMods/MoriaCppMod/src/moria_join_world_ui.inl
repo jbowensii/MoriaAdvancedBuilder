@@ -735,13 +735,9 @@
                 umgSetText(*btnTxtPtr, label);
         }
 
-        // ---------- IN-PLACE MODIFICATION (architecture pivot) ----------
-        // Earlier we spawned a fresh BP instance via WidgetBlueprintLibrary::Create
-        // and tried to use that as a duplicate. Problem: the standalone instance
-        // had no MainMenu wiring, so Join/Advanced/Close/Esc all broke (delegates
-        // were never bound). New approach: just modify the native widget in
-        // place — tint TextBlocks yellow + inject our session history. All
-        // native button wiring, switcher logic, and Esc handling stays intact.
+        // Modify the native widget in place: tint TextBlocks yellow + inject
+        // session-history rows. All native button wiring, switcher logic, and
+        // Esc handling stays intact.
         void onNativeJoinWorldShown(UObject* nativeWidget)
         {
             if (!nativeWidget || !isObjectAlive(nativeWidget)) return;
@@ -760,10 +756,9 @@
             m_pendingShowJoinWorldUI = true;
         }
 
-        // hideModJoinWorldUI is now mostly a no-op — we don't manage a separate
-        // duplicate anymore. Native flow handles Esc, Close, and navigation.
-        // Just clear our tracking pointers so other gated code knows JW isn't
-        // in our "modified" state any longer.
+        // No-op for the widget itself — native flow handles dismissal.
+        // Clears tracking pointers so gated polling code (right-click delete,
+        // Advanced) sees JoinWorld as "not live".
         void hideModJoinWorldUI()
         {
             VLOG(STR("[JoinWorldUI] hideModJoinWorldUI() — clearing tracking (native handles cleanup)\n"));
