@@ -1,41 +1,28 @@
-// moria_settings_ui.inl — v6.8.0+ Settings-screen take-over
+// moria_settings_ui.inl — Take over WBP_SettingsScreen_C and friends in place:
+// inject mod keymap rows, merge mod content into the native Gameplay tab, and
+// add a pause-menu mod block to UI_WBP_EscapeMenu2_C.
 //
-// GOAL: take over the game's Settings screen the same way we did Join World —
-// in-place modification, not spawn-duplicate. End-state features:
-//   1. Add custom key-binding entries to WBP_ControlsTab (or its peer)
-//   2. Append a new tab to the navbar that hosts our F12 menu equivalent
-//      (Cheats, Tweaks, Game Mods, etc.) — replacing the Win32 overlay panel.
-//
-// CURRENT STATE: instrumentation only. We hook OnAfterShow on the various
-// settings screens, log what we see, and (when triggered) dump the live
-// widget tree to docs/widget-harvest/ for analysis. No modifications yet.
-//
-// Settings classes from dumps/CXXHeaderDump:
+// Settings classes (from dumps/CXXHeaderDump):
 //   WBP_SettingsScreen_C        — main settings shell, has tabArray + tab members
 //   WBP_AccessibilityTab_C      — Accessibility tab content
 //   WBP_AudioTab_C              — Audio
 //   WBP_ControllerTab_C         — Controller settings
 //   WBP_ControllerMappingTab_C  — Controller key mapping
-//   WBP_ControlsTab_C           — Keyboard key mapping (★ where we want to add custom keys)
+//   WBP_ControlsTab_C           — Keyboard key mapping
 //   WBP_EditMappingTab_C        — Sub-screen for editing a single binding
-//   WBP_GameplayTab_C           — Gameplay settings
+//   WBP_GameplayTab_C           — Gameplay settings (where mod content merges)
 //   WBP_LegalTab_C              — Legal info / credits
 //   WBP_VideoTab_C              — Video / display settings
-//   UI_WBP_EscapeMenu2_C        — In-game pause menu (entry point to settings)
+//   UI_WBP_EscapeMenu2_C        — In-game pause menu (mod button block injected here)
 //
-// Key data structure (from dumps/CXXHeaderDump/FGKUIToolkit.hpp):
+// FFGKUITab layout (from dumps/CXXHeaderDump/FGKUIToolkit.hpp):
 //   struct FFGKUITab {                                  // 0xE8 bytes
 //       FName Name;                       // 0x00
 //       FText DisplayName;                // 0x08 (FText, 0x18)
 //       TSoftClassPtr<UUserWidget> WidgetClass; // 0x20 (TSoftClassPtr, 0x28)
 //       FFGKUIScreenConfig TabConfig;     // 0x48 (0xA0)
 //   };
-//
-// To add a tab: build an FFGKUITab and append to WBP_SettingsScreen.tabArray
-// before the BP populates the navbar. Best hook point is `Construct()` or the
-// custom `GetNavBarTabs()` UFunction documented on UWBP_SettingsScreen_C.
-//
-// See `cpp-mod/docs/joinworld-ui-takeover.md` for the in-place methodology.
+// Stride + field offsets are reflection-resolved (see ensureFGKUITabOffsets).
 
         // ────────────────────────────────────────────────────────────────
         // STATE
@@ -277,23 +264,19 @@
             }
         }
 
-        // ────────────────────────────────────────────────────────────────
-        // KEYMAP TAB INJECTION (v6.8.0 CP1 — visible rows, no chord wiring yet)
-        // ────────────────────────────────────────────────────────────────
-        // Schema: each row in the keymap tab is a HorizontalBox containing
-        //   - left: TextBlock label (action name, e.g. "Quick Build 1")
-        //   - right: WBP_SettingsKeySelector_C (chord display + edit)
-        // We append our rows under two new section headings:
+        // Keymap tab injection.
+        // Schema: each row is an HBox of TextBlock label + WBP_SettingsKeySelector_C.
+        // Mod rows append under two new section headings:
         //   "INVENTORY AND ITEMS"   — 16 Quick Build entries (use + set)
         //   "MOD KEY BINDINGS"      — 15 mod-action entries
-        // Both go AFTER the native Emotes section, at the bottom of the
-        // ScrollBox. Future iteration (v0.2+) wires chord persistence and
-        // dispatch; v0.1 is layout-only.
+        // Both go after the native Emotes section, at the bottom of the
+        // ScrollBox. Chord rebind, persistence, modifier glyph rendering and
+        // capture all ship via tickReapplyModifierPrefixes / OnKeySelectedBP.
 
         struct ModKeymapRow
         {
             const wchar_t* label;
-            const wchar_t* iniKey;     // for v0.2 persistence
+            const wchar_t* iniKey;
             const wchar_t* defaultChord; // human-readable e.g. "Shift+F1"
         };
 
@@ -760,17 +743,6 @@
                 }
                 ++s_diagCount;
             }
-
-            // Modifier-prefix rendering ("L-SHIFT + F1") deferred —
-            // earlier attempts (writing keyText, hiding KeyGlyph) broke
-            // the inner UInputKeySelector's selecting-state machine and
-            // caused click-to-rebind lockups + text-layer artifacts.
-            //
-            // SET rows currently render the same as USE rows (F-key glyph
-            // only). Will revisit once chord persistence (CP2) is wired,
-            // using a tick-driven reapply that respects
-            // OptionKeySelector.GetIsSelectingKey() so we never fight the
-            // BP during user interaction.
         }
 
         // Append a widget to a UScrollBox via its AddChild UFunction.
@@ -913,16 +885,11 @@
             }
 
             // ── Mod Key Bindings section ───────────────────────────────
-            // siblingIdx + withShift fields:
-            //   - "Flying Dwarf"     = SHIFT + s_bindings[11].key  (\ default)
-            //   - "Duplicate Target" = SHIFT + s_bindings[12].key  (] default)
-            // Previously these rows had bindIdx=-1 and vk=0, which caused
-            // applyDefaultChordToSelector to early-return — the BP
-            // InputKeySelector then displayed its placeholder (SpaceBar),
-            // confusing users into thinking the binding had reverted to SPACE.
-            // The actual dispatch lives in moria_debug.inl::dispatchMcSlot
-            // case 3/case 4 which check isModifierDown() — these rows are
-            // chord variants of the parent slot, not independent bindings.
+            // siblingIdx + withShift: "Flying Dwarf" / "Duplicate Target" are
+            // chord variants of parent slots (SHIFT + the sibling's key). They
+            // have no independent bindIdx because dispatch in dispatchMcSlot
+            // (moria_debug.inl) reads isModifierDown() on the parent slot.
+            // siblingIdx is used only to inherit the displayed key from the parent.
             struct ModSpec {
                 const wchar_t* label;
                 int bindIdx;          // -1 if this is a chord variant
@@ -957,9 +924,7 @@
                     addToScrollBox(scrollBox, row);
                     applyDefaultChordToSelector(row, vk, m.withShift);
                     // modBits must reflect withShift so
-                    // tickReapplyModifierPrefixes draws the SHIFT glyph.
-                    // Was 0 in v6.20.24 — Flying Dwarf / Duplicate Target
-                    // rows showed bare key without the SHIFT prefix.
+                    // tickReapplyModifierPrefixes draws the SHIFT glyph for chord variants.
                     uint8_t modBits = m.withShift ? 0x01 : 0;
                     trackRow(row, m.bindIdx, vk, m.withShift, modBits, m.iniKey);
                     ++modAdded;
@@ -1216,11 +1181,6 @@
             return nullptr;
         }
 
-        // Tick-gated reapply of modifier glyph Image on SET rows. Spawns
-        // a UImage as sibling of KeyGlyph in Overlay_1 with the modifier
-        // texture, positioned to the LEFT. One-shot per row (modGlyphInjected
-        // flag) — but we still tick to retry if WidgetTree wasn't ready
-        // on first try. Skips during selecting mode.
         // Poll keyboard during selecting mode for ANY key + modifiers.
         // Bypasses the BP's UInputKeySelector entirely — captures every
         // chord including Ctrl+F1, Alt+G, DEL, etc. and applies it directly
@@ -1404,14 +1364,9 @@
 
                 UObject* glyph = r.modGlyphImg.Get();
 
-                // fix #3a (white squares on Trash/Replenish/RemoveAttrs).
-                // The lazy-create below always built the ScaleBox+Image
-                // scaffold then relied on Collapsed visibility to hide it
-                // for plain-key rows. The Image had no Brush.ResourceObject
-                // so UE rendered the 1×1 white default — visible as a small
-                // white square between the row label and key text on every
-                // row whose chord has no modifier. Skip the create entirely
-                // when modBits == 0 (no modifier).
+                // Image with empty Brush.ResourceObject renders UE's 1×1 white
+                // default — visible as a white square next to plain-key rows.
+                // Skip the entire ScaleBox+Image create when modBits == 0.
                 if (!glyph && r.modBits == 0) continue;
 
                 // Lazy-create glyph: ScaleBox > Image, mirroring the
@@ -1587,14 +1542,13 @@
                      std::wstring(r.iniKey.begin(), r.iniKey.end()).c_str(),
                      keyStr.c_str(), isShift ? STR("Y") : STR("N"));
 
-                // fix #3b (bare-modifier capture). The BP's
-                // UInputKeySelector captures bare Shift/Ctrl/Alt instantly
-                // and exits selecting mode, firing OnKeySelectedBP with
-                // key="Shift" (no modifier flags). The user expected to
-                // press Shift+F1 as a chord but the BP grabbed Shift
-                // before the F1 press landed. Detect modifier-name
-                // captures, restore the previous chord display, and
-                // re-arm bIsSelectingKey so the BP keeps listening —
+                // Bare-modifier capture handler. The BP's UInputKeySelector
+                // captures bare Shift/Ctrl/Alt instantly and exits selecting
+                // mode, firing OnKeySelectedBP with key="Shift" (no modifier
+                // flags). The user expected to press Shift+F1 as a chord but
+                // the BP grabbed Shift before the F1 press landed. Detect
+                // modifier-name captures, restore the previous chord display,
+                // and re-arm bIsSelectingKey so the BP keeps listening —
                 // user's subsequent key press completes the chord with
                 // current modifier state.
                 bool isModifierAlone =
@@ -2065,10 +2019,9 @@
                 if (UObject* hd = spawnSectionHeading(STR("Mod Game Options")))
                     appendToVerticalBox(parentPanel, hd);
             }
-            // 5 action buttons (Rename/Save/Unlock/Read All/
-            // Clear All Buffs) moved to the in-game pause menu
-            // (UI_WBP_EscapeMenu2_C → injectPauseMenuButtons). Only the
-            // two toggle buttons remain on the Gameplay tab here.
+            // Action buttons (Rename / Save / Unlock / Read All / Clear Buffs)
+            // live on the in-game pause menu; only the two toggle rows are
+            // emitted here.
             struct Spec { const wchar_t* label; GameOptKind kind; };
             static const Spec gameOptSpecs[] = {
                 { STR("Toggle No Collision Flying"), GameOptKind::ToggleNoCollision },
@@ -2209,10 +2162,9 @@
             int added = 0;
             for (const auto& s : specs)
             {
-                // fromPauseMenu=true so Settings → Gameplay tab's
-                // m_gameOptButtons.clear() doesn't wipe these out (caused
-                // SAVE GAME / RENAME / etc. to silently no-op after the user
-                // opened the Gameplay tab).
+                // fromPauseMenu=true preserves these entries through Gameplay-tab
+                // rebuilds; without it the partial erase wipes them and clicks
+                // become silent no-ops.
                 UObject* btn = spawnGameOptButton(outer, s.label, s.kind, /*fromPauseMenu=*/true);
                 if (!btn) continue;
                 if (auto* smPtr = btn->GetValuePtrByPropertyNameInChain<bool>(STR("SmallText")))
@@ -2240,21 +2192,18 @@
             if (leaveBtn) finalOrder.push_back(leaveBtn);
             if (quitBtn)  finalOrder.push_back(quitBtn);
 
-            // 4) ClearChildren on the VerticalBox via UFUNCTION (ClearChildren
-            //    IS reflected; InsertChildAt is NOT — that's why prior spacer
-            //    inserts silently fell back to AddChild and ended up at the
-            //    bottom). The widgets themselves stay alive — only the slots
-            //    are released.
+            // 4) ClearChildren is reflected; InsertChildAt is NOT — to insert
+            //    into an existing UVerticalBox, clear and rebuild via AddChild.
+            //    The widgets themselves stay alive — only the slots are released.
             if (auto* fnClr = vbox->GetFunctionByNameInChain(STR("ClearChildren")))
             {
                 std::vector<uint8_t> b(fnClr->GetParmsSize(), 0);
                 safeProcessEvent(vbox, fnClr, b.data());
             }
 
-            // 5) v0.56 — Use USizeBox with HeightOverride for spacers.
-            //    USpacer's `Size` (FVector2D) write didn't render reliably
-            //    in this game; SizeBox + jw_setSizeBoxOverride is the
-            //    proven path used elsewhere in the codebase.
+            // 5) Use USizeBox with HeightOverride for spacers. USpacer's `Size`
+            //    (FVector2D) write didn't render reliably in this game; SizeBox
+            //    + jw_setSizeBoxOverride is the proven path.
             UClass* spacerCls = nullptr;
             try {
                 spacerCls = UObjectGlobals::StaticFindObject<UClass*>(
@@ -3758,10 +3707,7 @@
                 };
                 // labels per user spec: Title-Case button text,
                 // toggleables show ON/OFF (no PEACE/FIGHT, no SAVE NOW).
-                // 5 action buttons (Rename/Save/Unlock/Read All/
-                // Clear All Buffs) moved to the in-game pause menu
-                // (UI_WBP_EscapeMenu2_C → injectPauseMenuButtons). Only
-                // the two toggle rows remain on the Gameplay tab.
+                // Action buttons live on the pause menu; toggle rows only here.
                 static const GSpec gSpecs[] = {
                     { STR("No Collision (Flying)"), GameOptKind::ToggleNoCollision, nullptr, 0,0,0 },
                     { STR("Peace Mode"),           GameOptKind::TogglePeace,       nullptr,         0,0,0 },

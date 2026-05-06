@@ -3,7 +3,7 @@ KHAZAD-DUM ADVANCED BUILDER PACK
 COMPREHENSIVE MODDING KNOWLEDGE BASE
 
 Return to Moria (Lord of the Rings) — UE4SS C++ and Lua Modding
-Document Version 6.23.22
+Document Version 6.23.23
 Updated: 2026-05-08
 
 NOTE: The original document body below (Parts 1-3) was written through
@@ -3802,6 +3802,48 @@ over 9 iterations:
                * generic createImageWithBrush helper
                * keybind label rect (76x44)
              No behavior change in the normal case.
+    v6.23.23: Comment audit chunk 6a - moria_settings_ui.inl REWRITEs
+             (first wave, ~12 high-impact prose rewrites).
+             File header: 38-line "v6.8.0+ instrumentation only / GOAL /
+             CURRENT STATE / End-state features" misleading banner -> 25-line
+             concise orientation block describing actual shipped behavior.
+             Other rewrites:
+               * KEYMAP TAB INJECTION banner (drop "v0.1 layout-only / v0.2+
+                 wires chord persistence" - all shipped now)
+               * Modifier-prefix "deferred TODO" comment (10 lines) deleted
+                 - tickReapplyModifierPrefixes IS wired
+               * siblingIdx + withShift block (10 lines -> 5)
+               * modBits-must-reflect-withShift bug history -> 1-liner
+               * Tick-gated reapply mis-attached header (5 lines deleted -
+                 it described tickReapplyModifierPrefixes but sat above
+                 tickCaptureSpecialKeys)
+               * "fix #3a" / "fix #3b" task-tracker prefixes stripped;
+                 substance kept
+               * "5 action buttons (Rename/Save/Unlock...)" 4-line history
+                 rephrased to current-state in 3 lines (2 sites)
+               * fromPauseMenu rationale (4 lines bug history -> 3 lines
+                 current-state)
+               * ClearChildren / InsertChildAt UFunction reflection note
+                 (5 lines -> 3 lines, dropped "prior spacer inserts")
+               * v0.56 prefix dropped on USizeBox spacer rationale
+
+             Remaining settings_ui REWRITEs (~30) deferred to v6.23.24:
+               * carousel rationale consolidation
+               * SetBrushFromTexture bug-history strip
+               * checkbox label-prefix history
+               * BndEvt v0.35+v0.44 prefix
+               * spawnGameOptButton "exactly like CP4" reference
+               * navTabPressed pre/post hook stale narratives
+               * Option B/C era references
+               * dual-content state stale "two parallel sets" claim
+               * CHEATS HOST PATH banner audit
+               * CP5 "repurpose legal tab" stale banner
+               * various m_dual* state field comments
+               * FFGKUITab navbar append CP5 v0.4 / v0.3 prefixes
+
+             Build clean. Net diff: settings_ui.inl ~70 LOC removed
+             from prose-only tightening.
+
     v6.23.22: Comment audit chunk 5b - dllmain.cpp REWRITEs (second half).
              Continued prose-tightening on dllmain.cpp.
 
