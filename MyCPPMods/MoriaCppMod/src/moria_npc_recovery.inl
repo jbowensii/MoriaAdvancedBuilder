@@ -20,6 +20,292 @@
 
         bool m_npcProbeDone{false};
 
+        // ════════════════════════════════════════════════════════════════
+        // PHASE 2 (v7.1.0-rc.3) — PRODUCTION NPC STUCK-PATHING RECOVERY.
+        // ════════════════════════════════════════════════════════════════
+        //
+        // Algorithm (per the approved plan in deep-percolating-parnas.md):
+        //   1) Every 1 s on the game thread, walk cached friendly NPC
+        //      controllers (cache refreshes every 5 s via FindAllOf).
+        //   2) For each: read pawn (direct reflective UPROPERTY),
+        //      walk FSMRoot.ActiveChild chain to leaf state.
+        //   3) If leaf has a 'Destination' UPROPERTY (FVector), it's a
+        //      path-following state — read pawn location via direct
+        //      memory at RootComponent.RelativeLocation.
+        //   4) If pawn moved >100 cm since last tick → reset stuck timer
+        //      (NPC is making progress). Else accumulate stuck time.
+        //   5) After m_npcStuckThresholdMs of no progress AND throttle
+        //      window passed → ProcessEvent K2_SetActorLocation with
+        //      destination, bSweep=false, bTeleport=true.
+        //
+        // Authority-only: gated on m_isDedicatedServer || (m_localPC alive).
+        // Client peers see no teleport activity — server replicates the
+        // movement via standard pawn replication.
+
+        struct NpcRecoveryEntry {
+            RC::Unreal::FWeakObjectPtr controller;
+            RC::Unreal::FWeakObjectPtr pawn;
+            float lastX{0.0f}, lastY{0.0f}, lastZ{0.0f};
+            ULONGLONG lastProgressTickMs{0};
+            ULONGLONG lastTeleportTickMs{0};
+            bool initialized{false};
+        };
+        std::unordered_map<UObject*, NpcRecoveryEntry> m_npcRecoveryStates;
+        std::vector<RC::Unreal::FWeakObjectPtr> m_npcControllerCache;
+
+        ULONGLONG m_lastNpcRecoveryTickMs{0};
+        ULONGLONG m_lastNpcCacheRefreshMs{0};
+
+        bool m_npcRecoveryEnabled{true};        // rc.3: hardcoded ON for testing; rc.4 adds Settings toggle
+        ULONGLONG m_npcStuckThresholdMs{10000};  // 10 seconds default
+        static constexpr ULONGLONG NPC_TELEPORT_THROTTLE_MS = 30000;  // 30s between teleports per NPC
+        static constexpr float NPC_PROGRESS_THRESHOLD_CM = 100.0f;     // 1m of movement = "making progress"
+
+        // Diagnostic: log each NEW leaf-state class name once per session
+        // so we can map the state-name landscape as the user plays.
+        std::set<std::wstring> m_npcLeafClassesSeen;
+
+        // Walk FSMRoot.ActiveChild chain to find the leaf currently-
+        // running state. Caps at depth 16 to avoid runaway in case of
+        // a self-referencing state graph.
+        UObject* npcFindLeafActiveState(UObject* fsmComp)
+        {
+            if (!fsmComp || !isObjectAlive(fsmComp)) return nullptr;
+            auto* rootPtr = fsmComp->GetValuePtrByPropertyNameInChain<UObject*>(STR("FSMRoot"));
+            UObject* state = (rootPtr && *rootPtr) ? *rootPtr : nullptr;
+            if (!state || !isObjectAlive(state)) return nullptr;
+
+            UObject* leaf = state;
+            for (int depth = 0; depth < 16; ++depth)
+            {
+                auto* childPtr = leaf->GetValuePtrByPropertyNameInChain<UObject*>(STR("ActiveChild"));
+                UObject* child = (childPtr && *childPtr) ? *childPtr : nullptr;
+                if (!child || !isObjectAlive(child)) break;
+                if (child == leaf) break;  // self-loop guard
+                leaf = child;
+            }
+            return leaf;
+        }
+
+        // Read pawn world location via direct memory at
+        // pawn->RootComponent->RelativeLocation. ~10x faster than
+        // K2_GetActorLocation PE call. Verified equivalent in rc.1.
+        // Returns false if any link in the chain is null/unreadable.
+        bool npcReadPawnLocation(UObject* pawn, float& outX, float& outY, float& outZ)
+        {
+            if (!pawn || !isObjectAlive(pawn)) return false;
+            auto* rcPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("RootComponent"));
+            UObject* root = (rcPtr && *rcPtr) ? *rcPtr : nullptr;
+            if (!root || !isObjectAlive(root)) return false;
+            auto* relLoc = root->GetValuePtrByPropertyNameInChain<float>(STR("RelativeLocation"));
+            if (!relLoc) return false;
+            outX = relLoc[0];
+            outY = relLoc[1];
+            outZ = relLoc[2];
+            return true;
+        }
+
+        // PE dispatch: K2_SetActorLocation(NewLocation, bSweep=false,
+        // SweepHitResult, bTeleport=true). bTeleport=true bypasses sweep
+        // and interpolation — the pawn warps instantly. UE4 replicates
+        // the new position to clients via standard pawn movement
+        // replication.
+        bool npcTeleportPawn(UObject* pawn, float x, float y, float z)
+        {
+            if (!pawn || !isObjectAlive(pawn)) return false;
+            auto* fn = pawn->GetFunctionByNameInChain(STR("K2_SetActorLocation"));
+            if (!fn) return false;
+
+            auto* pNew   = findParam(fn, STR("NewLocation"));
+            auto* pSweep = findParam(fn, STR("bSweep"));
+            auto* pTele  = findParam(fn, STR("bTeleport"));
+            if (!pNew || !pSweep || !pTele) return false;
+
+            std::vector<uint8_t> buf(fn->GetParmsSize(), 0);
+            auto* loc = reinterpret_cast<float*>(buf.data() + pNew->GetOffset_Internal());
+            loc[0] = x; loc[1] = y; loc[2] = z;
+            *reinterpret_cast<bool*>(buf.data() + pSweep->GetOffset_Internal()) = false;
+            *reinterpret_cast<bool*>(buf.data() + pTele->GetOffset_Internal())  = true;
+
+            try { safeProcessEvent(pawn, fn, buf.data()); } catch (...) { return false; }
+            return true;
+        }
+
+        // Refresh the controller cache. Called every 5 s — controllers
+        // come and go slowly (bubble streaming), no need for per-tick
+        // FindAllOf calls.
+        void npcRefreshControllerCache()
+        {
+            m_npcControllerCache.clear();
+            std::vector<UObject*> ctrls;
+            findAllOfSafe(STR("MorAIController"), ctrls);
+            for (UObject* c : ctrls)
+            {
+                if (!c || !isObjectAlive(c)) continue;
+                std::wstring cls = safeClassName(c);
+                // Cheap prefix filter: friendly dwarf NPC controllers.
+                // "BP_AiController_Npc" — lowercase 'i'. Excludes orcs
+                // (BP_AIController_*), watcher, grendel, goat (different
+                // prefixes entirely).
+                if (cls.size() < 19) continue;
+                if (cls.substr(0, 19) != STR("BP_AiController_Npc")) continue;
+                m_npcControllerCache.emplace_back(c);
+            }
+
+            // Lazy cleanup: drop state entries whose controller is no
+            // longer in the cache.
+            if (!m_npcRecoveryStates.empty())
+            {
+                std::set<UObject*> live;
+                for (auto& w : m_npcControllerCache)
+                {
+                    UObject* c = w.Get();
+                    if (c) live.insert(c);
+                }
+                for (auto it = m_npcRecoveryStates.begin(); it != m_npcRecoveryStates.end(); )
+                {
+                    if (live.find(it->first) == live.end())
+                        it = m_npcRecoveryStates.erase(it);
+                    else
+                        ++it;
+                }
+            }
+        }
+
+        // Production tick. Per the design budget: throttled to 1 Hz,
+        // controller-cache refresh every 5 s, no PE in the hot path
+        // (only on actual teleport, which is rare).
+        void tickNpcRecovery()
+        {
+            if (!m_npcRecoveryEnabled) return;
+            if (!m_characterLoaded && !m_isDedicatedServer) return;
+
+            // Authority-only: skip on remote clients. The server is
+            // the only one whose teleport will replicate.
+            if (!m_isDedicatedServer)
+            {
+                // Listen-server host: m_localPC alive + pawn alive
+                // implies authority for this player's controllers.
+                // For now we run on any host that has a local player —
+                // the server-fly sweep uses the same gate.
+                if (!m_localPC) return;
+            }
+
+            ULONGLONG now = GetTickCount64();
+            if (now - m_lastNpcRecoveryTickMs < 1000) return;  // 1 Hz tick
+            m_lastNpcRecoveryTickMs = now;
+
+            // Refresh controller cache every 5 s.
+            if (now - m_lastNpcCacheRefreshMs >= 5000)
+            {
+                m_lastNpcCacheRefreshMs = now;
+                npcRefreshControllerCache();
+            }
+
+            if (m_npcControllerCache.empty()) return;
+
+            for (auto& wctrl : m_npcControllerCache)
+            {
+                UObject* ctrl = wctrl.Get();
+                if (!ctrl || !isObjectAlive(ctrl)) continue;
+
+                // Pawn (direct reflective read — confirmed working in rc.1).
+                auto* pawnPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("Pawn"));
+                UObject* pawn = (pawnPtr && *pawnPtr) ? *pawnPtr : nullptr;
+                if (!pawn || !isObjectAlive(pawn)) continue;
+
+                // FSM component → leaf active state.
+                auto* fsmPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("BehaviorFSMComp"));
+                UObject* fsmComp = (fsmPtr && *fsmPtr) ? *fsmPtr : nullptr;
+                UObject* leaf = npcFindLeafActiveState(fsmComp);
+                if (!leaf) continue;
+
+                // Diagnostic: one-shot log per new leaf class so we can
+                // map the state-name landscape as the user plays.
+                if (s_verbose)
+                {
+                    std::wstring leafCls = safeClassName(leaf);
+                    if (m_npcLeafClassesSeen.insert(leafCls).second)
+                    {
+                        VLOG(STR("[NpcRecovery] new leaf state class observed: '{}'\n"),
+                             leafCls.c_str());
+                    }
+                }
+
+                // Path-following test: leaf has a 'Destination' UPROPERTY.
+                // Idle/Talk/Work/EQS states don't expose this; only the
+                // FGKBehaviorState_MoveTo family does.
+                auto* destPtr = leaf->GetValuePtrByPropertyNameInChain<float>(STR("Destination"));
+                if (!destPtr)
+                {
+                    // Not a MoveTo state — clear stuck tracking for this
+                    // controller. Next time it enters MoveTo we'll start
+                    // a fresh timer.
+                    auto it = m_npcRecoveryStates.find(ctrl);
+                    if (it != m_npcRecoveryStates.end())
+                        it->second.initialized = false;
+                    continue;
+                }
+
+                // Read pawn location via direct memory.
+                float px, py, pz;
+                if (!npcReadPawnLocation(pawn, px, py, pz)) continue;
+
+                // Get-or-create state entry.
+                NpcRecoveryEntry& entry = m_npcRecoveryStates[ctrl];
+                if (!entry.initialized)
+                {
+                    entry.controller = RC::Unreal::FWeakObjectPtr(ctrl);
+                    entry.pawn = RC::Unreal::FWeakObjectPtr(pawn);
+                    entry.lastX = px; entry.lastY = py; entry.lastZ = pz;
+                    entry.lastProgressTickMs = now;
+                    entry.initialized = true;
+                    continue;
+                }
+
+                // Did the pawn make progress? Compute squared distance to
+                // avoid a sqrt; threshold² is 100*100 = 10000.
+                float dx = px - entry.lastX;
+                float dy = py - entry.lastY;
+                float dz = pz - entry.lastZ;
+                float d2 = dx*dx + dy*dy + dz*dz;
+                if (d2 > NPC_PROGRESS_THRESHOLD_CM * NPC_PROGRESS_THRESHOLD_CM)
+                {
+                    entry.lastProgressTickMs = now;
+                    entry.lastX = px; entry.lastY = py; entry.lastZ = pz;
+                    continue;
+                }
+
+                // Pawn is not making progress. Has stuck time exceeded threshold?
+                ULONGLONG stuckElapsed = now - entry.lastProgressTickMs;
+                if (stuckElapsed < m_npcStuckThresholdMs) continue;
+
+                // Throttle: don't teleport same NPC more than once every 30 s.
+                if (entry.lastTeleportTickMs != 0 &&
+                    now - entry.lastTeleportTickMs < NPC_TELEPORT_THROTTLE_MS)
+                    continue;
+
+                // Stuck. Read destination + teleport.
+                float dx_t = destPtr[0], dy_t = destPtr[1], dz_t = destPtr[2];
+                std::wstring leafCls = safeClassName(leaf);
+                std::wstring ctrlCls = safeClassName(ctrl);
+
+                bool ok = npcTeleportPawn(pawn, dx_t, dy_t, dz_t);
+
+                VLOG(STR("[NpcRecovery] {} teleported pawn ({}) "
+                         "from ({:.1f},{:.1f},{:.1f}) to ({:.1f},{:.1f},{:.1f}) "
+                         "after {}s stuck in state '{}' (result={})\n"),
+                     ctrlCls.c_str(), safeClassName(pawn).c_str(),
+                     px, py, pz, dx_t, dy_t, dz_t,
+                     (unsigned)(stuckElapsed / 1000), leafCls.c_str(),
+                     ok ? STR("OK") : STR("FAILED"));
+
+                entry.lastTeleportTickMs = now;
+                entry.lastProgressTickMs = now;  // reset stuck timer
+                entry.lastX = px; entry.lastY = py; entry.lastZ = pz;
+            }
+        }
+
         // Walk a UStruct's full property chain and log each property's
         // name + type + offset. Used at probe time to discover the
         // unknown UPROPERTY names on UFGKActorFSMComponent.
