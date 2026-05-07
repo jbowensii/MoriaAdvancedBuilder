@@ -222,6 +222,13 @@
 
                 // Diagnostic: one-shot log per new leaf class so we can
                 // map the state-name landscape as the user plays.
+                // For motion-suspect classes (names containing Move /
+                // Travel / Goto / Approach / Flee), also dump the full
+                // property chain + try multiple candidate destination
+                // field names — rc.3 found the game uses
+                // FGKBehaviorState_MoveToBlackboardKey, NOT the simple
+                // FGKBehaviorState_MoveTo, so 'Destination' isn't the
+                // right field name. This dump tells us what IS.
                 if (s_verbose)
                 {
                     std::wstring leafCls = safeClassName(leaf);
@@ -229,6 +236,83 @@
                     {
                         VLOG(STR("[NpcRecovery] new leaf state class observed: '{}'\n"),
                              leafCls.c_str());
+
+                        bool isMotionSuspect =
+                            (leafCls.find(STR("Move")) != std::wstring::npos ||
+                             leafCls.find(STR("Travel")) != std::wstring::npos ||
+                             leafCls.find(STR("Goto")) != std::wstring::npos ||
+                             leafCls.find(STR("GoTo")) != std::wstring::npos ||
+                             leafCls.find(STR("Approach")) != std::wstring::npos ||
+                             leafCls.find(STR("Flee")) != std::wstring::npos ||
+                             leafCls.find(STR("Path")) != std::wstring::npos ||
+                             leafCls.find(STR("Walk")) != std::wstring::npos);
+
+                        if (isMotionSuspect)
+                        {
+                            // Full property dump.
+                            std::wstring label = STR("[motion-suspect] ") + leafCls;
+                            npcProbeLogPropertyChain(leaf, label.c_str());
+
+                            // Try multiple candidate destination field names.
+                            const wchar_t* fvecCandidates[] = {
+                                STR("Destination"),
+                                STR("TargetLocation"),
+                                STR("GoalLocation"),
+                                STR("DestLocation"),
+                                STR("CurrentEndLocation"),
+                                STR("EndLocation"),
+                                STR("FinalLocation"),
+                                STR("MoveGoal"),
+                                STR("Goal"),
+                            };
+                            for (const wchar_t* name : fvecCandidates)
+                            {
+                                auto* p = leaf->GetValuePtrByPropertyNameInChain<float>(name);
+                                if (p)
+                                {
+                                    VLOG(STR("[NpcRecovery]   FVector '{}' EXISTS = ({:.1f}, {:.1f}, {:.1f})\n"),
+                                         name, p[0], p[1], p[2]);
+                                }
+                            }
+
+                            // Try blackboard key-name candidates (FName).
+                            const wchar_t* fnameCandidates[] = {
+                                STR("LocationBlackboardKeyName"),
+                                STR("TargetBlackboardKeyName"),
+                                STR("BlackboardKey"),
+                                STR("GoalKey"),
+                                STR("DestinationKey"),
+                            };
+                            for (const wchar_t* name : fnameCandidates)
+                            {
+                                // FName is 8 bytes — try reading as such.
+                                auto* p = leaf->GetValuePtrByPropertyNameInChain<RC::Unreal::FName>(name);
+                                if (p)
+                                {
+                                    std::wstring keyStr;
+                                    try { keyStr = p->ToString(); } catch (...) { keyStr = STR("(unreadable)"); }
+                                    VLOG(STR("[NpcRecovery]   FName '{}' EXISTS = '{}'\n"),
+                                         name, keyStr.c_str());
+                                }
+                            }
+
+                            // Try AActor* destination candidates.
+                            const wchar_t* actorCandidates[] = {
+                                STR("DestinationActor"),
+                                STR("TargetActor"),
+                                STR("GoalActor"),
+                            };
+                            for (const wchar_t* name : actorCandidates)
+                            {
+                                auto* p = leaf->GetValuePtrByPropertyNameInChain<UObject*>(name);
+                                if (p && *p)
+                                {
+                                    std::wstring acls = safeClassName(*p);
+                                    VLOG(STR("[NpcRecovery]   Actor '{}' EXISTS = {:p} class={}\n"),
+                                         name, (void*)*p, acls.c_str());
+                                }
+                            }
+                        }
                     }
                 }
 

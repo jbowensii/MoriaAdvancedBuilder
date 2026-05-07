@@ -585,19 +585,21 @@ namespace MoriaMods
 
         #include "moria_npc_recovery.inl"
 
+        #include "moria_goat.inl"
+
       public:
 
 
         MoriaCppMod()
         {
-            ModVersion = STR("7.1.0-rc.3");
+            ModVersion = STR("7.1.0-rc.4");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.3\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.4\n"));
         }
 
         ~MoriaCppMod() override
@@ -637,7 +639,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.3 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.4 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
@@ -1936,6 +1938,21 @@ namespace MoriaMods
                 }
                 s_lastRevealMapKey = nowDown;
             }
+            // Num- (Subtract) — spawn a tame BP_NpcGoat_C that follows the player.
+            // Edge-triggered, suppressed while the F12 settings panel is open or
+            // a modifier is held (so existing chord behavior isn't shadowed).
+            {
+                static bool s_lastSpawnGoatKey = false;
+                bool nowDown = (GetAsyncKeyState(VK_SUBTRACT) & 0x8000) != 0;
+                if (nowDown && !s_lastSpawnGoatKey && !m_ftVisible && !modDown)
+                {
+                    VLOG(STR("[MoriaCppMod] [Goat] NUM- press detected\n"));
+                    spawnFollowGoat();
+                }
+                s_lastSpawnGoatKey = nowDown;
+            }
+            // Goat follow tick (no-op when herd is empty; throttled to 1 Hz/goat internally).
+            tickFollowGoats();
             // Num0 - capture bubble info to clipboard + Target Info widget (v6.4.5+)
             // Windows maps numpad-0 to VK_NUMPAD0 only when NumLock is ON; with NumLock OFF
             // the same physical key sends VK_INSERT (which Replenish owns). We always
@@ -3136,6 +3153,12 @@ namespace MoriaMods
                         m_localPawn = getPawn();
                         VLOG(STR("[MoriaCppMod] Character loaded - PC={:p} Pawn={:p}, waiting 15s before replay\n"),
                              (void*)m_localPC, (void*)m_localPawn);
+
+                        // Preload goat-spawn assets so NUM- works in any zone,
+                        // not only after walking past a wild goat. Best-effort —
+                        // chunk-locked assets will still fail until visited.
+                        ensureGoatSpawnBindings();
+                        ensureGoatSkinMaterial();
 
                         // Server fly: set client-authoritative movement on all characters at login.
                         // Tells the server to trust client positions (allows client fly to work).
