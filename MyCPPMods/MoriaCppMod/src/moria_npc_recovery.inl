@@ -176,60 +176,120 @@
 
             if (fsmComp && isObjectAlive(fsmComp))
             {
-                // ---- TODO #1: full property dump of UFGKActorFSMComponent ----
-                npcProbeLogPropertyChain(fsmComp, STR("[#1] BehaviorFSMComp"));
+                // ---- TODO #1 (rc.2): the FSM doesn't expose CurrentState. ----
+                // Properties dumped in rc.1: FSMRoot, AllStates, StateMap,
+                // RunTimeStates. Active-state detection requires walking
+                // these structures.
 
-                // Probe candidate field names for "current state" pointer.
-                const wchar_t* candidates[] = {
-                    STR("CurrentState"),
-                    STR("ActiveState"),
-                    STR("State"),
-                    STR("CurrentChildState"),
-                    STR("ActiveChildState"),
-                };
-                for (const wchar_t* name : candidates)
+                // (a) FSMRoot — UFGKState*. Dump its property surface to
+                //     understand what UFGKState exposes (likely bIsActive,
+                //     Children, etc.).
                 {
-                    auto* p = fsmComp->GetValuePtrByPropertyNameInChain<UObject*>(name);
-                    if (p)
+                    auto* rootPtr = fsmComp->GetValuePtrByPropertyNameInChain<UObject*>(STR("FSMRoot"));
+                    UObject* root = (rootPtr && *rootPtr) ? *rootPtr : nullptr;
+                    VLOG(STR("[NpcProbe] [#1a] FSMRoot ptr={:p} obj={:p}\n"),
+                         (void*)rootPtr, (void*)root);
+                    if (root && isObjectAlive(root))
                     {
-                        UObject* state = *p;
-                        std::wstring stateCls = state ? safeClassName(state) : STR("(null)");
-                        VLOG(STR("[NpcProbe] [#1] field '{}' EXISTS, value={:p} class={}\n"),
-                             name, (void*)state, stateCls.c_str());
-                        if (state && isObjectAlive(state))
+                        npcProbeLogPropertyChain(root, STR("[#1a] FSMRoot"));
+                    }
+                }
+
+                // (b) AllStates — TArray<UFGKState*>. Dump first ~10 entries:
+                //     class name + check for an active flag.
+                {
+                    auto* allStatesPtr =
+                        fsmComp->GetValuePtrByPropertyNameInChain<TArray<UObject*>>(STR("AllStates"));
+                    if (allStatesPtr)
+                    {
+                        int n = allStatesPtr->Num();
+                        VLOG(STR("[NpcProbe] [#1b] AllStates.Num() = {}\n"), n);
+                        int dumpLimit = (n > 10) ? 10 : n;
+                        for (int i = 0; i < dumpLimit; ++i)
                         {
-                            // If this is a MoveTo state, dump its destination.
-                            if (stateCls.find(STR("MoveTo")) != std::wstring::npos)
-                            {
-                                auto* destPtr = state->GetValuePtrByPropertyNameInChain<float>(STR("Destination"));
-                                if (destPtr)
-                                {
-                                    VLOG(STR("[NpcProbe] [#1+] MoveTo.Destination: ({:.1f}, {:.1f}, {:.1f})\n"),
-                                         destPtr[0], destPtr[1], destPtr[2]);
-                                }
-                                npcProbeLogPropertyChain(state, STR("[#1+] active MoveTo state"));
+                            UObject* state = (*allStatesPtr)[i];
+                            if (!state || !isObjectAlive(state)) {
+                                VLOG(STR("[NpcProbe] [#1b]   AllStates[{}] = null/dead\n"), i);
+                                continue;
                             }
+                            std::wstring sCls = safeClassName(state);
+                            VLOG(STR("[NpcProbe] [#1b]   AllStates[{}] = {:p} class={}\n"),
+                                 i, (void*)state, sCls.c_str());
+
+                            // Probe candidate "is active" field names on each state.
+                            const wchar_t* activeFlags[] = {
+                                STR("bIsActive"), STR("bActive"), STR("bIsCurrent"),
+                                STR("bIsRunning"), STR("bEntered"),
+                            };
+                            for (const wchar_t* fname : activeFlags) {
+                                auto* fptr = state->GetValuePtrByPropertyNameInChain<bool>(fname);
+                                if (fptr) {
+                                    VLOG(STR("[NpcProbe] [#1b]     {}={}  (field '{}')\n"),
+                                         fname, *fptr ? STR("TRUE") : STR("false"), fname);
+                                }
+                            }
+
+                            // Dump first state fully so we see UFGKState's complete shape.
+                            if (i == 0) {
+                                npcProbeLogPropertyChain(state, STR("[#1b] AllStates[0] full prop dump"));
+                            }
+                        }
+                    } else {
+                        VLOG(STR("[NpcProbe] [#1b] AllStates property not reachable\n"));
+                    }
+                }
+
+                // (c) RunTimeStates — alternate access path (TArray).
+                {
+                    auto* rtsPtr =
+                        fsmComp->GetValuePtrByPropertyNameInChain<TArray<UObject*>>(STR("RunTimeStates"));
+                    if (rtsPtr)
+                    {
+                        VLOG(STR("[NpcProbe] [#1c] RunTimeStates.Num() = {}\n"), rtsPtr->Num());
+                        int dumpLimit = (rtsPtr->Num() > 5) ? 5 : rtsPtr->Num();
+                        for (int i = 0; i < dumpLimit; ++i)
+                        {
+                            UObject* state = (*rtsPtr)[i];
+                            if (!state || !isObjectAlive(state)) continue;
+                            std::wstring sCls = safeClassName(state);
+                            VLOG(STR("[NpcProbe] [#1c]   RunTimeStates[{}] = {:p} class={}\n"),
+                                 i, (void*)state, sCls.c_str());
                         }
                     }
                 }
             }
 
-            // ---- TODO #3: check UMorPathFollowingComponent for built-in stuck flags ----
-            if (pawn && isObjectAlive(pawn))
+            // ---- TODO #3 (rc.2): re-aimed. PathFollowingComponent lives ----
+            // on the AIController in standard UE4, not the pawn. Probe both
+            // sides + try Mor-prefixed alt names.
             {
-                auto* pfcPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("PathFollowingComponent"));
-                UObject* pfc = (pfcPtr && *pfcPtr) ? *pfcPtr : nullptr;
-                VLOG(STR("[NpcProbe] [#3] pawn->PathFollowingComponent: comp={:p}\n"), (void*)pfc);
-                if (pfc && isObjectAlive(pfc))
+                struct ProbeTarget { UObject* obj; const wchar_t* label; };
+                ProbeTarget targets[] = {
+                    { probeCtrl, STR("[#3a] controller->PathFollowingComponent") },
+                    { probeCtrl, STR("[#3a-alt] controller->MorPathFollowingComponent") },
+                    { pawn,      STR("[#3b] pawn->PathFollowingComponent") },
+                    { pawn,      STR("[#3b-alt] pawn->MorPathFollowingComponent") },
+                };
+                const wchar_t* propNames[] = {
+                    STR("PathFollowingComponent"),
+                    STR("MorPathFollowingComponent"),
+                    STR("PathFollowingComponent"),
+                    STR("MorPathFollowingComponent"),
+                };
+                for (size_t i = 0; i < 4; ++i)
                 {
-                    npcProbeLogPropertyChain(pfc, STR("[#3] PathFollowingComponent"));
-                }
-
-                // Also check if MorPathFollowingComponent lives on a different access path.
-                auto* mpfPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("MorPathFollowingComponent"));
-                if (mpfPtr && *mpfPtr)
-                {
-                    npcProbeLogPropertyChain(*mpfPtr, STR("[#3 alt] MorPathFollowingComponent"));
+                    if (!targets[i].obj || !isObjectAlive(targets[i].obj)) continue;
+                    auto* pfcPtr = targets[i].obj->GetValuePtrByPropertyNameInChain<UObject*>(propNames[i]);
+                    UObject* pfc = (pfcPtr && *pfcPtr) ? *pfcPtr : nullptr;
+                    VLOG(STR("[NpcProbe] {}: ptr={:p} comp={:p}\n"),
+                         targets[i].label, (void*)pfcPtr, (void*)pfc);
+                    if (pfc && isObjectAlive(pfc))
+                    {
+                        npcProbeLogPropertyChain(pfc, targets[i].label);
+                        // After first successful resolve, stop walking — both
+                        // alts on the same object would dump the same thing.
+                        break;
+                    }
                 }
             }
 
