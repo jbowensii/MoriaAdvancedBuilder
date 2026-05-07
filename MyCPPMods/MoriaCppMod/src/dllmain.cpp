@@ -583,19 +583,21 @@ namespace MoriaMods
 
         #include "moria_overlay_mgmt.inl"
 
+        #include "moria_npc_recovery.inl"
+
       public:
 
 
         MoriaCppMod()
         {
-            ModVersion = STR("7.0.0");
+            ModVersion = STR("7.1.0-rc.1");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v7.0.0\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.1\n"));
         }
 
         ~MoriaCppMod() override
@@ -635,7 +637,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v7.0.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.1 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
@@ -2890,6 +2892,7 @@ namespace MoriaMods
             tickTargetInfoDrag();          // inspect window drag + close + auto-hide
             tickRotationDisplay();         // rotation display 4-cell pyramid
             tickRenameFocus();             // re-assert focus on rename input
+            tickNpcRecoveryProbe();        // PHASE 1 DIAG: NPC stuck-pathing probe (s_verbose only, one-shot)
 
             // Quick Build chord-aware dispatch.
             //   USE (s_bindings[i].key, no modifiers): fires quickBuildSlot
