@@ -373,7 +373,11 @@
         {
             m_sessionHistory.clear();
             const std::string path = sessionHistoryPath();
-            std::ifstream f(path, std::ios::binary);
+            // v6.4.3 Steam ™ path fix: route through the wide-path
+            // helper so non-ASCII chars in the install path (Steam's
+            // "Return to Moria™" → 0xE2 0x84 0xA2) don't get
+            // CP_1252-mojibaked at file-open time.
+            std::ifstream f = openInputFile(path, std::ios::binary);
             if (!f)
             {
                 VLOG(STR("[SessionHistory] no file at '{}', starting empty\n"),
@@ -403,7 +407,8 @@
         {
             const std::string path = sessionHistoryPath();
             std::string text = serializeSessionHistoryJson();
-            std::ofstream f(path, std::ios::binary | std::ios::trunc);
+            // v6.4.3 Steam ™ path fix — see loadSessionHistory above.
+            std::ofstream f = openOutputFile(path, std::ios::binary | std::ios::trunc);
             if (!f)
             {
                 VLOG(STR("[SessionHistory] save FAILED — cannot open '{}'\n"),

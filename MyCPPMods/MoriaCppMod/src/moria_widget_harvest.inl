@@ -431,8 +431,10 @@
             }
 
             std::string outDir = modPath("Mods/MoriaCppMod/widget-harvest/");
-            // Best-effort mkdir
-            CreateDirectoryA(outDir.c_str(), nullptr);
+            // v6.4.3 Steam ™ path fix — CreateDirectoryA interprets the
+            // path as CP_1252, mojibakes Steam's "Return to Moria™".
+            // Convert UTF-8 → UTF-16 and use the wide Win32 API.
+            CreateDirectoryW(utf8PathToWide(outDir).c_str(), nullptr);
 
             // UTF-8 short name -> simple ascii-safe filename
             std::string fname = outDir + utf8Name + ".json";

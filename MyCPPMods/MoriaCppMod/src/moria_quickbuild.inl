@@ -147,6 +147,15 @@
                 }
             }
 
+            // [NpcRecovery]: single on/off toggle. Default is ON; we
+            // only write the section when the user has explicitly
+            // turned it off, to keep the INI clean.
+            if (!m_npcRecoveryEnabled)
+            {
+                file << "\n[NpcRecovery]\n";
+                file << "Enabled = false\n";
+            }
+
             // [Tweaks]: only non-default (index > 0) entries are written.
             {
                 file << "\n[Tweaks]\n";
@@ -348,6 +357,17 @@
                                         }
                                     }
                                 }
+                            }
+                        }
+                        else if (strEqualCI(section, "NpcRecovery"))
+                        {
+                            // Single key: Enabled = true|false. Default
+                            // ON, so the only meaningful action here is
+                            // a user-supplied "false" turning it off.
+                            if (strEqualCI(kv->key, "Enabled"))
+                            {
+                                bool isTrue = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                                m_npcRecoveryEnabled = isTrue;
                             }
                         }
                         else if (strEqualCI(section, "Tweaks"))

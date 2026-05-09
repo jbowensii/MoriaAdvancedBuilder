@@ -48,6 +48,22 @@
             float lastX{0.0f}, lastY{0.0f}, lastZ{0.0f};
             ULONGLONG lastProgressTickMs{0};
             ULONGLONG lastTeleportTickMs{0};
+            // rc.5: remembered destination across leaf-state transitions.
+            // Blocked NPCs cycle MoveToBlackboardKey ↔ Idle/TakeMeal too
+            // fast for a leaf-scoped timer — we cache the last seen path
+            // destination so we can teleport even when the controller is
+            // currently between path-follow attempts.
+            float lastDestX{0.0f}, lastDestY{0.0f}, lastDestZ{0.0f};
+            ULONGLONG lastDestSeenTickMs{0};
+            ULONGLONG lastStatusLogMs{0};   // rc.6 verbose throttle
+            // rc.18: bed-walk no-match cooldown. If our last scan
+            // found no bed for this NPC, don't rescan for this many
+            // seconds — avoids the per-tick scan loop that caused lag.
+            ULONGLONG lastBedScanFailMs{0};
+            // rc.18: cached matched bed (FWeakObjectPtr so it auto-
+            // invalidates on GC). If set + alive, skip the walk.
+            RC::Unreal::FWeakObjectPtr cachedAssignedBed;
+            bool hasDestination{false};
             bool initialized{false};
         };
         std::unordered_map<UObject*, NpcRecoveryEntry> m_npcRecoveryStates;
@@ -57,13 +73,119 @@
         ULONGLONG m_lastNpcCacheRefreshMs{0};
 
         bool m_npcRecoveryEnabled{true};        // rc.3: hardcoded ON for testing; rc.4 adds Settings toggle
-        ULONGLONG m_npcStuckThresholdMs{10000};  // 10 seconds default
+        ULONGLONG m_npcStuckThresholdMs{5000};   // rc.6: 5 s default (was 10 s) — faster response on the user's blocked-bed scenario
         static constexpr ULONGLONG NPC_TELEPORT_THROTTLE_MS = 30000;  // 30s between teleports per NPC
         static constexpr float NPC_PROGRESS_THRESHOLD_CM = 100.0f;     // 1m of movement = "making progress"
+        // rc.5: how recently we must have observed a path-follow
+        // destination for it to count as a valid teleport target. Blocked
+        // NPCs cycle MoveToBlackboardKey ↔ Idle every ~1-3 s; 30 s is
+        // plenty of slack to ride out the gaps without firing on stale
+        // destinations after the NPC genuinely abandoned the path.
+        static constexpr ULONGLONG NPC_DEST_FRESHNESS_MS = 30000;
+        // rc.9: skip teleport if pawn is already within this distance
+        // of its target. Prevents pointless snap-warps when an NPC is
+        // standing right next to its bed but the FSM hasn't formally
+        // marked the path complete.
+        static constexpr float NPC_PROXIMITY_SKIP_CM = 500.0f;
 
         // Diagnostic: log each NEW leaf-state class name once per session
         // so we can map the state-name landscape as the user plays.
         std::set<std::wstring> m_npcLeafClassesSeen;
+        // rc.5: log each unique (state-class × Block*-property) pair
+        // once so we can chart where "Blocked" surfaces reflectively.
+        std::set<std::wstring> m_npcBlockedPropsSeen;
+        // rc.7: log each unique (class × discovery-keyword-property)
+        // pair once so we can chart where assigned bed / home / target
+        // / etc references surface on the controller and pawn.
+        std::set<std::wstring> m_npcDiscoveryPropsSeen;
+        // rc.11: log each unique CurrentActivity row name once.
+        std::set<std::wstring> m_npcActivityNamesSeen;
+
+        // rc.7: scan a UObject's full property surface (own + inherited)
+        // for any UPROPERTY whose name contains one of a set of
+        // settlement-assignment keywords. One-shot logged per
+        // (class × property-name × scan-target-label).
+        void npcDiscoveryProbe(UObject* ctrl, UObject* pawn)
+        {
+            // rc.10: widened keyword set. The user reports a "Blocked"
+            // status visible in the NPC interact menu — that data must
+            // surface through a property somewhere reachable. Original
+            // rc.7 keywords focused on destination/assignment; this
+            // adds the menu/choice/availability/status surface.
+            static const wchar_t* kKeywords[] = {
+                STR("Bed"), STR("Home"), STR("Sleep"), STR("Rest"),
+                STR("Workstation"), STR("Job"), STR("Task"),
+                STR("Assigned"), STR("Owner"), STR("Settlement"),
+                STR("Target"), STR("Goal"), STR("Destination"),
+                // rc.10 additions:
+                STR("Interact"), STR("Choice"), STR("Option"),
+                STR("Action"), STR("Available"),
+                STR("Status"), STR("State"), STR("Reason"),
+                STR("Block"), STR("Cant"), STR("Disable"),
+                STR("Need"), STR("Mood"), STR("Want"), STR("Issue"),
+                STR("Worker"), STR("Behavior"),
+            };
+            auto containsKeywordCI = [](const std::wstring& name) -> bool {
+                std::wstring lo; lo.reserve(name.size());
+                for (wchar_t c : name) lo.push_back((wchar_t)towlower(c));
+                for (const wchar_t* kw : kKeywords) {
+                    std::wstring kwl; kwl.reserve(wcslen(kw));
+                    for (size_t i = 0; kw[i]; ++i) kwl.push_back((wchar_t)towlower(kw[i]));
+                    if (lo.find(kwl) != std::wstring::npos) return true;
+                }
+                return false;
+            };
+
+            auto scan = [&](UObject* obj, const wchar_t* tgtLabel) {
+                if (!obj || !isObjectAlive(obj)) return;
+                UClass* cls = nullptr;
+                try { cls = obj->GetClassPrivate(); } catch (...) {}
+                if (!cls) return;
+                std::wstring clsName;
+                try { clsName = cls->GetName(); } catch (...) { return; }
+                try {
+                    for (auto* prop : cls->ForEachPropertyInChain())
+                    {
+                        if (!prop) continue;
+                        std::wstring pn;
+                        try { pn = prop->GetName(); } catch (...) { continue; }
+                        if (!containsKeywordCI(pn)) continue;
+                        std::wstring oneShot = std::wstring(tgtLabel) + STR(":") + clsName + STR("::") + pn;
+                        if (!m_npcDiscoveryPropsSeen.insert(oneShot).second) continue;
+                        int32 off = -1;
+                        try { off = prop->GetOffset_Internal(); } catch (...) {}
+                        VLOG(STR("[NpcRecovery] DISCOVER {} '{}::{}' off=0x{:04x}\n"),
+                             tgtLabel, clsName.c_str(), pn.c_str(), (unsigned)off);
+                    }
+                } catch (...) {}
+            };
+
+            scan(ctrl, STR("ctrl"));
+            scan(pawn, STR("pawn"));
+
+            // rc.10: also scan the FSM component (it's a separate
+            // UObject hung off the controller). Behavior status flags
+            // — including potential "Blocked" — are sometimes parked
+            // on the FSM root rather than the controller class.
+            if (ctrl)
+            {
+                auto* fsmPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("BehaviorFSMComp"));
+                UObject* fsmComp = (fsmPtr && *fsmPtr) ? *fsmPtr : nullptr;
+                if (fsmComp) scan(fsmComp, STR("fsm"));
+            }
+
+            // rc.15: also scan UMorNPCComponent on the pawn ("NPC" at
+            // offset 0xF98 per CXXHeaderDump). InteractedBed on the
+            // pawn is null for NPCs blocked from a bed they've never
+            // reached — the assigned bed reference must live somewhere
+            // else, possibly on this component.
+            if (pawn)
+            {
+                auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
+                UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
+                if (npcComp) scan(npcComp, STR("npccomp"));
+            }
+        }
 
         // Walk FSMRoot.ActiveChild chain to find the leaf currently-
         // running state. Caps at depth 16 to avoid runaway in case of
@@ -131,6 +253,271 @@
             return true;
         }
 
+        // SEH-wrapped 16-byte byte-scan helper. Plain C function body
+        // (no destructors) so __try/__except is legal here.
+        // Returns true if a 16-byte sequence matching `needle` was
+        // found in [base, base+limit). Step is the alignment.
+        static bool seh_scan_for_guid(const uint8_t* base, int32 limit,
+                                      const uint8_t* needle) noexcept
+        {
+            __try {
+                for (int32 off = 0; off + 16 <= limit; off += 4)
+                {
+                    if (std::memcmp(base + off, needle, 16) == 0) return true;
+                }
+                return false;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                return false;
+            }
+        }
+
+        // rc.16: find the AMorBed assigned to the given NPC pawn.
+        //
+        // The bed-assignment data isn't reachable from the pawn /
+        // controller / NPCComponent side — we audited every reflective
+        // surface in rc.10/rc.15 and none expose the bed reference.
+        // The assignment lives on the bed itself (private replicated
+        // FGuid field, not in the header dumps).
+        //
+        // Approach: read the pawn's NpcGuid (16 bytes on
+        // UMorNPCComponent at offset 0x178), enumerate all AMorBed
+        // actors, and byte-scan each bed's instance memory for a
+        // matching 16-byte sequence. False positives are
+        // astronomically unlikely with 128-bit random guids.
+        UObject* npcFindAssignedBed(UObject* pawn)
+        {
+            if (!pawn || !isObjectAlive(pawn)) return nullptr;
+            auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
+            UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
+            if (!npcComp || !isObjectAlive(npcComp)) return nullptr;
+
+            auto* myGuid = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+            if (!myGuid || !isReadableMemory(myGuid, 16)) return nullptr;
+
+            // Sanity: don't search for an all-zero guid (unset NPC),
+            // it'd match every uninitialized FGuid field in every bed.
+            bool allZero = true;
+            for (int i = 0; i < 16; ++i) if (myGuid[i] != 0) { allZero = false; break; }
+            if (allZero) return nullptr;
+
+            // rc.17: enumerate beds by all known subclass names.
+            // FindAllOf is exact-match (per ue4ss-class-enumeration.md);
+            // querying "MorBed" alone returned 0 because every actual
+            // bed instance is a subclass (BP_Bedroll_C / BP_Bed_Base_C).
+            // Same pattern the controller cache uses.
+            std::vector<UObject*> beds;
+            static const wchar_t* kBedClasses[] = {
+                STR("BP_Bedroll_C"),
+                STR("BP_Bed_Base_C"),
+                STR("MorBed"),
+            };
+            for (const wchar_t* clsName : kBedClasses)
+            {
+                std::vector<UObject*> chunk;
+                if (!findAllOfSafe(clsName, chunk)) continue;
+                for (UObject* b : chunk) {
+                    if (!b || !isObjectAlive(b)) continue;
+                    std::wstring c = safeClassName(b);
+                    if (c.size() >= 9 && c.substr(0,9) == STR("Default__")) continue;
+                    beds.push_back(b);
+                }
+            }
+
+            // Verbose diagnostic — once per scan, log bed count and
+            // first bed's class. Tells us immediately if enumeration
+            // is finding anything.
+            if (s_verbose) {
+                static size_t s_lastLoggedBedCount = (size_t)-1;
+                if (beds.size() != s_lastLoggedBedCount) {
+                    s_lastLoggedBedCount = beds.size();
+                    std::wstring firstCls = beds.empty() ? std::wstring(STR("(none)"))
+                                                         : safeClassName(beds[0]);
+                    VLOG(STR("[NpcRecovery] bed-walk found {} bed actor(s); first cls='{}'\n"),
+                         (int)beds.size(), firstCls.c_str());
+                }
+            }
+
+            // Cap scan range — AMorBed CXXHeaderDump shows class size
+            // 0x8B0; BP subclass adds ~UberGraph + a few component
+            // fields, round up to 0xC00. Step by 4 bytes (FGuid is
+            // 4-byte aligned in UE4 layout).
+            constexpr int32 kScanLimit = 0xC00;
+            constexpr int32 kStep = 4;
+
+            // rc.18: SEH-wrap the whole scan, NO per-step
+            // isReadableMemory. Per-step VirtualQuery costs ~50µs each
+            // and at 768 steps × 30 beds × 9 NPCs = 200K syscalls/sec
+            // — that was the lag source. The bed object's instance
+            // memory is contiguously allocated by UE4; if any 4-byte
+            // window is unreadable, the whole object is dead and SEH
+            // catches the AV. One try/catch per bed instead of 768.
+            for (UObject* bed : beds)
+            {
+                if (!bed || !isObjectAlive(bed)) continue;
+                std::wstring cls = safeClassName(bed);
+                if (cls.size() >= 9 && cls.substr(0, 9) == STR("Default__")) continue;
+
+                if (seh_scan_for_guid(reinterpret_cast<const uint8_t*>(bed),
+                                      kScanLimit, myGuid))
+                    return bed;
+            }
+            return nullptr;
+        }
+
+        // rc.19: recursively walk the FSM state tree and read the
+        // FIRST FGKBehaviorState_MoveTo* / MoveToBlackboardKey
+        // instance's Destination field, regardless of whether that
+        // state is currently the active leaf.
+        //
+        // Rationale: blocked NPCs cycle between Emote/Idle/RunEQS as
+        // their leaf — they never enter MoveToBlackboardKey while
+        // we're polling. Status logs show hasDest=N for the entire
+        // session, despite the NPC clearly having a target (the bed
+        // they can't reach). The MoveToBlackboardKey state OBJECT
+        // exists in the FSM's state tree (we saw 8 sibling states
+        // in rc.1's AllStates dump) and retains its Destination
+        // FVector — it just isn't the currently-active leaf.
+        //
+        // Walk: state -> Children TArray -> recurse. Cap depth at 16
+        // for self-loop safety.
+        // rc.20: GetValueAsVector on a UBlackboardComponent for a
+        // given key name. The MoveToBlackboardKey state references its
+        // destination via name; the actual FVector lives in the
+        // blackboard and persists across state activations. The state
+        // object's Destination cache resets to FLT_MAX when dormant
+        // (rc.19 hit this bug), but the blackboard key value is stable.
+        bool npcGetBlackboardVector(UObject* blackboardComp, RC::Unreal::FName keyName,
+                                    float& ox, float& oy, float& oz)
+        {
+            if (!blackboardComp || !isObjectAlive(blackboardComp)) return false;
+            auto* fn = blackboardComp->GetFunctionByNameInChain(STR("GetValueAsVector"));
+            if (!fn) return false;
+            auto* pKey = findParam(fn, STR("KeyName"));
+            auto* pRet = findParam(fn, STR("ReturnValue"));
+            if (!pKey || !pRet) return false;
+            std::vector<uint8_t> buf(fn->GetParmsSize(), 0);
+            *reinterpret_cast<RC::Unreal::FName*>(buf.data() + pKey->GetOffset_Internal()) = keyName;
+            try { safeProcessEvent(blackboardComp, fn, buf.data()); } catch (...) { return false; }
+            float* v = reinterpret_cast<float*>(buf.data() + pRet->GetOffset_Internal());
+            if (!isReadableMemory(v, sizeof(float) * 3)) return false;
+            // Reject FLT_MAX sentinel and (0,0,0).
+            const float kSentinel = 1e30f;
+            if (v[0] >  kSentinel || v[1] >  kSentinel || v[2] >  kSentinel) return false;
+            if (v[0] < -kSentinel || v[1] < -kSentinel || v[2] < -kSentinel) return false;
+            if (v[0] == 0.0f && v[1] == 0.0f && v[2] == 0.0f) return false;
+            ox = v[0]; oy = v[1]; oz = v[2];
+            return true;
+        }
+
+        bool npcReadFsmMoveDestRec(UObject* state, float& ox, float& oy, float& oz, int depth)
+        {
+            if (!state || !isObjectAlive(state) || depth > 16) return false;
+            std::wstring cls = safeClassName(state);
+
+            // Two paths to read a MoveTo* state's destination:
+            //
+            //   (A) MoveToBlackboardKey: read BlackboardKeyName +
+            //       BlackboardComponent and ask the blackboard for the
+            //       actual FVector. Persists across activations.
+            //
+            //   (B) Plain MoveTo: read state.Destination directly. Only
+            //       valid while the state is active (FLT_MAX otherwise).
+            if (cls.find(STR("MoveToBlackboardKey")) != std::wstring::npos)
+            {
+                auto* keyNamePtr = state->GetValuePtrByPropertyNameInChain<RC::Unreal::FName>(STR("BlackboardKeyName"));
+                auto* bbCompPtr  = state->GetValuePtrByPropertyNameInChain<UObject*>(STR("BlackboardComponent"));
+                if (keyNamePtr && bbCompPtr && *bbCompPtr)
+                {
+                    if (npcGetBlackboardVector(*bbCompPtr, *keyNamePtr, ox, oy, oz))
+                        return true;
+                }
+            }
+            if (cls.find(STR("MoveTo")) != std::wstring::npos)
+            {
+                auto* destPtr = state->GetValuePtrByPropertyNameInChain<float>(STR("Destination"));
+                if (destPtr)
+                {
+                    float x = destPtr[0], y = destPtr[1], z = destPtr[2];
+                    // Reject FLT_MAX sentinel and (0,0,0).
+                    const float kSentinel = 1e30f;
+                    if (x <  kSentinel && y <  kSentinel && z <  kSentinel &&
+                        x > -kSentinel && y > -kSentinel && z > -kSentinel &&
+                        (x != 0.0f || y != 0.0f || z != 0.0f))
+                    {
+                        ox = x; oy = y; oz = z;
+                        return true;
+                    }
+                }
+            }
+            // Recurse into Children TArray.
+            auto* childrenArr = state->GetValuePtrByPropertyNameInChain<RC::Unreal::TArray<UObject*>>(STR("Children"));
+            if (childrenArr)
+            {
+                for (int32 i = 0; i < childrenArr->Num(); ++i)
+                {
+                    UObject* c = (*childrenArr)[i];
+                    if (npcReadFsmMoveDestRec(c, ox, oy, oz, depth + 1)) return true;
+                }
+            }
+            return false;
+        }
+
+        bool npcReadFsmMoveDest(UObject* fsmComp, float& ox, float& oy, float& oz)
+        {
+            if (!fsmComp || !isObjectAlive(fsmComp)) return false;
+            auto* rootPtr = fsmComp->GetValuePtrByPropertyNameInChain<UObject*>(STR("FSMRoot"));
+            UObject* root = (rootPtr && *rootPtr) ? *rootPtr : nullptr;
+            if (!root) return false;
+            return npcReadFsmMoveDestRec(root, ox, oy, oz, 0);
+        }
+
+        // rc.11: read the NPC's CurrentActivity row name. The
+        // "Blocked from Assigned Bed" status surfaced in the in-game
+        // interact menu corresponds to EMorNpcActivity::CantReach
+        // (value 11) on the activity enum. This enum value is exposed
+        // through UMorNPCComponent::GetCurrentActivity() which returns
+        // an FMorNPCActivityRowHandle (DataTable* + FName). The FName
+        // is the DataTable row key, conventionally named after the
+        // enum — e.g. "CantReach", "Idle", "Working".
+        //
+        // Returns the row name (FName converted to wstring) on
+        // success, or an empty string on any failure. NPCComponent
+        // pointer is found via the pawn's "NPC" UPROPERTY at offset
+        // 0x0F98 on AMorCharacter (per CXXHeaderDump line 7569).
+        std::wstring npcReadCurrentActivityName(UObject* pawn)
+        {
+            if (!pawn || !isObjectAlive(pawn)) return {};
+            auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
+            UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
+            if (!npcComp || !isObjectAlive(npcComp)) return {};
+
+            auto* fn = npcComp->GetFunctionByNameInChain(STR("GetCurrentActivity"));
+            if (!fn) return {};
+
+            // FMorNPCActivityRowHandle layout (16 bytes):
+            //   +0  UDataTable*  DataTable  (8 bytes)
+            //   +8  FName        RowName    (8 bytes)
+            // Plus the UFunction prepends a hidden return-value parm
+            // at the start of the parm buffer. findParam("ReturnValue")
+            // resolves that offset for us.
+            auto* pRet = findParam(fn, STR("ReturnValue"));
+            if (!pRet) return {};
+
+            std::vector<uint8_t> buf(fn->GetParmsSize(), 0);
+            try { safeProcessEvent(npcComp, fn, buf.data()); } catch (...) { return {}; }
+
+            // RowName is at retOffset + 8.
+            int32 retOff = pRet->GetOffset_Internal();
+            if (retOff < 0) return {};
+            uint8_t* retBase = buf.data() + retOff;
+            if (!isReadableMemory(retBase, 16)) return {};
+
+            auto* fname = reinterpret_cast<RC::Unreal::FName*>(retBase + 8);
+            std::wstring rowName;
+            try { rowName = fname->ToString(); } catch (...) { return {}; }
+            return rowName;
+        }
+
         // Refresh the controller cache. Called every 5 s — controllers
         // come and go slowly (bubble streaming), no need for per-tick
         // FindAllOf calls.
@@ -138,18 +525,65 @@
         {
             m_npcControllerCache.clear();
             std::vector<UObject*> ctrls;
-            findAllOfSafe(STR("MorAIController"), ctrls);
+
+            // rc.6: FindAllOf is exact-match (per
+            // ue4ss-class-enumeration.md). Calling it once on the
+            // parent class "MorAIController" misses every subclass
+            // instance — the actual NPC controllers are
+            // BP_AiController_NpcDwarf_C, BP_AiController_NpcWanderer_*,
+            // etc. Iterate each known friendly-NPC subclass name and
+            // accumulate. Costs N FindAllOf calls but they're cheap and
+            // only run every 5 s (cache refresh interval).
+            //
+            // Inventory from the user's blueprint research; if a
+            // friendly-NPC subclass is missing here, the cache won't
+            // see it — track via the cache-size log below.
+            static const wchar_t* kFriendlyNpcClasses[] = {
+                STR("BP_AiController_NpcDwarf_C"),
+                STR("BP_AiController_NpcWanderer_Simple_C"),
+                STR("BP_AiController_NpcEmissary_C"),
+                STR("BP_AiController_NpcMerchant_C"),
+                STR("BP_AiController_NpcWarden_C"),
+                STR("BP_AiController_NpcRecruit_C"),
+                STR("BP_AiController_NpcRecruitAndSettlement_C"),
+            };
+            for (const wchar_t* clsName : kFriendlyNpcClasses)
+            {
+                std::vector<UObject*> chunk;
+                if (!findAllOfSafe(clsName, chunk)) continue;
+                for (UObject* c : chunk)
+                {
+                    if (!c || !isObjectAlive(c)) continue;
+                    // Reject CDOs (Class Default Objects):
+                    // FindAllOf returns the CDO alongside instances
+                    // and we don't want to teleport that.
+                    std::wstring cls = safeClassName(c);
+                    if (cls.size() >= 9 && cls.substr(0, 9) == STR("Default__"))
+                        continue;
+                    ctrls.emplace_back(c);
+                }
+            }
+
+            // De-dup by pointer (some NPCs may match >1 of the parent
+            // chains used above; cheap to filter).
+            std::set<UObject*> seenSet;
             for (UObject* c : ctrls)
             {
-                if (!c || !isObjectAlive(c)) continue;
-                std::wstring cls = safeClassName(c);
-                // Cheap prefix filter: friendly dwarf NPC controllers.
-                // "BP_AiController_Npc" — lowercase 'i'. Excludes orcs
-                // (BP_AIController_*), watcher, grendel, goat (different
-                // prefixes entirely).
-                if (cls.size() < 19) continue;
-                if (cls.substr(0, 19) != STR("BP_AiController_Npc")) continue;
+                if (!seenSet.insert(c).second) continue;
                 m_npcControllerCache.emplace_back(c);
+            }
+
+            // Verbose: log cache size at each refresh so we can see if
+            // bubble streaming is loading NPCs or not.
+            if (s_verbose)
+            {
+                static size_t s_lastLoggedCacheSize = (size_t)-1;
+                if (m_npcControllerCache.size() != s_lastLoggedCacheSize)
+                {
+                    VLOG(STR("[NpcRecovery] cache refresh: {} friendly NPC controller(s) live\n"),
+                         (int)m_npcControllerCache.size());
+                    s_lastLoggedCacheSize = m_npcControllerCache.size();
+                }
             }
 
             // Lazy cleanup: drop state entries whose controller is no
@@ -316,20 +750,97 @@
                     }
                 }
 
-                // Path-following test: leaf has a 'Destination' UPROPERTY.
-                // Idle/Talk/Work/EQS states don't expose this; only the
-                // FGKBehaviorState_MoveTo family does.
-                auto* destPtr = leaf->GetValuePtrByPropertyNameInChain<float>(STR("Destination"));
-                if (!destPtr)
+                // rc.5: instant teleport when leaf state class name
+                // contains "block" (case-insensitive). The user reports
+                // NPCs showing a "blocked from assigned bed"
+                // notification — if a state class with a "block"
+                // substring is ever observed in the FSM, we should warp
+                // immediately rather than wait out the stuck timer.
+                // Scoped wide on purpose: we don't yet know the exact
+                // name (camel-case, all-caps, lowercase, prefix `b`,
+                // etc.); the diag dump below prints class + property
+                // names on first sighting so we can tighten in a
+                // follow-up. Case-insensitive search via lowercase.
+                auto containsBlockCI = [](const std::wstring& s) -> bool {
+                    std::wstring lo; lo.reserve(s.size());
+                    for (wchar_t c : s) lo.push_back((wchar_t)towlower(c));
+                    return lo.find(STR("block")) != std::wstring::npos;
+                };
+
+                std::wstring leafClsForBlock = safeClassName(leaf);
+                bool isBlockedState = containsBlockCI(leafClsForBlock);
+
+                // rc.20: per-tick block-prop UPROPERTY scan DISABLED.
+                // Walking ForEachPropertyInChain every tick on every
+                // NPC's leaf state is expensive and produced zero hits
+                // across all earlier tests — "blocked" isn't exposed
+                // as a UPROPERTY anywhere on the FSM. The
+                // CurrentActivity-based CantReach trigger (downstream)
+                // is the authoritative signal.
+                bool blockedPropTrue = false;
+                std::wstring blockedPropName;
+                if (false)
                 {
-                    // Not a MoveTo state — clear stuck tracking for this
-                    // controller. Next time it enters MoveTo we'll start
-                    // a fresh timer.
-                    auto it = m_npcRecoveryStates.find(ctrl);
-                    if (it != m_npcRecoveryStates.end())
-                        it->second.initialized = false;
-                    continue;
+                    UClass* cls = nullptr;
+                    try { cls = leaf->GetClassPrivate(); } catch (...) {}
+                    if (cls)
+                    {
+                        try {
+                            for (auto* prop : cls->ForEachPropertyInChain())
+                            {
+                                if (!prop) continue;
+                                std::wstring pn;
+                                try { pn = prop->GetName(); } catch (...) { continue; }
+                                if (!containsBlockCI(pn)) continue;
+
+                                std::wstring oneShot = leafClsForBlock + STR("::") + pn;
+                                bool firstSighting = m_npcBlockedPropsSeen.insert(oneShot).second;
+                                int32 off = -1;
+                                try { off = prop->GetOffset_Internal(); } catch (...) {}
+
+                                // Try to read as bool (1 byte).
+                                bool bVal = false;
+                                if (off >= 0)
+                                {
+                                    auto* b = reinterpret_cast<uint8_t*>(leaf) + off;
+                                    if (isReadableMemory(b, 1))
+                                        bVal = (*b != 0);
+                                }
+                                if (firstSighting && s_verbose)
+                                {
+                                    VLOG(STR("[NpcRecovery] BLOCK-PROP first-seen on '{}': name='{}' off=0x{:04x} val(bool)={}\n"),
+                                         leafClsForBlock.c_str(), pn.c_str(),
+                                         (unsigned)off, bVal ? STR("true") : STR("false"));
+                                }
+                                if (bVal) {
+                                    blockedPropTrue = true;
+                                    blockedPropName = pn;
+                                }
+                            }
+                        } catch (...) {}
+                    }
                 }
+
+                bool instantBlock = isBlockedState || blockedPropTrue;
+
+                // rc.5: per-pawn stuck tracking, decoupled from leaf state.
+                //
+                // Why: rc.3/rc.4 only ran their stuck timer while the leaf
+                // was a MoveTo* state. Blocked NPCs (e.g. "blocked from
+                // assigned bed") cycle MoveToBlackboardKey ↔ Idle/TakeMeal
+                // every 1-3 s — the leaf-scoped timer kept resetting and
+                // never reached the 10 s threshold despite the pawn being
+                // visibly stuck for minutes. Rc.5 inverts the logic:
+                //   • Always read pawn location and tick the stuck timer,
+                //     regardless of what state we're in.
+                //   • Cache the most-recently observed path destination
+                //     from any MoveTo* leaf (FGKBehaviorState_MoveTo or
+                //     FGKBehaviorState_MoveToBlackboardKey both expose
+                //     'Destination' — confirmed in rc.4 logs).
+                //   • Trigger teleport when stuck >= threshold AND we
+                //     have a remembered destination from within the last
+                //     NPC_DEST_FRESHNESS_MS window. The freshness window
+                //     bridges the rapid Idle ↔ MoveTo cycles.
 
                 // Read pawn location via direct memory.
                 float px, py, pz;
@@ -344,44 +855,187 @@
                     entry.lastX = px; entry.lastY = py; entry.lastZ = pz;
                     entry.lastProgressTickMs = now;
                     entry.initialized = true;
-                    continue;
+                    // Don't continue — fall through so we still capture
+                    // a destination on this same tick if the leaf is a
+                    // MoveTo* state.
                 }
 
-                // Did the pawn make progress? Compute squared distance to
-                // avoid a sqrt; threshold² is 100*100 = 10000.
-                float dx = px - entry.lastX;
-                float dy = py - entry.lastY;
-                float dz = pz - entry.lastZ;
-                float d2 = dx*dx + dy*dy + dz*dz;
-                if (d2 > NPC_PROGRESS_THRESHOLD_CM * NPC_PROGRESS_THRESHOLD_CM)
+                // Capture-or-refresh the remembered destination if we're
+                // currently in a path-follow state. Both MoveTo and
+                // MoveToBlackboardKey expose 'Destination' as FVector.
+                auto* destPtr = leaf->GetValuePtrByPropertyNameInChain<float>(STR("Destination"));
                 {
-                    entry.lastProgressTickMs = now;
-                    entry.lastX = px; entry.lastY = py; entry.lastZ = pz;
-                    continue;
+                    bool destValid = false;
+                    if (destPtr) {
+                        const float kSentinel = 1e30f;
+                        float x = destPtr[0], y = destPtr[1], z = destPtr[2];
+                        destValid = (x <  kSentinel && y <  kSentinel && z <  kSentinel &&
+                                     x > -kSentinel && y > -kSentinel && z > -kSentinel &&
+                                     (x != 0.0f || y != 0.0f || z != 0.0f));
+                    }
+                    if (destValid)
+                    {
+                        entry.lastDestX = destPtr[0];
+                        entry.lastDestY = destPtr[1];
+                        entry.lastDestZ = destPtr[2];
+                        entry.lastDestSeenTickMs = now;
+                        entry.hasDestination = true;
+                    }
+                }
+                if (!entry.hasDestination)
+                {
+                    // rc.19: leaf isn't a MoveTo* state but we don't
+                    // have a cached destination yet. Walk the entire
+                    // FSM state tree for any sibling MoveToBlackboardKey
+                    // instance and read its Destination directly. The
+                    // state object persists in the tree even when not
+                    // currently active.
+                    auto* fsmPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("BehaviorFSMComp"));
+                    UObject* fsmComp2 = (fsmPtr && *fsmPtr) ? *fsmPtr : nullptr;
+                    float fx, fy, fz;
+                    if (npcReadFsmMoveDest(fsmComp2, fx, fy, fz))
+                    {
+                        entry.lastDestX = fx;
+                        entry.lastDestY = fy;
+                        entry.lastDestZ = fz;
+                        entry.lastDestSeenTickMs = now;
+                        entry.hasDestination = true;
+                        if (s_verbose) {
+                            static bool s_loggedFirstFsmHit = false;
+                            if (!s_loggedFirstFsmHit) {
+                                s_loggedFirstFsmHit = true;
+                                VLOG(STR("[NpcRecovery] destination resolved via FSM tree walk for first NPC: ({:.1f}, {:.1f}, {:.1f})\n"),
+                                     fx, fy, fz);
+                            }
+                        }
+                    }
                 }
 
-                // Pawn is not making progress. Has stuck time exceeded threshold?
+                // rc.12: work-state filter REMOVED. With rc.11's
+                // CurrentActivity-based trigger, the leaf state is
+                // irrelevant — only the activity row name (e.g.
+                // "CantReachBed") gates the teleport. Filtering by
+                // leaf state was rejecting CantReach NPCs that
+                // happened to be parked in a Work_C leaf state at
+                // sample time, blocking the very fix the user wanted.
+
+                // Verbose per-NPC status: emit a one-line summary every
+                // ~10 s per NPC so we can see what the cache looks like
+                // during a blocked-bed scenario without filling the log.
+                if (s_verbose && (now - entry.lastStatusLogMs >= 10000))
+                {
+                    entry.lastStatusLogMs = now;
+                    ULONGLONG stuck_s = (now - entry.lastProgressTickMs) / 1000;
+                    ULONGLONG dest_age_s = entry.hasDestination
+                        ? (now - entry.lastDestSeenTickMs) / 1000 : 0;
+                    VLOG(STR("[NpcRecovery] status: ctrl={:p} cls='{}' leaf='{}' "
+                             "stuck={}s hasDest={} destAge={}s instantBlock={}\n"),
+                         (void*)ctrl, safeClassName(ctrl).c_str(),
+                         leafClsForBlock.c_str(),
+                         (unsigned)stuck_s,
+                         entry.hasDestination ? STR("Y") : STR("N"),
+                         (unsigned)dest_age_s,
+                         instantBlock ? STR("Y") : STR("N"));
+                }
+
+                // Update location-progress bookkeeping (kept for
+                // status-log completeness; no longer the trigger).
+                {
+                    float dx = px - entry.lastX;
+                    float dy = py - entry.lastY;
+                    float dz = pz - entry.lastZ;
+                    float d2 = dx*dx + dy*dy + dz*dz;
+                    if (d2 > NPC_PROGRESS_THRESHOLD_CM * NPC_PROGRESS_THRESHOLD_CM)
+                    {
+                        entry.lastProgressTickMs = now;
+                        entry.lastX = px; entry.lastY = py; entry.lastZ = pz;
+                    }
+                }
+
+                // rc.11: PRIMARY TRIGGER — read the NPC's CurrentActivity
+                // row name and compare against "CantReach" (the
+                // EMorNpcActivity enum value displayed as "Blocked from
+                // Assigned <X>" in the in-game interact menu). This is
+                // the literal "blocked" signal the user wants. No time
+                // threshold — fires immediately on detection.
+                std::wstring activityName = npcReadCurrentActivityName(pawn);
+                std::wstring activityLo = activityName;
+                for (auto& c : activityLo) c = (wchar_t)towlower(c);
+                bool isCantReach = (activityLo.find(STR("cantreach")) != std::wstring::npos)
+                                || (activityLo.find(STR("cant_reach")) != std::wstring::npos)
+                                || (activityLo.find(STR("blocked")) != std::wstring::npos);
+
+                // Verbose: log first sighting of each unique activity
+                // name so we can chart what row keys the DT actually
+                // uses (case + spelling).
+                if (s_verbose && !activityName.empty())
+                {
+                    if (m_npcActivityNamesSeen.insert(activityName).second)
+                        VLOG(STR("[NpcRecovery] activity-name first seen: '{}'\n"),
+                             activityName.c_str());
+                }
+
+                // Trigger gate: only the CantReach activity (or our
+                // legacy isBlockedState/blockedPropTrue paths) fires
+                // a teleport now. Stuck-timer + state denylist are
+                // GONE — they produced false positives on workers and
+                // mass-fallback to the player.
                 ULONGLONG stuckElapsed = now - entry.lastProgressTickMs;
-                if (stuckElapsed < m_npcStuckThresholdMs) continue;
+                if (!isCantReach && !instantBlock) continue;
 
                 // Throttle: don't teleport same NPC more than once every 30 s.
                 if (entry.lastTeleportTickMs != 0 &&
                     now - entry.lastTeleportTickMs < NPC_TELEPORT_THROTTLE_MS)
                     continue;
 
-                // Stuck. Read destination + teleport.
-                float dx_t = destPtr[0], dy_t = destPtr[1], dz_t = destPtr[2];
+                // rc.18: SIMPLIFIED — blocked → teleport to cached
+                // path destination, period. The cached destination is
+                // captured up-tick whenever the FSM is in
+                // FGKBehaviorState_MoveToBlackboardKey. We keep it for
+                // the entire session (no freshness expiry) so an NPC
+                // who once attempted to path can be unblocked even
+                // long after the FSM gave up. If we never observed
+                // them attempting a path, we have nothing to send
+                // them to and skip.
+                if (!entry.hasDestination)
+                {
+                    // Verbose, but throttled per-NPC so it doesn't spam.
+                    if (s_verbose && (now - entry.lastStatusLogMs >= 30000))
+                    {
+                        entry.lastStatusLogMs = now;
+                        VLOG(STR("[NpcRecovery] {} blocked but never observed in MoveTo state — no destination cached, skipping\n"),
+                             safeClassName(ctrl).c_str());
+                    }
+                    continue;
+                }
+
+                float dx_t = entry.lastDestX;
+                float dy_t = entry.lastDestY;
+                float dz_t = entry.lastDestZ;
+                ULONGLONG destAgeMs = now - entry.lastDestSeenTickMs;
+                const wchar_t* destSource = STR("path-dest");
+
                 std::wstring leafCls = safeClassName(leaf);
                 std::wstring ctrlCls = safeClassName(ctrl);
 
                 bool ok = npcTeleportPawn(pawn, dx_t, dy_t, dz_t);
 
-                VLOG(STR("[NpcRecovery] {} teleported pawn ({}) "
+                const wchar_t* trigger =
+                    isCantReach ? STR("CANT-REACH") :
+                    isBlockedState ? STR("BLOCKED-state") :
+                    blockedPropTrue ? STR("BLOCKED-prop") :
+                    STR("STUCK-timer");
+
+                VLOG(STR("[NpcRecovery] {} teleported pawn ({}) trigger={} target={} "
                          "from ({:.1f},{:.1f},{:.1f}) to ({:.1f},{:.1f},{:.1f}) "
-                         "after {}s stuck in state '{}' (result={})\n"),
+                         "after {}s stuck (current state '{}'{}{}, dest age {}ms, result={})\n"),
                      ctrlCls.c_str(), safeClassName(pawn).c_str(),
+                     trigger, destSource,
                      px, py, pz, dx_t, dy_t, dz_t,
                      (unsigned)(stuckElapsed / 1000), leafCls.c_str(),
+                     blockedPropTrue ? STR(", prop=") : STR(""),
+                     blockedPropTrue ? blockedPropName.c_str() : STR(""),
+                     (unsigned)destAgeMs,
                      ok ? STR("OK") : STR("FAILED"));
 
                 entry.lastTeleportTickMs = now;

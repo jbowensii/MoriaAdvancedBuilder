@@ -592,14 +592,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("7.1.0-rc.4");
+            ModVersion = STR("7.1.0-rc.20");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.4\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.20\n"));
         }
 
         ~MoriaCppMod() override
@@ -639,7 +639,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.4 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.20 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
@@ -813,6 +813,80 @@ namespace MoriaMods
                 if (wcscmp(fnStr, STR("navTabPressed")) == 0 && parms)
                 {
                     s_instance->onNavTabPressedPre(context, func, parms);
+                }
+
+                // Goat E-press hooks — narrow targets known so far.
+                if (wcscmp(fnStr, STR("ServerInteract")) == 0 && parms)
+                {
+                    s_instance->onGoatInteractPre(context, func, parms);
+                }
+                if (wcscmp(fnStr, STR("ServerRescueNpc")) == 0 && parms)
+                {
+                    s_instance->onGoatRescuePre(context, func, parms);
+                }
+                // Narrow keyword diagnostic — kept tight because the per-PE
+                // call cost adds up (this fires on every UFunction
+                // dispatch, thousands per second). Only the substrings we
+                // still actively need: "Interact" (for OnPressInteract /
+                // OnReleaseInteract / OnSetInteraction etc on goat) and
+                // "Rescue" (for legacy ServerRescueNpc visibility). Cheap
+                // wcsstr — no lowercase, no per-call set lookup unless we
+                // match.
+                if (!s_instance->m_followGoats.empty()
+                    && (wcsstr(fnStr, STR("Interact")) != nullptr
+                        || wcsstr(fnStr, STR("Rescue"))   != nullptr))
+                {
+                    static std::set<std::wstring> s_seenInteractFns;
+                    if (s_seenInteractFns.size() < 80
+                        && s_seenInteractFns.insert(fnStr).second)
+                    {
+                        std::wstring ctxCls = context ? safeClassName(context) : L"<null>";
+                        VLOG(STR("[MoriaCppMod] [GoatPEDiag] PE-pre: '{}' on class={}\n"),
+                             fnStr, ctxCls.c_str());
+                    }
+                    // First time we see UI_WBP_Interaction_C fire one of
+                    // these, dump its full property+UFunction schema so
+                    // we can find the visible-label FText and the target
+                    // UObject* to override "Rescue" -> "Open".
+                    if (context)
+                    {
+                        std::wstring ctxCls = safeClassName(context);
+                        if (ctxCls == STR("UI_WBP_Interaction_C"))
+                        {
+                            s_instance->dumpInteractionWidgetSchema(context);
+                        }
+                    }
+                }
+                // BP_RequestSpawn full-args diagnostic (every call, not
+                // one-shot). Logs spawner+context+class so we can compare
+                // natural-spawn callers to our own attempts.
+                if (wcscmp(fnStr, STR("BP_RequestSpawn")) == 0 && parms && func)
+                {
+                    s_instance->onBPRequestSpawnPre(context, func, parms);
+                }
+                // ServerSetInteractableCustomName: capture the chest the
+                // player just renamed; if the new name is "goat" (case
+                // insensitive) it becomes our persistent backing storage.
+                if (wcscmp(fnStr, STR("ServerSetInteractableCustomName")) == 0
+                    && parms && func)
+                {
+                    s_instance->onChestRenamePre(context, func, parms);
+                }
+                // [SUSPENDED 2026-05-09] InteractDiag wire — see
+                // `chest-link-future.md`. ServerInteract is not the
+                // chest-open path; logger removed to cut PE-pre overhead.
+                // Tap-E on companion goat: bypass the failing rescue gate by
+                // force-calling ExecuteInteraction on the widget when E is
+                // pressed and the widget is bound to one of our goats.
+                if (!s_instance->m_followGoats.empty()
+                    && wcscmp(fnStr, STR("OnPressInteract")) == 0
+                    && context)
+                {
+                    std::wstring ctxCls = safeClassName(context);
+                    if (ctxCls == STR("UI_WBP_Interaction_C"))
+                    {
+                        s_instance->onInteractionPressPre(context);
+                    }
                 }
                 // Legacy v0.4 hook - keep in case some path still calls it.
                 if (wcscmp(fnStr, STR("Initialize NavBar")) == 0 ||
@@ -1366,6 +1440,20 @@ namespace MoriaMods
                         VLOG(STR("[MoriaCppMod] [HUD] Entered FreeCam - hiding toolbars\n"));
                         s_overlay.visible = false;
                         s_overlay.needsUpdate = true;
+                        // v6.10.0+ New Building Bar — same hide-on-
+                        // freecam behavior the legacy MC toolbar had.
+                        // SetVisibility(1) = ESlateVisibility::Collapsed
+                        // (no layout space, no input).
+                        if (s_instance->m_newBuildingBar &&
+                            isObjectAlive(s_instance->m_newBuildingBar))
+                        {
+                            auto* visFn = s_instance->m_newBuildingBar
+                                ->GetFunctionByNameInChain(STR("SetVisibility"));
+                            if (visFn) {
+                                uint8_t p[8]{}; p[0] = 1;
+                                safeProcessEvent(s_instance->m_newBuildingBar, visFn, p);
+                            }
+                        }
                     }
                     return;
                 }
@@ -1379,6 +1467,18 @@ namespace MoriaMods
                     if (s_instance->m_toolbarsVisible)
                     {
                         if (s_instance->m_showHotbar) { s_overlay.visible = true; s_overlay.needsUpdate = true; }
+                    }
+                    // Restore NBB visibility. SetVisibility(0) =
+                    // ESlateVisibility::Visible.
+                    if (s_instance->m_newBuildingBar &&
+                        isObjectAlive(s_instance->m_newBuildingBar))
+                    {
+                        auto* visFn = s_instance->m_newBuildingBar
+                            ->GetFunctionByNameInChain(STR("SetVisibility"));
+                        if (visFn) {
+                            uint8_t p[8]{}; p[0] = 0;
+                            safeProcessEvent(s_instance->m_newBuildingBar, visFn, p);
+                        }
                     }
                     return;
                 }
@@ -1946,8 +2046,8 @@ namespace MoriaMods
                 bool nowDown = (GetAsyncKeyState(VK_SUBTRACT) & 0x8000) != 0;
                 if (nowDown && !s_lastSpawnGoatKey && !m_ftVisible && !modDown)
                 {
-                    VLOG(STR("[MoriaCppMod] [Goat] NUM- press detected\n"));
-                    spawnFollowGoat();
+                    VLOG(STR("[MoriaCppMod] [Goat] NUM- press detected (toggle)\n"));
+                    toggleFollowGoat();
                 }
                 s_lastSpawnGoatKey = nowDown;
             }
@@ -3159,6 +3259,10 @@ namespace MoriaMods
                         // chunk-locked assets will still fail until visited.
                         ensureGoatSpawnBindings();
                         ensureGoatSkinMaterial();
+                        ensurePackItemClass();
+                        ensurePackStaticMesh();
+                        dumpEquipComponentSchemas();
+                        dumpPlayerControllerSchema();
 
                         // Server fly: set client-authoritative movement on all characters at login.
                         // Tells the server to trust client positions (allows client fly to work).
