@@ -500,6 +500,13 @@ namespace MoriaMods
         bool m_rollRotateEnabled{true};
         bool m_buildMenuPrimed{false};
         bool m_buildTabAfterShowFired{false};
+        // v7.1.x: cached "is the build HUD currently visible?" state.
+        // Set by the OnAfterShow / OnAfterHide PE post-hooks on
+        // UI_WBP_BuildHUDv2_C. Replaces the per-tick PE polling that
+        // isPlacementActive() used to do every 250ms — when this is
+        // false, isPlacementActive() returns false immediately with
+        // no PE dispatch.
+        bool m_buildHudShowing{false};
 
 
         ScreenCoords m_screen;
@@ -592,14 +599,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("7.1.0-rc.20");
+            ModVersion = STR("7.1.0-rc.30");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.20\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.30\n"));
         }
 
         ~MoriaCppMod() override
@@ -639,7 +646,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.20 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.30 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
@@ -760,13 +767,11 @@ namespace MoriaMods
             }
 
 
-            register_keydown_event(Input::Key::MULTIPLY, [this]() {
-                if (m_ftVisible) return;
-                m_showHotbar = !m_showHotbar;
-                s_overlay.visible = m_showHotbar && m_gameHudVisible;
-                s_overlay.needsUpdate = true;
-                showOnScreen(m_showHotbar ? Loc::get("msg.hotbar_overlay_on") : Loc::get("msg.hotbar_overlay_off"), 2.0f, 0.2f, 0.8f, 1.0f);
-            });
+            // v7.1.x: NUM* binding fully retired. Previously toggled
+            // the legacy GDI+ overlay HUD (m_showHotbar / s_overlay)
+            // which was deprecated at v6.10.0 when the New Building
+            // Bar UMG widget replaced it. Reveal-Map moved to the
+            // pause-menu button stack. NUM* is now free.
 
 
 
@@ -978,6 +983,105 @@ namespace MoriaMods
                                 static_cast<uint8_t*>(parms) + pBubble->GetOffset_Internal());
                             if (bubble && isObjectAlive(bubble))
                                 s_instance->onBubbleEnteredEvent(bubble);
+                        }
+                    }
+                    return;
+                }
+
+                // [v1.1.1 GATE OVERRIDE 2026-05-10] IsUsableBy on the
+                // goat's MorNPCComponent returns false because the goat
+                // hasn't actually joined the player's settlement (the
+                // ownership/faction check fails internally). Override
+                // the return value to true when the context is one of
+                // our follower goats' MorNPCComponent. Cheap fnStr cmp
+                // first, only resolve context's outer when name matches.
+                if (wcscmp(fnStr2, STR("IsUsableBy")) == 0
+                    && parms && context && !s_instance->m_followGoats.empty())
+                {
+                    UObject* outer = nullptr;
+                    try { outer = context->GetOuterPrivate(); } catch (...) {}
+                    if (outer && isObjectAlive(outer))
+                    {
+                        bool isOurGoat = false;
+                        for (auto& g : s_instance->m_followGoats)
+                        {
+                            UObject* mine = g.pawn.Get();
+                            if (mine && mine == outer) { isOurGoat = true; break; }
+                        }
+                        if (isOurGoat)
+                        {
+                            if (auto* pRet = findParam(func, STR("ReturnValue")))
+                            {
+                                bool* slot = reinterpret_cast<bool*>(
+                                    static_cast<uint8_t*>(parms) + pRet->GetOffset_Internal());
+                                if (!*slot)
+                                {
+                                    *slot = true;
+                                    static int s_overrideLogsRemaining = 5;
+                                    if (s_overrideLogsRemaining > 0)
+                                    {
+                                        --s_overrideLogsRemaining;
+                                        VLOG(STR("[MoriaCppMod] [Goat] IsUsableBy overridden false->true on goat={:p} (remaining={})\n"),
+                                             (void*)outer, s_overrideLogsRemaining);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // rc.26: event-driven NPC blocked-bed trigger.
+                // SetCurrentActivity is the canonical UFunction the
+                // game calls when an NPC's activity transitions; its
+                // companion MorNpcUpdateActivity broadcasts the
+                // OnUpdateActivity multicast. Either fires the moment
+                // an NPC's Activity becomes CantReachBed / etc — no
+                // polling needed. Cheap function-name filter first
+                // per feedback_filter_pe_by_function_name_first.md.
+                if (wcscmp(fnStr2, STR("SetCurrentActivity")) == 0 ||
+                    wcscmp(fnStr2, STR("MorNpcUpdateActivity")) == 0)
+                {
+                    // rc.27 diag: one-shot log of each function name +
+                    // each unique row-name we observe. Confirms whether
+                    // the hook fires at all; if no log lines for these
+                    // appear, the function names don't match the runtime.
+                    {
+                        static std::set<std::wstring> s_seenFn;
+                        if (s_seenFn.insert(fnStr2).second)
+                            VLOG(STR("[NpcRecovery] EVENT-HOOK first sighting: fn='{}'\n"), fnStr2);
+                    }
+                    if (parms)
+                    {
+                        // Parm name is "ActivityHandle" on
+                        // SetCurrentActivity, "NpcActivity" on the
+                        // delegate broadcast. Try both.
+                        FProperty* pAct = func->GetPropertyByNameInChain(STR("ActivityHandle"));
+                        if (!pAct) pAct = func->GetPropertyByNameInChain(STR("NpcActivity"));
+                        if (pAct)
+                        {
+                            uint8_t* base = static_cast<uint8_t*>(parms) + pAct->GetOffset_Internal();
+                            // FMorNPCActivityRowHandle layout:
+                            // DataTable* @0 (8B), FName RowName @8 (8B).
+                            auto* fname = reinterpret_cast<RC::Unreal::FName*>(base + 8);
+                            std::wstring rowName;
+                            try { rowName = fname->ToString(); } catch (...) {}
+                            if (!rowName.empty())
+                            {
+                                // rc.27 diag: log unique row names too.
+                                {
+                                    static std::set<std::wstring> s_seenRow;
+                                    if (s_seenRow.insert(rowName).second)
+                                        VLOG(STR("[NpcRecovery] EVENT-HOOK row-name first sighting: '{}'\n"),
+                                             rowName.c_str());
+                                }
+                                std::wstring lo = rowName;
+                                for (auto& c : lo) c = (wchar_t)towlower(c);
+                                if (lo == STR("cantreachbed") || lo == STR("cantreachassignedbed"))
+                                {
+                                    // context is the UMorNPCComponent.
+                                    s_instance->onNpcBlockedActivityEvent(context);
+                                }
+                            }
                         }
                     }
                     return;
@@ -1276,6 +1380,14 @@ namespace MoriaMods
                             VLOG(STR("[MoriaCppMod] [Rename] cleared DisallowedWords on native dialog\n"));
                         }
                     }
+                    if (cls == STR("UI_WBP_BuildHUDv2_C"))
+                    {
+                        // v7.1.x: cache build-HUD visibility so
+                        // isPlacementActive() can early-exit without
+                        // a per-frame PE call. Replaces the polling
+                        // loop in tickRotationDisplay (4 PE/sec).
+                        s_instance->m_buildHudShowing = true;
+                    }
                     if (cls == STR("UI_WBP_Build_Tab_C"))
                     {
                         s_instance->m_buildTabAfterShowFired = true;
@@ -1410,6 +1522,11 @@ namespace MoriaMods
                     if (cls == STR("WBP_SettingsScreen_C"))
                         s_instance->onNativeSettingsScreenHidden();
 
+                    if (cls == STR("UI_WBP_BuildHUDv2_C"))
+                    {
+                        // v7.1.x: see corresponding OnAfterShow above.
+                        s_instance->m_buildHudShowing = false;
+                    }
                     if (cls == STR("UI_WBP_BuildHUDv2_C") || cls == STR("UI_WBP_Build_Tab_C"))
                     {
                         QBLOG(STR("[MoriaCppMod] [Placement] OnAfterHide fired on {}\n"), cls);
@@ -1599,7 +1716,7 @@ namespace MoriaMods
             });
 
             m_replayActive = true;
-            VLOG(STR("[MoriaCppMod] {}: F1-F8=build | F9=rotate | Num0=bubble info | Num*=reveal map | Mod keybinds in Settings → keymap tab\n"),
+            VLOG(STR("[MoriaCppMod] {}: F1-F8=build | F9=rotate | Num0=bubble info | Reveal map in pause menu | Mod keybinds in Settings → keymap tab\n"),
                  ModVersion);
 
 
@@ -2025,19 +2142,11 @@ namespace MoriaMods
                     s_lastTrashKey = nowDown;
                 }
             }
-            // Num* - reveal map (zones + chapters only)
-            {
-                static bool s_lastRevealMapKey = false;
-                bool nowDown = (GetAsyncKeyState(VK_MULTIPLY) & 0x8000) != 0;
-                if (nowDown && !s_lastRevealMapKey)
-                {
-                    VLOG(STR("[MoriaCppMod] [RevealMap] NUM* press detected (ftVisible={} modDown={})\n"),
-                         m_ftVisible ? 1 : 0, modDown ? 1 : 0);
-                    if (!m_ftVisible && !modDown)
-                        revealEntireMap();
-                }
-                s_lastRevealMapKey = nowDown;
-            }
+            // v7.1.x: NUM* polled handler retired — reveal-map moved to
+            // the pause-menu (ESC) button stack alongside UNLOCK
+            // RECIPES / READ ALL LORE / CLEAR ALL BUFFS. NUM* is now
+            // free again. See moria_settings_ui.inl for the new entry
+            // (GameOptKind::RevealMap).
             // Num- (Subtract) — spawn a tame BP_NpcGoat_C that follows the player.
             // Edge-triggered, suppressed while the F12 settings panel is open or
             // a modifier is held (so existing chord behavior isn't shadowed).
@@ -3251,6 +3360,14 @@ namespace MoriaMods
                         m_charLoadTime = GetTickCount64();
                         m_localPC = findPlayerController();
                         m_localPawn = getPawn();
+                        // rc.28: arm the post-load NPC sweep for +30 s.
+                        // NPCs already in CantReachBed at world-load
+                        // had their SetCurrentActivity fire before the
+                        // PE post-hook was registered; the polling
+                        // tick eventually catches them but a one-shot
+                        // sweep at 30 s is the explicit safety net.
+                        m_npcPostLoadSweepDueMs = m_charLoadTime + 30000;
+                        m_npcPostLoadSweepFired = false;
                         VLOG(STR("[MoriaCppMod] Character loaded - PC={:p} Pawn={:p}, waiting 15s before replay\n"),
                              (void*)m_localPC, (void*)m_localPawn);
 

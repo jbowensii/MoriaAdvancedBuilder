@@ -137,7 +137,7 @@ namespace MoriaMods
 
     #define VLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
 
-    #define QUICKBUILD_LOGGING 1
+    #define QUICKBUILD_LOGGING 0
 
     #if QUICKBUILD_LOGGING
         #define QBLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)

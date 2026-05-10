@@ -71,6 +71,14 @@
 
         ULONGLONG m_lastNpcRecoveryTickMs{0};
         ULONGLONG m_lastNpcCacheRefreshMs{0};
+        // rc.28: post-load sweep state. NPCs already in CantReachBed
+        // when the world loads fire their SetCurrentActivity BEFORE
+        // our PE post-hook is registered, so the event-driven path
+        // misses them. ~30 s after character-load we sweep the
+        // controller cache once and trigger the teleport for any NPC
+        // currently in a CantReach* activity.
+        ULONGLONG m_npcPostLoadSweepDueMs{0};
+        bool m_npcPostLoadSweepFired{false};
 
         bool m_npcRecoveryEnabled{true};        // rc.3: hardcoded ON for testing; rc.4 adds Settings toggle
         ULONGLONG m_npcStuckThresholdMs{5000};   // rc.6: 5 s default (was 10 s) — faster response on the user's blocked-bed scenario
@@ -271,6 +279,216 @@
             }
         }
 
+        // rc.26: event-driven trigger called from the PE post-hook on
+        // UMorNPCComponent::SetCurrentActivity / MorNpcUpdateActivity
+        // when the activity row name matches CantReachBed /
+        // CantReachAssignedBed. The hook gives us the NPC component;
+        // we resolve to pawn → controller → FSM destination → teleport.
+        // Throttle still applies (NPC_TELEPORT_THROTTLE_MS, 30 s).
+        void onNpcBlockedActivityEvent(UObject* npcComp)
+        {
+            if (!m_npcRecoveryEnabled) return;
+            if (!npcComp || !isObjectAlive(npcComp)) return;
+            // Authority gate — same as the polling tick. Server only.
+            if (!m_isDedicatedServer && (!m_localPC || !isObjectAlive(m_localPC))) return;
+
+            // pawn = npcComp->NPCCharacter (AMorCharacter*)
+            auto* pawnPtr = npcComp->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPCCharacter"));
+            UObject* pawn = (pawnPtr && *pawnPtr) ? *pawnPtr : nullptr;
+            if (!pawn || !isObjectAlive(pawn)) return;
+
+            // controller = pawn->Controller (AAIController*)
+            auto* ctrlPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("Controller"));
+            UObject* ctrl = (ctrlPtr && *ctrlPtr) ? *ctrlPtr : nullptr;
+            if (!ctrl || !isObjectAlive(ctrl)) return;
+
+            // Filter to friendly NPC dwarf controllers (same prefix the
+            // cache uses) — skip orcs / wildlife / unrelated AI.
+            std::wstring cls = safeClassName(ctrl);
+            if (cls.size() < 19 || cls.substr(0, 19) != STR("BP_AiController_Npc")) return;
+
+            // Get-or-create the recovery state entry. Reuses the same
+            // throttle + cached destination as the polling path.
+            ULONGLONG now = GetTickCount64();
+            NpcRecoveryEntry& entry = m_npcRecoveryStates[ctrl];
+            if (!entry.initialized)
+            {
+                entry.controller = RC::Unreal::FWeakObjectPtr(ctrl);
+                entry.pawn = RC::Unreal::FWeakObjectPtr(pawn);
+                entry.initialized = true;
+            }
+
+            // Throttle: don't re-teleport same NPC within 30 s.
+            if (entry.lastTeleportTickMs != 0 &&
+                now - entry.lastTeleportTickMs < NPC_TELEPORT_THROTTLE_MS)
+                return;
+
+            // Resolve destination. Three paths in order of preference:
+            //   (1) Cached path-dest — captured during a prior tick
+            //       when the NPC was actively in MoveToBlackboardKey.
+            //   (2) FSM tree walk — read TargetBlackboardKey actor or
+            //       BlackboardKey vector from any MoveToBlackboardKey
+            //       state in the tree (state may be dormant).
+            //   (3) Bed-walk byte-scan — iterate AMorBed actors, find
+            //       the one whose private NpcGuid matches our NPC's.
+            //       Last-resort because it's a brute-force scan, but
+            //       it's the only path that works when the FSM has
+            //       been parked long enough that all MoveToBlackboardKey
+            //       state was cleared.
+            float dx_t = 0, dy_t = 0, dz_t = 0;
+            const wchar_t* destSrc = STR("?");
+            if (entry.hasDestination)
+            {
+                dx_t = entry.lastDestX; dy_t = entry.lastDestY; dz_t = entry.lastDestZ;
+                destSrc = STR("cached");
+            }
+            else
+            {
+                auto* fsmPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("BehaviorFSMComp"));
+                UObject* fsmComp = (fsmPtr && *fsmPtr) ? *fsmPtr : nullptr;
+                if (npcReadFsmMoveDest(fsmComp, dx_t, dy_t, dz_t))
+                {
+                    destSrc = STR("fsm-walk");
+                    entry.lastDestX = dx_t; entry.lastDestY = dy_t; entry.lastDestZ = dz_t;
+                    entry.lastDestSeenTickMs = now;
+                    entry.hasDestination = true;
+                }
+                else
+                {
+                    UObject* bed = npcFindAssignedBed(pawn);
+                    if (!bed || !isObjectAlive(bed))
+                    {
+                        // rc.30 one-shot diag: dump the NPC's guid +
+                        // the first bed's UPROPERTY chain so we can
+                        // see if there's an assignment field we
+                        // missed. Fires once per session.
+                        if (s_verbose)
+                        {
+                            static bool s_diagDumped = false;
+                            if (!s_diagDumped) {
+                                s_diagDumped = true;
+                                npcDumpBedDiagnostic(pawn);
+                            }
+                            VLOG(STR("[NpcRecovery] EVENT-DRIVEN: no destination — fsm-walk + bed-walk both failed for {}\n"),
+                                 cls.c_str());
+                        }
+                        return;
+                    }
+                    if (!npcReadPawnLocation(bed, dx_t, dy_t, dz_t))
+                    {
+                        if (s_verbose)
+                            VLOG(STR("[NpcRecovery] EVENT-DRIVEN: bed found but its location read failed for {}\n"),
+                                 cls.c_str());
+                        return;
+                    }
+                    destSrc = STR("bed-walk");
+                    entry.lastDestX = dx_t; entry.lastDestY = dy_t; entry.lastDestZ = dz_t;
+                    entry.lastDestSeenTickMs = now;
+                    entry.hasDestination = true;
+                    entry.cachedAssignedBed = RC::Unreal::FWeakObjectPtr(bed);
+                }
+            }
+
+            float px, py, pz;
+            if (!npcReadPawnLocation(pawn, px, py, pz)) return;
+
+            bool ok = npcTeleportPawn(pawn, dx_t, dy_t, dz_t);
+            entry.lastTeleportTickMs = now;
+            entry.lastProgressTickMs = now;
+            entry.lastX = px; entry.lastY = py; entry.lastZ = pz;
+
+            if (s_verbose)
+            {
+                VLOG(STR("[NpcRecovery] EVENT-DRIVEN teleport ({}) src={} from ({:.1f},{:.1f},{:.1f}) to ({:.1f},{:.1f},{:.1f}) result={}\n"),
+                     cls.c_str(), destSrc, px, py, pz, dx_t, dy_t, dz_t,
+                     ok ? STR("OK") : STR("FAILED"));
+            }
+            // Tell the caller (sweep counter) the teleport actually
+            // fired vs. silently bailed on no-destination.
+            m_lastEventTeleportFired = true;
+        }
+        bool m_lastEventTeleportFired{false};
+
+        // rc.30: one-shot diagnostic when the bed-walk fails to find
+        // a match for any NPC. Logs:
+        //   (a) the NPC's NpcGuid bytes (proves it's populated, not all-zero)
+        //   (b) the first bed's class + every UPROPERTY in its chain
+        //       (so we can spot any field name like AssignedNpc /
+        //       OwnerGuid / etc that we missed)
+        //   (c) a hex dump of the first bed's first 0x300 bytes of
+        //       instance memory (so we can eyeball whether any 16-byte
+        //       window matches the NPC's guid pattern — confirms the
+        //       byte-scan approach is or isn't viable)
+        void npcDumpBedDiagnostic(UObject* pawn)
+        {
+            if (!pawn || !isObjectAlive(pawn)) return;
+
+            // (a) NPC guid bytes
+            auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
+            UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
+            if (npcComp && isObjectAlive(npcComp))
+            {
+                auto* g = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                if (g && isReadableMemory(g, 16))
+                {
+                    VLOG(STR("[NpcRecovery] DIAG NpcGuid bytes: {:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}\n"),
+                         g[0],g[1],g[2],g[3], g[4],g[5],g[6],g[7],
+                         g[8],g[9],g[10],g[11], g[12],g[13],g[14],g[15]);
+                }
+                else
+                {
+                    VLOG(STR("[NpcRecovery] DIAG NpcGuid: unreadable\n"));
+                }
+            }
+
+            // (b) first bed's UPROPERTY chain
+            std::vector<UObject*> beds;
+            static const wchar_t* kBedClasses[] = {
+                STR("BP_Bedroll_C"), STR("BP_Bed_Base_C"), STR("MorBed"),
+            };
+            for (const wchar_t* clsName : kBedClasses) {
+                std::vector<UObject*> chunk;
+                if (!findAllOfSafe(clsName, chunk)) continue;
+                for (UObject* b : chunk) {
+                    if (!b || !isObjectAlive(b)) continue;
+                    std::wstring c = safeClassName(b);
+                    if (c.size() >= 9 && c.substr(0,9) == STR("Default__")) continue;
+                    beds.push_back(b);
+                }
+                if (!beds.empty()) break;
+            }
+            if (beds.empty()) {
+                VLOG(STR("[NpcRecovery] DIAG: no live beds to probe\n"));
+                return;
+            }
+            UObject* firstBed = beds[0];
+            std::wstring bedCls = safeClassName(firstBed);
+            VLOG(STR("[NpcRecovery] DIAG first bed: cls='{}' ptr={:p}\n"),
+                 bedCls.c_str(), (void*)firstBed);
+
+            UClass* bedClsObj = nullptr;
+            try { bedClsObj = firstBed->GetClassPrivate(); } catch (...) {}
+            if (bedClsObj) {
+                int dumped = 0;
+                try {
+                    for (auto* prop : bedClsObj->ForEachPropertyInChain()) {
+                        if (!prop) continue;
+                        std::wstring pn;
+                        try { pn = prop->GetName(); } catch (...) { continue; }
+                        int32 off = -1;
+                        try { off = prop->GetOffset_Internal(); } catch (...) {}
+                        VLOG(STR("[NpcRecovery] DIAG bed prop[{}] off=0x{:04x} name='{}'\n"),
+                             dumped, (unsigned)off, pn.c_str());
+                        if (++dumped >= 200) {
+                            VLOG(STR("[NpcRecovery] DIAG bed prop dump truncated at 200\n"));
+                            break;
+                        }
+                    }
+                } catch (...) {}
+                VLOG(STR("[NpcRecovery] DIAG total bed properties logged: {}\n"), dumped);
+            }
+        }
+
         // rc.16: find the AMorBed assigned to the given NPC pawn.
         //
         // The bed-assignment data isn't reachable from the pawn /
@@ -409,26 +627,71 @@
             return true;
         }
 
+        // rc.27: GetValueAsObject on a UBlackboardComponent for a
+        // given key name. MoveToBlackboardKey states sometimes carry
+        // a TargetBlackboardKeyName that points to an actor (the bed,
+        // workstation, etc.) rather than just a vector waypoint.
+        // Reading the actor and using ITS location is more reliable
+        // than the vector key — the vector can be a path-end-point
+        // that's already where the NPC is stuck (we hit this in
+        // rc.26 testing: dest equalled current location, teleport
+        // moved nothing).
+        bool npcGetBlackboardActor(UObject* blackboardComp, RC::Unreal::FName keyName,
+                                   UObject*& outActor)
+        {
+            outActor = nullptr;
+            if (!blackboardComp || !isObjectAlive(blackboardComp)) return false;
+            auto* fn = blackboardComp->GetFunctionByNameInChain(STR("GetValueAsObject"));
+            if (!fn) return false;
+            auto* pKey = findParam(fn, STR("KeyName"));
+            auto* pRet = findParam(fn, STR("ReturnValue"));
+            if (!pKey || !pRet) return false;
+            std::vector<uint8_t> buf(fn->GetParmsSize(), 0);
+            *reinterpret_cast<RC::Unreal::FName*>(buf.data() + pKey->GetOffset_Internal()) = keyName;
+            try { safeProcessEvent(blackboardComp, fn, buf.data()); } catch (...) { return false; }
+            UObject** pp = reinterpret_cast<UObject**>(buf.data() + pRet->GetOffset_Internal());
+            if (!isReadableMemory(pp, sizeof(UObject*))) return false;
+            UObject* obj = *pp;
+            if (!obj || !isObjectAlive(obj)) return false;
+            outActor = obj;
+            return true;
+        }
+
         bool npcReadFsmMoveDestRec(UObject* state, float& ox, float& oy, float& oz, int depth)
         {
             if (!state || !isObjectAlive(state) || depth > 16) return false;
             std::wstring cls = safeClassName(state);
 
-            // Two paths to read a MoveTo* state's destination:
+            // MoveToBlackboardKey state has THREE potential sources for
+            // the destination, in order of preference:
             //
-            //   (A) MoveToBlackboardKey: read BlackboardKeyName +
-            //       BlackboardComponent and ask the blackboard for the
-            //       actual FVector. Persists across activations.
-            //
-            //   (B) Plain MoveTo: read state.Destination directly. Only
-            //       valid while the state is active (FLT_MAX otherwise).
+            //   (1) TargetBlackboardKeyName → blackboard actor → its
+            //       world location. Most reliable for "blocked from
+            //       bed" — gives us the actual bed actor's location,
+            //       not a path waypoint.
+            //   (2) BlackboardKeyName → blackboard vector. The path's
+            //       target FVector. Can be stale (game gives up at the
+            //       obstacle, parking the dest where the NPC ended).
+            //   (3) state.Destination FVector. Only valid while active.
             if (cls.find(STR("MoveToBlackboardKey")) != std::wstring::npos)
             {
-                auto* keyNamePtr = state->GetValuePtrByPropertyNameInChain<RC::Unreal::FName>(STR("BlackboardKeyName"));
-                auto* bbCompPtr  = state->GetValuePtrByPropertyNameInChain<UObject*>(STR("BlackboardComponent"));
-                if (keyNamePtr && bbCompPtr && *bbCompPtr)
+                // (1) Try TargetBlackboardKey → actor location.
+                auto* tgtKeyPtr  = state->GetValuePtrByPropertyNameInChain<RC::Unreal::FName>(STR("TargetBlackboardKeyName"));
+                auto* bbCompPtr2 = state->GetValuePtrByPropertyNameInChain<UObject*>(STR("BlackboardComponent"));
+                if (tgtKeyPtr && bbCompPtr2 && *bbCompPtr2)
                 {
-                    if (npcGetBlackboardVector(*bbCompPtr, *keyNamePtr, ox, oy, oz))
+                    UObject* tgtActor = nullptr;
+                    if (npcGetBlackboardActor(*bbCompPtr2, *tgtKeyPtr, tgtActor) && tgtActor)
+                    {
+                        if (npcReadPawnLocation(tgtActor, ox, oy, oz))
+                            return true;
+                    }
+                }
+                // (2) Fallback to vector key.
+                auto* keyNamePtr = state->GetValuePtrByPropertyNameInChain<RC::Unreal::FName>(STR("BlackboardKeyName"));
+                if (keyNamePtr && bbCompPtr2 && *bbCompPtr2)
+                {
+                    if (npcGetBlackboardVector(*bbCompPtr2, *keyNamePtr, ox, oy, oz))
                         return true;
                 }
             }
@@ -484,38 +747,49 @@
         // success, or an empty string on any failure. NPCComponent
         // pointer is found via the pawn's "NPC" UPROPERTY at offset
         // 0x0F98 on AMorCharacter (per CXXHeaderDump line 7569).
+        // Helper: invoke an NPC-component UFunction that returns
+        // FMorNPCActivityRowHandle and pull the row name (FName) out
+        // of the return parm. Used for both GetCurrentActivity and
+        // GetInterruptedActivity below.
+        std::wstring npcReadActivityNameViaFn(UObject* npcComp, const wchar_t* fnName)
+        {
+            if (!npcComp || !isObjectAlive(npcComp)) return {};
+            auto* fn = npcComp->GetFunctionByNameInChain(fnName);
+            if (!fn) return {};
+            auto* pRet = findParam(fn, STR("ReturnValue"));
+            if (!pRet) return {};
+            std::vector<uint8_t> buf(fn->GetParmsSize(), 0);
+            try { safeProcessEvent(npcComp, fn, buf.data()); } catch (...) { return {}; }
+            int32 retOff = pRet->GetOffset_Internal();
+            if (retOff < 0) return {};
+            uint8_t* retBase = buf.data() + retOff;
+            if (!isReadableMemory(retBase, 16)) return {};
+            // FMorNPCActivityRowHandle layout: DataTable* @0, FName @8.
+            auto* fname = reinterpret_cast<RC::Unreal::FName*>(retBase + 8);
+            std::wstring rowName;
+            try { rowName = fname->ToString(); } catch (...) { return {}; }
+            return rowName;
+        }
+
         std::wstring npcReadCurrentActivityName(UObject* pawn)
         {
             if (!pawn || !isObjectAlive(pawn)) return {};
             auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
             UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
-            if (!npcComp || !isObjectAlive(npcComp)) return {};
+            return npcReadActivityNameViaFn(npcComp, STR("GetCurrentActivity"));
+        }
 
-            auto* fn = npcComp->GetFunctionByNameInChain(STR("GetCurrentActivity"));
-            if (!fn) return {};
-
-            // FMorNPCActivityRowHandle layout (16 bytes):
-            //   +0  UDataTable*  DataTable  (8 bytes)
-            //   +8  FName        RowName    (8 bytes)
-            // Plus the UFunction prepends a hidden return-value parm
-            // at the start of the parm buffer. findParam("ReturnValue")
-            // resolves that offset for us.
-            auto* pRet = findParam(fn, STR("ReturnValue"));
-            if (!pRet) return {};
-
-            std::vector<uint8_t> buf(fn->GetParmsSize(), 0);
-            try { safeProcessEvent(npcComp, fn, buf.data()); } catch (...) { return {}; }
-
-            // RowName is at retOffset + 8.
-            int32 retOff = pRet->GetOffset_Internal();
-            if (retOff < 0) return {};
-            uint8_t* retBase = buf.data() + retOff;
-            if (!isReadableMemory(retBase, 16)) return {};
-
-            auto* fname = reinterpret_cast<RC::Unreal::FName*>(retBase + 8);
-            std::wstring rowName;
-            try { rowName = fname->ToString(); } catch (...) { return {}; }
-            return rowName;
+        // The "Blocked from Assigned Bed" UI label corresponds to the
+        // INTERRUPTED activity, not the current one — when an NPC
+        // can't reach their bed, they fall back to Working in
+        // CurrentActivity while the bed-attempt is parked in
+        // InterruptedActivity with a "CantReach"/"Blocked" row name.
+        std::wstring npcReadInterruptedActivityName(UObject* pawn)
+        {
+            if (!pawn || !isObjectAlive(pawn)) return {};
+            auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
+            UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
+            return npcReadActivityNameViaFn(npcComp, STR("GetInterruptedActivity"));
         }
 
         // Refresh the controller cache. Called every 5 s — controllers
@@ -609,6 +883,56 @@
         // Production tick. Per the design budget: throttled to 1 Hz,
         // controller-cache refresh every 5 s, no PE in the hot path
         // (only on actual teleport, which is rare).
+        // rc.28: one-shot sweep ~30 s after character-load. NPCs
+        // already in CantReachBed when the world was loaded had their
+        // SetCurrentActivity fire BEFORE our PE post-hook was wired,
+        // so the event-driven path doesn't see them. This sweep
+        // explicitly walks the cache and trips the teleport for any
+        // NPC currently in a CantReach* activity. Fires once per
+        // character-load.
+        void runPostLoadCantReachSweep()
+        {
+            if (m_npcControllerCache.empty())
+            {
+                // Cache not populated yet — try a forced refresh.
+                npcRefreshControllerCache();
+                if (m_npcControllerCache.empty()) {
+                    VLOG(STR("[NpcRecovery] post-load sweep: no NPCs in cache, skipping\n"));
+                    return;
+                }
+            }
+
+            int swept = 0, triggered = 0;
+            for (auto& wctrl : m_npcControllerCache)
+            {
+                UObject* ctrl = wctrl.Get();
+                if (!ctrl || !isObjectAlive(ctrl)) continue;
+                ++swept;
+                auto* pawnPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("Pawn"));
+                UObject* pawn = (pawnPtr && *pawnPtr) ? *pawnPtr : nullptr;
+                if (!pawn || !isObjectAlive(pawn)) continue;
+
+                std::wstring cur  = npcReadCurrentActivityName(pawn);
+                std::wstring intr = npcReadInterruptedActivityName(pawn);
+                auto isCantReachBed = [](const std::wstring& s) {
+                    std::wstring lo = s;
+                    for (auto& c : lo) c = (wchar_t)towlower(c);
+                    return lo == STR("cantreachbed") || lo == STR("cantreachassignedbed");
+                };
+
+                if (!(isCantReachBed(cur) || isCantReachBed(intr))) continue;
+
+                auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
+                UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
+                if (!npcComp) continue;
+                m_lastEventTeleportFired = false;
+                onNpcBlockedActivityEvent(npcComp);
+                if (m_lastEventTeleportFired) ++triggered;
+            }
+            VLOG(STR("[NpcRecovery] post-load sweep: scanned {} NPC(s), {} actually teleported\n"),
+                 swept, triggered);
+        }
+
         void tickNpcRecovery()
         {
             if (!m_npcRecoveryEnabled) return;
@@ -626,6 +950,16 @@
             }
 
             ULONGLONG now = GetTickCount64();
+
+            // rc.28: one-shot post-load sweep at +30 s.
+            if (!m_npcPostLoadSweepFired
+                && m_npcPostLoadSweepDueMs != 0
+                && now >= m_npcPostLoadSweepDueMs)
+            {
+                m_npcPostLoadSweepFired = true;
+                runPostLoadCantReachSweep();
+            }
+
             if (now - m_lastNpcRecoveryTickMs < 1000) return;  // 1 Hz tick
             m_lastNpcRecoveryTickMs = now;
 
@@ -919,25 +1253,6 @@
                 // happened to be parked in a Work_C leaf state at
                 // sample time, blocking the very fix the user wanted.
 
-                // Verbose per-NPC status: emit a one-line summary every
-                // ~10 s per NPC so we can see what the cache looks like
-                // during a blocked-bed scenario without filling the log.
-                if (s_verbose && (now - entry.lastStatusLogMs >= 10000))
-                {
-                    entry.lastStatusLogMs = now;
-                    ULONGLONG stuck_s = (now - entry.lastProgressTickMs) / 1000;
-                    ULONGLONG dest_age_s = entry.hasDestination
-                        ? (now - entry.lastDestSeenTickMs) / 1000 : 0;
-                    VLOG(STR("[NpcRecovery] status: ctrl={:p} cls='{}' leaf='{}' "
-                             "stuck={}s hasDest={} destAge={}s instantBlock={}\n"),
-                         (void*)ctrl, safeClassName(ctrl).c_str(),
-                         leafClsForBlock.c_str(),
-                         (unsigned)stuck_s,
-                         entry.hasDestination ? STR("Y") : STR("N"),
-                         (unsigned)dest_age_s,
-                         instantBlock ? STR("Y") : STR("N"));
-                }
-
                 // Update location-progress bookkeeping (kept for
                 // status-log completeness; no longer the trigger).
                 {
@@ -958,12 +1273,36 @@
                 // Assigned <X>" in the in-game interact menu). This is
                 // the literal "blocked" signal the user wants. No time
                 // threshold — fires immediately on detection.
-                std::wstring activityName = npcReadCurrentActivityName(pawn);
-                std::wstring activityLo = activityName;
-                for (auto& c : activityLo) c = (wchar_t)towlower(c);
-                bool isCantReach = (activityLo.find(STR("cantreach")) != std::wstring::npos)
-                                || (activityLo.find(STR("cant_reach")) != std::wstring::npos)
-                                || (activityLo.find(STR("blocked")) != std::wstring::npos);
+                std::wstring activityCurrent     = npcReadCurrentActivityName(pawn);
+                std::wstring activityInterrupted = npcReadInterruptedActivityName(pawn);
+
+                // rc.25: narrowed to bed-only. Previously matched any
+                // "cantreach" / "blocked" substring; now only the two
+                // explicit bed-related row names. Other CantReach*
+                // variants (e.g. workstation, deposit) are intentionally
+                // ignored — they're not the user's blocked-bed problem
+                // and the right destination for them isn't the cached
+                // bed dest. Keep this a strict allow-list so we don't
+                // accidentally yank workers around.
+                auto isCantReachStr = [](const std::wstring& s) {
+                    std::wstring lo = s;
+                    for (auto& c : lo) c = (wchar_t)towlower(c);
+                    return lo == STR("cantreachbed")
+                        || lo == STR("cantreachassignedbed");
+                };
+
+                // The "Blocked from Assigned Bed" UI lives in the
+                // INTERRUPTED activity slot — current is whatever
+                // they're doing instead (Working / NoMealsNeeded / etc).
+                // We trigger on either being CantReach.
+                bool isCantReach = isCantReachStr(activityCurrent)
+                                || isCantReachStr(activityInterrupted);
+
+                // Use whichever one is the CantReach* one for the
+                // status log + activity-name first-seen tracking.
+                std::wstring activityName = isCantReachStr(activityInterrupted)
+                                          ? activityInterrupted
+                                          : activityCurrent;
 
                 // Verbose: log first sighting of each unique activity
                 // name so we can chart what row keys the DT actually
@@ -973,6 +1312,21 @@
                     if (m_npcActivityNamesSeen.insert(activityName).second)
                         VLOG(STR("[NpcRecovery] activity-name first seen: '{}'\n"),
                              activityName.c_str());
+                }
+
+                // rc.22: per-NPC status log AFTER activity is read, so
+                // we can see the actual gate-relevant state — activity
+                // name, isCantReach, hasDest. Throttled to 10 s/NPC.
+                if (s_verbose && (now - entry.lastStatusLogMs >= 10000))
+                {
+                    entry.lastStatusLogMs = now;
+                    VLOG(STR("[NpcRecovery] status: ctrl={:p} curAct='{}' intrAct='{}' isCantReach={} hasDest={} leaf='{}'\n"),
+                         (void*)ctrl,
+                         activityCurrent.c_str(),
+                         activityInterrupted.c_str(),
+                         isCantReach ? STR("Y") : STR("N"),
+                         entry.hasDestination ? STR("Y") : STR("N"),
+                         leafClsForBlock.c_str());
                 }
 
                 // Trigger gate: only the CantReach activity (or our

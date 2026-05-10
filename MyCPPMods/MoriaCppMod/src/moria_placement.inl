@@ -56,22 +56,22 @@
 
         bool isPlacementActive()
         {
-            UObject* hud = getCachedBuildHUD();
-            if (!hud) { QBLOG(STR("[MoriaCppMod] [QB] isPlacementActive -> false (no HUD)\n")); return false; }
-            auto* fn = hud->GetFunctionByNameInChain(STR("IsShowing"));
-            if (!fn) { QBLOG(STR("[MoriaCppMod] [QB] isPlacementActive -> false (no IsShowing fn)\n")); return false; }
-            struct { bool Ret{false}; } params{};
-            safeProcessEvent(hud, fn, &params);
-            if (!params.Ret) { QBLOG(STR("[MoriaCppMod] [QB] isPlacementActive -> false (HUD not showing)\n")); return false; }
+            // v7.1.x: cached state from OnAfterShow / OnAfterHide
+            // post-hooks on UI_WBP_BuildHUDv2_C (see dllmain.cpp
+            // m_buildHudShowing). When the HUD isn't showing, we
+            // return false immediately — no PE dispatch, no
+            // per-frame ProcessEvent budget burn.
+            if (!m_buildHudShowing) return false;
 
-            // Re-resolve each call — cheap name-walk, safe across world transitions
+            UObject* hud = getCachedBuildHUD();
+            if (!hud) return false;
+
+            // HUD is showing — only need to read recipeSelectMode
+            // (cheap reflective property read, no PE call).
             FBoolProperty* bp_recipeSelectMode = resolveBoolProperty(hud, L"recipeSelectMode");
             if (!bp_recipeSelectMode) return false;
             bool recipeSelectMode = bp_recipeSelectMode->GetPropertyValueInContainer(hud);
-            bool result = !recipeSelectMode;
-            QBLOG(STR("[MoriaCppMod] [QB] isPlacementActive -> {} (recipeSelectMode={})\n"),
-                  result ? STR("true") : STR("false"), recipeSelectMode ? STR("true") : STR("false"));
-            return result;
+            return !recipeSelectMode;
         }
 
 

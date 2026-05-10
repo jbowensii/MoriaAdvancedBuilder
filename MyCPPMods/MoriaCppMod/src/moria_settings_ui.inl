@@ -1739,7 +1739,12 @@
                                   // Confirm/Cancel buttons on the in-game
                                   // WBP_UI_RenameWorldModal_C used as our character
                                   // rename UI (replaces the home-rolled dialog).
-                                  RenameModalConfirm, RenameModalCancel };
+                                  RenameModalConfirm, RenameModalCancel,
+                                  // v7.1.x: REVEAL MAP migrated from a NUM*
+                                  // polled keybind into the pause-menu button
+                                  // stack so users discover it through the
+                                  // ESC menu instead of learning a numpad chord.
+                                  RevealMap };
         struct GameOptButton {
             FWeakObjectPtr widget;
             GameOptKind    kind;
@@ -2131,6 +2136,7 @@
                 { STR("UNLOCK RECIPES"),   GameOptKind::Unlock     },
                 { STR("READ ALL LORE"),    GameOptKind::ReadAll    },
                 { STR("CLEAR ALL BUFFS"),  GameOptKind::ClearBuffs },
+                { STR("REVEAL MAP"),       GameOptKind::RevealMap  },
             };
 
             // 1) Snapshot the ORIGINAL native order so we can rebuild
@@ -4024,6 +4030,9 @@
                         break;
                     case GameOptKind::ClearBuffs:
                         clearAllBuffs();
+                        break;
+                    case GameOptKind::RevealMap:
+                        revealEntireMap();
                         break;
                     case GameOptKind::ToggleNoCollision:
                         m_noCollisionWhileFlying = !m_noCollisionWhileFlying;
