@@ -588,14 +588,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("7.0.1");
+            ModVersion = STR("7.0.2");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v7.0.1\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v7.0.2\n"));
         }
 
         ~MoriaCppMod() override
@@ -635,7 +635,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v7.0.1 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v7.0.2 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
@@ -1132,7 +1132,7 @@ namespace MoriaMods
                                 port   = tail;
                             }
                         }
-                        if (isLocal && port.empty()) { port = hostStr; domain = "127.0.1.1"; }
+                        if (isLocal && port.empty()) { port = hostStr; domain = "127.0.2.1"; }
 
                         SessionHistoryEntry entry;
                         entry.name     = (isLocal ? "Local Server " : "Direct Join ") + hostStr;
