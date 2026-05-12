@@ -74,11 +74,14 @@
         // rc.28: post-load sweep state. NPCs already in CantReachBed
         // when the world loads fire their SetCurrentActivity BEFORE
         // our PE post-hook is registered, so the event-driven path
-        // misses them. ~30 s after character-load we sweep the
-        // controller cache once and trigger the teleport for any NPC
-        // currently in a CantReach* activity.
-        ULONGLONG m_npcPostLoadSweepDueMs{0};
-        bool m_npcPostLoadSweepFired{false};
+        // misses them.
+        //
+        // rc.41: changed from one-shot at +30 s to recurring every
+        // 30 s for the first 5 minutes after character-load. Live
+        // log showed an NPC transitioning NoBed → CantReachBed at
+        // +70 s, which the one-shot at +30 s missed entirely.
+        ULONGLONG m_npcPostLoadSweepNextMs{0};
+        ULONGLONG m_npcPostLoadSweepEndMs{0};
 
         bool m_npcRecoveryEnabled{true};        // rc.3: hardcoded ON for testing; rc.4 adds Settings toggle
         ULONGLONG m_npcStuckThresholdMs{5000};   // rc.6: 5 s default (was 10 s) — faster response on the user's blocked-bed scenario
@@ -235,29 +238,66 @@
             return true;
         }
 
-        // PE dispatch: K2_SetActorLocation(NewLocation, bSweep=false,
-        // SweepHitResult, bTeleport=true). bTeleport=true bypasses sweep
-        // and interpolation — the pawn warps instantly. UE4 replicates
-        // the new position to clients via standard pawn movement
-        // replication.
+        // rc.43: PE dispatch K2_TeleportTo(DestLocation, DestRotation)
+        // INSTEAD OF K2_SetActorLocation. K2_TeleportTo is the proper
+        // character-aware teleport — it does one collision sweep and
+        // commits the move via the movement component, so the
+        // CharacterMovementComponent re-anchor logic doesn't snap the
+        // pawn back to its previous nav-mesh point on the next tick.
+        //
+        // rc.0 → rc.42 used K2_SetActorLocation(bTeleport=true) which
+        // reliably updates RootComponent.RelativeLocation (our
+        // post-teleport read-backs confirmed this) but for Characters
+        // the CMC's UpdatedComponent re-syncs from the capsule's
+        // physics state on next tick, defeating the move visually.
+        // K2_TeleportTo skips that path.
         bool npcTeleportPawn(UObject* pawn, float x, float y, float z)
         {
             if (!pawn || !isObjectAlive(pawn)) return false;
-            auto* fn = pawn->GetFunctionByNameInChain(STR("K2_SetActorLocation"));
-            if (!fn) return false;
 
-            auto* pNew   = findParam(fn, STR("NewLocation"));
-            auto* pSweep = findParam(fn, STR("bSweep"));
-            auto* pTele  = findParam(fn, STR("bTeleport"));
+            // Try K2_TeleportTo first.
+            auto* fn = pawn->GetFunctionByNameInChain(STR("K2_TeleportTo"));
+            if (fn)
+            {
+                auto* pDest = findParam(fn, STR("DestLocation"));
+                auto* pRot  = findParam(fn, STR("DestRotation"));
+                auto* pRet  = findParam(fn, STR("ReturnValue"));
+                if (pDest)
+                {
+                    std::vector<uint8_t> buf(fn->GetParmsSize(), 0);
+                    auto* loc = reinterpret_cast<float*>(buf.data() + pDest->GetOffset_Internal());
+                    loc[0] = x; loc[1] = y; loc[2] = z;
+                    // DestRotation defaults to zero (FRotator{0,0,0}).
+                    if (pRot) {
+                        auto* rot = reinterpret_cast<float*>(buf.data() + pRot->GetOffset_Internal());
+                        rot[0] = 0.0f; rot[1] = 0.0f; rot[2] = 0.0f;
+                    }
+                    try { safeProcessEvent(pawn, fn, buf.data()); } catch (...) { return false; }
+                    // Optional ReturnValue check — K2_TeleportTo returns
+                    // bool indicating whether the move succeeded. If
+                    // false, fall through to K2_SetActorLocation below.
+                    bool retVal = true;
+                    if (pRet) {
+                        bool* r = reinterpret_cast<bool*>(buf.data() + pRet->GetOffset_Internal());
+                        if (isReadableMemory(r, 1)) retVal = *r;
+                    }
+                    if (retVal) return true;
+                }
+            }
+
+            // Fallback: K2_SetActorLocation(NewLocation, bSweep=false, bTeleport=true).
+            auto* fn2 = pawn->GetFunctionByNameInChain(STR("K2_SetActorLocation"));
+            if (!fn2) return false;
+            auto* pNew   = findParam(fn2, STR("NewLocation"));
+            auto* pSweep = findParam(fn2, STR("bSweep"));
+            auto* pTele  = findParam(fn2, STR("bTeleport"));
             if (!pNew || !pSweep || !pTele) return false;
-
-            std::vector<uint8_t> buf(fn->GetParmsSize(), 0);
+            std::vector<uint8_t> buf(fn2->GetParmsSize(), 0);
             auto* loc = reinterpret_cast<float*>(buf.data() + pNew->GetOffset_Internal());
             loc[0] = x; loc[1] = y; loc[2] = z;
             *reinterpret_cast<bool*>(buf.data() + pSweep->GetOffset_Internal()) = false;
             *reinterpret_cast<bool*>(buf.data() + pTele->GetOffset_Internal())  = true;
-
-            try { safeProcessEvent(pawn, fn, buf.data()); } catch (...) { return false; }
+            try { safeProcessEvent(pawn, fn2, buf.data()); } catch (...) { return false; }
             return true;
         }
 
@@ -358,10 +398,14 @@
                     UObject* bed = npcFindAssignedBed(pawn);
                     if (!bed || !isObjectAlive(bed))
                     {
-                        // rc.30 one-shot diag: dump the NPC's guid +
-                        // the first bed's UPROPERTY chain so we can
-                        // see if there's an assignment field we
-                        // missed. Fires once per session.
+                        // rc.42: guid-scan can't match — bed assignment
+                        // isn't stored as a 16-byte FGuid in bed
+                        // memory. Fall back to nearest unoccupied bed.
+                        bed = npcFindNearestUnoccupiedBed(pawn);
+                    }
+                    if (!bed || !isObjectAlive(bed))
+                    {
+                        // rc.30 one-shot diag: dump on first total failure.
                         if (s_verbose)
                         {
                             static bool s_diagDumped = false;
@@ -369,7 +413,7 @@
                                 s_diagDumped = true;
                                 npcDumpBedDiagnostic(pawn);
                             }
-                            VLOG(STR("[NpcRecovery] EVENT-DRIVEN: no destination — fsm-walk + bed-walk both failed for {}\n"),
+                            VLOG(STR("[NpcRecovery] EVENT-DRIVEN: no destination — fsm-walk + bed-walk + nearest-bed all failed for {}\n"),
                                  cls.c_str());
                         }
                         return;
@@ -487,6 +531,60 @@
                 } catch (...) {}
                 VLOG(STR("[NpcRecovery] DIAG total bed properties logged: {}\n"), dumped);
             }
+        }
+
+        // rc.42: find the NEAREST UNOCCUPIED bed to the given pawn.
+        //
+        // The "assigned bed" data isn't reachable from reflection
+        // anywhere we've checked (rc.30 diagnostic dumped 130+ UPROPERTYs
+        // on AMorBed — no NpcGuid / Owner / Assigned* field. Byte-scan
+        // for our NpcGuid in bed memory also returned no match across
+        // 21+ beds). The assignment lives somewhere private (settlement
+        // manager or raw C++ state).
+        //
+        // Pragmatic fallback: warp the NPC onto the nearest bed whose
+        // `bIsBeingUsed` flag (UPROPERTY at offset 0x0620 on AMorBed) is
+        // false. They end up on A bed, the game's settlement system
+        // re-routes from there. Beats sitting frozen forever.
+        UObject* npcFindNearestUnoccupiedBed(UObject* pawn)
+        {
+            if (!pawn || !isObjectAlive(pawn)) return nullptr;
+            float px, py, pz;
+            if (!npcReadPawnLocation(pawn, px, py, pz)) return nullptr;
+
+            static const wchar_t* kBedClasses[] = {
+                STR("BP_Bedroll_C"),
+                STR("BP_Bed_Base_C"),
+                STR("BP_Bed_Mansion_C"),  // rc.42: missed earlier
+                STR("MorBed"),
+            };
+            UObject* best = nullptr;
+            float bestDist2 = std::numeric_limits<float>::max();
+            for (const wchar_t* clsName : kBedClasses)
+            {
+                std::vector<UObject*> chunk;
+                if (!findAllOfSafe(clsName, chunk)) continue;
+                for (UObject* bed : chunk)
+                {
+                    if (!bed || !isObjectAlive(bed)) continue;
+                    std::wstring cls = safeClassName(bed);
+                    if (cls.size() >= 9 && cls.substr(0,9) == STR("Default__")) continue;
+
+                    // Skip occupied. UPROPERTY 'bIsBeingUsed' bool at 0x0620.
+                    auto* busy = bed->GetValuePtrByPropertyNameInChain<bool>(STR("bIsBeingUsed"));
+                    if (busy && *busy) continue;
+
+                    float bx, by, bz;
+                    if (!npcReadPawnLocation(bed, bx, by, bz)) continue;
+                    float dx = bx - px, dy = by - py, dz = bz - pz;
+                    float d2 = dx*dx + dy*dy + dz*dz;
+                    if (d2 < bestDist2) {
+                        bestDist2 = d2;
+                        best = bed;
+                    }
+                }
+            }
+            return best;
         }
 
         // rc.16: find the AMorBed assigned to the given NPC pawn.
@@ -914,13 +1012,17 @@
 
                 std::wstring cur  = npcReadCurrentActivityName(pawn);
                 std::wstring intr = npcReadInterruptedActivityName(pawn);
-                auto isCantReachBed = [](const std::wstring& s) {
+                // rc.44: widened to ANY cantreach* substring (was
+                // bed-only). Catches CantReachFurnace + future
+                // variants. See matching widening in the polling
+                // tick + dllmain PE post-hook.
+                auto isCantReachAny = [](const std::wstring& s) {
                     std::wstring lo = s;
                     for (auto& c : lo) c = (wchar_t)towlower(c);
-                    return lo == STR("cantreachbed") || lo == STR("cantreachassignedbed");
+                    return lo.find(STR("cantreach")) != std::wstring::npos;
                 };
 
-                if (!(isCantReachBed(cur) || isCantReachBed(intr))) continue;
+                if (!(isCantReachAny(cur) || isCantReachAny(intr))) continue;
 
                 auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
                 UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
@@ -951,16 +1053,29 @@
 
             ULONGLONG now = GetTickCount64();
 
-            // rc.28: one-shot post-load sweep at +30 s.
-            if (!m_npcPostLoadSweepFired
-                && m_npcPostLoadSweepDueMs != 0
-                && now >= m_npcPostLoadSweepDueMs)
+            // rc.45: drop polling rate from 1 Hz to 0.2 Hz (every 5 s).
+            // Concern is 30+ NPCs at 1 Hz = ~60 PE calls/sec just for
+            // activity reads. At 0.2 Hz that drops to ~12 PE/sec.
+            // CantReach* states persist for minutes, so a 5 s detection
+            // latency is invisible to the player. The recurring
+            // post-load sweep + event-driven PE hook (once we get the
+            // function-name match right) handle responsive cases;
+            // polling is just the long-game safety net.
+            static constexpr ULONGLONG NPC_POLL_INTERVAL_MS = 5000;
+
+            // rc.41: recurring post-load sweep every 30 s for the
+            // first 5 minutes after character-load.
+            if (m_npcPostLoadSweepNextMs != 0
+                && now >= m_npcPostLoadSweepNextMs)
             {
-                m_npcPostLoadSweepFired = true;
                 runPostLoadCantReachSweep();
+                if (now < m_npcPostLoadSweepEndMs)
+                    m_npcPostLoadSweepNextMs = now + 30000;
+                else
+                    m_npcPostLoadSweepNextMs = 0;  // window closed
             }
 
-            if (now - m_lastNpcRecoveryTickMs < 1000) return;  // 1 Hz tick
+            if (now - m_lastNpcRecoveryTickMs < NPC_POLL_INTERVAL_MS) return;  // 0.2 Hz
             m_lastNpcRecoveryTickMs = now;
 
             // Refresh controller cache every 5 s.
@@ -976,6 +1091,25 @@
             {
                 UObject* ctrl = wctrl.Get();
                 if (!ctrl || !isObjectAlive(ctrl)) continue;
+
+                // rc.45: adaptive per-NPC throttle. If this NPC was
+                // teleported in the last NPC_TELEPORT_THROTTLE_MS, we
+                // know we just acted on it and the activity won't
+                // re-trigger until the throttle expires. Skip ALL
+                // per-NPC work (no activity read, no FSM walk, nothing)
+                // until the throttle window opens. For 30+ NPCs the
+                // dominant cost is the 2 PE calls/NPC for activity
+                // reads — this lets just-teleported NPCs contribute
+                // zero ProcessEvent calls for 30 s.
+                {
+                    auto it = m_npcRecoveryStates.find(ctrl);
+                    if (it != m_npcRecoveryStates.end()
+                        && it->second.lastTeleportTickMs != 0
+                        && now - it->second.lastTeleportTickMs < NPC_TELEPORT_THROTTLE_MS)
+                    {
+                        continue;
+                    }
+                }
 
                 // Pawn (direct reflective read — confirmed working in rc.1).
                 auto* pawnPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("Pawn"));
@@ -1276,19 +1410,23 @@
                 std::wstring activityCurrent     = npcReadCurrentActivityName(pawn);
                 std::wstring activityInterrupted = npcReadInterruptedActivityName(pawn);
 
-                // rc.25: narrowed to bed-only. Previously matched any
-                // "cantreach" / "blocked" substring; now only the two
-                // explicit bed-related row names. Other CantReach*
-                // variants (e.g. workstation, deposit) are intentionally
-                // ignored — they're not the user's blocked-bed problem
-                // and the right destination for them isn't the cached
-                // bed dest. Keep this a strict allow-list so we don't
-                // accidentally yank workers around.
+                // rc.44: widened to ANY cantreach* substring. The user
+                // wanted blocked-furnace and other CantReach* variants
+                // to trigger too (rc.25 had narrowed to bed-only).
+                // Observed row names so far:
+                //   CantReachBed / CantReachAssignedBed (sleep)
+                //   CantReachFurnace (workstation - metalworker)
+                // Likely future variants: CantReachKitchen, CantReachStation,
+                // CantReachWorkbench, etc. Substring match handles all.
+                //
+                // Note: rejecting the No* prefix family (NoBed, NoFurnace,
+                // NoMealsNeeded, NoSuitableStorage) — those are
+                // preconditions ("NPC has nothing to do") rather than
+                // path failures and don't need teleport.
                 auto isCantReachStr = [](const std::wstring& s) {
                     std::wstring lo = s;
                     for (auto& c : lo) c = (wchar_t)towlower(c);
-                    return lo == STR("cantreachbed")
-                        || lo == STR("cantreachassignedbed");
+                    return lo.find(STR("cantreach")) != std::wstring::npos;
                 };
 
                 // The "Blocked from Assigned Bed" UI lives in the
@@ -1353,11 +1491,76 @@
                 // them to and skip.
                 if (!entry.hasDestination)
                 {
-                    // Verbose, but throttled per-NPC so it doesn't spam.
+                    // rc.41: bed-walk fallback in the polling path
+                    // too. The event-driven path already has this; we
+                    // need it here because activity transitions from
+                    // NoBed → CantReachBed can happen long after the
+                    // post-load sweep (~70s in observed log), and the
+                    // PE post-hook on SetCurrentActivity has not been
+                    // confirmed to fire reliably yet. Bed-walk is
+                    // the last-resort path that doesn't depend on
+                    // the FSM having a live MoveTo state.
+                    auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
+                    UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
+                    if (npcComp)
+                    {
+                        UObject* bed = npcFindAssignedBed(pawn);
+                        if (bed && isObjectAlive(bed))
+                        {
+                            float bx, by, bz;
+                            if (npcReadPawnLocation(bed, bx, by, bz))
+                            {
+                                entry.lastDestX = bx; entry.lastDestY = by; entry.lastDestZ = bz;
+                                entry.lastDestSeenTickMs = now;
+                                entry.hasDestination = true;
+                                entry.cachedAssignedBed = RC::Unreal::FWeakObjectPtr(bed);
+                                if (s_verbose) {
+                                    static bool s_loggedFirstBedHit = false;
+                                    if (!s_loggedFirstBedHit) {
+                                        s_loggedFirstBedHit = true;
+                                        VLOG(STR("[NpcRecovery] polling resolved bed via guid-scan walk: ({:.1f}, {:.1f}, {:.1f})\n"),
+                                             bx, by, bz);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!entry.hasDestination)
+                {
+                    // rc.42: final fallback — nearest unoccupied bed.
+                    // Assignment-side data isn't reachable; we just put
+                    // the NPC on A bed. Game's settlement system can
+                    // re-route. Solves the "frozen forever" symptom.
+                    UObject* anyBed = npcFindNearestUnoccupiedBed(pawn);
+                    if (anyBed && isObjectAlive(anyBed))
+                    {
+                        float bx, by, bz;
+                        if (npcReadPawnLocation(anyBed, bx, by, bz))
+                        {
+                            entry.lastDestX = bx; entry.lastDestY = by; entry.lastDestZ = bz;
+                            entry.lastDestSeenTickMs = now;
+                            entry.hasDestination = true;
+                            entry.cachedAssignedBed = RC::Unreal::FWeakObjectPtr(anyBed);
+                            if (s_verbose) {
+                                static bool s_loggedFirstNearest = false;
+                                if (!s_loggedFirstNearest) {
+                                    s_loggedFirstNearest = true;
+                                    VLOG(STR("[NpcRecovery] polling resolved nearest UNOCCUPIED bed: cls='{}' loc=({:.1f}, {:.1f}, {:.1f})\n"),
+                                         safeClassName(anyBed).c_str(), bx, by, bz);
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!entry.hasDestination)
+                {
+                    // Still nothing — even the nearest-unoccupied
+                    // fallback found no bed. Throttled diagnostic.
                     if (s_verbose && (now - entry.lastStatusLogMs >= 30000))
                     {
                         entry.lastStatusLogMs = now;
-                        VLOG(STR("[NpcRecovery] {} blocked but never observed in MoveTo state — no destination cached, skipping\n"),
+                        VLOG(STR("[NpcRecovery] {} blocked but no destination resolvable — skipping\n"),
                              safeClassName(ctrl).c_str());
                     }
                     continue;

@@ -46,6 +46,14 @@ namespace MoriaMods
 
         ULONGLONG m_lastWorldCheck{0};
         ULONGLONG m_lastCharPoll{0};
+        // [rc.40] Bell toggle cooldown — 2 seconds between summon/dismiss toggles.
+        ULONGLONG m_lastBellToggleMs{0};
+        // [rc.52] Goat companion settings (persisted via MoriaCppMod.ini [GoatCompanion]).
+        std::wstring m_goatName{ L"Rûdh" };  // default "Rûdh"
+        // Goat-menu state — UMG widget pre-created at character-load, visibility toggled.
+        UObject* m_goatMenuWidget{nullptr};
+        bool     m_goatMenuVisible{false};
+        ULONGLONG m_lastGoatMenuMs{0};  // E-press dedupe cooldown
         ULONGLONG m_lastStreamCheck{0};
         ULONGLONG m_lastRescanTime{0};
         ULONGLONG m_lastBubbleCheck{0};
@@ -250,6 +258,13 @@ namespace MoriaMods
 
 
         static inline MoriaCppMod* s_instance{nullptr};
+
+        // [v1.1.1 DIAG TOGGLE 2026-05-10] NUM. flips this. When true,
+        // PE-pre callback logs every UFunction whose name contains any
+        // rescue-related keyword (Settlement / Wanderer / Recruit /
+        // Roster / Register / OnNpc / Despawn / Rescue / Interact)
+        // WITHOUT dedup. Off by default — zero overhead for normal play.
+        static inline bool s_diagMode{false};
 
         // Recipe unlock queue state (drained by main tick at UNLOCK_BATCH_SIZE/frame)
         static constexpr int UNLOCK_BATCH_SIZE = 50;
@@ -599,14 +614,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("7.1.0-rc.30");
+            ModVersion = STR("7.1.0-rc.45");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.30\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.45\n"));
         }
 
         ~MoriaCppMod() override
@@ -646,7 +661,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.30 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.45 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
@@ -837,6 +852,305 @@ namespace MoriaMods
                 // "Rescue" (for legacy ServerRescueNpc visibility). Cheap
                 // wcsstr — no lowercase, no per-call set lookup unless we
                 // match.
+                // [v1.1.1 DIAG MODE 2026-05-10] When NUM.-toggled diag
+                // mode is ON, log EVERY PE-pre call matching any rescue-
+                // chain keyword without dedup. Independent of the narrow
+                // m_followGoats-gated filter below — fires regardless of
+                // whether a goat is summoned, so it can capture a fresh
+                // dwarf rescue from start to finish.
+                if (s_diagMode)
+                {
+                    if (   wcsstr(fnStr, STR("Rescue"))     != nullptr
+                        || wcsstr(fnStr, STR("Settlement")) != nullptr
+                        || wcsstr(fnStr, STR("Wanderer"))   != nullptr
+                        || wcsstr(fnStr, STR("Recruit"))    != nullptr
+                        || wcsstr(fnStr, STR("Roster"))     != nullptr
+                        || wcsstr(fnStr, STR("Register"))   != nullptr
+                        || wcsstr(fnStr, STR("OnNpc"))      != nullptr
+                        || wcsstr(fnStr, STR("Despawn"))    != nullptr
+                        || wcsstr(fnStr, STR("Interact"))   != nullptr
+                        || wcsstr(fnStr, STR("AddNpc"))     != nullptr
+                        || wcsstr(fnStr, STR("RemoveNpc"))  != nullptr
+                        || wcsstr(fnStr, STR("Recruited"))  != nullptr
+                        || wcsstr(fnStr, STR("Rescued"))    != nullptr
+                        // [rc.40 BELL DISCOVERY 2026-05-12] keywords likely
+                        // to catch container-item right-click / use events.
+                        || wcsstr(fnStr, STR("UseItem"))    != nullptr
+                        || wcsstr(fnStr, STR("ServerUse")) != nullptr
+                        || wcsstr(fnStr, STR("Activate"))   != nullptr
+                        || wcsstr(fnStr, STR("OnItem"))     != nullptr
+                        || wcsstr(fnStr, STR("RightClick")) != nullptr
+                        || wcsstr(fnStr, STR("OnSlot"))     != nullptr
+                        || wcsstr(fnStr, STR("OpenContainer")) != nullptr)
+                    {
+                        std::wstring ctxCls = context ? safeClassName(context) : L"<null>";
+                        VLOG(STR("[MoriaCppMod] [DiagMode] PE-pre: '{}' on class={}\n"),
+                             fnStr, ctxCls.c_str());
+                    }
+                }
+
+                // [rc.40.2 BELL RIGHT-CLICK → TOGGLE 2026-05-12]
+                // Hook target confirmed by rc.40.1 dump:
+                //   fn='ItemRightClicked' ctx='WBP_UI_Inventory_Screen_C'
+                //   parm[0] ItemHandle : StructProperty off=0x0 size=20
+                //   FItemHandle layout: int32 ID at +0x00 (then Payload, WeakObjectPtr)
+                //
+                // We read the int32 ID from the parm buffer, look it up in
+                // the player's MorInventoryComponent.Items FFastArraySerializer,
+                // pull the item's TSubclassOf<AInventoryItem>, and compare
+                // class name. If it's BP_PorterGoatBell_C → toggleGoatFromBell().
+                //
+                // All offsets reflection-resolved. iiSize/iiItemOff/iiIDOff
+                // helpers (moria_reflection.h) walk the FItemInstance UStruct
+                // at startup; fall back to FGK.hpp constants if reflection
+                // fails. iiaListOff() resolves the FFastArraySerializer's
+                // inner array offset the same way.
+                if (wcscmp(fnStr, STR("ItemRightClicked")) == 0
+                    && parms && func && s_instance
+                    && s_instance->m_localPawn && isObjectAlive(s_instance->m_localPawn))
+                {
+                    const uint8_t* parmBytes = reinterpret_cast<const uint8_t*>(parms);
+                    int32_t handleID = *reinterpret_cast<const int32_t*>(parmBytes + 0);
+                    if (handleID != 0)
+                    {
+                        UObject* invComp = s_instance->findPlayerInventoryComponent(s_instance->m_localPawn);
+                        if (invComp && isObjectAlive(invComp))
+                        {
+                            FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
+                            if (itemsProp)
+                            {
+                                uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp)
+                                                  + itemsProp->GetOffset_Internal() + iiaListOff();
+                                if (isReadableMemory(listBase, 16))
+                                {
+                                    uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+                                    int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
+                                    if (arrData && arrNum > 0 && arrNum < 10000)
+                                    {
+                                        int stride  = iiSize();
+                                        int itemOff = iiItemOff();
+                                        int idOff   = iiIDOff();
+                                        UClass* matchedCls = nullptr;
+                                        for (int i = 0; i < arrNum; ++i)
+                                        {
+                                            uint8_t* entry = arrData + i * stride;
+                                            int32_t entryID = *reinterpret_cast<int32_t*>(entry + idOff);
+                                            if (entryID == handleID)
+                                            {
+                                                matchedCls = *reinterpret_cast<UClass**>(entry + itemOff);
+                                                break;
+                                            }
+                                        }
+                                        if (matchedCls && isObjectAlive(matchedCls))
+                                        {
+                                            std::wstring clsName;
+                                            try { clsName = matchedCls->GetName(); } catch (...) {}
+                                            if (clsName == STR("BP_PorterGoatBell_C"))
+                                            {
+                                                VLOG(STR("[MoriaCppMod] [BellHook] *** bell right-clicked (ID={}) — firing toggleGoatFromBell ***\n"),
+                                                     handleID);
+                                                s_instance->toggleGoatFromBell();
+                                            }
+                                            // Other items: silent pass-through. We don't
+                                            // suppress the vanilla right-click — context
+                                            // menu still opens (the bell's 1×1 storage UI
+                                            // will appear briefly; harmless for v1.1.6
+                                            // testing, can suppress later if desired).
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // [rc.51 WIDE HOTBAR DISCOVERY 2026-05-12]
+                // rc.50's ServerUse hook didn't fire on hotbar press. The
+                // hotbar key-press for a container item must route through a
+                // different UFunction (possibly OpenContainer, ServerEquip,
+                // or an EnhancedInputAction event). Cache bell ID at first
+                // sight from the inventory walk and log first-sight of any
+                // UFunction whose first 4 parm bytes match. Catches the
+                // dispatch regardless of name.
+                if (parms && func && s_instance
+                    && s_instance->m_localPawn && isObjectAlive(s_instance->m_localPawn))
+                {
+                    // Resolve bell ID once per session via the player's inventory.
+                    static int32_t s_cachedBellID = 0;
+                    static ULONGLONG s_lastBellIDScan = 0;
+                    ULONGLONG nowMs = GetTickCount64();
+                    if (s_cachedBellID == 0 && nowMs - s_lastBellIDScan > 2000)
+                    {
+                        s_lastBellIDScan = nowMs;
+                        UObject* invComp = s_instance->findPlayerInventoryComponent(s_instance->m_localPawn);
+                        if (invComp && isObjectAlive(invComp))
+                        {
+                            FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
+                            if (itemsProp)
+                            {
+                                uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp)
+                                                  + itemsProp->GetOffset_Internal() + iiaListOff();
+                                if (isReadableMemory(listBase, 16))
+                                {
+                                    uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+                                    int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
+                                    if (arrData && arrNum > 0 && arrNum < 10000)
+                                    {
+                                        int stride  = iiSize();
+                                        int itemOff = iiItemOff();
+                                        int idOff   = iiIDOff();
+                                        for (int i = 0; i < arrNum; ++i)
+                                        {
+                                            uint8_t* entry = arrData + i * stride;
+                                            UClass* itemCls = *reinterpret_cast<UClass**>(entry + itemOff);
+                                            if (itemCls && isObjectAlive(itemCls))
+                                            {
+                                                std::wstring n;
+                                                try { n = itemCls->GetName(); } catch (...) {}
+                                                if (n == STR("BP_PorterGoatBell_C"))
+                                                {
+                                                    s_cachedBellID = *reinterpret_cast<int32_t*>(entry + idOff);
+                                                    VLOG(STR("[MoriaCppMod] [BellHook] cached bell ID={} for wide-discovery probe\n"),
+                                                         s_cachedBellID);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Probe: if first parm bytes equal cached bell ID, log fn.
+                    if (s_cachedBellID != 0)
+                    {
+                        const uint8_t* parmBytes = reinterpret_cast<const uint8_t*>(parms);
+                        int32_t maybeID = *reinterpret_cast<const int32_t*>(parmBytes + 0);
+                        if (maybeID == s_cachedBellID)
+                        {
+                            static std::set<std::wstring> s_seenBellDispatchFns;
+                            if (s_seenBellDispatchFns.size() < 100
+                                && s_seenBellDispatchFns.insert(fnStr).second)
+                            {
+                                std::wstring ctxCls = context ? safeClassName(context) : L"<null>";
+                                VLOG(STR("[MoriaCppMod] [BellHook] *** WIDE-MATCH fn='{}' ctx='{}' (bell ID at parm offset 0) ***\n"),
+                                     fnStr, ctxCls.c_str());
+                            }
+                        }
+                    }
+                }
+
+                // [rc.51.1 HOTBAR HOOK 2026-05-12]
+                // Confirmed via WIDE-MATCH discovery: hotbar key dispatch for
+                // container items fires UMorEquipComponent::ServerEquip(FItemHandle, EEquipMode).
+                // NOT ServerUse — the engine treats hotbar-slot activation as
+                // "equip" for containers. Same FItemHandle layout at parm
+                // offset 0, same ID-match → toggleGoatFromBell.
+                if ((wcscmp(fnStr, STR("ServerEquip")) == 0
+                  || wcscmp(fnStr, STR("ServerUse")) == 0)
+                    && parms && func && s_instance
+                    && s_instance->m_localPawn && isObjectAlive(s_instance->m_localPawn))
+                {
+                    const uint8_t* parmBytes = reinterpret_cast<const uint8_t*>(parms);
+                    int32_t handleID = *reinterpret_cast<const int32_t*>(parmBytes + 0);
+                    if (handleID != 0)
+                    {
+                        UObject* invComp = s_instance->findPlayerInventoryComponent(s_instance->m_localPawn);
+                        if (invComp && isObjectAlive(invComp))
+                        {
+                            FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
+                            if (itemsProp)
+                            {
+                                uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp)
+                                                  + itemsProp->GetOffset_Internal() + iiaListOff();
+                                if (isReadableMemory(listBase, 16))
+                                {
+                                    uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+                                    int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
+                                    if (arrData && arrNum > 0 && arrNum < 10000)
+                                    {
+                                        int stride  = iiSize();
+                                        int itemOff = iiItemOff();
+                                        int idOff   = iiIDOff();
+                                        UClass* matchedCls = nullptr;
+                                        for (int i = 0; i < arrNum; ++i)
+                                        {
+                                            uint8_t* entry = arrData + i * stride;
+                                            int32_t entryID = *reinterpret_cast<int32_t*>(entry + idOff);
+                                            if (entryID == handleID)
+                                            {
+                                                matchedCls = *reinterpret_cast<UClass**>(entry + itemOff);
+                                                break;
+                                            }
+                                        }
+                                        if (matchedCls && isObjectAlive(matchedCls))
+                                        {
+                                            std::wstring clsName;
+                                            try { clsName = matchedCls->GetName(); } catch (...) {}
+                                            if (clsName == STR("BP_PorterGoatBell_C"))
+                                            {
+                                                VLOG(STR("[MoriaCppMod] [BellHook] *** bell ServerUse (hotbar) ID={} — firing toggleGoatFromBell ***\n"),
+                                                     handleID);
+                                                s_instance->toggleGoatFromBell();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // [rc.48 DISCOVERY PROBES 2026-05-12]
+                //
+                // (A) Hotbar slot activation discovery. When player presses
+                //     hotbar number key (1-8) to "use" an item in that slot,
+                //     some UFunction fires with the item handle as parm.
+                //     We don't know the function name yet. Log first-sight
+                //     of any function whose name suggests hotbar/quickslot
+                //     dispatch, regardless of context.
+                //
+                // (B) Manage widget show discovery. When player E-interacts
+                //     with our bell-spawned goat, the engine surfaces the
+                //     vanilla dwarf "Standing By / Needs a Furnace" manage
+                //     widget. To suppress it we need to know its class +
+                //     show-event UFunction name. Log first-sight of any
+                //     widget show event when the fn name suggests a
+                //     manage/NPC-UI surface.
+                {
+                    bool hotbarLike =
+                           wcsstr(fnStr, STR("Hotbar"))     != nullptr
+                        || wcsstr(fnStr, STR("QuickSlot")) != nullptr
+                        || wcsstr(fnStr, STR("SlotKey"))    != nullptr
+                        || wcsstr(fnStr, STR("SlotPress")) != nullptr
+                        || wcsstr(fnStr, STR("ActionBar")) != nullptr
+                        || wcsstr(fnStr, STR("UseSlot"))    != nullptr
+                        || wcsstr(fnStr, STR("ActivateSlot")) != nullptr
+                        || wcsstr(fnStr, STR("OnSlotClicked")) != nullptr;
+                    bool manageWidgetLike =
+                           wcsstr(fnStr, STR("ManageScreen"))     != nullptr
+                        || wcsstr(fnStr, STR("NpcManage"))         != nullptr
+                        || wcsstr(fnStr, STR("WBP_NPC"))           != nullptr
+                        || wcsstr(fnStr, STR("MorNpcManage"))      != nullptr
+                        || wcsstr(fnStr, STR("NPCManage"))         != nullptr
+                        || (wcsstr(fnStr, STR("OnAfterShow"))      != nullptr ||
+                            wcsstr(fnStr, STR("OnBeforeShow"))     != nullptr ||
+                            wcsstr(fnStr, STR("NativeBeforeShow")) != nullptr ||
+                            wcsstr(fnStr, STR("NativeAfterShow"))  != nullptr);
+                    if (hotbarLike || manageWidgetLike)
+                    {
+                        static std::set<std::wstring> s_seenHotbarFns;
+                        if (s_seenHotbarFns.size() < 200
+                            && s_seenHotbarFns.insert(fnStr).second)
+                        {
+                            std::wstring ctxCls = context ? safeClassName(context) : L"<null>";
+                            const wchar_t* tag = hotbarLike ? STR("hotbar") : STR("widget");
+                            VLOG(STR("[MoriaCppMod] [BellDiscover] {} fn='{}' ctx='{}'\n"),
+                                 tag, fnStr, ctxCls.c_str());
+                        }
+                    }
+                }
+
                 if (!s_instance->m_followGoats.empty()
                     && (wcsstr(fnStr, STR("Interact")) != nullptr
                         || wcsstr(fnStr, STR("Rescue"))   != nullptr))
@@ -869,6 +1183,29 @@ namespace MoriaMods
                 {
                     s_instance->onBPRequestSpawnPre(context, func, parms);
                 }
+                // [v7.1.0-rc.45 SUSPENDED 2026-05-10] recruit-fire detector
+                // commented out — paired with NUM- chain. Without the
+                // setupGoatRecruit append (also suspended), there's nothing
+                // tracked so this would never match anyway, but keep it
+                // grouped under the same #if 0 for one-iteration test then
+                // delete.
+#if 0 // NUM_MINUS_RECRUIT_SUSPENDED_2026_05_10
+                // [v1.2.8 RECRUIT FIRE DETECTOR] When our marker UFunction
+                // name dispatches via PE, that means a multicast we
+                // subscribed (OnWandererRecruited or OnNpcRescued) fired
+                // for a tracked goat. Trigger the post-recruit handler.
+                // Cheap fnStr cmp first; only resolve context if matched.
+                if (wcscmp(fnStr, STR("MoriaModGoatRecruitMarker")) == 0
+                    || wcscmp(fnStr, STR("OnNpcRescued_Event_2")) == 0)
+                {
+                    if (context && s_instance->isGoatPendingRecruit(context))
+                    {
+                        VLOG(STR("[MoriaCppMod] [Recruit] detected '{}' fire on tracked goat={:p} — running post-recruit handler\n"),
+                             fnStr, (void*)context);
+                        s_instance->onGoatRecruited(context);
+                    }
+                }
+#endif
                 // ServerSetInteractableCustomName: capture the chest the
                 // player just renamed; if the new name is "goat" (case
                 // insensitive) it becomes our persistent backing storage.
@@ -1076,7 +1413,10 @@ namespace MoriaMods
                                 }
                                 std::wstring lo = rowName;
                                 for (auto& c : lo) c = (wchar_t)towlower(c);
-                                if (lo == STR("cantreachbed") || lo == STR("cantreachassignedbed"))
+                                // rc.44: widened to ANY cantreach*
+                                // substring. Catches Furnace + future
+                                // variants without re-shipping.
+                                if (lo.find(STR("cantreach")) != std::wstring::npos)
                                 {
                                     // context is the UMorNPCComponent.
                                     s_instance->onNpcBlockedActivityEvent(context);
@@ -1732,6 +2072,17 @@ namespace MoriaMods
             Unreal::Hook::RegisterLoadMapPreCallback(
                 [this](UEngine*, FWorldContext&, FURL, UPendingNetGame*, FString&) -> std::pair<bool, bool>
                 {
+                    // [v7.1.0-rc.45 CRASH FIX 2026-05-11] Clear stale widget
+                    // pointers + character-load state on map transition.
+                    // Without this, tickRotationDisplay can hit a stale
+                    // m_rotDisplayWidget (slot reused with class ptr
+                    // 0xFF...FF) during the world-tear-down window before
+                    // our pawn-lost detection fires.
+                    m_rotDisplayWidget = nullptr;
+                    m_characterLoaded = false;
+                    m_localPC = nullptr;
+                    m_localPawn = nullptr;
+
                     if (!m_definitionsApplied)
                     {
                         m_definitionsApplied = true;
@@ -1991,6 +2342,31 @@ namespace MoriaMods
                 }
             }
 
+            // [rc.52 E-MENU 2026-05-12]
+            // E key press near a tracked goat → show custom menu (Stay /
+            // Follow / Dismiss / Access Saddlebags). Filters: goat alive
+            // in m_followGoats, within 300 units, player roughly facing it.
+            // ESC closes menu.
+            {
+                static bool s_lastE = false;
+                static bool s_lastEsc = false;
+                bool modHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) ||
+                               (GetAsyncKeyState(VK_CONTROL) & 0x8000) ||
+                               (GetAsyncKeyState(VK_MENU) & 0x8000);
+                bool eDown = m_characterLoaded && (GetAsyncKeyState(0x45 /*'E'*/) & 0x8000) != 0;
+                if (eDown && !s_lastE && !m_ftVisible && !modHeld)
+                {
+                    s_instance->tryOpenGoatMenu();
+                }
+                s_lastE = eDown;
+                bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+                if (escDown && !s_lastEsc && m_goatMenuVisible)
+                {
+                    s_instance->closeGoatMenu();
+                }
+                s_lastEsc = escDown;
+            }
+
             // Reposition HUD keybind dispatcher (default F10). First press
             // shows the inspect window + rotation display draggable; second
             // press OR ESC exits and returns visibility to normal rules.
@@ -2147,21 +2523,172 @@ namespace MoriaMods
             // RECIPES / READ ALL LORE / CLEAR ALL BUFFS. NUM* is now
             // free again. See moria_settings_ui.inl for the new entry
             // (GameOptKind::RevealMap).
-            // Num- (Subtract) — spawn a tame BP_NpcGoat_C that follows the player.
-            // Edge-triggered, suppressed while the F12 settings panel is open or
-            // a modifier is held (so existing chord behavior isn't shadowed).
+            // [v1.2.3 TEST 2026-05-10] NUM- repurposed for the
+            // OnNpcRescued FScriptDelegate-append test. Player presses
+            // it near the deeps goat → we find that BP_NpcGoat_C in
+            // loaded world + append a delegate entry to
+            // BP_MorSettlementManager.OnNpcRescued's invocation list.
+            // Per desktop's hypothesis: subscription presence gates the
+            // Rescue prompt's surfacing. Old toggleFollowGoat()
+            // (spawn/despawn + assignPorterRole + all the v1.0.x mutations)
+            // is suspended.
+            // [v7.1.0-rc.45 SUSPENDED 2026-05-10] NUM- recruit chain
+            // commented out — desktop's editor recon located the real
+            // dispatcher bug (hardcoded class whitelist in
+            // BP_StoryManager.HandleOnNpcRescued ubergraph) and is
+            // patching it in v1.2.10 .pak. Our NUM- chain was calling
+            // the wrong RPC (ServerSendNpcToSettlement instead of the
+            // proper ServerRescueNpc), interfering with the now-working
+            // vanilla recruit prompt, and is fully redundant. Keep
+            // commented for one iteration per dead-code policy (test
+            // v1.2.10 with vanilla E only), then delete in the next
+            // rc bump. See chest-link-future.md sibling notes and
+            // feedback_comment_out_before_delete.md.
+#if 0 // NUM_MINUS_RECRUIT_SUSPENDED_2026_05_10
             {
                 static bool s_lastSpawnGoatKey = false;
                 bool nowDown = (GetAsyncKeyState(VK_SUBTRACT) & 0x8000) != 0;
                 if (nowDown && !s_lastSpawnGoatKey && !m_ftVisible && !modDown)
                 {
-                    VLOG(STR("[MoriaCppMod] [Goat] NUM- press detected (toggle)\n"));
-                    toggleFollowGoat();
+                    VLOG(STR("[MoriaCppMod] [Goat] NUM- press detected — full goat-recruit wire-up\n"));
+                    // Find the deeps goat (broadened class candidates).
+                    const wchar_t* goatCands[] = {
+                        STR("BP_NpcGoat_C"),
+                        STR("BP_NpcGoat_Survivor_C"),
+                        STR("BP_NpcGoat_Survivor_1_C"),
+                        STR("BP_NpcGoat_Survivor_2_C"),
+                        STR("BP_NpcGoat_Survivor_3_C"),
+                        STR("BP_NpcGoat_Wanderer_C"),
+                        STR("BP_NpcGoat_Wanderer_1_C"),
+                        STR("BP_PorterGoat_C"),
+                    };
+                    UObject* deepsGoat = nullptr;
+                    for (auto* cn : goatCands)
+                    {
+                        std::vector<UObject*> hit;
+                        if (seh_findAllOf(cn, &hit) && !hit.empty())
+                        {
+                            for (UObject* g : hit)
+                                if (g && isObjectAlive(g)) { deepsGoat = g; break; }
+                            if (deepsGoat) break;
+                        }
+                    }
+                    if (deepsGoat)
+                    {
+                        if (s_instance->setupGoatRecruit(deepsGoat))
+                        {
+                            // [v1.2.8 ONE-SHOT] Don't wait for multicast.
+                            // The graph-less goat won't fire OnWandererRecruited
+                            // naturally (no event-graph wiring in BP). Press =
+                            // immediate recruit. NPC manager registration +
+                            // actor despawn happen now. Goat re-spawns at
+                            // camp via the standard NPC manager flow.
+                            VLOG(STR("[MoriaCppMod] [Recruit] NUM- triggering immediate recruit (no wait for multicast)\n"));
+                            s_instance->onGoatRecruited(deepsGoat);
+                            showOnScreen(L"Goat recruited! Travel to camp.", 4.0f, 0.4f, 0.9f, 0.4f);
+                        }
+                        else
+                        {
+                            showOnScreen(L"Goat recruit-chain wire-up FAILED — see log", 2.5f, 0.9f, 0.4f, 0.4f);
+                        }
+                    }
+                    else
+                    {
+                        VLOG(STR("[MoriaCppMod] [Recruit] no goat in world\n"));
+                        showOnScreen(L"No goat found nearby", 1.5f, 0.7f, 0.7f, 0.7f);
+                    }
                 }
                 s_lastSpawnGoatKey = nowDown;
             }
+#endif
+            // [v7.1.0-rc.45 SUMMON 2026-05-10] NUM+ → teleport the live
+            // goat (BP_NpcGoat_C) to the player's location. Hook target
+            // discovered via rc.34 reflection: MorCharacter::ServerTeleportTo
+            // (FVector DestLocation, FRotator DestRotation). Goals 1+3 of
+            // porter-goat-feature-goals.md — summon makes the goat appear
+            // at the player; the goat's existing porter BT
+            // (Bst_NPCGoatWorkPorter) handles follow once it's nearby.
+            {
+                static bool s_lastSummonKey = false;
+                bool nowDown = (GetAsyncKeyState(VK_ADD) & 0x8000) != 0;
+                if (nowDown && !s_lastSummonKey && !m_ftVisible && !modDown)
+                {
+                    s_instance->summonGoatToPlayer();
+                }
+                s_lastSummonKey = nowDown;
+            }
+            // [v7.1.0-rc.45 BELL/SADDLEBAGS GRANT DEBUG 2026-05-12]
+            //   NUM7 → grant Bell-of-the-Goat (BP_PorterGoatBell_C)
+            //   NUM8 → grant Saddlebags (BP_PorterGoatSaddlebags_C)
+            // Moved off NUM2/NUM3 — those are bound to Remove Single / Undo
+            // Remove / Remove All in Settings → Gameplay tab.
+            //
+            // Both paths from PorterGoatBell_v1.1.1 pak. Bell triggers
+            // summon (rc.40 will hook right-click on it). Saddlebags is
+            // the 8x8 hidden storage anchor. Production acquisition is
+            // via Shire merchant recipe-bundle purchase; these debug
+            // keybinds skip the campaign progression for fast iteration.
+            {
+                static bool s_lastBellGrantKey = false;
+                bool nowDown = (GetAsyncKeyState(VK_NUMPAD7) & 0x8000) != 0;
+                if (nowDown && !s_lastBellGrantKey && !m_ftVisible && !modDown)
+                {
+                    s_instance->grantBellToPlayer();
+                }
+                s_lastBellGrantKey = nowDown;
+            }
+            {
+                static bool s_lastSaddlebagsGrantKey = false;
+                bool nowDown = (GetAsyncKeyState(VK_NUMPAD8) & 0x8000) != 0;
+                if (nowDown && !s_lastSaddlebagsGrantKey && !m_ftVisible && !modDown)
+                {
+                    s_instance->grantSaddlebagsToPlayer();
+                }
+                s_lastSaddlebagsGrantKey = nowDown;
+            }
+            // [rc.40a 2026-05-12] NUM9 test keybind removed per user spec.
+            // Bell toggle is right-click-only now. Discovery happens via the
+            // [BellHook] PE-pre logging on any UFunction called with the
+            // bell as context (see PE-pre handler ~line 880).
+            // Num. (Decimal) — toggle diag mode. When ON, every PE-pre call
+            // matching wide rescue-related keywords logs WITHOUT dedup.
+            // When OFF (default), back to the narrow Interact/Rescue
+            // filter with one-shot dedup. Use this to capture full
+            // dwarf-rescue chain in a fresh game.
+            {
+                static bool s_lastDiagKey = false;
+                bool nowDown = (GetAsyncKeyState(VK_DECIMAL) & 0x8000) != 0;
+                if (nowDown && !s_lastDiagKey && !m_ftVisible && !modDown)
+                {
+                    s_diagMode = !s_diagMode;
+                    VLOG(STR("[MoriaCppMod] [DiagMode] toggled {} (rescue-chain capture)\n"),
+                         s_diagMode ? STR("ON") : STR("OFF"));
+                    showOnScreen(s_diagMode ? L"Rescue diag: ON" : L"Rescue diag: OFF",
+                                 2.0f, 0.4f, 0.9f, 0.4f);
+                }
+                s_lastDiagKey = nowDown;
+            }
+            // Num/ (Divide) — probe: dump BP_StoryManager.OnNpcRescued
+            // multicast subscriber list. Per desktop's BP-graph decode,
+            // each rescued NPC self-subscribes in BeginPlay; the goat
+            // doesn't, so the multicast bypasses it. Dumping the list
+            // before/after a real dwarf rescue confirms or refutes.
+            {
+                static bool s_lastProbeKey = false;
+                bool nowDown = (GetAsyncKeyState(VK_DIVIDE) & 0x8000) != 0;
+                if (nowDown && !s_lastProbeKey && !m_ftVisible && !modDown)
+                {
+                    VLOG(STR("[MoriaCppMod] [Probe] NUM/ press detected — dumping rescue subscribers\n"));
+                    dumpStoryMgrRescueSubscribers();
+                    showOnScreen(L"Rescue probe: dumped subscribers",
+                                 2.0f, 0.4f, 0.9f, 0.4f);
+                }
+                s_lastProbeKey = nowDown;
+            }
             // Goat follow tick (no-op when herd is empty; throttled to 1 Hz/goat internally).
             tickFollowGoats();
+            // Goat menu click dispatch (no-op unless menu visible).
+            tickGoatMenu();
             // Num0 - capture bubble info to clipboard + Target Info widget (v6.4.5+)
             // Windows maps numpad-0 to VK_NUMPAD0 only when NumLock is ON; with NumLock OFF
             // the same physical key sends VK_INSERT (which Replenish owns). We always
@@ -3360,14 +3887,14 @@ namespace MoriaMods
                         m_charLoadTime = GetTickCount64();
                         m_localPC = findPlayerController();
                         m_localPawn = getPawn();
-                        // rc.28: arm the post-load NPC sweep for +30 s.
-                        // NPCs already in CantReachBed at world-load
-                        // had their SetCurrentActivity fire before the
-                        // PE post-hook was registered; the polling
-                        // tick eventually catches them but a one-shot
-                        // sweep at 30 s is the explicit safety net.
-                        m_npcPostLoadSweepDueMs = m_charLoadTime + 30000;
-                        m_npcPostLoadSweepFired = false;
+                        // rc.41: arm a RECURRING post-load NPC sweep.
+                        // First fire at +30 s, then every 30 s up to
+                        // +5 min after character-load. Live log
+                        // showed an NPC transitioning NoBed →
+                        // CantReachBed at +70 s — the original
+                        // one-shot at +30 s missed it.
+                        m_npcPostLoadSweepNextMs = m_charLoadTime + 30000;
+                        m_npcPostLoadSweepEndMs  = m_charLoadTime + 300000;
                         VLOG(STR("[MoriaCppMod] Character loaded - PC={:p} Pawn={:p}, waiting 15s before replay\n"),
                              (void*)m_localPC, (void*)m_localPawn);
 

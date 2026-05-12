@@ -131,6 +131,10 @@
             file << "PitchRotate = " << (m_pitchRotateEnabled ? "true" : "false") << "\n";
             file << "RollRotate = " << (m_rollRotateEnabled ? "true" : "false") << "\n";
 
+            // [rc.52 2026-05-12] Porter Goat companion settings.
+            file << "\n[GoatCompanion]\n";
+            file << "Name = " << wideToUtf8(m_goatName) << "\n";
+
             // [Cheats]: only "true" entries written; absent keys = false.
             {
                 file << "\n[Cheats]\n";
@@ -327,6 +331,14 @@
                             else if (strEqualCI(kv->key, "RollRotate"))
                             {
                                 m_rollRotateEnabled = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                        }
+                        else if (strEqualCI(section, "GoatCompanion"))
+                        {
+                            if (strEqualCI(kv->key, "Name"))
+                            {
+                                if (!kv->value.empty())
+                                    m_goatName = utf8ToWide(kv->value);
                             }
                         }
                         else if (strEqualCI(section, "Cheats"))
