@@ -4790,27 +4790,57 @@
                         // Fix: keep widget at design size 1100, bump font
                         // size via the deprecated Font UPROPERTY (still
                         // accepted at runtime in UE4.27).
+                        // Width sized to fit inside the rename popup (~480
+                        // design px). Original 1100px was for a different
+                        // full-screen context and overflowed the popup card.
                         if (slot)
                             jw_setCanvasSlot(slot,
                                              0.5f, 0.5f, 0.5f, 0.5f,   // anchors center
                                              0.0f, -20.0f,             // position offset
-                                             1100.0f, 80.0f,           // size
+                                             480.0f, 60.0f,            // size (smaller — fits popup)
                                              0.5f, 0.5f,               // alignment center
                                              false);
 
-                        // Set MinimumDesiredWidth so the EditableTextBox
-                        // claims the full SizeBox width even before any
-                        // text is typed. This anchors the visible scrolling
-                        // viewport to the same width as the box (no clipping
-                        // at small content size).
+                        // Set MinimumDesiredWidth to match — text box claims
+                        // the full SizeBox width without overflowing.
                         if (auto* fn = editBox->GetFunctionByNameInChain(STR("SetMinimumDesiredWidth")))
                         {
                             std::vector<uint8_t> bb(fn->GetParmsSize(), 0);
                             if (auto* p = findParam(fn, STR("InMinimumDesiredWidth")))
                             {
-                                *reinterpret_cast<float*>(bb.data() + p->GetOffset_Internal()) = 1080.0f;
+                                *reinterpret_cast<float*>(bb.data() + p->GetOffset_Internal()) = 460.0f;
                                 safeProcessEvent(editBox, fn, bb.data());
                             }
+                        }
+
+                        // 2026-05-14 — user reported font too tiny; bumped to
+                        // 24 + Bold typeface. FSlateFontInfo layout:
+                        //   +0x40 = FName TypefaceFontName  (write "Bold")
+                        //   +0x48 = int32 Size              (write 24)
+                        // UEditableTextBox has TWO FSlateFontInfo locations:
+                        //   (1) deprecated `Font` UPROPERTY at offset 0x0958
+                        //   (2) WidgetStyle (FEditableTextBoxStyle) at 0x0130,
+                        //       containing Font at +0x0238 → absolute 0x0368
+                        // Write both so whichever Slate actually reads gets it.
+                        constexpr int kFontSize = 24;
+                        RC::Unreal::FName boldFName(STR("Bold"), RC::Unreal::FNAME_Add);
+                        if (auto* fProp = editBox->GetPropertyByNameInChain(STR("Font")))
+                        {
+                            uint8_t* fontBase = reinterpret_cast<uint8_t*>(editBox)
+                                              + fProp->GetOffset_Internal();
+                            *reinterpret_cast<int32_t*>(fontBase + 0x48) = kFontSize;
+                            std::memcpy(fontBase + 0x40, &boldFName, sizeof(RC::Unreal::FName));
+                            VLOG(STR("[MoriaCppMod] [Rename v2] deprecated Font: Size={} Bold typeface @off=0x{:x}\n"),
+                                 kFontSize, fProp->GetOffset_Internal());
+                        }
+                        if (auto* wsProp = editBox->GetPropertyByNameInChain(STR("WidgetStyle")))
+                        {
+                            uint8_t* stylBase = reinterpret_cast<uint8_t*>(editBox)
+                                              + wsProp->GetOffset_Internal();
+                            *reinterpret_cast<int32_t*>(stylBase + 0x0238 + 0x48) = kFontSize;
+                            std::memcpy(stylBase + 0x0238 + 0x40, &boldFName, sizeof(RC::Unreal::FName));
+                            VLOG(STR("[MoriaCppMod] [Rename v2] WidgetStyle.Font: Size={} Bold typeface @off=0x{:x}\n"),
+                                 kFontSize, wsProp->GetOffset_Internal() + 0x0238);
                         }
 
                         // EditBox property dump - first-sight diagnostic.
@@ -5063,6 +5093,30 @@
                 std::wstring msg = L"Name too long: " + std::to_wstring(newName.size())
                                  + L" characters (max " + std::to_wstring(kRenameMaxLen) + L")";
                 showErrorBox(msg);
+                return;
+            }
+
+            // [Phase 6 GoatRename intercept] If we opened the rename modal
+            // from the goat submenu, route the confirmed name to m_goatName
+            // instead of the character-rename pipeline.
+            if (m_renamingGoat)
+            {
+                m_renamingGoat = false;
+                std::wstring oldName = m_goatName;
+                m_goatName = newName;
+                saveConfig();  // writes [GoatCompanion] Name= to MoriaCppMod.ini
+                std::wstring toast = oldName + STR(" \x2192 ") + newName;
+                showOnScreen(toast, 5.0f, 0.95f, 0.85f, 0.5f);
+                VLOG(STR("[MoriaCppMod] [GoatMenu] RENAMED '{}' -> '{}' (via modal)\n"),
+                     oldName, newName);
+                hideRenameDialog();
+                // 2026-05-14 — hideRenameDialog's pause-menu detection set
+                // input mode to UI Only if any UI_WBP_EscapeMenu2_C widget was
+                // alive in the viewport (even if the game wasn't paused). For
+                // a goat rename the game IS NOT paused — force Game mode so
+                // the player can move again.
+                setInputModeGame();
+                VLOG(STR("[MoriaCppMod] [GoatMenu] post-rename: forced Game mode (override pause-menu detect)\n"));
                 return;
             }
 

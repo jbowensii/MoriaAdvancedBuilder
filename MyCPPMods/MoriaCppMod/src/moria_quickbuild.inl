@@ -160,6 +160,14 @@
                 file << "Enabled = false\n";
             }
 
+            // [GoatSaveProbes]: diagnostic probes for porter goat save
+            // research. Default OFF; only write when explicitly enabled.
+            if (m_goatSaveProbesEnabled)
+            {
+                file << "\n[GoatSaveProbes]\n";
+                file << "Enabled = true\n";
+            }
+
             // [Tweaks]: only non-default (index > 0) entries are written.
             {
                 file << "\n[Tweaks]\n";
@@ -380,6 +388,16 @@
                             {
                                 bool isTrue = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
                                 m_npcRecoveryEnabled = isTrue;
+                            }
+                        }
+                        else if (strEqualCI(section, "GoatSaveProbes"))
+                        {
+                            // v1.4.1-probe: Phase 2 goat-save research probes.
+                            // Default OFF — only diagnostic builds enable this.
+                            if (strEqualCI(kv->key, "Enabled"))
+                            {
+                                bool isTrue = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                                m_goatSaveProbesEnabled = isTrue;
                             }
                         }
                         else if (strEqualCI(section, "Tweaks"))

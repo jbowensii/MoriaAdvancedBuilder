@@ -137,6 +137,102 @@ static std::wstring safeClassName(UObject* obj)
     return std::wstring(buf);
 }
 
+// SEH-wrapped helper for direct `obj->GetName()` (NOT via class). For a
+// UClass*, this returns the actual class name like "BP_NpcGoat_C" rather
+// than the meta-class "BlueprintGeneratedClass" that safeClassName returns.
+// Same split-function pattern as safeClassName to avoid mixing SEH with
+// C++ unwinding objects.
+static void dispatchObjectNameToBuf(UObject* obj, wchar_t* buf, size_t bufLen)
+{
+    if (!obj || bufLen == 0) { if (buf && bufLen) buf[0] = L'\0'; return; }
+    auto name = obj->GetName();
+    wcsncpy_s(buf, bufLen, name.c_str(), _TRUNCATE);
+}
+
+static bool seh_objectNameToBuf(UObject* obj, wchar_t* buf, size_t bufLen) noexcept
+{
+    __try {
+        dispatchObjectNameToBuf(obj, buf, bufLen);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (buf && bufLen) buf[0] = L'\0';
+        return false;
+    }
+}
+
+static std::wstring safeObjectName(UObject* obj)
+{
+    if (!obj) return L"";
+    wchar_t buf[256] = {};
+    if (!seh_objectNameToBuf(obj, buf, sizeof(buf) / sizeof(buf[0]))) return L"";
+    return std::wstring(buf);
+}
+
+// SEH-wrapped FName::ToString for speculative byte interpretation. C++
+// try/catch CANNOT catch SEH access violations — if the FName bytes are
+// garbage (e.g., we reinterpret_cast random memory as FName*), ToString
+// dereferences the global name table at a wild index and AVs.
+//
+// Used in TMap pair-decode probes where the slot bytes might or might not
+// be an FName key depending on stride/layout assumptions. Returns empty
+// string on AV; caller distinguishes "valid FName resolved to empty" from
+// "AV protected" via the bool return.
+static void dispatchFNameToStringToBuf(void* fnameBytes, wchar_t* buf, size_t bufLen)
+{
+    if (!fnameBytes || bufLen == 0) { if (buf && bufLen) buf[0] = L'\0'; return; }
+    auto* fname = reinterpret_cast<RC::Unreal::FName*>(fnameBytes);
+    auto name = fname->ToString();
+    wcsncpy_s(buf, bufLen, name.c_str(), _TRUNCATE);
+}
+
+static bool seh_fnameToStringToBuf(void* fnameBytes, wchar_t* buf, size_t bufLen) noexcept
+{
+    __try {
+        dispatchFNameToStringToBuf(fnameBytes, buf, bufLen);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (buf && bufLen) buf[0] = L'\0';
+        return false;
+    }
+}
+
+static std::wstring seh_fnameToString(void* fnameBytes)
+{
+    if (!fnameBytes) return L"";
+    wchar_t buf[256] = {};
+    if (!seh_fnameToStringToBuf(fnameBytes, buf, sizeof(buf) / sizeof(buf[0]))) return L"";
+    return std::wstring(buf);
+}
+
+// SEH-wrapped FText::ToString for property reads where the FText might be
+// in a mid-construction state. Same split-function pattern as the FName variant.
+static void dispatchFTextToStringToBuf(void* ftextBytes, wchar_t* buf, size_t bufLen)
+{
+    if (!ftextBytes || bufLen == 0) { if (buf && bufLen) buf[0] = L'\0'; return; }
+    auto* ft = reinterpret_cast<RC::Unreal::FText*>(ftextBytes);
+    auto s = ft->ToString();
+    wcsncpy_s(buf, bufLen, s.c_str(), _TRUNCATE);
+}
+
+static bool seh_ftextToStringToBuf(void* ftextBytes, wchar_t* buf, size_t bufLen) noexcept
+{
+    __try {
+        dispatchFTextToStringToBuf(ftextBytes, buf, bufLen);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (buf && bufLen) buf[0] = L'\0';
+        return false;
+    }
+}
+
+static std::wstring seh_ftextToString(void* ftextBytes)
+{
+    if (!ftextBytes) return L"";
+    wchar_t buf[512] = {};
+    if (!seh_ftextToStringToBuf(ftextBytes, buf, sizeof(buf) / sizeof(buf[0]))) return L"";
+    return std::wstring(buf);
+}
+
 
 static bool isObjectAlive(UObject* obj)
 {

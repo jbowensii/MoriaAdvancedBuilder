@@ -54,6 +54,22 @@ namespace MoriaMods
         UObject* m_goatMenuWidget{nullptr};
         bool     m_goatMenuVisible{false};
         ULONGLONG m_lastGoatMenuMs{0};  // E-press dedupe cooldown
+        bool     m_goatModalPending{false};  // [Phase 4] set in PE-pre, consumed on tick
+
+        // [Phase 6 / Path α] Submenu state — fresh UI_WBP_InteractionMenu_C
+        // spawned on Details-press, populated with 7 cloned rows. We own its
+        // cursor/input completely (vanilla cursor doesn't navigate our rows
+        // — known from Path A probes — so we poll input + drive SetIsSelected
+        // ourselves).
+        UObject*  m_goatSubMenu{nullptr};
+        bool      m_goatSubMenuVisible{false};
+        bool      m_goatSubMenuPending{false};
+        UObject*  m_goatSubMenuRows[6]{};   // [0]=Follow [1]=Stay [2]=Saddlebags [3]=Feed [4]=Rename [5]=Dismiss (Wander dropped)
+        UObject*  m_proximityMenuAtOpen{nullptr};  // cached at submenu-open time, for reliable hide-target
+        int       m_goatSubMenuCursorIdx{0};
+        UObject*  m_goatSubMenuTemplateRow{nullptr};  // cached vanilla Details row for clone source
+        bool      m_renamingGoat{false};  // [Phase 6] when true, confirmRenameDialog routes typed name to m_goatName
+        bool      m_keepUIModeAfterSubmenuClose{false};  // handlers that open their own popups set this so closeGoatSubmenu skips setInputModeGame
         ULONGLONG m_lastStreamCheck{0};
         ULONGLONG m_lastRescanTime{0};
         ULONGLONG m_lastBubbleCheck{0};
@@ -609,19 +625,21 @@ namespace MoriaMods
 
         #include "moria_goat.inl"
 
+        #include "moria_goat_save_probes.inl"
+
       public:
 
 
         MoriaCppMod()
         {
-            ModVersion = STR("7.1.0-rc.45");
+            ModVersion = STR("7.2.0-rc.1");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.45\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v7.2.0-rc.1 (Porter Goat: vanilla interaction menu Follow/Stay toggle + Saddlebag dispatch via ServerUse)\n"));
         }
 
         ~MoriaCppMod() override
@@ -661,7 +679,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v7.1.0-rc.45 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v7.2.0-rc.1 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
@@ -826,6 +844,15 @@ namespace MoriaMods
                 const auto fnName = func->GetName();
                 const wchar_t* fnStr = fnName.c_str();
 
+                // v1.4.1-probe: Probe E — save-shaped UFunction arg capture.
+                // PersistorWatch — log-only detection of BeginPlay / SaveGameObject*
+                //                  calls on BP_PorterGoatPersistor_C (rc.54).
+                // Early-out fast when probes disabled (the common case).
+                if (s_instance->m_goatSaveProbesEnabled) {
+                    s_instance->onProbeE_processEventPre(context, func, parms);
+                    s_instance->onPersistorWatchPre(context, func);
+                }
+
                 // navTabPressed pre-hook: when user clicks the Cheats tab,
                 // rewrite the tab name to "Gameplay" so the framework
                 // displays the Gameplay tab content. Set a flag so the
@@ -945,7 +972,7 @@ namespace MoriaMods
                                         {
                                             std::wstring clsName;
                                             try { clsName = matchedCls->GetName(); } catch (...) {}
-                                            if (clsName == STR("BP_PorterGoatBell_C"))
+                                            if (clsName == STR("EQ_GoatBell_C"))
                                             {
                                                 VLOG(STR("[MoriaCppMod] [BellHook] *** bell right-clicked (ID={}) — firing toggleGoatFromBell ***\n"),
                                                      handleID);
@@ -1007,7 +1034,7 @@ namespace MoriaMods
                                             {
                                                 std::wstring n;
                                                 try { n = itemCls->GetName(); } catch (...) {}
-                                                if (n == STR("BP_PorterGoatBell_C"))
+                                                if (n == STR("EQ_GoatBell_C"))
                                                 {
                                                     s_cachedBellID = *reinterpret_cast<int32_t*>(entry + idOff);
                                                     VLOG(STR("[MoriaCppMod] [BellHook] cached bell ID={} for wide-discovery probe\n"),
@@ -1087,7 +1114,7 @@ namespace MoriaMods
                                         {
                                             std::wstring clsName;
                                             try { clsName = matchedCls->GetName(); } catch (...) {}
-                                            if (clsName == STR("BP_PorterGoatBell_C"))
+                                            if (clsName == STR("EQ_GoatBell_C"))
                                             {
                                                 VLOG(STR("[MoriaCppMod] [BellHook] *** bell ServerUse (hotbar) ID={} — firing toggleGoatFromBell ***\n"),
                                                      handleID);
@@ -1172,7 +1199,9 @@ namespace MoriaMods
                         std::wstring ctxCls = safeClassName(context);
                         if (ctxCls == STR("UI_WBP_Interaction_C"))
                         {
-                            s_instance->dumpInteractionWidgetSchema(context);
+                            // [Phase 3] silenced — InteractDump (271 lines/session) was
+                            // the discovery probe; we know the schema now.
+                            // s_instance->dumpInteractionWidgetSchema(context);
                         }
                     }
                 }
@@ -1183,7 +1212,7 @@ namespace MoriaMods
                 {
                     s_instance->onBPRequestSpawnPre(context, func, parms);
                 }
-                // [v7.1.0-rc.45 SUSPENDED 2026-05-10] recruit-fire detector
+                // [v7.1.0-rc.51 SUSPENDED 2026-05-10] recruit-fire detector
                 // commented out — paired with NUM- chain. Without the
                 // setupGoatRecruit append (also suspended), there's nothing
                 // tracked so this would never match anyway, but keep it
@@ -1230,6 +1259,84 @@ namespace MoriaMods
                         s_instance->onInteractionPressPre(context);
                     }
                 }
+                // [rc.54 PATH A] OnSetInteractable on the menu — fires when
+                // proximity widget opens for a new NPC. We hook PE-pre to
+                // detect our goat early; deferred injection happens in
+                // tickGoatMenuInject() so vanilla's row population finishes
+                // first.
+                // [Phase 6 / Path α] Scroll-wheel / arrow-key nav for our
+                // submenu. Vanilla's input system fires OnSelectionNext/
+                // OnSelectionPrevious on the menu — AND ALSO OnMoveNext/
+                // OnMovePrevious on the currently-focused row. Hook both so
+                // wheel events reach us regardless of which level vanilla
+                // dispatches at.
+                // Diagnostic: log any "Selection" / "Move" / "Scroll" /
+                // "Navigate" UFunc that fires on our submenu or its rows
+                // while submenu is visible. Dedup per-fnStr per session.
+                if (s_instance->m_goatSubMenuVisible && context)
+                {
+                    bool isOurs = (context == s_instance->m_goatSubMenu);
+                    if (!isOurs) {
+                        for (int i = 0; i < 7; ++i)
+                            if (s_instance->m_goatSubMenuRows[i] == context) { isOurs = true; break; }
+                    }
+                    if (isOurs &&
+                        (wcsstr(fnStr, STR("Select")) ||
+                         wcsstr(fnStr, STR("Move")) ||
+                         wcsstr(fnStr, STR("Scroll")) ||
+                         wcsstr(fnStr, STR("Navigate")) ||
+                         wcsstr(fnStr, STR("Mouse"))))
+                    {
+                        static std::set<std::wstring> s_seen;
+                        if (s_seen.size() < 60 && s_seen.insert(fnStr).second)
+                            VLOG(STR("[MoriaCppMod] [GoatSubmenuDiag] '{}' on ctx={:p} (is-menu={})\n"),
+                                 fnStr, (void*)context, context == s_instance->m_goatSubMenu);
+                    }
+                }
+
+                if (s_instance->m_goatSubMenuVisible
+                    && context == s_instance->m_goatSubMenu
+                    && (wcscmp(fnStr, STR("OnSelectionNext")) == 0
+                        || wcscmp(fnStr, STR("OnSelectionPrevious")) == 0))
+                {
+                    int dir = (wcscmp(fnStr, STR("OnSelectionNext")) == 0) ? +1 : -1;
+                    s_instance->onGoatSubmenuScroll(dir);
+                }
+                // Restored 2026-05-14 — dropping this handler broke scroll
+                // entirely. OnSelectionNext on the menu only fires on first
+                // open; subsequent opens rely on OnMoveNext on row contexts.
+                // 2-3x advance per tick was the user complaint; the 100ms
+                // throttle inside onGoatSubmenuScroll dedupes that, so we can
+                // safely listen to both signals again.
+                if (s_instance->m_goatSubMenuVisible
+                    && context
+                    && (wcscmp(fnStr, STR("OnMoveNext")) == 0
+                        || wcscmp(fnStr, STR("OnMovePrevious")) == 0))
+                {
+                    std::wstring ctxCls = safeClassName(context);
+                    if (ctxCls == STR("UI_WBP_Interaction_C"))
+                    {
+                        int dir = (wcscmp(fnStr, STR("OnMoveNext")) == 0) ? +1 : -1;
+                        s_instance->onGoatSubmenuScroll(dir);
+                    }
+                }
+
+                // [Phase 4 — Path A hooks disabled]
+                // OnSetInteractable + NavProbe + MenuProbe hooks were for
+                // the row-injection discovery work. Path A is dead;
+                // disabled to cut PE-pre overhead and log noise.
+                #if 0
+                if (!s_instance->m_followGoats.empty()
+                    && wcscmp(fnStr, STR("OnSetInteractable")) == 0
+                    && context)
+                {
+                    std::wstring ctxCls = safeClassName(context);
+                    if (ctxCls == STR("UI_WBP_InteractionMenu_C"))
+                    {
+                        s_instance->onInteractMenuSetInteractablePre(context, func, parms);
+                    }
+                }
+                #endif
                 // Legacy v0.4 hook - keep in case some path still calls it.
                 if (wcscmp(fnStr, STR("Initialize NavBar")) == 0 ||
                     wcscmp(fnStr, STR("InitializeNavBar")) == 0)
@@ -1308,6 +1415,17 @@ namespace MoriaMods
                 const auto fn = func->GetName();
                 const wchar_t* fnStr2 = fn.c_str();
 
+                // v1.4.1-probe: Probe C — save-lifecycle PE post-hook capture.
+                // Probe F — broader save-subsystem filter + return-value reader.
+                // Probe H — Interaction delegate capture (rc.54).
+                // Early-out fast when probes disabled (the common case). Runs
+                // before the MP guard so the dedicated-server case is logged too.
+                if (s_instance->m_goatSaveProbesEnabled) {
+                    s_instance->onProbeC_processEventPost(context, func);
+                    s_instance->onProbeF_processEventPost(context, func, parms);
+                    s_instance->onProbeH_processEventPost(context, func, parms);
+                }
+
                 // MP guard: skip UI/state hooks on dedicated server - each client has its own mod instance
                 // Only OnPlayerEnteredBubble is allowed through (useful for server-side bubble tracking)
                 if (s_instance->m_isDedicatedServer)
@@ -1367,6 +1485,22 @@ namespace MoriaMods
                     }
                 }
 
+                // [Phase 5] Re-enable OnShow PE-post hook on the vanilla
+                // proximity menu to override the header text from "Citizen"
+                // to "Porter Goat" when the menu shows for our goat.
+                // (OnMoveNext/Previous force-cycling stays disabled — Path A
+                // row injection is dead.)
+                if (!s_instance->m_followGoats.empty()
+                    && wcscmp(fnStr2, STR("OnShow")) == 0
+                    && context)
+                {
+                    std::wstring ctxCls = safeClassName(context);
+                    if (ctxCls == STR("UI_WBP_InteractionMenu_C"))
+                    {
+                        s_instance->onInteractMenuShownPost(context);
+                    }
+                }
+
                 // rc.26: event-driven NPC blocked-bed trigger.
                 // SetCurrentActivity is the canonical UFunction the
                 // game calls when an NPC's activity transitions; its
@@ -1375,6 +1509,44 @@ namespace MoriaMods
                 // an NPC's Activity becomes CantReachBed / etc — no
                 // polling needed. Cheap function-name filter first
                 // per feedback_filter_pe_by_function_name_first.md.
+                // rc.46 BROAD DIAGNOSTIC: log EVERY UFunction called
+                // on a UMorNPCComponent context, one-shot per unique
+                // function name. If anything UFunction-shaped fires
+                // during an activity change, this surfaces it. If
+                // nothing does, that's conclusive evidence the change
+                // is a direct C++ property write with no PE dispatch.
+                //
+                // Cheap function-name filter first per
+                // feedback_filter_pe_by_function_name_first.md — we
+                // only resolve safeClassName on a small handful of
+                // candidate function names (anything starting with
+                // a common activity/NPC-related prefix).
+                {
+                    bool maybeNpcFunc =
+                        (wcsstr(fnStr2, STR("Activity")) != nullptr) ||
+                        (wcsstr(fnStr2, STR("MorNpc")) != nullptr) ||
+                        (wcsstr(fnStr2, STR("NPC")) != nullptr) ||
+                        (wcsstr(fnStr2, STR("SetCurrent")) != nullptr) ||
+                        (wcsstr(fnStr2, STR("Interrupted")) != nullptr);
+                    if (maybeNpcFunc && context)
+                    {
+                        std::wstring ctxCls = safeClassName(context);
+                        bool isNpcCtx = (ctxCls.find(STR("MorNPC")) != std::wstring::npos
+                                      || ctxCls.find(STR("NpcDwarf")) != std::wstring::npos
+                                      || ctxCls.find(STR("MorCharacter")) != std::wstring::npos);
+                        if (isNpcCtx)
+                        {
+                            static std::set<std::wstring> s_seenBroad;
+                            std::wstring key = std::wstring(fnStr2) + STR("@") + ctxCls;
+                            if (s_seenBroad.insert(key).second)
+                            {
+                                VLOG(STR("[NpcRecovery] BROAD-DIAG: fn='{}' ctxCls='{}' (one-shot)\n"),
+                                     fnStr2, ctxCls.c_str());
+                            }
+                        }
+                    }
+                }
+
                 if (wcscmp(fnStr2, STR("SetCurrentActivity")) == 0 ||
                     wcscmp(fnStr2, STR("MorNpcUpdateActivity")) == 0)
                 {
@@ -1419,7 +1591,9 @@ namespace MoriaMods
                                 if (lo.find(STR("cantreach")) != std::wstring::npos)
                                 {
                                     // context is the UMorNPCComponent.
-                                    s_instance->onNpcBlockedActivityEvent(context);
+                                    // rc.51: pass row name as hint for
+                                    // activity-aware fallback routing.
+                                    s_instance->onNpcBlockedActivityEvent(context, rowName);
                                 }
                             }
                         }
@@ -2072,7 +2246,7 @@ namespace MoriaMods
             Unreal::Hook::RegisterLoadMapPreCallback(
                 [this](UEngine*, FWorldContext&, FURL, UPendingNetGame*, FString&) -> std::pair<bool, bool>
                 {
-                    // [v7.1.0-rc.45 CRASH FIX 2026-05-11] Clear stale widget
+                    // [v7.1.0-rc.51 CRASH FIX 2026-05-11] Clear stale widget
                     // pointers + character-load state on map transition.
                     // Without this, tickRotationDisplay can hit a stale
                     // m_rotDisplayWidget (slot reused with class ptr
@@ -2342,30 +2516,19 @@ namespace MoriaMods
                 }
             }
 
-            // [rc.52 E-MENU 2026-05-12]
-            // E key press near a tracked goat → show custom menu (Stay /
-            // Follow / Dismiss / Access Saddlebags). Filters: goat alive
-            // in m_followGoats, within 300 units, player roughly facing it.
-            // ESC closes menu.
-            {
-                static bool s_lastE = false;
-                static bool s_lastEsc = false;
-                bool modHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) ||
-                               (GetAsyncKeyState(VK_CONTROL) & 0x8000) ||
-                               (GetAsyncKeyState(VK_MENU) & 0x8000);
-                bool eDown = m_characterLoaded && (GetAsyncKeyState(0x45 /*'E'*/) & 0x8000) != 0;
-                if (eDown && !s_lastE && !m_ftVisible && !modHeld)
-                {
-                    s_instance->tryOpenGoatMenu();
-                }
-                s_lastE = eDown;
-                bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-                if (escDown && !s_lastEsc && m_goatMenuVisible)
-                {
-                    s_instance->closeGoatMenu();
-                }
-                s_lastEsc = escDown;
-            }
+            // [Phase 4 / Path B' 2026-05-14]
+            // Vanilla proximity widget shows "[E] Details" on goat (pak
+            // ships bDetailsInteractionEnabled=true). E-press on that row
+            // fires UI_WBP_Interaction_C::OnPressInteract → our PE-pre hook
+            // (onInteractionPressPre) sets m_goatModalPending = true. This
+            // tick handler picks up the flag and opens our centered modal.
+            // Path A row-injection + cursor cycling are confirmed dead-ends
+            // (vanilla's nav iterates NPC interaction structs, not the
+            // widget tree); kept dormant for archaeology.
+            s_instance->tickGoatModalDeferred();
+            s_instance->tickGoatSubmenu();
+            s_instance->tickGoatMenuInject();  // no-op (gated internally)
+            // s_instance->tickGoatMenuProbe();  // disabled — no Path A probe needed
 
             // Reposition HUD keybind dispatcher (default F10). First press
             // shows the inspect window + rotation display draggable; second
@@ -2532,7 +2695,7 @@ namespace MoriaMods
             // Rescue prompt's surfacing. Old toggleFollowGoat()
             // (spawn/despawn + assignPorterRole + all the v1.0.x mutations)
             // is suspended.
-            // [v7.1.0-rc.45 SUSPENDED 2026-05-10] NUM- recruit chain
+            // [v7.1.0-rc.51 SUSPENDED 2026-05-10] NUM- recruit chain
             // commented out — desktop's editor recon located the real
             // dispatcher bug (hardcoded class whitelist in
             // BP_StoryManager.HandleOnNpcRescued ubergraph) and is
@@ -2601,7 +2764,7 @@ namespace MoriaMods
                 s_lastSpawnGoatKey = nowDown;
             }
 #endif
-            // [v7.1.0-rc.45 SUMMON 2026-05-10] NUM+ → teleport the live
+            // [v7.1.0-rc.51 SUMMON 2026-05-10] NUM+ → teleport the live
             // goat (BP_NpcGoat_C) to the player's location. Hook target
             // discovered via rc.34 reflection: MorCharacter::ServerTeleportTo
             // (FVector DestLocation, FRotator DestRotation). Goals 1+3 of
@@ -2617,7 +2780,7 @@ namespace MoriaMods
                 }
                 s_lastSummonKey = nowDown;
             }
-            // [v7.1.0-rc.45 BELL/SADDLEBAGS GRANT DEBUG 2026-05-12]
+            // [v7.1.0-rc.51 BELL/SADDLEBAGS GRANT DEBUG 2026-05-12]
             //   NUM7 → grant Bell-of-the-Goat (BP_PorterGoatBell_C)
             //   NUM8 → grant Saddlebags (BP_PorterGoatSaddlebags_C)
             // Moved off NUM2/NUM3 — those are bound to Remove Single / Undo
@@ -3646,7 +3809,10 @@ namespace MoriaMods
             tickRotationDisplay();         // rotation display 4-cell pyramid
             tickRenameFocus();             // re-assert focus on rename input
             tickNpcRecoveryProbe();        // PHASE 1 DIAG: NPC stuck-pathing probe (s_verbose only, one-shot)
-            tickNpcRecovery();             // PHASE 2: NPC stuck-pathing recovery (1 Hz, authority-only)
+            tickNpcRecovery();             // rc.46 EXPERIMENT: polling early-out via `if (true) return` — kept for code preservation, body inert
+            tickDayCycleNpcScan();         // rc.47: day-cycle-triggered direct-read scan (Path 2 — zero PE in hot loop)
+            tickGoatSaveProbes();          // v1.4.1-probe: Phase 2 goat-save research probes (gated by [GoatSaveProbes] Enabled=true)
+            pollGoatMenuKey();             // rc.62: VK_E edge-detect → tryOpenGoatMenu (BP menu suppression made onInteractionPressPre path inert)
 
             // Quick Build chord-aware dispatch.
             //   USE (s_bindings[i].key, no modifiers): fires quickBuildSlot
@@ -3895,6 +4061,13 @@ namespace MoriaMods
                         // one-shot at +30 s missed it.
                         m_npcPostLoadSweepNextMs = m_charLoadTime + 30000;
                         m_npcPostLoadSweepEndMs  = m_charLoadTime + 300000;
+                        // rc.49: also open a 30 s Path-2 scan window
+                        // immediately at character-load. Same direct-
+                        // read scan as day-cycle transitions — catches
+                        // NPCs already in CantReach at load using the
+                        // cheap direct-memory path instead of waiting
+                        // for the recurring sweep (which uses PE).
+                        openNpcScanWindow(m_charLoadTime, STR("character-load"));
                         VLOG(STR("[MoriaCppMod] Character loaded - PC={:p} Pawn={:p}, waiting 15s before replay\n"),
                              (void*)m_localPC, (void*)m_localPawn);
 

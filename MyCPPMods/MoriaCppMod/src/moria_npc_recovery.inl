@@ -83,6 +83,37 @@
         ULONGLONG m_npcPostLoadSweepNextMs{0};
         ULONGLONG m_npcPostLoadSweepEndMs{0};
 
+        // rc.47: day-cycle-triggered NPC scan state.
+        //
+        // Architecture: detect day/night phase transitions by sampling
+        // ATimeManager::CurrentPeriodIndex (int32 @ 0x0278) each tick.
+        // When it changes, open a 30 s scan window. During the window,
+        // walk AMorNPCManager.NpcInfo.Items (TArray<FMorNPCInfo>) via
+        // direct memory reads — NO PE calls — checking each NPC's
+        // CurrentActivity.RowName for CantReach*. On hit, look up the
+        // matching controller in our cache by NpcGuid match and call
+        // onNpcBlockedActivityEvent for it.
+        //
+        // Cost at idle: 1 int32 read per tick. Cost during scan window:
+        // (N×24-byte stride iteration + N×FName.ToString() per second
+        // for 30 s). For 30 NPCs: ~30 FName resolves/sec during
+        // window only. Outside window: zero NPC work.
+        //
+        // Why CurrentPeriodIndex: ATimeManager exposes a per-phase
+        // index (dawn/day/dusk/night/etc.) at known offset. Activity
+        // transitions cluster around phase boundaries because NPCs
+        // re-evaluate their schedule then. Sampling 30 s after each
+        // boundary catches every relevant transition.
+        RC::Unreal::FWeakObjectPtr m_cachedTimeManager;
+        RC::Unreal::FWeakObjectPtr m_cachedNpcManager;
+        int32  m_lastTimePeriodIndex{-1};
+        // rc.50: single one-shot scan instead of 30s window.
+        // m_scanDueMs is the timestamp when the next scan should
+        // fire; 0 = none pending. Each trigger schedules ONE scan
+        // 10 s in the future (lets cache populate + NPCs settle
+        // into post-event activities), runs once, clears m_scanDueMs.
+        ULONGLONG m_scanDueMs{0};
+
         bool m_npcRecoveryEnabled{true};        // rc.3: hardcoded ON for testing; rc.4 adds Settings toggle
         ULONGLONG m_npcStuckThresholdMs{5000};   // rc.6: 5 s default (was 10 s) — faster response on the user's blocked-bed scenario
         static constexpr ULONGLONG NPC_TELEPORT_THROTTLE_MS = 30000;  // 30s between teleports per NPC
@@ -325,7 +356,10 @@
         // CantReachAssignedBed. The hook gives us the NPC component;
         // we resolve to pawn → controller → FSM destination → teleport.
         // Throttle still applies (NPC_TELEPORT_THROTTLE_MS, 30 s).
-        void onNpcBlockedActivityEvent(UObject* npcComp)
+        // rc.51: activityNameHint lets callers pass the row name they
+        // already have so we can route the fallback by target type
+        // (bed/furnace/etc.). Empty string → no hint, defaults to bed.
+        void onNpcBlockedActivityEvent(UObject* npcComp, const std::wstring& activityNameHint = std::wstring())
         {
             if (!m_npcRecoveryEnabled) return;
             if (!npcComp || !isObjectAlive(npcComp)) return;
@@ -395,46 +429,98 @@
                 }
                 else
                 {
-                    UObject* bed = npcFindAssignedBed(pawn);
-                    if (!bed || !isObjectAlive(bed))
-                    {
-                        // rc.42: guid-scan can't match — bed assignment
-                        // isn't stored as a 16-byte FGuid in bed
-                        // memory. Fall back to nearest unoccupied bed.
-                        bed = npcFindNearestUnoccupiedBed(pawn);
+                    // rc.51: ACTIVITY-AWARE fallback routing.
+                    // Inspect the activity name hint (lowercased) and
+                    // pick the appropriate target-type finder:
+                    //   contains "furnace" → nearest furnace/forge
+                    //   contains "bed"     → nearest unoccupied bed
+                    //   default            → nearest unoccupied bed
+                    //                        (no info; bed is most common)
+                    //
+                    // This fixes the rc.50 bug where furnace-blocked
+                    // NPCs got teleported to a bed instead of a
+                    // furnace (because the fallback was bed-only).
+                    std::wstring actLo = activityNameHint;
+                    for (auto& c : actLo) c = (wchar_t)towlower(c);
+                    bool wantFurnace = (actLo.find(STR("furnace")) != std::wstring::npos)
+                                    || (actLo.find(STR("forge"))   != std::wstring::npos);
+
+                    UObject* tgt = nullptr;
+                    if (wantFurnace) {
+                        tgt = npcFindNearestFurnace(pawn);
+                        if (tgt) destSrc = STR("nearest-furnace");
+                    } else {
+                        UObject* bed = npcFindAssignedBed(pawn);
+                        bool fromGuidScan = (bed && isObjectAlive(bed));
+                        if (!fromGuidScan) bed = npcFindNearestUnoccupiedBed(pawn);
+                        tgt = bed;
+                        if (tgt) destSrc = fromGuidScan ? STR("bed-guid-scan") : STR("nearest-bed");
                     }
-                    if (!bed || !isObjectAlive(bed))
+
+                    if (!tgt || !isObjectAlive(tgt))
                     {
-                        // rc.30 one-shot diag: dump on first total failure.
                         if (s_verbose)
                         {
                             static bool s_diagDumped = false;
-                            if (!s_diagDumped) {
+                            if (!s_diagDumped && !wantFurnace) {
                                 s_diagDumped = true;
                                 npcDumpBedDiagnostic(pawn);
                             }
-                            VLOG(STR("[NpcRecovery] EVENT-DRIVEN: no destination — fsm-walk + bed-walk + nearest-bed all failed for {}\n"),
-                                 cls.c_str());
+                            VLOG(STR("[NpcRecovery] EVENT-DRIVEN: no destination — fsm-walk + activity-fallback all failed for {} (activity='{}')\n"),
+                                 cls.c_str(), activityNameHint.c_str());
                         }
                         return;
                     }
-                    if (!npcReadPawnLocation(bed, dx_t, dy_t, dz_t))
+                    if (!npcReadPawnLocation(tgt, dx_t, dy_t, dz_t))
                     {
                         if (s_verbose)
-                            VLOG(STR("[NpcRecovery] EVENT-DRIVEN: bed found but its location read failed for {}\n"),
-                                 cls.c_str());
+                            VLOG(STR("[NpcRecovery] EVENT-DRIVEN: target {} found but location read failed for {}\n"),
+                                 destSrc, cls.c_str());
                         return;
                     }
-                    destSrc = STR("bed-walk");
                     entry.lastDestX = dx_t; entry.lastDestY = dy_t; entry.lastDestZ = dz_t;
                     entry.lastDestSeenTickMs = now;
                     entry.hasDestination = true;
-                    entry.cachedAssignedBed = RC::Unreal::FWeakObjectPtr(bed);
+                    if (!wantFurnace) {
+                        entry.cachedAssignedBed = RC::Unreal::FWeakObjectPtr(tgt);
+                    }
                 }
             }
 
             float px, py, pz;
             if (!npcReadPawnLocation(pawn, px, py, pz)) return;
+
+            // rc.48: 200 cm (2 m) offset from the target object. NPCs
+            // were appearing in the center of the bed/furnace mesh
+            // and getting stuck inside collision geometry. Offset
+            // direction = vector from target back toward the NPC's
+            // pre-teleport position (normalized), so they land along
+            // their natural approach line instead of on top.
+            // Edge case: if NPC is already AT target XY, use an
+            // arbitrary direction so we still nudge them outside the
+            // collision volume.
+            {
+                float dx = px - dx_t;
+                float dy = py - dy_t;
+                float len2D = std::sqrt(dx*dx + dy*dy);
+                float nx, ny;
+                if (len2D > 1.0f) {
+                    nx = dx / len2D;
+                    ny = dy / len2D;
+                } else {
+                    // NPC essentially on top of target — push along +X.
+                    nx = 1.0f;
+                    ny = 0.0f;
+                }
+                // rc.49: reduced 200→75 cm. 2 m was overshooting the
+                // approach line and dropping NPCs too far from their
+                // target. 75 cm clears the bed/furnace collision
+                // radius while leaving them close enough to walk one
+                // step onto the target.
+                constexpr float kTargetOffsetCm = 75.0f;
+                dx_t += nx * kTargetOffsetCm;
+                dy_t += ny * kTargetOffsetCm;
+            }
 
             bool ok = npcTeleportPawn(pawn, dx_t, dy_t, dz_t);
             entry.lastTeleportTickMs = now;
@@ -443,7 +529,7 @@
 
             if (s_verbose)
             {
-                VLOG(STR("[NpcRecovery] EVENT-DRIVEN teleport ({}) src={} from ({:.1f},{:.1f},{:.1f}) to ({:.1f},{:.1f},{:.1f}) result={}\n"),
+                VLOG(STR("[NpcRecovery] EVENT-DRIVEN teleport ({}) src={} from ({:.1f},{:.1f},{:.1f}) to ({:.1f},{:.1f},{:.1f}) [+75cm offset applied] result={}\n"),
                      cls.c_str(), destSrc, px, py, pz, dx_t, dy_t, dz_t,
                      ok ? STR("OK") : STR("FAILED"));
             }
@@ -533,6 +619,53 @@
             }
         }
 
+        // rc.51: find the nearest FURNACE / fueled-crafting-station
+        // actor to the given pawn. Used when activity is CantReachFurnace.
+        //
+        // Furnaces inherit from BP_FueledCraftingStation_C; concrete
+        // classes include BP_BasicFurnace_C and BP_BasicForge_C. They
+        // each have at least one UMorAIBehaviorPointComponent that
+        // NPCs path to for interaction. For simplicity we teleport to
+        // the actor's root location with the 75 cm offset applied at
+        // the call site — the NPC's settlement/AI logic should
+        // re-route from there.
+        //
+        // Note: we don't filter by "occupied" here because furnaces
+        // don't have a simple bIsBeingUsed flag like beds — they're
+        // "occupied" only briefly during craft interactions. Multiple
+        // metalworkers can share one furnace by queueing.
+        UObject* npcFindNearestFurnace(UObject* pawn)
+        {
+            if (!pawn || !isObjectAlive(pawn)) return nullptr;
+            float px, py, pz;
+            if (!npcReadPawnLocation(pawn, px, py, pz)) return nullptr;
+
+            static const wchar_t* kFurnaceClasses[] = {
+                STR("BP_BasicFurnace_C"),
+                STR("BP_BasicForge_C"),
+                STR("BP_FueledCraftingStation_C"),
+            };
+            UObject* best = nullptr;
+            float bestDist2 = std::numeric_limits<float>::max();
+            for (const wchar_t* clsName : kFurnaceClasses)
+            {
+                std::vector<UObject*> chunk;
+                if (!findAllOfSafe(clsName, chunk)) continue;
+                for (UObject* st : chunk)
+                {
+                    if (!st || !isObjectAlive(st)) continue;
+                    std::wstring cls = safeClassName(st);
+                    if (cls.size() >= 9 && cls.substr(0,9) == STR("Default__")) continue;
+                    float sx, sy, sz;
+                    if (!npcReadPawnLocation(st, sx, sy, sz)) continue;
+                    float dx = sx - px, dy = sy - py, dz = sz - pz;
+                    float d2 = dx*dx + dy*dy + dz*dz;
+                    if (d2 < bestDist2) { bestDist2 = d2; best = st; }
+                }
+            }
+            return best;
+        }
+
         // rc.42: find the NEAREST UNOCCUPIED bed to the given pawn.
         //
         // The "assigned bed" data isn't reachable from reflection
@@ -585,6 +718,241 @@
                 }
             }
             return best;
+        }
+
+        // rc.47: cache/refresh global manager singletons.
+        UObject* getOrFindTimeManager()
+        {
+            UObject* tm = m_cachedTimeManager.Get();
+            if (tm && isObjectAlive(tm)) return tm;
+            std::vector<UObject*> v;
+            if (!findAllOfSafe(STR("TimeManager"), v)) return nullptr;
+            for (UObject* o : v) {
+                if (!o || !isObjectAlive(o)) continue;
+                std::wstring c = safeClassName(o);
+                if (c.size() >= 9 && c.substr(0,9) == STR("Default__")) continue;
+                m_cachedTimeManager = RC::Unreal::FWeakObjectPtr(o);
+                return o;
+            }
+            return nullptr;
+        }
+        UObject* getOrFindNpcManager()
+        {
+            UObject* nm = m_cachedNpcManager.Get();
+            if (nm && isObjectAlive(nm)) return nm;
+            std::vector<UObject*> v;
+            if (!findAllOfSafe(STR("MorNPCManager"), v)) return nullptr;
+            for (UObject* o : v) {
+                if (!o || !isObjectAlive(o)) continue;
+                std::wstring c = safeClassName(o);
+                if (c.size() >= 9 && c.substr(0,9) == STR("Default__")) continue;
+                m_cachedNpcManager = RC::Unreal::FWeakObjectPtr(o);
+                return o;
+            }
+            return nullptr;
+        }
+
+        // rc.47: read ATimeManager.CurrentPeriodIndex via direct
+        // memory at offset 0x0278 (per CXXHeaderDump line 11109).
+        // Returns -1 if unreachable. SEH-wrapped so any layout
+        // mismatch survives gracefully.
+        static int32 seh_readTimePeriodIndex(UObject* tm) noexcept
+        {
+            __try {
+                const uint8_t* base = reinterpret_cast<const uint8_t*>(tm);
+                int32 idx = *reinterpret_cast<const int32*>(base + 0x0278);
+                return idx;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                return -1;
+            }
+        }
+
+        // rc.47: walk AMorNPCManager.NpcInfo.Items via direct memory
+        // reads and invoke `cb(item_ptr, npcGuidBytes)` for each item
+        // whose CurrentActivity row name OR InterruptedActivity row
+        // name contains "cantreach". Zero PE calls in the hot loop.
+        //
+        // Layout (from CXXHeaderDump, all offsets confirmed):
+        //   AMorNPCManager.NpcInfo              → +0x03A0  (FMorNPCInfoArray)
+        //   FMorNPCInfoArray.Items              → +0x0108  (TArray<FMorNPCInfo>)
+        //   TArray.Data                          → +0x00   (FMorNPCInfo*)
+        //   TArray.ArrayNum                      → +0x08   (int32)
+        //   FMorNPCInfo size                     → 0x0260
+        //   FMorNPCInfo.PersistentData           → +0x0010 (FMorNpcPersistentData)
+        //   FMorNpcPersistentData.NpcGuid        → +0x000C (FGuid, 16 bytes)
+        //                                          → absolute offset in item = 0x001C
+        //   FMorNPCInfo.CurrentActivity          → +0x0210 (FMorNPCActivityRowHandle)
+        //     .RowName (FName)                   → +0x0008 from CurrentActivity start
+        //                                          → absolute offset in item = 0x0218
+        //   FMorNPCInfo.InterruptedActivity      → +0x0220
+        //     .RowName                            → absolute offset in item = 0x0228
+        template<typename CB>
+        void scanNpcInfoForCantReach(UObject* npcManager, CB&& cb)
+        {
+            if (!npcManager || !isObjectAlive(npcManager)) return;
+            const uint8_t* mgrBase = reinterpret_cast<const uint8_t*>(npcManager);
+            // Probe-readable check around the TArray header.
+            if (!isReadableMemory(mgrBase + 0x03A0 + 0x0108, 16)) return;
+
+            const uint8_t* arrayHeader = mgrBase + 0x03A0 + 0x0108;
+            uint8_t* itemsData = *reinterpret_cast<uint8_t* const*>(arrayHeader + 0x00);
+            int32 itemsNum     = *reinterpret_cast<const int32*>(arrayHeader + 0x08);
+
+            if (!itemsData || itemsNum <= 0 || itemsNum > 1024) return;
+
+            constexpr int32 kItemStride = 0x0260;
+            constexpr int32 kOffNpcGuid = 0x001C;
+            constexpr int32 kOffCurRowName = 0x0218;
+            constexpr int32 kOffIntRowName = 0x0228;
+
+            for (int32 i = 0; i < itemsNum; ++i)
+            {
+                uint8_t* item = itemsData + (int64_t)i * kItemStride;
+                if (!isReadableMemory(item, kItemStride)) continue;
+
+                // rc.51: capture the matched row name so the caller
+                // can pass it as activityNameHint to onNpcBlockedActivityEvent.
+                std::wstring matched;
+                {
+                    auto* fname = reinterpret_cast<RC::Unreal::FName*>(item + kOffCurRowName);
+                    std::wstring rowName;
+                    try { rowName = fname->ToString(); } catch (...) {}
+                    if (!rowName.empty()) {
+                        std::wstring lo = rowName;
+                        for (auto& c : lo) c = (wchar_t)towlower(c);
+                        if (lo.find(STR("cantreach")) != std::wstring::npos) matched = rowName;
+                    }
+                }
+                if (matched.empty()) {
+                    auto* fname = reinterpret_cast<RC::Unreal::FName*>(item + kOffIntRowName);
+                    std::wstring rowName;
+                    try { rowName = fname->ToString(); } catch (...) {}
+                    if (!rowName.empty()) {
+                        std::wstring lo = rowName;
+                        for (auto& c : lo) c = (wchar_t)towlower(c);
+                        if (lo.find(STR("cantreach")) != std::wstring::npos) matched = rowName;
+                    }
+                }
+                if (matched.empty()) continue;
+
+                // Pass guid bytes + item pointer + matched activity name.
+                cb(item + kOffNpcGuid, item, matched);
+            }
+        }
+
+        // rc.47: given a 16-byte NpcGuid, find the matching controller
+        // in m_npcControllerCache. Iterates cache, reads each ctrl's
+        // pawn->NPC->NpcGuid via reflection, byte-compares.
+        UObject* findControllerByGuid(const uint8_t* targetGuid)
+        {
+            if (!targetGuid) return nullptr;
+            for (auto& wctrl : m_npcControllerCache)
+            {
+                UObject* ctrl = wctrl.Get();
+                if (!ctrl || !isObjectAlive(ctrl)) continue;
+                auto* pawnPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("Pawn"));
+                UObject* pawn = (pawnPtr && *pawnPtr) ? *pawnPtr : nullptr;
+                if (!pawn || !isObjectAlive(pawn)) continue;
+                auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
+                UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
+                if (!npcComp || !isObjectAlive(npcComp)) continue;
+                auto* g = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                if (!g || !isReadableMemory(g, 16)) continue;
+                if (std::memcmp(g, targetGuid, 16) == 0) return ctrl;
+            }
+            return nullptr;
+        }
+
+        // rc.50: schedule a single one-shot NPC scan 10 s in the
+        // future. Called from character-load + day-cycle transition.
+        // 10 s delay lets the controller cache refresh and lets
+        // NPCs settle into post-trigger activities before we sample.
+        void scheduleNpcScan(ULONGLONG now, const wchar_t* reason)
+        {
+            m_scanDueMs = now + 10000;
+            if (s_verbose) {
+                VLOG(STR("[NpcRecovery] scan scheduled for +10s — reason='{}'\n"), reason);
+            }
+        }
+        // Back-compat alias for existing callers (character-load site).
+        void openNpcScanWindow(ULONGLONG now, const wchar_t* reason)
+        {
+            scheduleNpcScan(now, reason);
+        }
+
+        // rc.47: main tick of the new architecture. Called every game-
+        // thread tick from the dllmain wrapper. Detects time-period
+        // changes by direct field read, opens scan window, and during
+        // the window walks the NPC manager's array directly (no PE
+        // calls in the hot loop).
+        void tickDayCycleNpcScan()
+        {
+            if (!m_npcRecoveryEnabled) return;
+            if (!m_characterLoaded && !m_isDedicatedServer) return;
+            if (!m_isDedicatedServer) {
+                if (!m_localPC) return;
+            }
+
+            ULONGLONG now = GetTickCount64();
+
+            // Always sample the time period; cheap (one int32 read).
+            UObject* tm = getOrFindTimeManager();
+            if (tm) {
+                int32 idx = seh_readTimePeriodIndex(tm);
+                if (idx >= 0 && idx != m_lastTimePeriodIndex) {
+                    int32 oldIdx = m_lastTimePeriodIndex;
+                    m_lastTimePeriodIndex = idx;
+                    // -1 = first-ever sample (don't fire scan for
+                    // initial detection — character-load already
+                    // scheduled its own scan).
+                    if (oldIdx != -1) {
+                        std::wstring r = std::wstring(STR("CurrentPeriodIndex "))
+                                       + std::to_wstring(oldIdx) + STR(" → ")
+                                       + std::to_wstring(idx);
+                        scheduleNpcScan(now, r.c_str());
+                    }
+                }
+            }
+
+            // Refresh controller cache every 5 s (needed by the
+            // guid-match lookup during scans).
+            if (now - m_lastNpcCacheRefreshMs >= 5000) {
+                m_lastNpcCacheRefreshMs = now;
+                npcRefreshControllerCache();
+            }
+
+            // rc.50: single one-shot scan when due. No window, no
+            // 1 Hz repeated polling — just fire once and clear.
+            if (m_scanDueMs == 0 || now < m_scanDueMs) return;
+            m_scanDueMs = 0;  // consume
+
+            UObject* nm = getOrFindNpcManager();
+            if (!nm) {
+                if (s_verbose)
+                    VLOG(STR("[NpcRecovery] scheduled scan fired but no NpcManager available — skipping\n"));
+                return;
+            }
+
+            int triggered = 0;
+            int scanned   = 0;
+            scanNpcInfoForCantReach(nm, [&](const uint8_t* guidBytes, uint8_t* item, const std::wstring& activityName) {
+                ++scanned;
+                UObject* ctrl = findControllerByGuid(guidBytes);
+                if (!ctrl) return;
+                auto* pawnPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("Pawn"));
+                UObject* pawn = (pawnPtr && *pawnPtr) ? *pawnPtr : nullptr;
+                if (!pawn || !isObjectAlive(pawn)) return;
+                auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
+                UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
+                if (!npcComp) return;
+                m_lastEventTeleportFired = false;
+                onNpcBlockedActivityEvent(npcComp, activityName);
+                if (m_lastEventTeleportFired) ++triggered;
+            });
+            if (s_verbose) {
+                VLOG(STR("[NpcRecovery] scan fired: {} CantReach NPC(s) found, {} teleported\n"),
+                     scanned, triggered);
+            }
         }
 
         // rc.16: find the AMorBed assigned to the given NPC pawn.
@@ -1027,8 +1395,11 @@
                 auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
                 UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
                 if (!npcComp) continue;
+                // rc.51: pass whichever activity matched as the hint
+                // so the fallback router can pick furnace vs bed.
+                const std::wstring& hint = isCantReachAny(cur) ? cur : intr;
                 m_lastEventTeleportFired = false;
-                onNpcBlockedActivityEvent(npcComp);
+                onNpcBlockedActivityEvent(npcComp, hint);
                 if (m_lastEventTeleportFired) ++triggered;
             }
             VLOG(STR("[NpcRecovery] post-load sweep: scanned {} NPC(s), {} actually teleported\n"),
@@ -1075,6 +1446,17 @@
                     m_npcPostLoadSweepNextMs = 0;  // window closed
             }
 
+            // rc.46 EXPERIMENT: polling tick DISABLED. The PE event-
+            // driven hook is being given the spotlight to prove
+            // whether the activity transition fires any UFunction at
+            // all. Polling cache refresh kept (cheap, needed for the
+            // recurring post-load sweep above). If the experiment
+            // proves the event hook works, polling stays dead and we
+            // remove it for good. If not, we revert to rc.45 (just
+            // checkout the v7.1.0-rc.45 tag).
+            //
+            // To re-enable polling: change `if (true)` below to false.
+            if (true) return;
             if (now - m_lastNpcRecoveryTickMs < NPC_POLL_INTERVAL_MS) return;  // 0.2 Hz
             m_lastNpcRecoveryTickMs = now;
 
@@ -1612,26 +1994,12 @@
             if (!cls) return;
             std::wstring clsName;
             try { clsName = cls->GetName(); } catch (...) { clsName = STR("?"); }
-            VLOG(STR("[NpcProbe] {} obj={:p} class={}\n"), label, (void*)obj, clsName.c_str());
-
-            int propCount = 0;
-            try {
-                for (auto* prop : cls->ForEachPropertyInChain())
-                {
-                    if (!prop) continue;
-                    std::wstring propName;
-                    try { propName = std::wstring(prop->GetName()); } catch (...) {}
-                    int32_t off = 0;
-                    try { off = prop->GetOffset_Internal(); } catch (...) {}
-                    VLOG(STR("[NpcProbe]   prop[{}] off={:#06x} name={}\n"),
-                         propCount, (unsigned)off, propName.c_str());
-                    if (++propCount >= 80) {
-                        VLOG(STR("[NpcProbe]   ... (truncated at 80 properties)\n"));
-                        break;
-                    }
-                }
-            } catch (...) {}
-            VLOG(STR("[NpcProbe] {} total properties logged: {}\n"), label, propCount);
+            // [Phase 3] silenced — NpcProbe (150 lines/session) was the
+            // discovery probe; NPC layout is known.
+            (void)label; (void)clsName;
+            // VLOG(STR("[NpcProbe] {} obj={:p} class={}\n"), label, (void*)obj, clsName.c_str());
+            // int propCount = 0;
+            // try { for (auto* prop : cls->ForEachPropertyInChain()) ... } catch (...) {}
         }
 
         // PHASE 1 — read-only one-shot probe. Walks the first NPC dwarf
