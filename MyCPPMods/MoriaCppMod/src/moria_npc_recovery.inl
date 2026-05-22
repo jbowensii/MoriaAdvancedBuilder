@@ -107,6 +107,19 @@
         RC::Unreal::FWeakObjectPtr m_cachedTimeManager;
         RC::Unreal::FWeakObjectPtr m_cachedNpcManager;
         int32  m_lastTimePeriodIndex{-1};
+
+        // v7.2.0-rc.2: NpcInfo traversal offsets, lazily resolved via
+        // reflection on first call. Sentinel pattern: -2=untried,
+        // -1=attempted-and-failed (caller uses documented fallbacks),
+        // >=0=resolved.
+        int32 m_off_npcInfoOnMgr{-2};         // AMorNPCManager.NpcInfo
+        int32 m_off_itemsOnInfoArr{-2};       // FMorNPCInfoArray.Items
+        int32 m_off_morNpcInfoStride{-2};     // sizeof(FMorNPCInfo)
+        int32 m_off_npcInfoNpcGuid{-2};       // FMorNPCInfo.PersistentData.NpcGuid (absolute)
+        int32 m_off_npcInfoCurRowName{-2};    // FMorNPCInfo.CurrentActivity.RowName (absolute)
+        int32 m_off_npcInfoIntRowName{-2};    // FMorNPCInfo.InterruptedActivity.RowName (absolute)
+        // ATimeManager.CurrentPeriodIndex offset (B6).
+        int32 m_off_timeManagerPeriodIdx{-2};
         // rc.50: single one-shot scan instead of 30s window.
         // m_scanDueMs is the timestamp when the next scan should
         // fire; 0 = none pending. Each trigger schedules ONE scan
@@ -133,9 +146,6 @@
         // Diagnostic: log each NEW leaf-state class name once per session
         // so we can map the state-name landscape as the user plays.
         std::set<std::wstring> m_npcLeafClassesSeen;
-        // rc.5: log each unique (state-class × Block*-property) pair
-        // once so we can chart where "Blocked" surfaces reflectively.
-        std::set<std::wstring> m_npcBlockedPropsSeen;
         // rc.7: log each unique (class × discovery-keyword-property)
         // pair once so we can chart where assigned bed / home / target
         // / etc references surface on the controller and pawn.
@@ -752,18 +762,195 @@
             return nullptr;
         }
 
-        // rc.47: read ATimeManager.CurrentPeriodIndex via direct
-        // memory at offset 0x0278 (per CXXHeaderDump line 11109).
-        // Returns -1 if unreachable. SEH-wrapped so any layout
-        // mismatch survives gracefully.
-        static int32 seh_readTimePeriodIndex(UObject* tm) noexcept
+        // SEH-only int32 read at a runtime offset. Separate noexcept
+        // function with no C++ objects so __try / __except is permitted
+        // (mixing SEH and try/catch in the same body is forbidden by MSVC).
+        static int32 seh_readInt32At(const uint8_t* base, int32 off) noexcept
         {
             __try {
-                const uint8_t* base = reinterpret_cast<const uint8_t*>(tm);
-                int32 idx = *reinterpret_cast<const int32*>(base + 0x0278);
-                return idx;
+                return *reinterpret_cast<const int32*>(base + off);
             } __except (EXCEPTION_EXECUTE_HANDLER) {
                 return -1;
+            }
+        }
+
+        // rc.47: read ATimeManager.CurrentPeriodIndex.
+        // v7.2.0-rc.2: offset reflectively resolved + cached on first call;
+        // falls back to documented +0x0278 (per CXXHeaderDump line 11109)
+        // if reflection is unavailable. The actual memory read is SEH-
+        // wrapped via seh_readInt32At so any layout mismatch survives.
+        int32 readTimePeriodIndex(UObject* tm)
+        {
+            if (!tm) return -1;
+            if (m_off_timeManagerPeriodIdx == -2)
+            {
+                m_off_timeManagerPeriodIdx = -1;  // pessimistic
+                UClass* cls = nullptr;
+                try { cls = tm->GetClassPrivate(); } catch (...) {}
+                if (cls)
+                {
+                    try {
+                        for (auto* p : cls->ForEachPropertyInChain())
+                        {
+                            if (!p) continue;
+                            std::wstring pn;
+                            try { pn = p->GetName(); } catch (...) { continue; }
+                            if (pn == STR("CurrentPeriodIndex"))
+                            {
+                                int32 o = -1;
+                                try { o = p->GetOffset_Internal(); } catch (...) {}
+                                if (o >= 0) m_off_timeManagerPeriodIdx = o;
+                                break;
+                            }
+                        }
+                    } catch (...) {}
+                }
+                if (s_verbose)
+                    VLOG(STR("[NpcRecovery] CurrentPeriodIndex offset resolved: 0x{:04x} (fallback 0x0278)\n"),
+                         (unsigned)(m_off_timeManagerPeriodIdx >= 0 ? m_off_timeManagerPeriodIdx : 0x0278));
+            }
+            int32 off = (m_off_timeManagerPeriodIdx >= 0) ? m_off_timeManagerPeriodIdx : 0x0278;
+            return seh_readInt32At(reinterpret_cast<const uint8_t*>(tm), off);
+        }
+
+        // v7.2.0-rc.2: lazy reflective resolve of the NpcInfo traversal
+        // offsets. Walks AMorNPCManager → NpcInfo (FStructProperty) →
+        // FMorNPCInfoArray → Items (FArrayProperty) → FMorNPCInfo
+        // (inner FStructProperty) → PersistentData / CurrentActivity /
+        // InterruptedActivity. Caches resolved offsets in m_off_* fields.
+        // Caller falls back to documented constants if any step fails.
+        void ensureNpcInfoOffsets(UObject* npcManager)
+        {
+            if (m_off_npcInfoOnMgr != -2) return;  // already tried
+            m_off_npcInfoOnMgr = -1;  // pessimistic until full success
+            if (!npcManager) return;
+
+            UClass* mgrCls = nullptr;
+            try { mgrCls = npcManager->GetClassPrivate(); } catch (...) {}
+            if (!mgrCls) return;
+
+            // 1. AMorNPCManager.NpcInfo (FStructProperty -> FMorNPCInfoArray)
+            RC::Unreal::FProperty* npcInfoProp = nullptr;
+            try {
+                for (auto* p : mgrCls->ForEachPropertyInChain())
+                {
+                    if (!p) continue;
+                    std::wstring pn;
+                    try { pn = p->GetName(); } catch (...) { continue; }
+                    if (pn == STR("NpcInfo")) { npcInfoProp = p; break; }
+                }
+            } catch (...) { return; }
+            if (!npcInfoProp) return;
+            int32 mgrInfoOff = -1;
+            try { mgrInfoOff = npcInfoProp->GetOffset_Internal(); } catch (...) { return; }
+            if (mgrInfoOff < 0) return;
+
+            auto* infoArrSp = static_cast<RC::Unreal::FStructProperty*>(npcInfoProp);
+            RC::Unreal::UScriptStruct* infoArrStruct = nullptr;
+            try { infoArrStruct = infoArrSp->GetStruct(); } catch (...) { return; }
+            if (!infoArrStruct) return;
+
+            // 2. FMorNPCInfoArray.Items (FArrayProperty<FMorNPCInfo>)
+            RC::Unreal::FArrayProperty* itemsProp = nullptr;
+            try {
+                for (auto* p : infoArrStruct->ForEachPropertyInChain())
+                {
+                    if (!p) continue;
+                    std::wstring pn;
+                    try { pn = p->GetName(); } catch (...) { continue; }
+                    if (pn == STR("Items")) { itemsProp = static_cast<RC::Unreal::FArrayProperty*>(p); break; }
+                }
+            } catch (...) { return; }
+            if (!itemsProp) return;
+            int32 itemsOff = -1;
+            try { itemsOff = itemsProp->GetOffset_Internal(); } catch (...) { return; }
+            if (itemsOff < 0) return;
+
+            // 3. Inner FMorNPCInfo struct
+            auto* innerProp = itemsProp->GetInner();
+            if (!innerProp) return;
+            auto* innerSp = static_cast<RC::Unreal::FStructProperty*>(innerProp);
+            RC::Unreal::UScriptStruct* infoStruct = nullptr;
+            try { infoStruct = innerSp->GetStruct(); } catch (...) { return; }
+            if (!infoStruct) return;
+            int32 stride = -1;
+            try { stride = infoStruct->GetPropertiesSize(); } catch (...) { return; }
+            if (stride <= 0) return;
+
+            // 4. PersistentData / CurrentActivity / InterruptedActivity offsets
+            RC::Unreal::FStructProperty* persistProp = nullptr;
+            RC::Unreal::FStructProperty* curActProp = nullptr;
+            RC::Unreal::FStructProperty* intActProp = nullptr;
+            try {
+                for (auto* p : infoStruct->ForEachPropertyInChain())
+                {
+                    if (!p) continue;
+                    std::wstring pn;
+                    try { pn = p->GetName(); } catch (...) { continue; }
+                    if (pn == STR("PersistentData"))      persistProp = static_cast<RC::Unreal::FStructProperty*>(p);
+                    else if (pn == STR("CurrentActivity")) curActProp  = static_cast<RC::Unreal::FStructProperty*>(p);
+                    else if (pn == STR("InterruptedActivity")) intActProp = static_cast<RC::Unreal::FStructProperty*>(p);
+                }
+            } catch (...) { return; }
+            if (!persistProp || !curActProp || !intActProp) return;
+            int32 persistOff = -1, curActOff = -1, intActOff = -1;
+            try {
+                persistOff = persistProp->GetOffset_Internal();
+                curActOff  = curActProp->GetOffset_Internal();
+                intActOff  = intActProp->GetOffset_Internal();
+            } catch (...) { return; }
+
+            // 5. NpcGuid inside PersistentData
+            int32 npcGuidInnerOff = -1;
+            RC::Unreal::UScriptStruct* persistStruct = nullptr;
+            try { persistStruct = persistProp->GetStruct(); } catch (...) {}
+            if (persistStruct)
+            {
+                try {
+                    for (auto* p : persistStruct->ForEachPropertyInChain())
+                    {
+                        if (!p) continue;
+                        std::wstring pn;
+                        try { pn = p->GetName(); } catch (...) { continue; }
+                        if (pn == STR("NpcGuid")) { try { npcGuidInnerOff = p->GetOffset_Internal(); } catch (...) {} break; }
+                    }
+                } catch (...) {}
+            }
+
+            // 6. RowName inside Activity row handle struct
+            int32 rowNameInnerOff = -1;
+            RC::Unreal::UScriptStruct* actStruct = nullptr;
+            try { actStruct = curActProp->GetStruct(); } catch (...) {}
+            if (actStruct)
+            {
+                try {
+                    for (auto* p : actStruct->ForEachPropertyInChain())
+                    {
+                        if (!p) continue;
+                        std::wstring pn;
+                        try { pn = p->GetName(); } catch (...) { continue; }
+                        if (pn == STR("RowName")) { try { rowNameInnerOff = p->GetOffset_Internal(); } catch (...) {} break; }
+                    }
+                } catch (...) {}
+            }
+            if (persistOff < 0 || curActOff < 0 || intActOff < 0 ||
+                npcGuidInnerOff < 0 || rowNameInnerOff < 0) return;
+
+            // All resolved — commit.
+            m_off_npcInfoOnMgr        = mgrInfoOff;
+            m_off_itemsOnInfoArr      = itemsOff;
+            m_off_morNpcInfoStride    = stride;
+            m_off_npcInfoNpcGuid      = persistOff + npcGuidInnerOff;
+            m_off_npcInfoCurRowName   = curActOff + rowNameInnerOff;
+            m_off_npcInfoIntRowName   = intActOff + rowNameInnerOff;
+
+            if (s_verbose)
+            {
+                VLOG(STR("[NpcRecovery] NpcInfo offsets resolved: NpcInfo=0x{:04x} Items=0x{:04x} stride=0x{:04x} guid=0x{:04x} curRow=0x{:04x} intRow=0x{:04x}\n"),
+                     (unsigned)mgrInfoOff, (unsigned)itemsOff, (unsigned)stride,
+                     (unsigned)(persistOff + npcGuidInnerOff),
+                     (unsigned)(curActOff + rowNameInnerOff),
+                     (unsigned)(intActOff + rowNameInnerOff));
             }
         }
 
@@ -772,38 +959,38 @@
         // whose CurrentActivity row name OR InterruptedActivity row
         // name contains "cantreach". Zero PE calls in the hot loop.
         //
-        // Layout (from CXXHeaderDump, all offsets confirmed):
+        // v7.2.0-rc.2: all six offsets resolved via reflection at first
+        // call by `ensureNpcInfoOffsets`. Documented fallbacks (per
+        // CXXHeaderDump) used only if reflection fails:
         //   AMorNPCManager.NpcInfo              → +0x03A0  (FMorNPCInfoArray)
         //   FMorNPCInfoArray.Items              → +0x0108  (TArray<FMorNPCInfo>)
-        //   TArray.Data                          → +0x00   (FMorNPCInfo*)
-        //   TArray.ArrayNum                      → +0x08   (int32)
-        //   FMorNPCInfo size                     → 0x0260
-        //   FMorNPCInfo.PersistentData           → +0x0010 (FMorNpcPersistentData)
-        //   FMorNpcPersistentData.NpcGuid        → +0x000C (FGuid, 16 bytes)
-        //                                          → absolute offset in item = 0x001C
-        //   FMorNPCInfo.CurrentActivity          → +0x0210 (FMorNPCActivityRowHandle)
-        //     .RowName (FName)                   → +0x0008 from CurrentActivity start
-        //                                          → absolute offset in item = 0x0218
-        //   FMorNPCInfo.InterruptedActivity      → +0x0220
-        //     .RowName                            → absolute offset in item = 0x0228
+        //   FMorNPCInfo stride                  → 0x0260
+        //   FMorNPCInfo.PersistentData.NpcGuid  → +0x001C (FGuid, 16 bytes)
+        //   FMorNPCInfo.CurrentActivity.RowName → +0x0218 (FName)
+        //   FMorNPCInfo.InterruptedActivity.RowName → +0x0228
+        //   TArray.Data @ +0x00, TArray.ArrayNum @ +0x08 — engine-stable.
         template<typename CB>
         void scanNpcInfoForCantReach(UObject* npcManager, CB&& cb)
         {
             if (!npcManager || !isObjectAlive(npcManager)) return;
+            ensureNpcInfoOffsets(npcManager);
+
+            const int32 offNpcInfo   = (m_off_npcInfoOnMgr      >= 0) ? m_off_npcInfoOnMgr      : 0x03A0;
+            const int32 offItems     = (m_off_itemsOnInfoArr    >= 0) ? m_off_itemsOnInfoArr    : 0x0108;
+            const int32 kItemStride  = (m_off_morNpcInfoStride  >= 0) ? m_off_morNpcInfoStride  : 0x0260;
+            const int32 kOffNpcGuid  = (m_off_npcInfoNpcGuid    >= 0) ? m_off_npcInfoNpcGuid    : 0x001C;
+            const int32 kOffCurRowName = (m_off_npcInfoCurRowName >= 0) ? m_off_npcInfoCurRowName : 0x0218;
+            const int32 kOffIntRowName = (m_off_npcInfoIntRowName >= 0) ? m_off_npcInfoIntRowName : 0x0228;
+
             const uint8_t* mgrBase = reinterpret_cast<const uint8_t*>(npcManager);
             // Probe-readable check around the TArray header.
-            if (!isReadableMemory(mgrBase + 0x03A0 + 0x0108, 16)) return;
+            if (!isReadableMemory(mgrBase + offNpcInfo + offItems, 16)) return;
 
-            const uint8_t* arrayHeader = mgrBase + 0x03A0 + 0x0108;
+            const uint8_t* arrayHeader = mgrBase + offNpcInfo + offItems;
             uint8_t* itemsData = *reinterpret_cast<uint8_t* const*>(arrayHeader + 0x00);
             int32 itemsNum     = *reinterpret_cast<const int32*>(arrayHeader + 0x08);
 
             if (!itemsData || itemsNum <= 0 || itemsNum > 1024) return;
-
-            constexpr int32 kItemStride = 0x0260;
-            constexpr int32 kOffNpcGuid = 0x001C;
-            constexpr int32 kOffCurRowName = 0x0218;
-            constexpr int32 kOffIntRowName = 0x0228;
 
             for (int32 i = 0; i < itemsNum; ++i)
             {
@@ -814,9 +1001,7 @@
                 // can pass it as activityNameHint to onNpcBlockedActivityEvent.
                 std::wstring matched;
                 {
-                    auto* fname = reinterpret_cast<RC::Unreal::FName*>(item + kOffCurRowName);
-                    std::wstring rowName;
-                    try { rowName = fname->ToString(); } catch (...) {}
+                    std::wstring rowName = seh_fnameToString(item + kOffCurRowName);
                     if (!rowName.empty()) {
                         std::wstring lo = rowName;
                         for (auto& c : lo) c = (wchar_t)towlower(c);
@@ -824,9 +1009,7 @@
                     }
                 }
                 if (matched.empty()) {
-                    auto* fname = reinterpret_cast<RC::Unreal::FName*>(item + kOffIntRowName);
-                    std::wstring rowName;
-                    try { rowName = fname->ToString(); } catch (...) {}
+                    std::wstring rowName = seh_fnameToString(item + kOffIntRowName);
                     if (!rowName.empty()) {
                         std::wstring lo = rowName;
                         for (auto& c : lo) c = (wchar_t)towlower(c);
@@ -898,7 +1081,7 @@
             // Always sample the time period; cheap (one int32 read).
             UObject* tm = getOrFindTimeManager();
             if (tm) {
-                int32 idx = seh_readTimePeriodIndex(tm);
+                int32 idx = readTimePeriodIndex(tm);
                 if (idx >= 0 && idx != m_lastTimePeriodIndex) {
                     int32 oldIdx = m_lastTimePeriodIndex;
                     m_lastTimePeriodIndex = idx;
@@ -1231,10 +1414,7 @@
             uint8_t* retBase = buf.data() + retOff;
             if (!isReadableMemory(retBase, 16)) return {};
             // FMorNPCActivityRowHandle layout: DataTable* @0, FName @8.
-            auto* fname = reinterpret_cast<RC::Unreal::FName*>(retBase + 8);
-            std::wstring rowName;
-            try { rowName = fname->ToString(); } catch (...) { return {}; }
-            return rowName;
+            return seh_fnameToString(retBase + 8);
         }
 
         std::wstring npcReadCurrentActivityName(UObject* pawn)
@@ -1627,51 +1807,7 @@
                 // as a UPROPERTY anywhere on the FSM. The
                 // CurrentActivity-based CantReach trigger (downstream)
                 // is the authoritative signal.
-                bool blockedPropTrue = false;
-                std::wstring blockedPropName;
-                if (false)
-                {
-                    UClass* cls = nullptr;
-                    try { cls = leaf->GetClassPrivate(); } catch (...) {}
-                    if (cls)
-                    {
-                        try {
-                            for (auto* prop : cls->ForEachPropertyInChain())
-                            {
-                                if (!prop) continue;
-                                std::wstring pn;
-                                try { pn = prop->GetName(); } catch (...) { continue; }
-                                if (!containsBlockCI(pn)) continue;
-
-                                std::wstring oneShot = leafClsForBlock + STR("::") + pn;
-                                bool firstSighting = m_npcBlockedPropsSeen.insert(oneShot).second;
-                                int32 off = -1;
-                                try { off = prop->GetOffset_Internal(); } catch (...) {}
-
-                                // Try to read as bool (1 byte).
-                                bool bVal = false;
-                                if (off >= 0)
-                                {
-                                    auto* b = reinterpret_cast<uint8_t*>(leaf) + off;
-                                    if (isReadableMemory(b, 1))
-                                        bVal = (*b != 0);
-                                }
-                                if (firstSighting && s_verbose)
-                                {
-                                    VLOG(STR("[NpcRecovery] BLOCK-PROP first-seen on '{}': name='{}' off=0x{:04x} val(bool)={}\n"),
-                                         leafClsForBlock.c_str(), pn.c_str(),
-                                         (unsigned)off, bVal ? STR("true") : STR("false"));
-                                }
-                                if (bVal) {
-                                    blockedPropTrue = true;
-                                    blockedPropName = pn;
-                                }
-                            }
-                        } catch (...) {}
-                    }
-                }
-
-                bool instantBlock = isBlockedState || blockedPropTrue;
+                bool instantBlock = isBlockedState;
 
                 // rc.5: per-pawn stuck tracking, decoupled from leaf state.
                 //
@@ -1962,18 +2098,15 @@
                 const wchar_t* trigger =
                     isCantReach ? STR("CANT-REACH") :
                     isBlockedState ? STR("BLOCKED-state") :
-                    blockedPropTrue ? STR("BLOCKED-prop") :
                     STR("STUCK-timer");
 
                 VLOG(STR("[NpcRecovery] {} teleported pawn ({}) trigger={} target={} "
                          "from ({:.1f},{:.1f},{:.1f}) to ({:.1f},{:.1f},{:.1f}) "
-                         "after {}s stuck (current state '{}'{}{}, dest age {}ms, result={})\n"),
+                         "after {}s stuck (current state '{}', dest age {}ms, result={})\n"),
                      ctrlCls.c_str(), safeClassName(pawn).c_str(),
                      trigger, destSource,
                      px, py, pz, dx_t, dy_t, dz_t,
                      (unsigned)(stuckElapsed / 1000), leafCls.c_str(),
-                     blockedPropTrue ? STR(", prop=") : STR(""),
-                     blockedPropTrue ? blockedPropName.c_str() : STR(""),
                      (unsigned)destAgeMs,
                      ok ? STR("OK") : STR("FAILED"));
 

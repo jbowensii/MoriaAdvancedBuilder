@@ -2262,57 +2262,9 @@
         // behavior runs unmolested.
         void pollGoatMenuKey()
         {
-            // [rc.65 DISABLED 2026-05-21] Vanilla menu pivot — no longer poll
-            // E to trigger custom UMG. Vanilla's interaction system handles
-            // E-on-goat natively once Desktop Claude re-enables the Rescue +
-            // Details Register flags. Quick exit.
+            // [rc.65] Vanilla menu pivot — body unused. Kept as a stub
+            // because dllmain.cpp still wires this into the tick loop.
             return;
-
-            // [rc.63 DIAG 2026-05-21] rc.62 logs showed ZERO [GoatMenu] lines
-            // despite user pressing E. Add diagnostic to find which gate
-            // is failing (or whether function is even called).
-
-            // Rate-limited heartbeat: confirms the function IS being called.
-            // 5s cadence so the log doesn't drown in tick spam.
-            {
-                static ULONGLONG s_lastHeartbeat = 0;
-                ULONGLONG now = GetTickCount64();
-                if (now - s_lastHeartbeat > 5000) {
-                    s_lastHeartbeat = now;
-                    VLOG(STR("[GoatMenuDiag] poll alive: charLoaded={} herd={} menuVis={}\n"),
-                         m_characterLoaded, (int)m_followGoats.size(), m_goatMenuVisible);
-                }
-            }
-
-            // [rc.64 MOVED] E state-change log moved BEFORE the herd gate so we
-            // see whether GetAsyncKeyState sees the key regardless of whether
-            // a goat is summoned. rc.63 had it after gates → silent when herd=0.
-            static bool s_lastE = false;
-            bool eDown = (GetAsyncKeyState(0x45 /*VK_E*/) & 0x8000) != 0;
-            if (eDown != s_lastE) {
-                VLOG(STR("[GoatMenuDiag] E key state change: {} -> {} (charLoaded={} herd={} menuVis={})\n"),
-                     s_lastE ? STR("DOWN") : STR("up"),
-                     eDown ? STR("DOWN") : STR("up"),
-                     m_characterLoaded, (int)m_followGoats.size(), m_goatMenuVisible);
-            }
-
-            if (!m_characterLoaded) { s_lastE = eDown; return; }
-            if (m_followGoats.empty()) { s_lastE = eDown; return; }
-            if (m_goatMenuVisible) { s_lastE = eDown; return; }
-
-            bool modHeld = ((GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0) ||
-                           ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) ||
-                           ((GetAsyncKeyState(VK_MENU)    & 0x8000) != 0);
-
-            // s_lastE is also updated in the early-return paths above so the
-            // edge detection stays consistent across gate transitions.
-            bool rising = eDown && !s_lastE && !modHeld;
-            s_lastE = eDown;
-            if (rising)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatMenu] VK_E edge — calling tryOpenGoatMenu (proximity gate inside)\n"));
-                tryOpenGoatMenu();
-            }
         }
 
         void showGoatMenu()
@@ -2464,104 +2416,10 @@
         // Tick handler: if pending, open submenu; if visible, poll input.
         void tickGoatSubmenu()
         {
-            // [rc.65 RE-DISABLED 2026-05-21] Submenu injection + custom UMG
-            // both abandoned. Vanilla menu handles all goat interaction via
-            // repurposed Rescue+Details slots. Submenu injection would just
-            // re-introduce the duplicate-menu collision. Early-return.
+            // [rc.65] Custom UMG submenu abandoned. Vanilla menu handles all
+            // goat interaction. Kept as a stub because dllmain.cpp still
+            // wires this into the tick loop.
             return;
-            // Original logic preserved below for rollback in case the vanilla
-            // approach also fails:
-            if (m_goatSubMenuPending)
-            {
-                m_goatSubMenuPending = false;
-                if (!m_goatSubMenuVisible) openGoatSubmenu();
-            }
-            if (!m_goatSubMenuVisible) return;
-
-            // Reassert proximity menu hidden every tick (vanilla re-shows itself).
-            forceProximityMenuHidden();
-
-            // ESC closes.
-            static bool s_lastEsc = false;
-            bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-            if (escDown && !s_lastEsc)
-            {
-                s_lastEsc = escDown;
-                VLOG(STR("[MoriaCppMod] [GoatSubmenu] ESC — closing\n"));
-                closeGoatSubmenu();
-                return;
-            }
-            s_lastEsc = escDown;
-
-            // Hover detection — find which row the mouse is over.
-            auto callIsHovered = [](UObject* w) -> bool {
-                if (!w || !isObjectAlive(w)) return false;
-                auto* fn = w->GetFunctionByNameInChain(STR("IsHovered"));
-                if (!fn) return false;
-                std::vector<uint8_t> buf(fn->GetParmsSize(), 0);
-                try { safeProcessEvent(w, fn, buf.data()); } catch (...) { return false; }
-                auto* pRet = findParam(fn, STR("ReturnValue"));
-                if (!pRet) return false;
-                return *reinterpret_cast<bool*>(buf.data() + pRet->GetOffset_Internal());
-            };
-
-            int hoveredIdx = -1;
-            for (int i = 0; i < 6; ++i)
-            {
-                if (callIsHovered(m_goatSubMenuRows[i])) { hoveredIdx = i; break; }
-            }
-
-            // Keyboard nav: W/S/Up/Down/scroll advance our cursor.
-            // Critical: keyboard wins over hover, otherwise mouse position
-            // pins the cursor on whatever row the mouse happens to be over
-            // and keyboard scrolling becomes invisible.
-            static bool s_lastDown = false, s_lastUp = false;
-            static int  s_lastHoveredIdx = -1;
-            bool downKey = (GetAsyncKeyState(VK_DOWN) & 0x8000) || (GetAsyncKeyState('S') & 0x8000);
-            bool upKey   = (GetAsyncKeyState(VK_UP)   & 0x8000) || (GetAsyncKeyState('W') & 0x8000);
-            bool justDown = downKey && !s_lastDown;
-            bool justUp   = upKey   && !s_lastUp;
-            bool hoverChanged = (hoveredIdx != s_lastHoveredIdx);
-            s_lastHoveredIdx = hoveredIdx;
-            s_lastDown = downKey;
-            s_lastUp   = upKey;
-
-            int newCursor = m_goatSubMenuCursorIdx;
-            if (justDown) newCursor = (newCursor + 1) % 6;
-            else if (justUp) newCursor = (newCursor + 5) % 6;
-            else if (hoverChanged && hoveredIdx >= 0) newCursor = hoveredIdx;
-            // (mouse-wheel scroll skipped for v1 — keyboard + hover cover it)
-
-            // Apply cursor change — force-sync ALL rows (defensive: ensures
-            // exactly one row shows the E icon, even if a stale selection
-            // accumulated from a prior animation or earlier mis-step).
-            if (newCursor != m_goatSubMenuCursorIdx)
-            {
-                m_goatSubMenuCursorIdx = newCursor;
-                for (int i = 0; i < 6; ++i)
-                {
-                    goatRowSetSelected(m_goatSubMenuRows[i], i == m_goatSubMenuCursorIdx);
-                }
-            }
-
-            // Activation: LBUTTON release on hovered row, OR E key on cursor row.
-            static bool s_lastLMB = false;
-            bool nowDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-            bool released = (s_lastLMB && !nowDown);
-            s_lastLMB = nowDown;
-
-            static bool s_lastE = false;
-            bool eDown = (GetAsyncKeyState(0x45 /*E*/) & 0x8000) != 0;
-            bool ePressed = (eDown && !s_lastE);
-            s_lastE = eDown;
-
-            int fireIdx = -1;
-            if (released && hoveredIdx >= 0) fireIdx = hoveredIdx;
-            else if (ePressed && m_goatSubMenuCursorIdx >= 0) fireIdx = m_goatSubMenuCursorIdx;
-            if (fireIdx < 0) return;
-
-            VLOG(STR("[MoriaCppMod] [GoatSubmenu] activate row[{}]\n"), fireIdx);
-            dispatchGoatSubmenuAction(fireIdx);
         }
 
         // Called from PE-pre hook in dllmain.cpp on OnSelectionNext/Previous
@@ -2767,7 +2625,6 @@
                 STR("Follow"), STR("Stay"), STR("Saddlebags"),
                 STR("Feed"), STR("Rename"), STR("Dismiss"),
             };
-            uint8_t* tbase = reinterpret_cast<uint8_t*>(tmpl);
             auto* tVisPtr = tmpl->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility"));
             uint8_t tVis = tVisPtr ? *tVisPtr : 0;
 
@@ -2779,15 +2636,11 @@
                     VLOG(STR("[MoriaCppMod] [GoatSubmenu] row[{}] create null\n"), i);
                     continue;
                 }
-                uint8_t* nbase = reinterpret_cast<uint8_t*>(row);
-                // Copy Interactable (16B @0x260), Interactor (8B @0x270),
-                // InteractComponent (8B @0x2B0) from template.
-                if (isReadableMemory(tbase + 0x260, 16) && isReadableMemory(nbase + 0x260, 16))
-                    std::memcpy(nbase + 0x260, tbase + 0x260, 16);
-                if (isReadableMemory(tbase + 0x270, 8) && isReadableMemory(nbase + 0x270, 8))
-                    std::memcpy(nbase + 0x270, tbase + 0x270, 8);
-                if (isReadableMemory(tbase + 0x2B0, 8) && isReadableMemory(nbase + 0x2B0, 8))
-                    std::memcpy(nbase + 0x2B0, tbase + 0x2B0, 8);
+                // Copy Interactable / Interactor / InteractComponent from
+                // template (reflective — survives FGK widget layout shifts).
+                copyRowPropertyByName(row, tmpl, STR("Interactable"));
+                copyRowPropertyByName(row, tmpl, STR("Interactor"));
+                copyRowPropertyByName(row, tmpl, STR("InteractComponent"));
 
                 // AddChild.
                 addToVBox(container, row);
@@ -3798,9 +3651,9 @@
             }
             if (!firstRow || !isObjectAlive(firstRow)) return;
 
-            uint8_t* rbase = reinterpret_cast<uint8_t*>(firstRow);
-            if (!isReadableMemory(rbase + 0x260, 8)) return;
-            UObject* npcComp = *reinterpret_cast<UObject**>(rbase + 0x260);
+            auto* npcCompPtr = firstRow->GetValuePtrByPropertyNameInChain<UObject*>(STR("Interactable"));
+            if (!npcCompPtr || !isReadableMemory(npcCompPtr, sizeof(UObject*))) return;
+            UObject* npcComp = *npcCompPtr;
             if (!npcComp || !isObjectAlive(npcComp)) return;
 
             UObject* owner = nullptr;
@@ -4095,7 +3948,6 @@
                 STR("Dismiss"),
             };
 
-            uint8_t* tbase = reinterpret_cast<uint8_t*>(templateRow);
             auto* tVisPtr = templateRow->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility"));
             uint8_t tVis = tVisPtr ? *tVisPtr : 0;
 
@@ -4108,15 +3960,11 @@
                     continue;
                 }
 
-                uint8_t* nbase = reinterpret_cast<uint8_t*>(newRow);
-                // Copy Interactable (16B @0x260), Interactor (8B @0x270),
-                // InteractComponent (8B @0x2B0) from the template.
-                if (isReadableMemory(tbase + 0x260, 16) && isReadableMemory(nbase + 0x260, 16))
-                    std::memcpy(nbase + 0x260, tbase + 0x260, 16);
-                if (isReadableMemory(tbase + 0x270, 8) && isReadableMemory(nbase + 0x270, 8))
-                    std::memcpy(nbase + 0x270, tbase + 0x270, 8);
-                if (isReadableMemory(tbase + 0x2B0, 8) && isReadableMemory(nbase + 0x2B0, 8))
-                    std::memcpy(nbase + 0x2B0, tbase + 0x2B0, 8);
+                // Copy Interactable / Interactor / InteractComponent from
+                // template (reflective — survives FGK widget layout shifts).
+                copyRowPropertyByName(newRow, templateRow, STR("Interactable"));
+                copyRowPropertyByName(newRow, templateRow, STR("Interactor"));
+                copyRowPropertyByName(newRow, templateRow, STR("InteractComponent"));
 
                 // AddChild to the container.
                 addToVBox(container, newRow);
@@ -6130,6 +5978,40 @@
                 m_recruitedGoatsPending.end());
         }
 
+        // Helper: shallow-copy a single named UPROPERTY from src to dst when
+        // both objects share a class. Used for cloning proximity-menu row
+        // fields (Interactable, Interactor, InteractComponent) from a
+        // template without hardcoding their byte offsets — survives any
+        // FGK widget layout shift.
+        bool copyRowPropertyByName(UObject* dst, UObject* src, const wchar_t* name)
+        {
+            if (!dst || !src) return false;
+            UClass* cls = nullptr;
+            try { cls = dst->GetClassPrivate(); } catch (...) {}
+            if (!cls) return false;
+            RC::Unreal::FProperty* found = nullptr;
+            try {
+                for (auto* p : cls->ForEachPropertyInChain())
+                {
+                    if (!p) continue;
+                    std::wstring pn;
+                    try { pn = p->GetName(); } catch (...) { continue; }
+                    if (pn == name) { found = p; break; }
+                }
+            } catch (...) {}
+            if (!found) return false;
+            int32 off = -1;
+            int32 size = -1;
+            try { off = found->GetOffset_Internal(); size = found->GetElementSize(); } catch (...) {}
+            if (off < 0 || size <= 0) return false;
+            uint8_t* srcPtr = reinterpret_cast<uint8_t*>(src) + off;
+            uint8_t* dstPtr = reinterpret_cast<uint8_t*>(dst) + off;
+            if (!isReadableMemory(srcPtr, (size_t)size)) return false;
+            if (!isReadableMemory(dstPtr, (size_t)size)) return false;
+            std::memcpy(dstPtr, srcPtr, (size_t)size);
+            return true;
+        }
+
         // Helper: append an entry to a multicast's InvocationList. Returns
         // true if appended (or already present), false on any error.
         // Layout: TArray header (16B) at field offset, FScriptDelegate
@@ -6205,12 +6087,14 @@
             }
             VLOG(STR("[MoriaCppMod] [Recruit] goat={:p} wanderer={:p}\n"), (void*)goat, (void*)wandComp);
 
-            // 2. Enable Recruit interaction. Direct bool write at known
-            // offsets (from probe), plus the proper UFunction setter for
-            // any side-effects that bool write skips.
+            // 2. Enable Recruit interaction. Reflective bool writes survive
+            // FGK component layout shifts on DLC; the UFunction setter below
+            // covers any side-effects the property writes alone skip.
             uint8_t* base = reinterpret_cast<uint8_t*>(wandComp);
-            *(base + 0xC0) = 1; // bRecruitInteractionRegister
-            *(base + 0xC1) = 1; // bRecruitInteractionEnabled
+            if (auto* p = wandComp->GetValuePtrByPropertyNameInChain<bool>(STR("bRecruitInteractionRegister")))
+                *p = true;
+            if (auto* p = wandComp->GetValuePtrByPropertyNameInChain<bool>(STR("bRecruitInteractionEnabled")))
+                *p = true;
             VLOG(STR("[MoriaCppMod] [Recruit] flipped bRecruitInteractionRegister + bRecruitInteractionEnabled = true\n"));
             if (auto* setEnFn = wandComp->GetFunctionByNameInChain(STR("SetRecruitInteractionEnabled")))
             {
@@ -6220,9 +6104,13 @@
             }
 
             // 3. Append FScriptDelegate to component's OnWandererRecruited
-            // multicast (off=0xB0 — confirmed by probe).
-            uint8_t* recruitListSlot = base + 0xB0;
-            appendMulticastEntry(recruitListSlot, goat, kGoatRecruitMarkerFn, STR("OnRecruited"));
+            // multicast. Reflectively resolved so FGK layout shifts on DLC
+            // don't silently corrupt neighboring bytes.
+            uint8_t* recruitListSlot = wandComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("OnWandererRecruited"));
+            if (recruitListSlot)
+                appendMulticastEntry(recruitListSlot, goat, kGoatRecruitMarkerFn, STR("OnRecruited"));
+            else
+                VLOG(STR("[MoriaCppMod] [Recruit] OnWandererRecruited property not found via reflection\n"));
 
             // 4. Subscribe goat to settlement-mgr's OnNpcRescued (existing
             // path — kept because the rescue-state probe correlation in
@@ -7205,182 +7093,10 @@
                  clsName.c_str(), fnCount);
         }
 
-        // [REMOVED 2026-05-08] Proper-spawn-via-NPC-manager helpers
-        // (spawnGoatViaSpawnNpcCheat, enableNPCDebugging,
-        // spawnGoatViaServerSpawnNpc, spawnGoatViaBPRequestSpawn,
-        // testProperGoatSpawn) and the NUM. keybind. See feedback memory
-        // `feedback_proper_npc_spawn_dead_end.md` for why. Short version:
-        // vanilla NPC spawning bypasses ProcessEvent entirely (native C++
-        // path inside MorAIPopulationManager / AILair / patrol manager) so
-        // the BP_RequestSpawn UFunction is unreachable as a working entry.
-        // Cheat-string SpawnNpc spawns dwarves regardless of args. Kept
-        // [SpawnDiag] PE hook below for free observability of any blueprint
-        // spawn callers that may fire in future sessions.
+        // Proper NPC-manager spawn path retired — see feedback memory
+        // `feedback_proper_npc_spawn_dead_end.md`. [SpawnDiag] PE hook
+        // below remains for free observability.
 
-#if 0  // [REMOVED 2026-05-08] dead spawn helpers — see comment block above
-        void spawnGoatViaSpawnNpcCheat(const wchar_t* argStr)
-        {
-            if (!m_localPC || !isObjectAlive(m_localPC))
-            {
-                VLOG(STR("[MoriaCppMod] [GoatProper] no local PC — bail\n"));
-                return;
-            }
-            auto* fn = m_localPC->GetFunctionByNameInChain(STR("SpawnNpc"));
-            if (!fn)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatProper] SpawnNpc UFunction not found on PC\n"));
-                return;
-            }
-            auto* pArgs = findParam(fn, STR("Args"));
-            if (!pArgs)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatProper] SpawnNpc 'Args' param not found\n"));
-                return;
-            }
-
-            int32_t argLen   = static_cast<int32_t>(wcslen(argStr)) + 1;
-            void* argBuf     = FMemory::Malloc(argLen * sizeof(wchar_t), 8);
-            void* fstrSlots  = FMemory::Malloc(16, 8);
-            if (!argBuf || !fstrSlots)
-            {
-                if (argBuf)    FMemory::Free(argBuf);
-                if (fstrSlots) FMemory::Free(fstrSlots);
-                return;
-            }
-            wmemcpy(static_cast<wchar_t*>(argBuf), argStr, argLen);
-
-            uint8_t* slot = static_cast<uint8_t*>(fstrSlots);
-            *reinterpret_cast<void**>   (slot + 0)  = argBuf;
-            *reinterpret_cast<int32_t*> (slot + 8)  = argLen;
-            *reinterpret_cast<int32_t*> (slot + 12) = argLen;
-
-            int sz = fn->GetParmsSize();
-            std::vector<uint8_t> buf(sz, 0);
-            uint8_t* arr = buf.data() + pArgs->GetOffset_Internal();
-            *reinterpret_cast<void**>  (arr + 0)  = fstrSlots;
-            *reinterpret_cast<int32_t*>(arr + 8)  = 1;
-            *reinterpret_cast<int32_t*>(arr + 12) = 1;
-
-            VLOG(STR("[MoriaCppMod] [GoatProper] calling MorPlayerController::SpawnNpc(['{}']) via PC={:p}\n"),
-                 argStr, (void*)m_localPC);
-            safeProcessEvent(m_localPC, fn, buf.data());
-            VLOG(STR("[MoriaCppMod] [GoatProper] SpawnNpc returned; engine will free TArray buffers\n"));
-            showOnScreen(L"Goat: SpawnNpc cheat fired", 2.0f, 0.4f, 0.9f, 0.4f);
-        }
-
-        // Enable MorCheatManager::bNPCDebugging on the cached PC. This is
-        // the gate that may make SpawnNpc / ServerSpawnNpc actually do work
-        // in shipping builds. One-shot per session.
-        bool m_npcDebuggingEnabled{false};
-        void enableNPCDebugging()
-        {
-            if (m_npcDebuggingEnabled) return;
-            if (!m_localPC || !isObjectAlive(m_localPC)) return;
-            UObject** cmPtr = m_localPC->GetValuePtrByPropertyNameInChain<UObject*>(STR("MyCheatManager"));
-            if (!cmPtr || !*cmPtr || !isObjectAlive(*cmPtr))
-            {
-                VLOG(STR("[MoriaCppMod] [GoatProper] MyCheatManager not resolvable on PC\n"));
-                return;
-            }
-            UObject* cm = *cmPtr;
-            bool* dbgPtr = cm->GetValuePtrByPropertyNameInChain<bool>(STR("bNPCDebugging"));
-            if (!dbgPtr)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatProper] bNPCDebugging property missing on cheat mgr\n"));
-                return;
-            }
-            *dbgPtr = true;
-            // Also call the UFunction NPCDebugging(true) in case there's
-            // bookkeeping beyond the bool flip.
-            if (auto* fn = cm->GetFunctionByNameInChain(STR("NPCDebugging")))
-            {
-                int sz = fn->GetParmsSize();
-                std::vector<uint8_t> buf(sz, 0);
-                writeGoatParm<bool>(fn, buf.data(), STR("bEnable"), true);
-                safeProcessEvent(cm, fn, buf.data());
-            }
-            m_npcDebuggingEnabled = true;
-            VLOG(STR("[MoriaCppMod] [GoatProper] bNPCDebugging set to true\n"));
-        }
-
-        // STAGE A direct call: MorPlayerController::ServerSpawnNpc(origin,
-        // center, args). Uses the player's current location for both origin
-        // and center. Builds a one-element TArray<FString> for args.
-        void spawnGoatViaServerSpawnNpc(const wchar_t* argStr)
-        {
-            if (!m_localPC || !isObjectAlive(m_localPC)) return;
-            auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerSpawnNpc"));
-            if (!fn)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatProper] ServerSpawnNpc UFunction not found\n"));
-                return;
-            }
-
-            // Locate player position so we can pass it as origin/center.
-            UObject* pawn = m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr;
-            if (!pawn) return;
-            // K2_GetActorLocation returns FVector in the parm buffer.
-            double px = 0, py = 0, pz = 0;
-            if (auto* getLoc = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
-            {
-                int gsz = getLoc->GetParmsSize();
-                std::vector<uint8_t> gbuf(gsz, 0);
-                if (safeProcessEvent(pawn, getLoc, gbuf.data()))
-                {
-                    auto* pRet = findParam(getLoc, STR("ReturnValue"));
-                    if (pRet)
-                    {
-                        // FVector layout in UE4.27 is double or float — depends.
-                        // UE4.27 default is float; use float for safety.
-                        float* fv = reinterpret_cast<float*>(gbuf.data() + pRet->GetOffset_Internal());
-                        px = fv[0]; py = fv[1]; pz = fv[2];
-                    }
-                }
-            }
-            VLOG(STR("[MoriaCppMod] [GoatProper] player loc=({:.1f},{:.1f},{:.1f}) for ServerSpawnNpc\n"),
-                 px, py, pz);
-
-            // Build TArray<FString>
-            int32_t argLen = static_cast<int32_t>(wcslen(argStr)) + 1;
-            void* argBuf    = FMemory::Malloc(argLen * sizeof(wchar_t), 8);
-            void* fstrSlots = FMemory::Malloc(16, 8);
-            wmemcpy(static_cast<wchar_t*>(argBuf), argStr, argLen);
-            uint8_t* fs = static_cast<uint8_t*>(fstrSlots);
-            *reinterpret_cast<void**>   (fs + 0)  = argBuf;
-            *reinterpret_cast<int32_t*> (fs + 8)  = argLen;
-            *reinterpret_cast<int32_t*> (fs + 12) = argLen;
-
-            // Pack params: OriginLocation (FVector), SpawnCenterLocation
-            // (FVector), Args (TArray<FString>).
-            int sz = fn->GetParmsSize();
-            std::vector<uint8_t> buf(sz, 0);
-            auto* pOrigin  = findParam(fn, STR("OriginLocation"));
-            auto* pCenter  = findParam(fn, STR("SpawnCenterLocation"));
-            auto* pArgs2   = findParam(fn, STR("Args"));
-            if (pOrigin)
-            {
-                float* v = reinterpret_cast<float*>(buf.data() + pOrigin->GetOffset_Internal());
-                v[0] = (float)px; v[1] = (float)py; v[2] = (float)pz;
-            }
-            if (pCenter)
-            {
-                float* v = reinterpret_cast<float*>(buf.data() + pCenter->GetOffset_Internal());
-                v[0] = (float)px; v[1] = (float)py; v[2] = (float)pz;
-            }
-            if (pArgs2)
-            {
-                uint8_t* arr = buf.data() + pArgs2->GetOffset_Internal();
-                *reinterpret_cast<void**>  (arr + 0)  = fstrSlots;
-                *reinterpret_cast<int32_t*>(arr + 8)  = 1;
-                *reinterpret_cast<int32_t*>(arr + 12) = 1;
-            }
-
-            VLOG(STR("[MoriaCppMod] [GoatProper] firing ServerSpawnNpc(origin=center=({:.1f},{:.1f},{:.1f}), args=['{}'])\n"),
-                 px, py, pz, argStr);
-            safeProcessEvent(m_localPC, fn, buf.data());
-            VLOG(STR("[MoriaCppMod] [GoatProper] ServerSpawnNpc returned\n"));
-        }
-#endif  // [REMOVED 2026-05-08] end Stage A dead helpers
 
         // PE pre-hook: ServerSetInteractableCustomName fires when ANY player
         // renames ANY interactable (chest, sign, etc.). When the new name
@@ -7548,57 +7264,6 @@
         // [SUSPENDED 2026-05-09] InteractDiag — proved chests do NOT use
         // ServerInteract (zero vanilla calls observed during real chest
         // interactions). See `chest-link-future.md` for restart notes.
-#if 0 // CHEST_LINK_SUSPENDED 2026-05-09
-        // PE pre-hook diagnostic: log every ServerInteract call's full
-        // args (ours + every natural caller). Empty FInteractContext
-        // (zero hash/RowName) is silently rejected by the chest; vanilla
-        // tap-E on chest will log the *working* hash + RowName so we can
-        // mirror them in our hijack.
-        void onServerInteractPre(UObject* context, UFunction* func, void* parms)
-        {
-            if (!context || !func || !parms) return;
-            std::wstring callerCls = safeClassName(context);
-
-            UObject* objInteract = nullptr;
-            uint32_t hash = 0;
-            uint32_t gaHash = 0;
-            std::wstring rowName = STR("?");
-            std::wstring interactorName = STR("?");
-
-            try
-            {
-                if (auto* p = findParam(func, STR("ObjectInteractable")))
-                {
-                    objInteract = *reinterpret_cast<UObject**>(
-                        static_cast<uint8_t*>(parms) + p->GetOffset_Internal());
-                }
-                if (auto* p = findParam(func, STR("InteractContext")))
-                {
-                    uint8_t* ctxSlot = static_cast<uint8_t*>(parms) + p->GetOffset_Internal();
-                    UObject* interactor = *reinterpret_cast<UObject**>(ctxSlot + 0);
-                    hash   = *reinterpret_cast<uint32_t*>(ctxSlot + 8);
-                    gaHash = *reinterpret_cast<uint32_t*>(ctxSlot + 12);
-                    // RowName at offset 16 — but FName ToString is unsafe
-                    // on stale entries. Read raw 8 bytes only.
-                    uint32_t* rn = reinterpret_cast<uint32_t*>(ctxSlot + 16);
-                    wchar_t buf[40];
-                    swprintf(buf, 40, STR("rawFName=%08X-%08X"), rn[0], rn[1]);
-                    rowName = buf;
-                    if (interactor && isObjectAlive(interactor))
-                        interactorName = safeClassName(interactor);
-                    else interactorName = STR("<null>");
-                }
-            } catch (...) {}
-
-            std::wstring objName = STR("?");
-            if (objInteract && isObjectAlive(objInteract))
-                objName = safeClassName(objInteract);
-
-            VLOG(STR("[MoriaCppMod] [InteractDiag] ServerInteract caller={} obj={} interactor={} hash=0x{:X} gaHash=0x{:X} {}\n"),
-                 callerCls.c_str(), objName.c_str(), interactorName.c_str(),
-                 hash, gaHash, rowName.c_str());
-        }
-#endif // CHEST_LINK_SUSPENDED
 
         // PE pre-hook diagnostic: log every BP_RequestSpawn call (ours +
         // every natural caller). Logs spawner class, context enum, and the
@@ -7668,159 +7333,6 @@
                  spawnerCls.c_str(), chTypePath.c_str(), spawnerArg.c_str(), ctxName, ctxVal);
         }
 
-#if 0  // [REMOVED 2026-05-08] dead Stage B helpers — see comment block above
-        // STAGE B: call MorAISpawnManager::BP_RequestSpawn directly.
-        // Bypasses the cheat-string parser entirely — feeds the spawn manager
-        // a TSoftClassPtr<AMorCharacter> that resolves to BP_NpcGoat_C via
-        // its cached weak pointer (we set the path-name FName to zero and
-        // rely on the engine reading the weak ptr first).
-        //
-        // Layouts (UE4.27 64-bit):
-        //   TSoftClassPtr<T> = TPersistentObjectPtr<FSoftObjectPath>
-        //                     = FWeakObjectPtr (8) + int32 Tag (4) + 4 pad
-        //                       + FName AssetPathName (8)
-        //                       + FString SubPathString (16)            = 40 bytes
-        //   FTransform        = FQuat (16) + FVector_pad (16) + FVector_pad (16) = 48 bytes
-        void spawnGoatViaBPRequestSpawn()
-        {
-            if (!m_localPC || !isObjectAlive(m_localPC)) return;
-            if (!m_goatBPClass)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatProper] m_goatBPClass not cached; ensureGoatSpawnBindings first\n"));
-                ensureGoatSpawnBindings();
-            }
-            if (!m_goatBPClass)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatProper] BP_NpcGoat_C class still not loaded; bail\n"));
-                return;
-            }
-
-            // Find the live spawn manager singleton.
-            std::vector<UObject*> mgrs;
-            if (!seh_findAllOf(STR("MorAISpawnManager"), &mgrs) || mgrs.empty())
-            {
-                VLOG(STR("[MoriaCppMod] [GoatProper] MorAISpawnManager singleton not found\n"));
-                return;
-            }
-            UObject* mgr = mgrs[0];
-            VLOG(STR("[MoriaCppMod] [GoatProper] AISpawnManager={:p} class={}\n"),
-                 (void*)mgr, safeClassName(mgr).c_str());
-
-            auto* fn = mgr->GetFunctionByNameInChain(STR("BP_RequestSpawn"));
-            if (!fn)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatProper] BP_RequestSpawn UFunction missing\n"));
-                return;
-            }
-
-            // Read player position.
-            UObject* pawn = m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr;
-            float px = 0, py = 0, pz = 0;
-            if (pawn)
-            {
-                if (auto* getLoc = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
-                {
-                    int gsz = getLoc->GetParmsSize();
-                    std::vector<uint8_t> gbuf(gsz, 0);
-                    if (safeProcessEvent(pawn, getLoc, gbuf.data()))
-                    {
-                        auto* pRet = findParam(getLoc, STR("ReturnValue"));
-                        if (pRet)
-                        {
-                            float* fv = reinterpret_cast<float*>(gbuf.data() + pRet->GetOffset_Internal());
-                            px = fv[0]; py = fv[1]; pz = fv[2];
-                        }
-                    }
-                }
-            }
-
-            // Build parm buffer.
-            int sz = fn->GetParmsSize();
-            std::vector<uint8_t> buf(sz, 0);
-
-            auto* pCharType = findParam(fn, STR("InCharacterType"));
-            auto* pXform    = findParam(fn, STR("InSpawnTransform"));
-            auto* pSpawner  = findParam(fn, STR("InSpawner"));
-            auto* pCtx      = findParam(fn, STR("InSpawnContext"));
-
-            if (!pCharType || !pXform || !pSpawner || !pCtx)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatProper] BP_RequestSpawn missing expected params (chartype={:p} xform={:p} spawner={:p} ctx={:p})\n"),
-                     (void*)pCharType, (void*)pXform, (void*)pSpawner, (void*)pCtx);
-                return;
-            }
-
-            // TSoftClassPtr<AMorCharacter> — fully populate:
-            //   offset  0: FWeakObjectPtr cache → BP_NpcGoat_C
-            //   offset  8: int32 TagAtLastTest = 0
-            //   offset 12: 4 bytes pad
-            //   offset 16: FName AssetPathName = "/Game/.../BP_NpcGoat.BP_NpcGoat_C"
-            //   offset 24: FString SubPathString = empty
-            // The path FName is required because the spawn manager's
-            // IsValid() check inspects AssetPathName, not the cache.
-            {
-                uint8_t* slot = buf.data() + pCharType->GetOffset_Internal();
-                // FWeakObjectPtr cache (perf hint).
-                new (slot + 0) RC::Unreal::FWeakObjectPtr(static_cast<UObject*>(m_goatBPClass));
-                // AssetPathName FName at offset 16. UE4SS FName is 8 bytes
-                // (ComparisonIndex + Number) matching the engine's shipping
-                // layout — copy the constructed FName's bytes directly.
-                std::wstring path;
-                try { path = m_goatBPClass->GetPathName(); } catch (...) {}
-                if (!path.empty())
-                {
-                    RC::Unreal::FName pathFN(path.c_str(), RC::Unreal::FNAME_Add);
-                    static_assert(sizeof(RC::Unreal::FName) == 8,
-                                  "FName binary layout mismatch — adjust copy size");
-                    std::memcpy(slot + 16, &pathFN, sizeof(RC::Unreal::FName));
-                    VLOG(STR("[MoriaCppMod] [GoatProper] soft path FName written: {}\n"), path.c_str());
-                }
-                // SubPathString FString at offset 24 stays zeroed (empty).
-            }
-
-            // FTransform: identity rotation, player translation, unit scale.
-            {
-                uint8_t* slot = buf.data() + pXform->GetOffset_Internal();
-                float* q = reinterpret_cast<float*>(slot + 0);   // FQuat
-                q[0] = 0.0f; q[1] = 0.0f; q[2] = 0.0f; q[3] = 1.0f;
-                float* t = reinterpret_cast<float*>(slot + 16);  // FVector Translation
-                t[0] = px; t[1] = py; t[2] = pz;
-                float* s = reinterpret_cast<float*>(slot + 32);  // FVector Scale3D
-                s[0] = 1.0f; s[1] = 1.0f; s[2] = 1.0f;
-            }
-
-            // InSpawner = our PC (any UObject*; the manager just records it).
-            {
-                UObject** slot = reinterpret_cast<UObject**>(buf.data() + pSpawner->GetOffset_Internal());
-                *slot = m_localPC;
-            }
-
-            // InSpawnContext = EMorAISpawnContext::AIPopulation (1).
-            {
-                uint8_t* slot = buf.data() + pCtx->GetOffset_Internal();
-                *slot = 1;
-            }
-
-            VLOG(STR("[MoriaCppMod] [GoatProper] firing BP_RequestSpawn(class=BP_NpcGoat_C, loc=({:.1f},{:.1f},{:.1f}), spawner=PC, ctx=AIPopulation)\n"),
-                 px, py, pz);
-            safeProcessEvent(mgr, fn, buf.data());
-            VLOG(STR("[MoriaCppMod] [GoatProper] BP_RequestSpawn returned\n"));
-            showOnScreen(L"Goat: BP_RequestSpawn fired", 2.0f, 0.4f, 0.9f, 0.4f);
-        }
-
-        // NUM. handler — Stage B: call BP_RequestSpawn directly. Stage A
-        // (cheat-string spawn) confirmed unsupported for goats — it picks
-        // dwarves regardless of args.
-        void testProperGoatSpawn()
-        {
-            if (!m_characterLoaded)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatProper] character not loaded; ignoring NUM.\n"));
-                return;
-            }
-            spawnGoatViaBPRequestSpawn();
-        }
-#endif  // [REMOVED 2026-05-08] end Stage B dead helpers
 
         // One-shot dump: walk every component on a live AActor and print
         // each component's class name + UFunction names that look related
@@ -8039,8 +7551,8 @@
             // We bail before falling into legacy chest-link / row-inject
             // dispatch code — those are dormant in Phase 4.
 
-            uint8_t* base = reinterpret_cast<uint8_t*>(widgetCtx);
-            UObject* interactable = *reinterpret_cast<UObject**>(base + 0x260);
+            auto* interactablePtr = widgetCtx->GetValuePtrByPropertyNameInChain<UObject*>(STR("Interactable"));
+            UObject* interactable = (interactablePtr && isReadableMemory(interactablePtr, sizeof(UObject*))) ? *interactablePtr : nullptr;
             if (!interactable || !isObjectAlive(interactable)) return;
 
             UObject* outer = nullptr;
@@ -8105,28 +7617,6 @@
             // Restart from `chest-link-future.md` Path B: spawn
             // UMorInventoryScreen directly with chest's Inventory (off=0x418)
             // as StorageObject.
-#if 0 // CHEST_LINK_SUSPENDED 2026-05-09
-            if (!m_goatChestActor || !isObjectAlive(m_goatChestActor))
-            {
-                VLOG(STR("[MoriaCppMod] [GoatChest] tap-E but no goat-chest captured (rename a chest 'Goat' first)\n"));
-                return;
-            }
-            UObject* playerInteractComp = *reinterpret_cast<UObject**>(
-                reinterpret_cast<uint8_t*>(widgetCtx) + 0x2B0);
-            if (!playerInteractComp || !isObjectAlive(playerInteractComp)) return;
-            auto* serverInteractFn = playerInteractComp->GetFunctionByNameInChain(STR("ServerInteract"));
-            if (!serverInteractFn) return;
-            int sz = serverInteractFn->GetParmsSize();
-            std::vector<uint8_t> buf(sz, 0);
-            auto* pObj = findParam(serverInteractFn, STR("ObjectInteractable"));
-            auto* pCtx = findParam(serverInteractFn, STR("InteractContext"));
-            if (!pObj || !pCtx) return;
-            *reinterpret_cast<UObject**>(buf.data() + pObj->GetOffset_Internal()) = m_goatChestActor;
-            uint8_t* ctxSlot = buf.data() + pCtx->GetOffset_Internal();
-            UObject* pawn = m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr;
-            *reinterpret_cast<UObject**>(ctxSlot + 0) = pawn;
-            safeProcessEvent(playerInteractComp, serverInteractFn, buf.data());
-#endif // CHEST_LINK_SUSPENDED
         }
 
         // ───── public entry: NUM- toggle handler ─────────────────────────
@@ -8191,10 +7681,11 @@
                 UObject* npcComp = readGoatParm<UObject*>(getCompFn, buf.data(), STR("ReturnValue"), nullptr);
                 if (!npcComp || !isObjectAlive(npcComp)) continue;
 
-                // Read NpcGuid at offset 0x178 (16 bytes — 4 uint32s). All
-                // zeros = wild goat / unregistered. Any non-zero word = ours.
-                uint32_t* g = reinterpret_cast<uint32_t*>(
-                    reinterpret_cast<uint8_t*>(npcComp) + 0x178);
+                // Read NpcGuid via reflection (FGuid is 16B / 4 uint32s).
+                // All zeros = wild goat / unregistered. Any non-zero word = ours.
+                uint8_t* guidPtr = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                if (!guidPtr) continue;
+                uint32_t* g = reinterpret_cast<uint32_t*>(guidPtr);
                 if (g[0] == 0 && g[1] == 0 && g[2] == 0 && g[3] == 0) continue;
 
                 VLOG(STR("[MoriaCppMod] [Goat] found existing registered porter goat={:p} guid={:08X}-{:08X}-{:08X}-{:08X}\n"),

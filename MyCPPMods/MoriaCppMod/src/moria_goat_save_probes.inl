@@ -109,10 +109,9 @@
                 if (!isReadableMemory(item, kItemStride)) continue;
 
                 std::wstring guidStr = probesFormatGuid(item + kOffNpcGuid);
-                std::wstring roleName, curAct, intAct;
-                try { roleName = reinterpret_cast<RC::Unreal::FName*>(item + kOffRoleRow)->ToString(); } catch (...) {}
-                try { curAct  = reinterpret_cast<RC::Unreal::FName*>(item + kOffCurAct)->ToString(); } catch (...) {}
-                try { intAct  = reinterpret_cast<RC::Unreal::FName*>(item + kOffIntAct)->ToString(); } catch (...) {}
+                std::wstring roleName = seh_fnameToString(item + kOffRoleRow);
+                std::wstring curAct   = seh_fnameToString(item + kOffCurAct);
+                std::wstring intAct   = seh_fnameToString(item + kOffIntAct);
 
                 VLOG(STR("[ProbeA] {} [{}] guid={} role={} curAct={} intAct={}\n"),
                      phaseLabel, i, guidStr.c_str(),
@@ -178,8 +177,7 @@
                 for (int32 i = 0; i < num; ++i) {
                     uint8_t* entry = dataPtr + (int64_t)i * stride;
                     if (!isReadableMemory(entry, stride)) continue;
-                    std::wstring p;
-                    try { p = reinterpret_cast<RC::Unreal::FName*>(entry)->ToString(); } catch (...) {}
+                    std::wstring p = seh_fnameToString(entry);
                     VLOG(STR("[ProbeB] {} [{}] = {}\n"), label, i, p.empty() ? STR("?") : p.c_str());
                     if (p.find(STR("BP_NpcGoat")) != std::wstring::npos) sawGoat = true;
                 }
@@ -201,8 +199,7 @@
                     for (int32 i = 0; i < num; ++i) {
                         uint8_t* entry = dataPtr + (int64_t)i * 8;
                         if (!isReadableMemory(entry, 8)) continue;
-                        std::wstring n;
-                        try { n = reinterpret_cast<RC::Unreal::FName*>(entry)->ToString(); } catch (...) {}
+                        std::wstring n = seh_fnameToString(entry);
                         VLOG(STR("[ProbeB] ValidNpcRoles [{}] = {}\n"),
                              i, n.empty() ? STR("?") : n.c_str());
                     }
