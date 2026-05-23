@@ -32,6 +32,60 @@
         // Preloaded at character-load so the spawn-tick equip call has zero
         // blocking I/O on the game thread.
         UClass*    m_packItemClass{nullptr};
+
+        // [v7.2.0-rc.3 2026-05-22] Tobi's porter-goat saddlebag class.
+        // v1.5.0 ships with the slot-wrapper BP_ContainerItem_Goat_Slot_EpicPack_C
+        // populated in the goat's InvComp but no actual saddlebag in the slot
+        // (Tobi's BeginPlay graph doesn't fill it). When [GoatExperimental]
+        // AutoEquipSaddleBag = true, we equip BP_PorterGoatSaddlebags_C onto
+        // the goat's MorEquipComponent post-spawn so the slot actually holds
+        // a real bag and clicking Saddlebags opens the storage grid.
+        UClass*    m_saddlebagItemClass{nullptr};
+        bool       m_autoEquipSaddleBag{true};   // INI-toggleable; default ON for rc.3 testing
+
+        // [v7.2.0-rc.4 2026-05-22] Goat saddlebag inventory widget tracking.
+        // Per Desktop Claude's recon: vanilla FRG ships
+        // WBP_UI_Inventory_Screen_StorageMode_C with isOpenedFromNPC /
+        // AssociatedNPC / InventoryComponent / Target exposed on spawn.
+        //
+        // [rc.5 2026-05-22] DEFAULT OFF — rc.4 testing showed the widget
+        // spawns and accepts bindings BUT renders with placeholder template
+        // text + displaces player inventory items + has no built-in close
+        // path. The widget's internal storage-resolve logic likely hits the
+        // tag mismatch ("Goat.Slot.EpicPack" vs widget's expected
+        // "Inventory.Slot.EpicPack") and falls back to player-side state.
+        // Until we work that out, users opt in via INI.
+        UClass*    m_goatSaddlebagWidgetCls{nullptr};
+        UObject*   m_goatSaddlebagWidget{nullptr};
+        bool       m_enableGoatSaddleUI{false};   // INI: [GoatExperimental] EnableGoatSaddleUI = true
+        bool       m_goatSaddleWrapperDumped{false};  // rc.6 one-shot wrapper diagnostic
+
+        // [v7.2.0-rc.12 2026-05-22] Phantom chest infrastructure.
+        // Desktop Claude's plan: spawn a hidden BP_StorageChest_Construction
+        // attached to the goat. Vanilla chest's FSM handles owner-validation,
+        // widget spawn, and UI hand-off — the path rc.4-rc.10 couldn't
+        // synthesize from scratch. When user clicks "Saddlebags" on goat
+        // menu, DLL calls the chest's OpenChest UFunction directly.
+        //
+        // 12a: visible chest spawn above goat — verify class resolves +
+        //      OpenChest works in clean isolation.
+        // 12b: attach to goat + hide mesh.
+        // 12c: replace rc.11 saddlebags no-op with OpenChest dispatch.
+        // 12d: suppress chest's E-prompt.
+        // 12e: persistence via sidecar.
+        UClass*    m_phantomChestClass{nullptr};
+        RC::Unreal::FWeakObjectPtr m_phantomChest;
+        bool       m_enablePhantomChest{false};  // INI: [GoatExperimental] PhantomChest = true
+
+        // [v7.2.0-rc.12b 2026-05-23] Saddlebag-as-world-actor experiment.
+        // Spawn BP_SaddleBags_Goat_C at goat's feet — bag is itself an
+        // AInventoryItem subclass (so an AActor). Bag exposes its own
+        // open/use API (same one right-clicking it in player inventory
+        // triggers). After spawn, probe + auto-call its Open* / Use* /
+        // Interact* UFunctions and see if any surface the proper "Goat
+        // Saddlebags" UI.
+        RC::Unreal::FWeakObjectPtr m_saddlebagWorldActor;
+        bool       m_enableSaddlebagAtGoat{false};  // INI: [GoatExperimental] SaddlebagAtGoat = true
         // Static mesh of the dwarven mountaineer pack (Dwarf_Pack01_Static).
         // We swap this into the goat's existing Hat StaticMeshComponent slot
         // (instead of clearing it to null) so a visible pack appears without
@@ -1078,6 +1132,597 @@
             VLOG(STR("[MoriaCppMod] [Goat] ServerEquipDummyItem(BP_EpicPack_AdventurersPack_Large_C) fired on EquipComp={:p}\n"),
                  (void*)equipComp);
             return true;
+        }
+
+        // [v7.2.0-rc.3] Resolve + cache Tobi's porter saddlebag UClass.
+        //
+        // Tobi shipped the goat content inside `SecretsOfKhazadDum_Assets_P.pak`
+        // (his umbrella mod). The class name + path under /Game/Mods/* is not
+        // fixed across pak releases. We try a list of candidate paths first;
+        // if none resolve, we fall back to a runtime scan of all loaded
+        // BlueprintGeneratedClass objects looking for "Saddle"/"SaddleBag"/
+        // "GoatPack"/"GoatBag" substrings, logging every hit so future
+        // sessions inherit the discovery via the cache. Cached for the session.
+        UClass* ensureSaddlebagItemClass()
+        {
+            if (m_saddlebagItemClass && isObjectAlive(m_saddlebagItemClass))
+                return m_saddlebagItemClass;
+
+            // 1) Direct path candidates. First hit wins.
+            static const wchar_t* kCandidates[] = {
+                STR("/Game/Mods/PorterGoat/Items/BP_PorterGoatSaddlebags.BP_PorterGoatSaddlebags_C"),
+                STR("/Game/Mods/PorterGoat/Items/BP_SaddleBags_Goat.BP_SaddleBags_Goat_C"),
+                STR("/Game/Mods/PorterGoat/BP_PorterGoatSaddlebags.BP_PorterGoatSaddlebags_C"),
+                STR("/Game/Mods/PorterGoat/BP_SaddleBags_Goat.BP_SaddleBags_Goat_C"),
+                STR("/Game/Mods/SecretsOfKhazadDum/PorterGoat/Items/BP_PorterGoatSaddlebags.BP_PorterGoatSaddlebags_C"),
+                STR("/Game/Mods/SecretsOfKhazadDum/PorterGoat/Items/BP_SaddleBags_Goat.BP_SaddleBags_Goat_C"),
+                nullptr
+            };
+            for (const wchar_t** p = kCandidates; *p; ++p)
+            {
+                UClass* c = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, *p);
+                if (!c) c = goat_loadClassAssetBlocking(*p);
+                if (c && isObjectAlive(c))
+                {
+                    m_saddlebagItemClass = c;
+                    VLOG(STR("[MoriaCppMod] [Goat] saddlebag item class resolved (direct): {} -> {:p}\n"),
+                         *p, (void*)c);
+                    return m_saddlebagItemClass;
+                }
+            }
+
+            // 2) Runtime scan fallback — walk loaded BlueprintGeneratedClass
+            //    objects, match by name substring. One-shot per session.
+            VLOG(STR("[MoriaCppMod] [Goat] saddlebag class direct lookup failed across {} candidate paths — scanning loaded BPs\n"),
+                 (int)(sizeof(kCandidates)/sizeof(kCandidates[0]) - 1));
+            std::vector<UObject*> bpClasses;
+            if (!findAllOfSafe(STR("BlueprintGeneratedClass"), bpClasses))
+            {
+                VLOG(STR("[MoriaCppMod] [Goat] BlueprintGeneratedClass scan failed (findAllOf returned false)\n"));
+                return nullptr;
+            }
+            VLOG(STR("[MoriaCppMod] [Goat] BlueprintGeneratedClass scan: {} loaded classes\n"),
+                 (int)bpClasses.size());
+
+            auto containsCI = [](const std::wstring& s, const wchar_t* needle) -> bool {
+                std::wstring lo; lo.reserve(s.size());
+                for (wchar_t c : s) lo.push_back((wchar_t)towlower(c));
+                std::wstring nl; for (size_t i = 0; needle[i]; ++i) nl.push_back((wchar_t)towlower(needle[i]));
+                return lo.find(nl) != std::wstring::npos;
+            };
+
+            UClass* firstMatch = nullptr;
+            for (UObject* c : bpClasses)
+            {
+                if (!c || !isObjectAlive(c)) continue;
+                std::wstring n;
+                try { n = c->GetName(); } catch (...) { continue; }
+                // Match anything saddlebag-ish OR with a path under /Mods/PorterGoat/
+                bool matchName = containsCI(n, STR("Saddle"))
+                              || containsCI(n, STR("GoatBag"))
+                              || containsCI(n, STR("GoatPack"))
+                              || containsCI(n, STR("PorterPack"))
+                              || containsCI(n, STR("PorterBag"));
+                std::wstring fullPath;
+                try { fullPath = c->GetFullName(); } catch (...) {}
+                bool matchPath = containsCI(fullPath, STR("/PorterGoat/"))
+                              || containsCI(fullPath, STR("/Mods/SecretsOfKhazadDum/"));
+                if (!matchName && !matchPath) continue;
+
+                VLOG(STR("[MoriaCppMod] [Goat] scan hit: name='{}' fullPath='{}'\n"),
+                     n.c_str(), fullPath.c_str());
+
+                // Prefer classes that look like item bags (Saddle/Bag/Pack in
+                // name) over slot wrappers or other PorterGoat support classes.
+                if (matchName && !containsCI(n, STR("Slot")) && !containsCI(n, STR("Wrapper")))
+                {
+                    if (!firstMatch) firstMatch = static_cast<UClass*>(c);
+                }
+            }
+
+            if (firstMatch && isObjectAlive(firstMatch))
+            {
+                m_saddlebagItemClass = firstMatch;
+                std::wstring name;
+                try { name = firstMatch->GetName(); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [Goat] saddlebag item class resolved (scan): '{}' -> {:p}\n"),
+                     name.c_str(), (void*)firstMatch);
+                return m_saddlebagItemClass;
+            }
+
+            VLOG(STR("[MoriaCppMod] [Goat] saddlebag class scan yielded no item-shaped match — equip will be skipped\n"));
+            return nullptr;
+        }
+
+        // [v7.2.0-rc.3] Equip Tobi's BP_PorterGoatSaddlebags_C onto the goat's
+        // MorEquipComponent via ServerEquipDummyItem — same RPC + parm shape
+        // as the visible adventurer's-pack equip path above. Returns true on
+        // success, false on any guard failure (defensive: every branch logs).
+        //
+        // v1.5.0 of Tobi's pak ships the goat with an empty EpicPack slot
+        // wrapper (BP_ContainerItem_Goat_Slot_EpicPack_C) but never fills it.
+        // This call fills the slot so the saddlebag click in the goat's
+        // interaction menu opens a real storage grid instead of doing nothing.
+        //
+        // Gated by m_autoEquipSaddleBag (INI: [GoatExperimental] AutoEquipSaddleBag).
+        // If ServerEquipDummyItem turns out to be the wrong RPC for a non-
+        // dummy bag, the call no-ops and the slot stays empty — same state
+        // as today, no regression. Worst case is logging noise.
+        bool equipPorterSaddlebag(UObject* goat)
+        {
+            if (!m_autoEquipSaddleBag)
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleEquip] disabled via INI — skipping\n"));
+                return false;
+            }
+            if (!goat || !isObjectAlive(goat))
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleEquip] goat null/dead — bail\n"));
+                return false;
+            }
+
+            UClass* saddleCls = ensureSaddlebagItemClass();
+            if (!saddleCls)
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleEquip] saddlebag class unresolved — bail\n"));
+                return false;
+            }
+
+            // Resolve the goat's MorEquipComponent.
+            UClass* equipCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                STR("/Script/Moria.MorEquipComponent"));
+            if (!equipCls)
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleEquip] MorEquipComponent UClass not resident\n"));
+                return false;
+            }
+            auto* getCompFn = goat->GetFunctionByNameInChain(STR("GetComponentByClass"));
+            if (!getCompFn)
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleEquip] GetComponentByClass missing on goat\n"));
+                return false;
+            }
+            std::vector<uint8_t> gbuf(getCompFn->GetParmsSize(), 0);
+            writeGoatParm<UClass*>(getCompFn, gbuf.data(), STR("ComponentClass"), equipCls);
+            if (!safeProcessEvent(goat, getCompFn, gbuf.data()))
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleEquip] GetComponentByClass dispatch failed\n"));
+                return false;
+            }
+            UObject* equipComp = readGoatParm<UObject*>(getCompFn, gbuf.data(), STR("ReturnValue"), nullptr);
+            if (!equipComp || !isObjectAlive(equipComp))
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleEquip] goat has no MorEquipComponent\n"));
+                return false;
+            }
+
+            // Fire ServerEquipDummyItem(saddleCls).
+            auto* sedFn = equipComp->GetFunctionByNameInChain(STR("ServerEquipDummyItem"));
+            if (!sedFn)
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleEquip] ServerEquipDummyItem missing on goat EquipComp\n"));
+                return false;
+            }
+            std::vector<uint8_t> buf(sedFn->GetParmsSize(), 0);
+            writeGoatParm<UClass*>(sedFn, buf.data(), STR("ItemToEquip"), saddleCls);
+            safeProcessEvent(equipComp, sedFn, buf.data());
+            VLOG(STR("[MoriaCppMod] [SaddleEquip] ServerEquipDummyItem(BP_PorterGoatSaddlebags_C) fired on EquipComp={:p}\n"),
+                 (void*)equipComp);
+            return true;
+        }
+
+        // [v7.2.0-rc.12a 2026-05-22] Resolve the chest class for phantom-
+        // chest approach. Primary target is BP_StorageChest_Construction_C
+        // (the settlement-buildable storage chest); fall back to other
+        // chest receptacles if that class isn't resident. Cached.
+        UClass* ensurePhantomChestClass()
+        {
+            if (m_phantomChestClass && isObjectAlive(m_phantomChestClass))
+                return m_phantomChestClass;
+            // [rc.12a.2] BP_StorageChest_Construction_C resolved cleanly in
+            // rc.12a but its UI didn't open — likely because it requires
+            // settlement-construction context (build state, materials).
+            // Pivot to BP_ChestReceptacle_C first — exploration-reward
+            // chests are complete by spawn, no construction state needed.
+            static const wchar_t* kCandidates[] = {
+                STR("/Game/LevelDesign/Placeables/Containers/BP_ChestReceptacle.BP_ChestReceptacle_C"),
+                STR("/Game/LevelDesign/Placeables/Containers/BP_SmallChestReceptacle.BP_SmallChestReceptacle_C"),
+                STR("/Game/LevelDesign/Placeables/Containers/BP_StorageChest_Construction.BP_StorageChest_Construction_C"),
+                STR("/Game/LevelDesign/Placeables/Containers/BP_FallBackReceptacle.BP_FallBackReceptacle_C"),
+                STR("/Game/LevelDesign/Placeables/Containers/BP_BarrelReceptacle.BP_BarrelReceptacle_C"),
+                nullptr
+            };
+            for (const wchar_t** p = kCandidates; *p; ++p)
+            {
+                UClass* c = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, *p);
+                if (!c) c = goat_loadClassAssetBlocking(*p);
+                if (c && isObjectAlive(c))
+                {
+                    m_phantomChestClass = c;
+                    VLOG(STR("[MoriaCppMod] [PhantomChest] class resolved: {} -> {:p}\n"),
+                         *p, (void*)c);
+                    return c;
+                }
+            }
+            VLOG(STR("[MoriaCppMod] [PhantomChest] no chest class resolvable across {} candidates\n"),
+                 (int)(sizeof(kCandidates)/sizeof(kCandidates[0]) - 1));
+            return nullptr;
+        }
+
+        // [v7.2.0-rc.12a 2026-05-22] Spawn a phantom chest near the goat.
+        // For 12a: chest is SPAWNED VISIBLE at goat_location + (0,0,200)
+        // so the player can walk up to it, press E (vanilla), and confirm
+        // chest UI opens. No attach, no hide — that's 12b. No OpenChest
+        // dispatch from goat menu — that's 12c.
+        //
+        // Gated by m_enablePhantomChest (INI: [GoatExperimental] PhantomChest).
+        // Default OFF — opt-in via INI to test.
+        //
+        // Uses the same GameplayStatics two-step spawn pattern as goat
+        // spawn (BeginDeferredActorSpawnFromClass + FinishSpawningActor).
+        void spawnPhantomChestNearGoat(UObject* goat)
+        {
+            if (!m_enablePhantomChest)
+            {
+                VLOG(STR("[MoriaCppMod] [PhantomChest] disabled via INI — skip\n"));
+                return;
+            }
+            if (!goat || !isObjectAlive(goat))
+            {
+                VLOG(STR("[MoriaCppMod] [PhantomChest] goat null/dead — skip\n"));
+                return;
+            }
+            if (!ensureGoatSpawnBindings())
+            {
+                VLOG(STR("[MoriaCppMod] [PhantomChest] spawn bindings not ready\n"));
+                return;
+            }
+            UClass* chestCls = ensurePhantomChestClass();
+            if (!chestCls)
+            {
+                showOnScreen(L"Phantom chest class missing", 2.5f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+
+            // Read goat location.
+            FVec3f loc{};
+            if (auto* gloc = goat->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
+            {
+                struct { FVec3f Ret{}; } lp{};
+                if (safeProcessEvent(goat, gloc, &lp)) loc = lp.Ret;
+            }
+            // 12a: spawn 200 cm above goat for visibility.
+            FVec3f chestLoc{loc.X, loc.Y, loc.Z + 200.0f};
+            FTransformRaw xform{};
+            xform.Rotation    = {0.0f, 0.0f, 0.0f, 1.0f};
+            xform.Translation = chestLoc;
+            xform.Scale3D     = {1.0f, 1.0f, 1.0f};
+
+            std::vector<uint8_t> buf(m_goatBeginSpawnFn->GetParmsSize(), 0);
+            writeGoatParm<UObject*>     (m_goatBeginSpawnFn, buf.data(), STR("WorldContextObject"), goat);
+            writeGoatParm<UClass*>      (m_goatBeginSpawnFn, buf.data(), STR("ActorClass"),         chestCls);
+            writeGoatParm<FTransformRaw>(m_goatBeginSpawnFn, buf.data(), STR("SpawnTransform"),     xform);
+            writeGoatParm<uint8_t>      (m_goatBeginSpawnFn, buf.data(), STR("CollisionHandlingOverride"), 1);  // AlwaysSpawn
+
+            VLOG(STR("[MoriaCppMod] [PhantomChest] BeginDeferred: goatLoc=({:.1f},{:.1f},{:.1f}) chestLoc=({:.1f},{:.1f},{:.1f})\n"),
+                 loc.X, loc.Y, loc.Z, chestLoc.X, chestLoc.Y, chestLoc.Z);
+            if (!safeProcessEvent(m_kismetGameplayStaticsCDO, m_goatBeginSpawnFn, buf.data()))
+            {
+                VLOG(STR("[MoriaCppMod] [PhantomChest] BeginDeferred PE failed\n"));
+                return;
+            }
+            UObject* chest = readGoatParm<UObject*>(m_goatBeginSpawnFn, buf.data(), STR("ReturnValue"), nullptr);
+            if (!chest)
+            {
+                VLOG(STR("[MoriaCppMod] [PhantomChest] BeginDeferred returned null\n"));
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [PhantomChest] BeginDeferred returned chest={:p}\n"), (void*)chest);
+
+            // FinishSpawningActor — commits the spawn.
+            std::vector<uint8_t> buf2(m_goatFinishSpawnFn->GetParmsSize(), 0);
+            writeGoatParm<UObject*>     (m_goatFinishSpawnFn, buf2.data(), STR("Actor"),          chest);
+            writeGoatParm<FTransformRaw>(m_goatFinishSpawnFn, buf2.data(), STR("SpawnTransform"), xform);
+            safeProcessEvent(m_kismetGameplayStaticsCDO, m_goatFinishSpawnFn, buf2.data());
+
+            // Track for later access (12b attach, 12c OpenChest dispatch).
+            m_phantomChest = RC::Unreal::FWeakObjectPtr(chest);
+            VLOG(STR("[MoriaCppMod] [PhantomChest] FinishSpawningActor fired; tracked at {:p}\n"),
+                 (void*)chest);
+            VLOG(STR("[MoriaCppMod] [PhantomChest] 12a SUCCESS: walk to chest above goat, press E, confirm vanilla chest UI opens\n"));
+            showOnScreen(L"Phantom chest spawned above goat — walk up, press E", 5.0f, 0.4f, 0.9f, 0.4f);
+
+            // 12a one-shot diagnostic: dump chest's UFunctions matching
+            // open/use keywords so we know what OpenChest looks like.
+            {
+                VLOG(STR("[MoriaCppMod] [PhantomChest] === chest UFunctions matching open/use/show/activate/storage ===\n"));
+                const wchar_t* candidates[] = {
+                    STR("OpenChest"), STR("OpenContainer"), STR("OpenInventory"),
+                    STR("ServerOpenChest"), STR("ServerInteract"), STR("ShowInventory"),
+                    STR("ActivateChest"), STR("OnInteract"), STR("OnUsed"),
+                    STR("BP_OnInteract"), STR("Interact"),
+                    nullptr
+                };
+                for (const wchar_t** p = candidates; *p; ++p)
+                {
+                    auto* fn = chest->GetFunctionByNameInChain(*p);
+                    if (fn)
+                    {
+                        int parms = 0;
+                        try { parms = fn->GetParmsSize(); } catch (...) {}
+                        VLOG(STR("[MoriaCppMod] [PhantomChest]   {} PRESENT (parmSize={})\n"), *p, parms);
+                    }
+                }
+                VLOG(STR("[MoriaCppMod] [PhantomChest] === end UFunc probe ===\n"));
+            }
+
+            // [rc.12a.2 2026-05-22] Immediately call OpenChest after spawn.
+            // Bypasses needing to walk to chest + press E (which depends on
+            // the chest's E-prompt being correctly configured for non-
+            // settlement contexts). If OpenChest opens a UI here, then the
+            // FSM works regardless of E-prompt — that's the answer 12c
+            // needs.
+            //
+            // Brief delay would be nicer (let chest finish initializing)
+            // but we have no game-thread sleep primitive. Fire immediately;
+            // if it fails because the chest isn't ready, the log will tell
+            // us and we can defer to a tick-based open in 12a.3.
+            {
+                auto* openFn = chest->GetFunctionByNameInChain(STR("OpenChest"));
+                if (openFn)
+                {
+                    int parmsSize = 0;
+                    try { parmsSize = openFn->GetParmsSize(); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [PhantomChest] calling OpenChest (parmSize={}) on chest={:p} immediately post-spawn\n"),
+                         parmsSize, (void*)chest);
+                    if (parmsSize == 0)
+                    {
+                        try { safeProcessEvent(chest, openFn, nullptr); } catch (...) {}
+                    }
+                    else
+                    {
+                        std::vector<uint8_t> ob(parmsSize, 0);
+                        try { safeProcessEvent(chest, openFn, ob.data()); } catch (...) {}
+                    }
+                    VLOG(STR("[MoriaCppMod] [PhantomChest] OpenChest dispatched — expect storage UI to appear\n"));
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [PhantomChest] OpenChest UFunction missing on this chest class — won't auto-open\n"));
+                }
+            }
+        }
+
+        // [v7.2.0-rc.12b 2026-05-23] Spawn Tobi's saddlebag as a world
+        // actor near the goat. BP_SaddleBags_Goat_C inherits from
+        // MorContainerItem → AInventoryItem → AActor, so it spawns via
+        // the same BeginDeferred + FinishSpawningActor pattern.
+        //
+        // Three things we want to learn:
+        //   1. Does the bag spawn cleanly as a world actor (it's an item
+        //      class so it might require a wrapper)?
+        //   2. What UFunctions does the spawned instance expose for opening
+        //      its storage?
+        //   3. Does any of them surface the proper "Goat Saddlebags" UI
+        //      when called directly post-spawn?
+        //
+        // Gated by m_enableSaddlebagAtGoat (INI: [GoatExperimental]
+        // SaddlebagAtGoat = true). Default OFF — opt-in.
+        void spawnSaddlebagAtGoat(UObject* goat)
+        {
+            if (!m_enableSaddlebagAtGoat)
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleAtGoat] disabled via INI — skip\n"));
+                return;
+            }
+            if (!goat || !isObjectAlive(goat))
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleAtGoat] goat null/dead — skip\n"));
+                return;
+            }
+            if (!ensureGoatSpawnBindings())
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleAtGoat] spawn bindings not ready\n"));
+                return;
+            }
+            UClass* saddleCls = ensureSaddlebagItemClass();  // BP_SaddleBags_Goat_C
+            if (!saddleCls)
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleAtGoat] saddlebag class unresolved\n"));
+                showOnScreen(L"Saddlebag class missing", 2.5f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+
+            // Read goat location + forward vector — spawn 100 cm in front of goat.
+            FVec3f loc{};
+            FVec3f fwd{1.0f, 0.0f, 0.0f};
+            if (auto* gloc = goat->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
+            {
+                struct { FVec3f Ret{}; } lp{};
+                if (safeProcessEvent(goat, gloc, &lp)) loc = lp.Ret;
+            }
+            if (auto* fwdFn = goat->GetFunctionByNameInChain(STR("GetActorForwardVector")))
+            {
+                struct { FVec3f Ret; } p{};
+                if (safeProcessEvent(goat, fwdFn, &p)) fwd = p.Ret;
+            }
+            FVec3f bagLoc{ loc.X + fwd.X * 100.0f, loc.Y + fwd.Y * 100.0f, loc.Z };
+            FTransformRaw xform{};
+            xform.Rotation    = {0.0f, 0.0f, 0.0f, 1.0f};
+            xform.Translation = bagLoc;
+            xform.Scale3D     = {1.0f, 1.0f, 1.0f};
+
+            std::vector<uint8_t> buf(m_goatBeginSpawnFn->GetParmsSize(), 0);
+            writeGoatParm<UObject*>     (m_goatBeginSpawnFn, buf.data(), STR("WorldContextObject"), goat);
+            writeGoatParm<UClass*>      (m_goatBeginSpawnFn, buf.data(), STR("ActorClass"),         saddleCls);
+            writeGoatParm<FTransformRaw>(m_goatBeginSpawnFn, buf.data(), STR("SpawnTransform"),     xform);
+            writeGoatParm<uint8_t>      (m_goatBeginSpawnFn, buf.data(), STR("CollisionHandlingOverride"), 1);  // AlwaysSpawn
+
+            VLOG(STR("[MoriaCppMod] [SaddleAtGoat] BeginDeferred: goatLoc=({:.1f},{:.1f},{:.1f}) bagLoc=({:.1f},{:.1f},{:.1f})\n"),
+                 loc.X, loc.Y, loc.Z, bagLoc.X, bagLoc.Y, bagLoc.Z);
+            if (!safeProcessEvent(m_kismetGameplayStaticsCDO, m_goatBeginSpawnFn, buf.data()))
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleAtGoat] BeginDeferred PE failed\n"));
+                return;
+            }
+            UObject* bag = readGoatParm<UObject*>(m_goatBeginSpawnFn, buf.data(), STR("ReturnValue"), nullptr);
+            if (!bag)
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleAtGoat] BeginDeferred returned null — item class may not be world-spawnable\n"));
+                showOnScreen(L"Saddlebag spawn returned null", 2.5f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [SaddleAtGoat] BeginDeferred returned bag={:p}\n"), (void*)bag);
+
+            std::vector<uint8_t> buf2(m_goatFinishSpawnFn->GetParmsSize(), 0);
+            writeGoatParm<UObject*>     (m_goatFinishSpawnFn, buf2.data(), STR("Actor"),          bag);
+            writeGoatParm<FTransformRaw>(m_goatFinishSpawnFn, buf2.data(), STR("SpawnTransform"), xform);
+            safeProcessEvent(m_kismetGameplayStaticsCDO, m_goatFinishSpawnFn, buf2.data());
+
+            m_saddlebagWorldActor = RC::Unreal::FWeakObjectPtr(bag);
+            VLOG(STR("[MoriaCppMod] [SaddleAtGoat] FinishSpawningActor fired; tracked at {:p}\n"), (void*)bag);
+            showOnScreen(L"Saddlebag spawned at goat — look for it / E it", 5.0f, 0.4f, 0.9f, 0.4f);
+
+            // Probe + auto-open. Try a broad set of UFunction names the
+            // bag may expose for opening its storage.
+            VLOG(STR("[MoriaCppMod] [SaddleAtGoat] === bag UFunctions matching open/use/show/activate/storage/interact ===\n"));
+            const wchar_t* candidates[] = {
+                STR("OpenChest"), STR("OpenContainer"), STR("OpenInventory"),
+                STR("OpenStorage"), STR("ShowStorage"), STR("ShowInventory"),
+                STR("ServerUse"), STR("ServerInteract"), STR("ServerOpen"),
+                STR("ActivateContainer"), STR("OnInteract"), STR("OnUsed"),
+                STR("BP_OnInteract"), STR("Interact"), STR("Use"),
+                nullptr
+            };
+            UFunction* firstOpener = nullptr;
+            for (const wchar_t** p = candidates; *p; ++p)
+            {
+                auto* fn = bag->GetFunctionByNameInChain(*p);
+                if (fn)
+                {
+                    int parms = 0;
+                    try { parms = fn->GetParmsSize(); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [SaddleAtGoat]   {} PRESENT (parmSize={})\n"), *p, parms);
+                    if (!firstOpener) firstOpener = fn;  // remember first hit
+                }
+            }
+            VLOG(STR("[MoriaCppMod] [SaddleAtGoat] === end UFunc probe ===\n"));
+
+            // Auto-call the first opener we found.
+            if (firstOpener)
+            {
+                int parmsSize = 0;
+                try { parmsSize = firstOpener->GetParmsSize(); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [SaddleAtGoat] auto-calling first opener (parmSize={}) on bag={:p}\n"),
+                     parmsSize, (void*)bag);
+                if (parmsSize == 0)
+                {
+                    try { safeProcessEvent(bag, firstOpener, nullptr); } catch (...) {}
+                }
+                else
+                {
+                    std::vector<uint8_t> ob(parmsSize, 0);
+                    try { safeProcessEvent(bag, firstOpener, ob.data()); } catch (...) {}
+                }
+                VLOG(STR("[MoriaCppMod] [SaddleAtGoat] opener dispatched — expect storage UI\n"));
+            }
+            else
+            {
+                VLOG(STR("[MoriaCppMod] [SaddleAtGoat] no opener UFunction found — walk to bag, press E manually\n"));
+            }
+        }
+
+        // [v7.2.0-rc.12b.2 2026-05-23] Add the saddlebag directly to the
+        // goat's MorInventoryComponent via ServerDebugSetItem. Mirrors
+        // grantPorterItemToPlayer (which targets the player's InvComp);
+        // this targets the goat's. Logs goat's Items array before + after
+        // so we can see whether ServerDebugSetItem accepts non-player
+        // InvComp targets.
+        //
+        // Gated by m_enableSaddlebagAtGoat (reused INI flag). If this
+        // succeeds, the bag is "in the goat" architecturally. Opening
+        // it from the goat menu still hits the cross-actor authority
+        // wall we proved in rc.9 — separate problem.
+        bool addSaddlebagToGoatInventory(UObject* goat)
+        {
+            if (!m_enableSaddlebagAtGoat) return false;
+            if (!goat || !isObjectAlive(goat)) return false;
+
+            UClass* saddleCls = ensureSaddlebagItemClass();
+            if (!saddleCls)
+            {
+                VLOG(STR("[MoriaCppMod] [AddSaddleToGoat] saddlebag class unresolved\n"));
+                return false;
+            }
+
+            UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                STR("/Script/Moria.MorInventoryComponent"));
+            if (!invCls) return false;
+            auto* getCompFn = goat->GetFunctionByNameInChain(STR("GetComponentByClass"));
+            if (!getCompFn) return false;
+            std::vector<uint8_t> gbuf(getCompFn->GetParmsSize(), 0);
+            writeGoatParm<UClass*>(getCompFn, gbuf.data(), STR("ComponentClass"), invCls);
+            if (!safeProcessEvent(goat, getCompFn, gbuf.data())) return false;
+            UObject* goatInv = readGoatParm<UObject*>(getCompFn, gbuf.data(), STR("ReturnValue"), nullptr);
+            if (!goatInv || !isObjectAlive(goatInv))
+            {
+                VLOG(STR("[MoriaCppMod] [AddSaddleToGoat] goat MorInventoryComponent not found\n"));
+                return false;
+            }
+
+            // Log goat inventory count BEFORE.
+            auto countGoatItems = [&]() -> int {
+                FProperty* itemsProp = goatInv->GetPropertyByNameInChain(STR("Items"));
+                if (!itemsProp) return -1;
+                uint8_t* lb = reinterpret_cast<uint8_t*>(goatInv)
+                            + itemsProp->GetOffset_Internal() + iiaListOff();
+                if (!isReadableMemory(lb, 16)) return -2;
+                int32_t n = *reinterpret_cast<int32_t*>(lb + 8);
+                return n;
+            };
+            int before = countGoatItems();
+            VLOG(STR("[MoriaCppMod] [AddSaddleToGoat] goat InvComp.Items count BEFORE = {}\n"), before);
+
+            UFunction* dsiFn = goatInv->GetFunctionByNameInChain(STR("ServerDebugSetItem"));
+            if (!dsiFn)
+            {
+                VLOG(STR("[MoriaCppMod] [AddSaddleToGoat] ServerDebugSetItem missing on goat InvComp — bail\n"));
+                return false;
+            }
+            int sz = dsiFn->GetParmsSize();
+            std::vector<uint8_t> buf(sz, 0);
+            auto* pItem  = findParam(dsiFn, STR("Item"));
+            if (!pItem) pItem = findParam(dsiFn, STR("ItemClass"));
+            auto* pCount = findParam(dsiFn, STR("Count"));
+            if (!pItem || !pCount)
+            {
+                VLOG(STR("[MoriaCppMod] [AddSaddleToGoat] expected parms missing — bail\n"));
+                return false;
+            }
+            *reinterpret_cast<UClass**>(buf.data() + pItem->GetOffset_Internal()) = saddleCls;
+            *reinterpret_cast<int32_t*>(buf.data() + pCount->GetOffset_Internal()) = 1;
+            VLOG(STR("[MoriaCppMod] [AddSaddleToGoat] firing ServerDebugSetItem(BP_SaddleBags_Goat_C, 1) on goat InvComp={:p}\n"),
+                 (void*)goatInv);
+            if (!safeProcessEvent(goatInv, dsiFn, buf.data()))
+            {
+                VLOG(STR("[MoriaCppMod] [AddSaddleToGoat] ServerDebugSetItem PE returned false\n"));
+                return false;
+            }
+            int after = countGoatItems();
+            VLOG(STR("[MoriaCppMod] [AddSaddleToGoat] goat InvComp.Items count AFTER = {} (delta {})\n"),
+                 after, after - before);
+            if (after > before)
+            {
+                VLOG(STR("[MoriaCppMod] [AddSaddleToGoat] SUCCESS — bag added to goat inventory\n"));
+                showOnScreen(L"Saddlebag added to goat inventory", 3.0f, 0.4f, 0.9f, 0.4f);
+                return true;
+            }
+            else
+            {
+                VLOG(STR("[MoriaCppMod] [AddSaddleToGoat] count unchanged — RPC may be player-only\n"));
+                showOnScreen(L"ServerDebugSetItem rejected on goat InvComp", 3.0f, 0.95f, 0.7f, 0.4f);
+                return false;
+            }
         }
 
         // Find the goat's UMorNPCComponent and call SetRoleFuzzy("Porter") on it.
@@ -3459,99 +4104,375 @@
                 }
             }
 
-            // ───── rc.71 IMPLEMENTATION ─────
-            // rc.70 diagnostic confirmed: only ServerUse(parmSize=20) on
-            // MorInventoryComponent matches an open/use pattern. Walk goat's
-            // InvComp.Items array, find the saddlebag entry (BP_SaddleBags_Goat_C
-            // or any class containing "SaddleBag"/"EpicPack"), get its ItemHandle
-            // ID, call ServerUse on the GOAT's InvComp with that handle.
+            // ───── rc.4 IMPLEMENTATION (Desktop Claude recon 2026-05-22) ─────
+            // ServerUse on the slot wrapper has been confirmed to no-op
+            // (rc.3b proved this empirically). The fix is to spawn the
+            // vanilla WBP_UI_Inventory_Screen_StorageMode_C widget directly
+            // and bind it to the goat's MorInventoryComponent via the
+            // ExposeOnSpawn bindings the parent widget already declares:
+            //   • isOpenedFromNPC : bool   (load-bearing — engages NPC routing)
+            //   • AssociatedNPC   : Object*
+            //   • InventoryComponent : Object*
+            //   • Target          : Object*  (mirror vanilla chest pattern)
+            //   • isStorageView   : bool
             //
-            // (v1.4.0's player-side ServerUse hang doesn't necessarily apply —
-            // architecture is different: saddlebag is equipped on goat, not in
-            // player's inventory. Goat-side hasn't been tested yet.)
+            // CRITICAL TIMING: isOpenedFromNPC has CPF_ExposeOnSpawn — it MUST
+            // be set before AddToViewport (which triggers Construct). We
+            // set it via reflection on the freshly-created widget instance
+            // immediately after WidgetBlueprintLibrary::Create returns,
+            // BEFORE AddToViewport.
             if (!goatInv || !isObjectAlive(goatInv)) {
                 VLOG(STR("[MoriaCppMod] [GoatSaddle] no MorInventoryComponent on goat — abort\n"));
                 showOnScreen(L"Goat has no inventory component", 2.5f, 0.9f, 0.4f, 0.4f);
                 return;
             }
 
+            // [rc.11 2026-05-22] ALL DLL-side paths exhausted.
+            //
+            // Test matrix:
+            //   rc.3:    ServerEquipDummyItem on goat → cosmetic only, no storage
+            //   rc.4-6:  Widget direct-spawn → broken render (NPC placeholders,
+            //            items in midair, build HUD bleed)
+            //   rc.7:    ServerUse on player's bag → works mechanically but
+            //            wrong architecture (bag-on-player, not bag-on-goat)
+            //   rc.9:    ServerUse on goat's wrapper w/ probe pak → fires
+            //            cleanly, no UI surfaces (cross-actor authority)
+            //   rc.10:   Widget direct-spawn w/ probe pak → same broken
+            //            render as rc.4-6, probe pak's storage redirect
+            //            didn't fix it
+            //
+            // Cross-actor authority gap requires a UI broker (state
+            // machine) that we cannot easily reconstruct from C++. Tobi
+            // needs to add the BP graph wire on his side. See message to
+            // Desktop Claude documenting the exhaustive test set.
+            //
+            // Safe no-op + toast until that lands. The rc.4-rc.10 spawn
+            // code lives in #if 0 below for revival once Tobi delivers.
+            // [rc.12c 2026-05-23] Tobi shipped v1.6.0 which changed
+            // BP_NpcGoat.InvComp.StorageHandle.RowName from
+            // "Goat.Slot.EpicPack" (1×1 custom slot) to "Dwarf.Inventory"
+            // (vanilla dwarf body inventory). The cross-actor authority
+            // gate we hit in rc.9 may have been keyed on storage config —
+            // with the wrapper now backed by dwarf-standard inventory
+            // semantics, ServerUse may now surface UI.
+            //
+            // RETRY the rc.9 ServerUse-on-goat-wrapper path. If it now
+            // opens the UI, Tobi's data-only change solved it natively.
+            // If it still fires-without-effect (same as rc.9 outcome),
+            // we're back to phantom-chest territory.
             FProperty* itemsProp = goatInv->GetPropertyByNameInChain(STR("Items"));
-            if (!itemsProp) {
+            if (!itemsProp)
+            {
                 VLOG(STR("[MoriaCppMod] [GoatSaddle] no Items property on goat InvComp\n"));
-                showOnScreen(L"Goat inventory empty", 2.5f, 0.9f, 0.7f, 0.4f);
                 return;
             }
-
             uint8_t* listBase = reinterpret_cast<uint8_t*>(goatInv)
                               + itemsProp->GetOffset_Internal() + iiaListOff();
-            if (!isReadableMemory(listBase, 16)) {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] Items list base unreadable\n"));
-                return;
-            }
+            if (!isReadableMemory(listBase, 16)) return;
             uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
             int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
-            VLOG(STR("[MoriaCppMod] [GoatSaddle] goat InvComp.Items: Num={} Data={:p}\n"),
-                 arrNum, (void*)arrData);
-
-            if (!arrData || arrNum <= 0) {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] goat inventory has no items\n"));
-                showOnScreen(L"Goat has no saddlebag equipped", 2.5f, 0.9f, 0.7f, 0.4f);
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] (rc.12c retry under v1.6.0 Dwarf.Inventory) goat Items Num={}\n"), arrNum);
+            if (!arrData || arrNum <= 0)
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] goat inventory empty\n"));
+                showOnScreen(L"Goat inventory empty", 2.5f, 0.9f, 0.7f, 0.4f);
                 return;
             }
 
             int stride  = iiSize();
             int itemOff = iiItemOff();
             int idOff   = iiIDOff();
-            int32_t saddlebagID = 0;
-            std::wstring matchedCls;
-            for (int i = 0; i < arrNum && i < 64; ++i) {
+            int32_t targetID = 0;
+            std::wstring targetCls;
+            for (int i = 0; i < arrNum && i < 64; ++i)
+            {
                 uint8_t* entry = arrData + i * stride;
                 if (!isReadableMemory(entry, stride)) continue;
                 UClass* itemCls = *reinterpret_cast<UClass**>(entry + itemOff);
                 int32_t itemID  = *reinterpret_cast<int32_t*>(entry + idOff);
                 std::wstring cls;
-                if (itemCls && isObjectAlive(itemCls)) {
+                if (itemCls && isObjectAlive(itemCls))
+                {
                     try { cls = itemCls->GetName(); } catch (...) {}
                 }
                 VLOG(STR("[MoriaCppMod] [GoatSaddle]   item[{}] id={} class='{}'\n"),
                      i, itemID, cls.empty() ? STR("?") : cls.c_str());
-                // Match: Tobi's exact class first, then any pack-shaped fallback
-                if (cls == STR("BP_SaddleBags_Goat_C") ||
-                    cls.find(STR("SaddleBag")) != std::wstring::npos ||
-                    cls.find(STR("Saddlebag")) != std::wstring::npos ||
-                    cls.find(STR("EpicPack")) != std::wstring::npos)
+                // Prefer wrapper/saddlebag-shaped match; fall back to first item.
+                if (targetID == 0 && itemID != 0)
                 {
-                    if (saddlebagID == 0) {  // first match wins
-                        saddlebagID = itemID;
-                        matchedCls = cls;
+                    if (cls.find(STR("Goat_Slot")) != std::wstring::npos
+                     || cls.find(STR("SaddleBag")) != std::wstring::npos
+                     || cls.find(STR("Saddlebag")) != std::wstring::npos
+                     || cls.find(STR("EpicPack")) != std::wstring::npos)
+                    {
+                        targetID = itemID;
+                        targetCls = cls;
+                    }
+                }
+            }
+            // Fallback: first non-zero item if no class match.
+            if (targetID == 0)
+            {
+                for (int i = 0; i < arrNum && i < 64; ++i)
+                {
+                    uint8_t* entry = arrData + i * stride;
+                    int32_t itemID = *reinterpret_cast<int32_t*>(entry + idOff);
+                    if (itemID != 0) { targetID = itemID; break; }
+                }
+            }
+            if (targetID == 0)
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] no usable item handle in goat inventory\n"));
+                showOnScreen(L"No usable items on goat", 2.5f, 0.9f, 0.7f, 0.4f);
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] targeting handle id={} class='{}'\n"),
+                 targetID, targetCls.empty() ? STR("(first item)") : targetCls.c_str());
+
+            auto* useFn = goatInv->GetFunctionByNameInChain(STR("ServerUse"));
+            if (!useFn)
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse missing on goat InvComp\n"));
+                return;
+            }
+            std::vector<uint8_t> buf(useFn->GetParmsSize(), 0);
+            *reinterpret_cast<int32_t*>(buf.data() + 0) = targetID;
+            try { safeProcessEvent(goatInv, useFn, buf.data()); } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse(ItemHandle.ID={}) fired on goat InvComp — UI should open if v1.6.0 Dwarf.Inventory unlocked authority\n"),
+                 targetID);
+            showOnScreen(L"Saddlebag click dispatched (v1.6.0 retest)", 1.5f, 0.4f, 0.9f, 0.4f);
+        }
+
+        // Dormant rc.4-rc.7 implementations preserved as commented source
+        // for when Tobi's saddlebag slot lands. They reference local vars
+        // from openGoatSaddlebagInventory's frame — wrapped in #if 0 so
+        // they compile out cleanly. See git history rc.4/rc.6/rc.7 for the
+        // live versions.
+#if 0
+        // [rc.6 2026-05-22] One-shot: dump every property on the goat's
+            // first inventory entry (the slot wrapper). Tells us the actual
+            // tag string Tobi uses so we can match it against the widget's
+            // expected tag. Gated by m_goatSaddleWrapperDumped so it only
+            // fires once per session. Walks Items[0] memory + reflects each
+            // UPROPERTY against the FItemInstance struct.
+            if (!m_goatSaddleWrapperDumped)
+            {
+                m_goatSaddleWrapperDumped = true;
+                FProperty* itemsProp = goatInv->GetPropertyByNameInChain(STR("Items"));
+                if (itemsProp)
+                {
+                    uint8_t* listBase = reinterpret_cast<uint8_t*>(goatInv)
+                                      + itemsProp->GetOffset_Internal() + iiaListOff();
+                    if (isReadableMemory(listBase, 16))
+                    {
+                        uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+                        int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
+                        if (arrData && arrNum > 0)
+                        {
+                            int stride  = iiSize();
+                            int itemOff = iiItemOff();
+                            uint8_t* entry = arrData + 0 * stride;
+                            UClass* itemCls = (isReadableMemory(entry + itemOff, sizeof(UClass*)))
+                                ? *reinterpret_cast<UClass**>(entry + itemOff) : nullptr;
+                            if (itemCls && isObjectAlive(itemCls))
+                            {
+                                std::wstring clsName;
+                                try { clsName = itemCls->GetName(); } catch (...) {}
+                                VLOG(STR("[MoriaCppMod] [GoatSaddleDump] === wrapper CDO property dump for class '{}' ===\n"),
+                                     clsName.c_str());
+                                UObject* cdo = nullptr;
+                                try { cdo = itemCls->GetClassDefaultObject(); } catch (...) {}
+                                if (cdo && isObjectAlive(cdo))
+                                {
+                                    int propCount = 0;
+                                    try {
+                                        for (auto* p : itemCls->ForEachPropertyInChain())
+                                        {
+                                            if (!p) continue;
+                                            std::wstring pn;
+                                            try { pn = p->GetName(); } catch (...) { continue; }
+                                            int32 off = -1;
+                                            try { off = p->GetOffset_Internal(); } catch (...) {}
+                                            // Try to read as common types and log first non-zero
+                                            // representation. Best-effort: many properties will
+                                            // log as raw 8 bytes which is fine for diagnostic.
+                                            uint8_t* cdoBase = reinterpret_cast<uint8_t*>(cdo);
+                                            if (off < 0 || !isReadableMemory(cdoBase + off, 8))
+                                            {
+                                                VLOG(STR("[MoriaCppMod] [GoatSaddleDump]   {} off=0x{:04x} (unreadable)\n"),
+                                                     pn.c_str(), (unsigned)off);
+                                                ++propCount;
+                                                continue;
+                                            }
+                                            // Heuristic: try FName first if name contains "Tag" or "Row"
+                                            bool isTagish = (pn.find(STR("Tag")) != std::wstring::npos)
+                                                         || (pn.find(STR("Row")) != std::wstring::npos)
+                                                         || (pn.find(STR("Name")) != std::wstring::npos);
+                                            if (isTagish)
+                                            {
+                                                std::wstring tagStr = seh_fnameToString(cdoBase + off);
+                                                VLOG(STR("[MoriaCppMod] [GoatSaddleDump]   {} off=0x{:04x} (FName?)='{}'\n"),
+                                                     pn.c_str(), (unsigned)off,
+                                                     tagStr.empty() ? STR("?") : tagStr.c_str());
+                                            }
+                                            else
+                                            {
+                                                uint64_t raw = *reinterpret_cast<uint64_t*>(cdoBase + off);
+                                                VLOG(STR("[MoriaCppMod] [GoatSaddleDump]   {} off=0x{:04x} raw=0x{:016x}\n"),
+                                                     pn.c_str(), (unsigned)off, raw);
+                                            }
+                                            ++propCount;
+                                            if (propCount > 80) break;  // safety cap
+                                        }
+                                    } catch (...) {}
+                                    VLOG(STR("[MoriaCppMod] [GoatSaddleDump] === end ({} props) ===\n"), propCount);
+                                }
+                                else
+                                {
+                                    VLOG(STR("[MoriaCppMod] [GoatSaddleDump] wrapper CDO null/dead — skipped\n"));
+                                }
+                            }
+                        }
                     }
                 }
             }
 
-            if (saddlebagID == 0) {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] no saddlebag-shaped item found in goat InvComp\n"));
-                showOnScreen(L"Saddlebag not equipped on goat", 2.5f, 0.9f, 0.7f, 0.4f);
+            // 1. Resolve saddlebag class (cached from rc.3b onward).
+            UClass* saddleCls = ensureSaddlebagItemClass();
+            if (!saddleCls)
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] saddlebag class unresolved — bail\n"));
+                showOnScreen(L"Saddlebag class not loaded", 2.5f, 0.9f, 0.4f, 0.4f);
                 return;
             }
-            VLOG(STR("[MoriaCppMod] [GoatSaddle] matched saddlebag id={} class='{}'\n"),
-                 saddlebagID, matchedCls.c_str());
 
-            // Call ServerUse(ItemHandle) on the goat's InvComp.
-            // FItemHandle layout: int32 ID (+0), int32 Payload (+4), FWeakObjectPtr (+8 = 8B), pad to 20.
-            auto* useFn = goatInv->GetFunctionByNameInChain(STR("ServerUse"));
-            if (!useFn) {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse missing on goat InvComp — abort\n"));
-                showOnScreen(L"ServerUse missing", 2.5f, 0.9f, 0.4f, 0.4f);
+            // 2. Find the player's MorInventoryComponent.
+            UObject* playerInv = findPlayerInventoryComponent(m_localPawn);
+            if (!playerInv || !isObjectAlive(playerInv))
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] player InvComp not found\n"));
+                showOnScreen(L"Player inventory not accessible", 2.5f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+
+            // 3. Walk player's Items array looking for the saddlebag.
+            FProperty* itemsProp = playerInv->GetPropertyByNameInChain(STR("Items"));
+            if (!itemsProp)
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] no Items property on player InvComp\n"));
+                return;
+            }
+            uint8_t* listBase = reinterpret_cast<uint8_t*>(playerInv)
+                              + itemsProp->GetOffset_Internal() + iiaListOff();
+            if (!isReadableMemory(listBase, 16))
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] player Items list base unreadable\n"));
+                return;
+            }
+            uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+            int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] player InvComp.Items: Num={} (looking for class={:p})\n"),
+                 arrNum, (void*)saddleCls);
+
+            if (!arrData || arrNum <= 0)
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] player inventory empty — no saddlebag to use\n"));
+                showOnScreen(L"Craft saddlebags first (need them in inventory)", 3.0f, 0.95f, 0.7f, 0.4f);
+                return;
+            }
+
+            int stride  = iiSize();
+            int itemOff = iiItemOff();
+            int idOff   = iiIDOff();
+            int32_t saddleID = 0;
+            for (int i = 0; i < arrNum && i < 200; ++i)
+            {
+                uint8_t* entry = arrData + i * stride;
+                if (!isReadableMemory(entry, stride)) continue;
+                UClass* itemCls = *reinterpret_cast<UClass**>(entry + itemOff);
+                if (!itemCls || !isObjectAlive(itemCls)) continue;
+                if (itemCls != saddleCls) continue;
+                int32_t itemID = *reinterpret_cast<int32_t*>(entry + idOff);
+                if (itemID != 0) { saddleID = itemID; break; }
+            }
+
+            if (saddleID == 0)
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] no BP_SaddleBags_Goat_C in player inventory — craft prompt\n"));
+                showOnScreen(L"No saddlebags found — craft them first", 3.0f, 0.95f, 0.7f, 0.4f);
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] found player saddlebag handle ID={}\n"), saddleID);
+
+            // 4. ServerUse(ItemHandle) on the PLAYER's InvComp.
+            // FItemHandle layout: int32 ID (+0), int32 Payload (+4),
+            // FWeakObjectPtr (+8), pad to 20 bytes.
+            auto* useFn = playerInv->GetFunctionByNameInChain(STR("ServerUse"));
+            if (!useFn)
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse missing on player InvComp\n"));
+                showOnScreen(L"ServerUse not available", 2.5f, 0.9f, 0.4f, 0.4f);
                 return;
             }
             std::vector<uint8_t> buf(useFn->GetParmsSize(), 0);
-            *reinterpret_cast<int32_t*>(buf.data() + 0) = saddlebagID;
-            // Payload, WeakObjectPtr, padding stay zero — engine resolves by ID
-            try { safeProcessEvent(goatInv, useFn, buf.data()); } catch (...) {}
-            VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse(ItemHandle.ID={}) fired on goat InvComp={:p}\n"),
-                 saddlebagID, (void*)goatInv);
+            *reinterpret_cast<int32_t*>(buf.data() + 0) = saddleID;
+            // Payload/WeakObjectPtr/padding stay zero — engine resolves by ID.
+            try { safeProcessEvent(playerInv, useFn, buf.data()); } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse(ItemHandle.ID={}) fired on PLAYER InvComp={:p} — saddlebag UI should open\n"),
+                 saddleID, (void*)playerInv);
+#endif  // dormant rc.4-rc.7 saddlebag UI attempts
 
-            showOnScreen(L"Opening goat saddlebag...", 1.5f, 0.4f, 0.9f, 0.4f);
+        // [rc.5 2026-05-22] Tick-driven close for the goat saddlebag widget.
+        // Polled from gameThreadTick whenever m_goatSaddlebagWidget is
+        // non-null. Watches Esc + Tab (both are standard inventory-close
+        // keys in Moria's UI). Uses GetAsyncKeyState which reads OS-level
+        // state regardless of UE input mode, so this works even when the
+        // widget has captured focus.
+        void tickGoatSaddlebagWidget()
+        {
+            if (!m_goatSaddlebagWidget) return;
+            if (!isObjectAlive(m_goatSaddlebagWidget))
+            {
+                // Stale handle (widget GC'd from under us). Reset state.
+                m_goatSaddlebagWidget = nullptr;
+                setInputModeGame();
+                return;
+            }
+            // Edge-trigger Esc OR Tab.
+            static bool s_lastEsc = false;
+            static bool s_lastTab = false;
+            bool eDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+            bool tDown = (GetAsyncKeyState(VK_TAB)    & 0x8000) != 0;
+            bool fire = (eDown && !s_lastEsc) || (tDown && !s_lastTab);
+            s_lastEsc = eDown;
+            s_lastTab = tDown;
+            if (fire)
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] Esc/Tab pressed — closing widget\n"));
+                closeGoatSaddlebagInventory();
+            }
+        }
+
+        // [v7.2.0-rc.4 2026-05-22] Close handler for the goat saddlebag widget.
+        // Invoked by the toggle path in openGoatSaddlebagInventory (E-press
+        // dismisses), the tick-driven Esc/Tab handler, and (future) goat
+        // despawn hook.
+        void closeGoatSaddlebagInventory()
+        {
+            if (!m_goatSaddlebagWidget) return;
+            if (isObjectAlive(m_goatSaddlebagWidget))
+            {
+                if (auto* fn = m_goatSaddlebagWidget->GetFunctionByNameInChain(STR("RemoveFromParent")))
+                {
+                    std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+                    try { safeProcessEvent(m_goatSaddlebagWidget, fn, b.data()); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] RemoveFromParent fired on widget={:p}\n"),
+                         (void*)m_goatSaddlebagWidget);
+                }
+            }
+            m_goatSaddlebagWidget = nullptr;
+            setInputModeGame();
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] widget closed + input mode Game\n"));
         }
 
         // Button tracking — used by the PE-pre click filter to route clicks
@@ -5062,6 +5983,31 @@
             {
                 safeProcessEvent(goat, sdc, nullptr);
             }
+
+            // [v7.2.0-rc.3 2026-05-22] Auto-equip Tobi's saddlebag onto the
+            // goat's MorEquipComponent. Fills the empty slot wrapper that v1.5.0
+            // ships with so clicking "Saddlebags" in the menu opens real
+            // storage. Gated by [GoatExperimental] AutoEquipSaddleBag.
+            equipPorterSaddlebag(goat);
+
+            // [v7.2.0-rc.12a 2026-05-22] Spawn phantom chest above goat for
+            // OpenChest broker testing. Gated by [GoatExperimental]
+            // PhantomChest = true (default OFF). For 12a: chest is visible
+            // 200 cm above goat so user can walk to it and press E to
+            // confirm vanilla chest UI opens.
+            spawnPhantomChestNearGoat(goat);
+
+            // [v7.2.0-rc.12b 2026-05-23] Alternative: spawn the actual
+            // saddlebag (BP_SaddleBags_Goat_C) as a world actor in front
+            // of the goat, probe its open/use UFunctions, auto-call the
+            // first one. Gated by [GoatExperimental] SaddlebagAtGoat = true.
+            spawnSaddlebagAtGoat(goat);
+
+            // [v7.2.0-rc.12b.2 2026-05-23] Parallel attempt: add the bag
+            // directly to the goat's MorInventoryComponent via
+            // ServerDebugSetItem. Tests whether the bag-on-goat
+            // architecture is achievable from DLL side. Same INI flag.
+            addSaddlebagToGoatInventory(goat);
 
             // [rc.49.1 2026-05-12] v1.3.0 modded BP_NpcGoat carries porter-mode
             // wiring natively (MorWandererComponent + cloned MorNPC interaction
@@ -7710,6 +8656,12 @@
             m_followGoats.push_back(rec);
             VLOG(STR("[MoriaCppMod] [Goat] adopted existing registered goat into follow tracking; herd size={}\n"),
                  m_followGoats.size());
+
+            // [v7.2.0-rc.3 2026-05-22] Save-persisted goats re-enter the world
+            // with the same empty-slot bug as fresh spawns (Tobi's BeginPlay
+            // graph doesn't fill the slot regardless of whether the goat is
+            // fresh or restored). Equip on adopt too.
+            equipPorterSaddlebag(goat);
         }
 
         // NUM- toggle: spawn if no goat is currently tracked; despawn if one is.

@@ -632,14 +632,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("7.2.0-rc.2");
+            ModVersion = STR("7.2.0-rc.12c");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v7.2.0-rc.2 (code review cleanup: dead code removed, hardcoded offsets reflective)\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v7.2.0-rc.12c (v1.6.0 retest: ServerUse on goat wrapper now that StorageHandle=Dwarf.Inventory)\n"));
         }
 
         ~MoriaCppMod() override
@@ -679,7 +679,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v7.2.0-rc.2 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v7.2.0-rc.12c (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
@@ -2527,6 +2527,7 @@ namespace MoriaMods
             // widget tree); kept dormant for archaeology.
             s_instance->tickGoatModalDeferred();
             s_instance->tickGoatSubmenu();
+            s_instance->tickGoatSaddlebagWidget();  // [rc.5] Esc/Tab close handler
             s_instance->tickGoatMenuInject();  // no-op (gated internally)
             // s_instance->tickGoatMenuProbe();  // disabled — no Path A probe needed
 

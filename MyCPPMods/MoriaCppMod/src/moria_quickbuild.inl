@@ -168,6 +168,28 @@
                 file << "Enabled = true\n";
             }
 
+            // [GoatExperimental]: speculative DLL-side workarounds for gaps
+            // in Tobi's pak. Always emit so users can flip flags without
+            // hunting docs. Defaults reflect current testing values.
+            {
+                file << "\n[GoatExperimental]\n";
+                file << "AutoEquipSaddleBag = " << (m_autoEquipSaddleBag ? "true" : "false") << "\n";
+                // [rc.5] Off by default — widget spawn caused player-inventory
+                // damage in rc.4. Flip to true to test once tag-mismatch +
+                // close-handler land cleanly.
+                file << "EnableGoatSaddleUI = " << (m_enableGoatSaddleUI ? "true" : "false") << "\n";
+                // [rc.12a] Phantom-chest experiment. Default OFF. When ON,
+                // bell-summon spawns BP_StorageChest_Construction 200 cm
+                // above goat; goal is to use chest's OpenChest UFunction
+                // as the UI broker for the saddlebag flow.
+                file << "PhantomChest = " << (m_enablePhantomChest ? "true" : "false") << "\n";
+                // [rc.12b] Saddlebag-as-world-actor experiment. Default OFF.
+                // When ON, bell-summon spawns BP_SaddleBags_Goat_C 100 cm
+                // in front of goat, probes its open UFunctions, auto-calls
+                // the first match.
+                file << "SaddlebagAtGoat = " << (m_enableSaddlebagAtGoat ? "true" : "false") << "\n";
+            }
+
             // [Tweaks]: only non-default (index > 0) entries are written.
             {
                 file << "\n[Tweaks]\n";
@@ -398,6 +420,27 @@
                             {
                                 bool isTrue = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
                                 m_goatSaveProbesEnabled = isTrue;
+                            }
+                        }
+                        else if (strEqualCI(section, "GoatExperimental"))
+                        {
+                            // [v7.2.0-rc.3] Speculative workarounds for Tobi
+                            // pak gaps. Each key is independently toggleable.
+                            if (strEqualCI(kv->key, "AutoEquipSaddleBag"))
+                            {
+                                m_autoEquipSaddleBag = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                            else if (strEqualCI(kv->key, "EnableGoatSaddleUI"))
+                            {
+                                m_enableGoatSaddleUI = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                            else if (strEqualCI(kv->key, "PhantomChest"))
+                            {
+                                m_enablePhantomChest = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                            }
+                            else if (strEqualCI(kv->key, "SaddlebagAtGoat"))
+                            {
+                                m_enableSaddlebagAtGoat = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
                             }
                         }
                         else if (strEqualCI(section, "Tweaks"))
