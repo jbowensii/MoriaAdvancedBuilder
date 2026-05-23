@@ -4045,62 +4045,72 @@
                  (void*)goatEquip, (void*)goatInv);
 
             // ───── ONE-SHOT DIAGNOSTIC ─────
+            // [rc.12e 2026-05-23] Extended UFunction dump using
+            // ForEachFunctionInChain — enumerates EVERY UFunction in the
+            // class chain (not just the hardcoded candidate list rc.3
+            // probed). Filters to names containing inventory/storage/open/
+            // show/access/container/use/server/local/broadcast/UI
+            // keywords. One-shot per session, gated by
+            // m_goatSaddlebagDiagDumped. Goal: surface any cross-actor-
+            // aware UFunction we missed (OpenWith / OpenContainerFor /
+            // BroadcastInventoryOpened / Server_OpenFor / etc.).
             if (!m_goatSaddlebagDiagDumped) {
                 m_goatSaddlebagDiagDumped = true;
-                auto dumpUFuncs = [&](UObject* o, const wchar_t* label) {
+                auto dumpAllUFuncs = [&](UObject* o, const wchar_t* label) {
                     if (!o || !isObjectAlive(o)) return;
                     RC::Unreal::UClass* c = nullptr;
                     try { c = o->GetClassPrivate(); } catch (...) { return; }
                     if (!c) return;
-                    VLOG(STR("[MoriaCppMod] [GoatSaddleDiag] === UFuncs matching open/use/show/activate/storage/container on {} ===\n"), label);
-                    RC::Unreal::UStruct* cur = c;
-                    int depth = 0;
-                    while (cur && depth < 6) {
-                        std::wstring sn;
-                        try { sn = cur->GetName(); } catch (...) {}
-                        // Iterate UFunctions via Children chain on the UStruct
-                        // by checking GetFunctionByNameInChain candidates.
-                        const wchar_t* keywords[] = {
-                            STR("Open"), STR("Use"), STR("Show"), STR("Activate"),
-                            STR("Storage"), STR("Container"), STR("Inventory"),
-                            STR("Interact"), STR("Server"), nullptr
-                        };
-                        // We can't easily iterate UFunctions on a UClass directly
-                        // via UE4SS exposed API; we know GetFunctionByNameInChain
-                        // works. Instead, iterate properties (some are
-                        // delegates / interactions we can match) and also list
-                        // common UFunction candidates by name probe.
-                        const wchar_t* candidates[] = {
-                            STR("ServerUseItem"), STR("ServerUse"), STR("ServerUseEquippedItem"),
-                            STR("OpenStorage"), STR("OpenContainer"), STR("OpenInventory"),
-                            STR("ShowInventory"), STR("ShowStorage"),
-                            STR("ActivateEquippedItem"), STR("UseEquippedItem"),
-                            STR("RequestUseItem"), STR("UseFromEquipment"),
-                            STR("ServerInteract"), STR("OnInteract"),
-                            STR("ServerEquipDummyItem"), STR("ServerUnequip"),
-                            nullptr
-                        };
-                        for (const wchar_t** p = candidates; *p; ++p) {
-                            auto* fn = o->GetFunctionByNameInChain(*p);
-                            if (fn) {
-                                VLOG(STR("[MoriaCppMod] [GoatSaddleDiag]   {} . {} (parmSize={}) PRESENT\n"),
-                                     sn.c_str(), *p, fn->GetParmsSize());
-                            }
+                    VLOG(STR("[MoriaCppMod] [GoatSaddleDiag] === ALL UFuncs (keyword-filtered) on {} ===\n"), label);
+                    int totalCount = 0;
+                    int hitCount = 0;
+                    try {
+                        for (auto* fn : c->ForEachFunctionInChain())
+                        {
+                            if (totalCount >= 800) break;
+                            ++totalCount;
+                            std::wstring fnName;
+                            try { fnName = fn->GetName(); } catch (...) { continue; }
+                            std::wstring lo = fnName;
+                            for (auto& ch : lo) ch = (wchar_t)towlower(ch);
+                            bool isInteresting =
+                                lo.find(L"open")       != std::wstring::npos
+                             || lo.find(L"show")       != std::wstring::npos
+                             || lo.find(L"access")     != std::wstring::npos
+                             || lo.find(L"inventory")  != std::wstring::npos
+                             || lo.find(L"storage")    != std::wstring::npos
+                             || lo.find(L"container")  != std::wstring::npos
+                             || lo.find(L"interact")   != std::wstring::npos
+                             || lo.find(L"use")        != std::wstring::npos
+                             || lo.find(L"broadcast")  != std::wstring::npos
+                             || lo.find(L"hud")        != std::wstring::npos
+                             || lo.find(L"widget")     != std::wstring::npos;
+                            if (!isInteresting) continue;
+                            int parms = 0;
+                            try { parms = fn->GetParmsSize(); } catch (...) {}
+                            VLOG(STR("[MoriaCppMod] [GoatSaddleDiag]   {} (parmSize={}) PRESENT\n"),
+                                 fnName.c_str(), parms);
+                            ++hitCount;
                         }
-                        RC::Unreal::UStruct* sup = nullptr;
-                        try { sup = cur->GetSuperStruct(); } catch (...) {}
-                        if (!sup || sup == cur) break;
-                        cur = sup;
-                        ++depth;
-                    }
+                    } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [GoatSaddleDiag] === end ({} hits / {} scanned) ===\n"),
+                         hitCount, totalCount);
                 };
-                dumpUFuncs(goatEquip, STR("goat.EquipComp"));
-                dumpUFuncs(goatInv,   STR("goat.InvComp"));
-                dumpUFuncs(goat,      STR("goat (actor)"));
-
-                // Also dump player controller — for ServerUse with goat target
+                dumpAllUFuncs(goatEquip, STR("goat.EquipComp"));
+                dumpAllUFuncs(goatInv,   STR("goat.InvComp"));
+                dumpAllUFuncs(goat,      STR("goat (actor)"));
                 if (m_localPC && isObjectAlive(m_localPC)) {
-                    dumpUFuncs(m_localPC, STR("player.PC"));
+                    dumpAllUFuncs(m_localPC, STR("player.PC"));
+                }
+                // Also dump BP_SaddleBags_Goat_C's class — bag class might
+                // expose its own opener.
+                UClass* saddleCls = ensureSaddlebagItemClass();
+                if (saddleCls && isObjectAlive(saddleCls))
+                {
+                    UObject* saddleCDO = nullptr;
+                    try { saddleCDO = saddleCls->GetClassDefaultObject(); } catch (...) {}
+                    if (saddleCDO && isObjectAlive(saddleCDO))
+                        dumpAllUFuncs(saddleCDO, STR("BP_SaddleBags_Goat_C (CDO)"));
                 }
             }
 
@@ -4179,11 +4189,17 @@
                 return;
             }
 
+            // [rc.12d 2026-05-23] Priority match for psi.2 pak:
+            //   1. Prefer BP_SaddleBags_Goat_C (the actual bag — what
+            //      psi.2's loadout chain should spawn into goat inventory)
+            //   2. Fall back to wrapper / SaddleBag / EpicPack / Goat_Slot
+            //   3. Fall back to first non-zero item
             int stride  = iiSize();
             int itemOff = iiItemOff();
             int idOff   = iiIDOff();
-            int32_t targetID = 0;
-            std::wstring targetCls;
+            int32_t bagID = 0;       std::wstring bagCls;       // priority 1
+            int32_t wrapperID = 0;   std::wstring wrapperCls;   // priority 2
+            int32_t firstID = 0;     std::wstring firstCls;     // priority 3
             for (int i = 0; i < arrNum && i < 64; ++i)
             {
                 uint8_t* entry = arrData + i * stride;
@@ -4197,50 +4213,128 @@
                 }
                 VLOG(STR("[MoriaCppMod] [GoatSaddle]   item[{}] id={} class='{}'\n"),
                      i, itemID, cls.empty() ? STR("?") : cls.c_str());
-                // Prefer wrapper/saddlebag-shaped match; fall back to first item.
-                if (targetID == 0 && itemID != 0)
+                if (itemID == 0) continue;
+                if (firstID == 0) { firstID = itemID; firstCls = cls; }
+                // Priority 1: the actual bag instance (psi.2 loadout chain output).
+                if (bagID == 0 && (cls == STR("BP_SaddleBags_Goat_C")
+                                || cls == STR("BP_PorterGoatSaddlebags_C")))
                 {
-                    if (cls.find(STR("Goat_Slot")) != std::wstring::npos
-                     || cls.find(STR("SaddleBag")) != std::wstring::npos
-                     || cls.find(STR("Saddlebag")) != std::wstring::npos
-                     || cls.find(STR("EpicPack")) != std::wstring::npos)
-                    {
-                        targetID = itemID;
-                        targetCls = cls;
-                    }
+                    bagID = itemID;
+                    bagCls = cls;
+                }
+                // Priority 2: wrapper or pack-shaped fallback.
+                else if (wrapperID == 0
+                       && (cls.find(STR("Goat_Slot")) != std::wstring::npos
+                        || cls.find(STR("SaddleBag")) != std::wstring::npos
+                        || cls.find(STR("Saddlebag")) != std::wstring::npos
+                        || cls.find(STR("EpicPack")) != std::wstring::npos))
+                {
+                    wrapperID = itemID;
+                    wrapperCls = cls;
                 }
             }
-            // Fallback: first non-zero item if no class match.
-            if (targetID == 0)
-            {
-                for (int i = 0; i < arrNum && i < 64; ++i)
-                {
-                    uint8_t* entry = arrData + i * stride;
-                    int32_t itemID = *reinterpret_cast<int32_t*>(entry + idOff);
-                    if (itemID != 0) { targetID = itemID; break; }
-                }
-            }
+            int32_t targetID = 0;
+            std::wstring targetCls;
+            if (bagID != 0)         { targetID = bagID;     targetCls = bagCls;     }
+            else if (wrapperID != 0){ targetID = wrapperID; targetCls = wrapperCls; }
+            else if (firstID != 0)  { targetID = firstID;   targetCls = firstCls;   }
             if (targetID == 0)
             {
                 VLOG(STR("[MoriaCppMod] [GoatSaddle] no usable item handle in goat inventory\n"));
                 showOnScreen(L"No usable items on goat", 2.5f, 0.9f, 0.7f, 0.4f);
                 return;
             }
-            VLOG(STR("[MoriaCppMod] [GoatSaddle] targeting handle id={} class='{}'\n"),
-                 targetID, targetCls.empty() ? STR("(first item)") : targetCls.c_str());
+            const wchar_t* tier = (bagID != 0)         ? STR("priority1=BAG (psi.2 loadout)")
+                                : (wrapperID != 0)     ? STR("priority2=WRAPPER (pre-psi)")
+                                :                        STR("priority3=FIRST (fallback)");
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] targeting handle id={} class='{}' tier={}\n"),
+                 targetID, targetCls.empty() ? STR("?") : targetCls.c_str(), tier);
 
+            // [rc.12f 2026-05-23] Angle-1 from Desktop Claude's broker hunt.
+            // rc.12e probe surfaced TWO BP-generated handlers on goat:
+            //   BndEvt__BP_NpcGoat_..._MorNpcOnManageInteraction__DelegateSignature
+            //   BndEvt__BP_NpcGoat_..._MorNpcOnManageLocalInteraction__DelegateSignature
+            //
+            // These are the same handlers BP_NpcDwarf binds — when a player
+            // clicks "Manage" on a recruited dwarf, the MorNpcOnManage*
+            // delegate fires and these BndEvt handlers run the UI-spawn
+            // flow. Tobi's BP_NpcGoat has them bound too. We can call them
+            // directly via ProcessEvent — parmSize=0, no arguments needed.
+            // The "Local" variant is client-side and most likely to surface
+            // UI on the calling player's view.
+            //
+            // Strategy: find each handler by substring match on its name
+            // (full name includes BP class + component + event index so
+            // we can't use a fixed string). Try LocalInteraction first.
+            UClass* goatCls = nullptr;
+            try { goatCls = goat->GetClassPrivate(); } catch (...) {}
+            UFunction* localManageFn = nullptr;
+            UFunction* netManageFn = nullptr;
+            if (goatCls)
+            {
+                try {
+                    for (auto* fn : goatCls->ForEachFunctionInChain())
+                    {
+                        if (!fn) continue;
+                        std::wstring fnName;
+                        try { fnName = fn->GetName(); } catch (...) { continue; }
+                        if (fnName.find(STR("MorNpcOnManageLocalInteraction")) != std::wstring::npos)
+                            localManageFn = fn;
+                        else if (fnName.find(STR("MorNpcOnManageInteraction")) != std::wstring::npos)
+                            netManageFn = fn;
+                    }
+                } catch (...) {}
+            }
+
+            auto fireHandler = [&](UFunction* fn, const wchar_t* label) -> bool {
+                if (!fn) return false;
+                int parmsSize = 0;
+                try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                std::wstring fnName;
+                try { fnName = fn->GetName(); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] firing {} handler '{}' (parmSize={}) on goat={:p}\n"),
+                     label, fnName.c_str(), parmsSize, (void*)goat);
+                if (parmsSize == 0)
+                {
+                    try { safeProcessEvent(goat, fn, nullptr); } catch (...) {}
+                }
+                else
+                {
+                    std::vector<uint8_t> mbuf(parmsSize, 0);
+                    try { safeProcessEvent(goat, fn, mbuf.data()); } catch (...) {}
+                }
+                return true;
+            };
+
+            // Priority 1: LocalInteraction (client-side UI most likely).
+            if (fireHandler(localManageFn, STR("MorNpcOnManageLocalInteraction")))
+            {
+                showOnScreen(L"Manage (Local) handler fired — expect UI", 1.5f, 0.4f, 0.9f, 0.4f);
+                return;
+            }
+            // Priority 2: network variant.
+            if (fireHandler(netManageFn, STR("MorNpcOnManageInteraction")))
+            {
+                showOnScreen(L"Manage (Net) handler fired — expect UI", 1.5f, 0.4f, 0.9f, 0.4f);
+                return;
+            }
+
+            // Last resort: rc.12c ServerUse(bag handle) — known to no-op
+            // but kept as belt-and-suspenders in case Manage handler is
+            // bound but empty.
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] no Manage handler found — falling back to ServerUse(bag) which is known to no-op\n"));
             auto* useFn = goatInv->GetFunctionByNameInChain(STR("ServerUse"));
             if (!useFn)
             {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse missing on goat InvComp\n"));
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse also missing on goat InvComp\n"));
                 return;
             }
             std::vector<uint8_t> buf(useFn->GetParmsSize(), 0);
             *reinterpret_cast<int32_t*>(buf.data() + 0) = targetID;
             try { safeProcessEvent(goatInv, useFn, buf.data()); } catch (...) {}
-            VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse(ItemHandle.ID={}) fired on goat InvComp — UI should open if v1.6.0 Dwarf.Inventory unlocked authority\n"),
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse(ItemHandle.ID={}) fired on goat InvComp (fallback)\n"),
                  targetID);
-            showOnScreen(L"Saddlebag click dispatched (v1.6.0 retest)", 1.5f, 0.4f, 0.9f, 0.4f);
+            showOnScreen(L"Saddlebag click dispatched (fallback ServerUse)", 1.5f, 0.9f, 0.7f, 0.4f);
         }
 
         // Dormant rc.4-rc.7 implementations preserved as commented source

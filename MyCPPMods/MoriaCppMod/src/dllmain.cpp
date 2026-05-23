@@ -632,14 +632,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("7.2.0-rc.12c");
+            ModVersion = STR("7.2.0-rc.12f");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v7.2.0-rc.12c (v1.6.0 retest: ServerUse on goat wrapper now that StorageHandle=Dwarf.Inventory)\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v7.2.0-rc.12f (Angle 1: fire MorNpcOnManageLocalInteraction BndEvt handler directly on goat)\n"));
         }
 
         ~MoriaCppMod() override
@@ -679,7 +679,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v7.2.0-rc.12c (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v7.2.0-rc.12f (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
@@ -4054,6 +4054,39 @@ namespace MoriaMods
                         m_charLoadTime = GetTickCount64();
                         m_localPC = findPlayerController();
                         m_localPawn = getPawn();
+
+                        // [rc.12d 2026-05-23] PsiPath install-detection probe.
+                        // Tobi's psi.2 pak ships /Game/Mods/PorterGoat/
+                        // CharacterData/DA_NpcGoat_CharacterData_C (the
+                        // FGKCharacterData aggregator). If it resolves on
+                        // startup, psi.2 is installed and the runtime
+                        // loadout chain should fire on goat spawn. If not,
+                        // user is still on v1.5.0/v1.6.0 baseline.
+                        {
+                            static bool s_psiProbed = false;
+                            if (!s_psiProbed)
+                            {
+                                s_psiProbed = true;
+                                const wchar_t* psiPath = STR("/Game/Mods/PorterGoat/CharacterData/DA_NpcGoat_CharacterData.DA_NpcGoat_CharacterData_C");
+                                UClass* psiCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, psiPath);
+                                if (!psiCls) psiCls = goat_loadClassAssetBlocking(psiPath);
+                                if (psiCls && isObjectAlive(psiCls))
+                                {
+                                    VLOG(STR("[MoriaCppMod] [Saddle-psi] DA_NpcGoat_CharacterData class load: {:p} — psi.2 pak DETECTED\n"),
+                                         (void*)psiCls);
+                                }
+                                else
+                                {
+                                    VLOG(STR("[MoriaCppMod] [Saddle-psi] DA_NpcGoat_CharacterData class load: NOT_FOUND — psi.2 pak NOT installed (still on v1.5/v1.6 baseline)\n"));
+                                }
+                                // Also probe the loadout class
+                                const wchar_t* loadoutPath = STR("/Game/Mods/PorterGoat/Loadouts/DA_NpcGoat_PorterLoadout.DA_NpcGoat_PorterLoadout_C");
+                                UClass* loadoutCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, loadoutPath);
+                                if (!loadoutCls) loadoutCls = goat_loadClassAssetBlocking(loadoutPath);
+                                VLOG(STR("[MoriaCppMod] [Saddle-psi] DA_NpcGoat_PorterLoadout class load: {:p}\n"),
+                                     (void*)loadoutCls);
+                            }
+                        }
                         // rc.41: arm a RECURRING post-load NPC sweep.
                         // First fire at +30 s, then every 30 s up to
                         // +5 min after character-load. Live log
