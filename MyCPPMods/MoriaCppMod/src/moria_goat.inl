@@ -58,6 +58,38 @@
         UClass*    m_goatSaddlebagWidgetCls{nullptr};
         UObject*   m_goatSaddlebagWidget{nullptr};
         bool       m_enableGoatSaddleUI{false};   // INI: [GoatExperimental] EnableGoatSaddleUI = true
+
+        // [v8.2.x 2026-07-12] UTF-8 double-encoding tolerance for the goat
+        // name. A PowerShell ini round-trip corrupted 'Rûdh' → 'RÃ»dh'
+        // (each non-ASCII wchar expanded to its UTF-8 bytes as latin-1
+        // chars) and that mojibake got written into the save's NpcInfo
+        // entry. Matching BOTH forms lets AutoRestore/GuidAdopt find the
+        // existing marker; the idempotent identity write then repairs the
+        // stored name to the correct form.
+        std::wstring goatNameMojibake() const
+        {
+            std::wstring out;
+            for (wchar_t c : m_goatName)
+            {
+                if (c < 0x80) out += c;
+                else if (c < 0x800)
+                {
+                    out += static_cast<wchar_t>(0xC0 | (c >> 6));
+                    out += static_cast<wchar_t>(0x80 | (c & 0x3F));
+                }
+                else
+                {
+                    out += static_cast<wchar_t>(0xE0 | (c >> 12));
+                    out += static_cast<wchar_t>(0x80 | ((c >> 6) & 0x3F));
+                    out += static_cast<wchar_t>(0x80 | (c & 0x3F));
+                }
+            }
+            return out;
+        }
+        bool isGoatNameMatch(const std::wstring& s) const
+        {
+            return s == m_goatName || s == goatNameMojibake();
+        }
         bool       m_goatSaddleWrapperDumped{false};  // rc.6 one-shot wrapper diagnostic
 
         // [v7.2.0-rc.12 2026-05-22] Phantom chest infrastructure.
@@ -4571,39 +4603,63 @@
         bool stopGoatBrainLogic(UObject* goat, const wchar_t* reason)
         {
             if (!goat || !isObjectAlive(goat)) return false;
+
+            // [v8.2.x FOLLOW FIX v2 2026-07-12] Log proved the goat's
+            // AIController has NO BrainComponent ("[GoatBrain] no
+            // BrainComponent ... nothing to stop") — Moria NPC behavior is
+            // the FGK FSM system (FGKActorFSMComponent), not a UE behavior
+            // tree. Disable the FSM component(s) instead: engine-level
+            // UActorComponent::Deactivate + SetComponentTickEnabled(false)
+            // (both BlueprintCallable). Sweep FSM comps on BOTH the pawn
+            // and its controller by class name.
+            auto disableFsmOn = [&](UObject* owner, const wchar_t* ownerLabel) -> int {
+                if (!owner || !isObjectAlive(owner)) return 0;
+                int disabled = 0;
+                // Walk all ObjectProperty fields on the owner (same idiom as
+                // the [Goat] component dumper at ~17358) and disable any
+                // whose class name contains "FSM" — covers BodyFSMComp and
+                // siblings regardless of the property name they hang off.
+                UClass* aCls = nullptr;
+                try { aCls = owner->GetClassPrivate(); } catch (...) {}
+                if (!aCls) return 0;
+                for (auto* strct = static_cast<UStruct*>(aCls); strct;
+                     strct = strct->GetSuperStruct())
+                {
+                    for (auto* prop : strct->ForEachProperty())
+                    {
+                        auto* objProp = CastField<FObjectProperty>(prop);
+                        if (!objProp) continue;
+                        UObject** vp = owner->GetValuePtrByPropertyNameInChain<UObject*>(prop->GetName().c_str());
+                        if (!vp || !*vp) continue;
+                        UObject* comp = *vp;
+                        if (!isObjectAlive(comp)) continue;
+                        std::wstring cls = safeClassName(comp);
+                        if (cls.find(STR("FSM")) == std::wstring::npos) continue;
+                        if (auto* deactFn = comp->GetFunctionByNameInChain(STR("Deactivate")))
+                        { try { safeProcessEvent(comp, deactFn, nullptr); } catch (...) {} }
+                        if (auto* tickFn = comp->GetFunctionByNameInChain(STR("SetComponentTickEnabled")))
+                        {
+                            std::vector<uint8_t> tb(tickFn->GetParmsSize(), 0);
+                            tb[0] = 0;  // bEnabled = false
+                            try { safeProcessEvent(comp, tickFn, tb.data()); } catch (...) {}
+                        }
+                        ++disabled;
+                        VLOG(STR("[MoriaCppMod] [GoatBrain] FSM comp DISABLED on {}: cls={} ptr={:p} (reason='{}')\n"),
+                             ownerLabel, cls.c_str(), (void*)comp, reason);
+                    }
+                }
+                return disabled;
+            };
+
+            int total = disableFsmOn(goat, STR("pawn"));
             auto* ctrlPtr = goat->GetValuePtrByPropertyNameInChain<UObject*>(STR("Controller"));
             UObject* ctrl = (ctrlPtr && *ctrlPtr) ? *ctrlPtr : nullptr;
-            if (!ctrl || !isObjectAlive(ctrl)) return false;
-            auto* brainPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("BrainComponent"));
-            UObject* brain = (brainPtr && *brainPtr) ? *brainPtr : nullptr;
-            if (!brain || !isObjectAlive(brain))
-            {
-                VLOG(STR("[MoriaCppMod] [GoatBrain] no BrainComponent on ctrl={:p} — nothing to stop\n"), (void*)ctrl);
-                return false;
-            }
-            auto* stopFn = brain->GetFunctionByNameInChain(STR("StopLogic"));
-            if (!stopFn) { VLOG(STR("[MoriaCppMod] [GoatBrain] StopLogic UFunction missing\n")); return false; }
-            auto* pReason = findParam(stopFn, STR("Reason"));
-            int sz = stopFn->GetParmsSize();
-            std::vector<uint8_t> buf(sz, 0);
-            if (pReason)
-            {
-                int32_t strLen = static_cast<int32_t>(wcslen(reason)) + 1;
-                void* strBuf = FMemory::Malloc(strLen * sizeof(wchar_t), 8);
-                if (strBuf)
-                {
-                    wmemcpy(static_cast<wchar_t*>(strBuf), reason, strLen);
-                    uint8_t* fstr = buf.data() + pReason->GetOffset_Internal();
-                    *reinterpret_cast<void**>   (fstr + 0)  = strBuf;
-                    *reinterpret_cast<int32_t*> (fstr + 8)  = strLen;
-                    *reinterpret_cast<int32_t*> (fstr + 12) = strLen;
-                }
-            }
-            bool ok = false;
-            try { ok = safeProcessEvent(brain, stopFn, buf.data()); } catch (...) {}
-            VLOG(STR("[MoriaCppMod] [GoatBrain] StopLogic('{}') on brain={:p} cls={} ok={}\n"),
-                 reason, (void*)brain, safeClassName(brain).c_str(), ok);
-            return ok;
+            if (ctrl && isObjectAlive(ctrl)) total += disableFsmOn(ctrl, STR("controller"));
+
+            if (total == 0)
+                VLOG(STR("[MoriaCppMod] [GoatBrain] no FSM components found on goat={:p} (reason='{}')\n"),
+                     (void*)goat, reason);
+            return total > 0;
         }
 
         void onGoatFollow()
@@ -10485,7 +10541,7 @@
                                         // missing because world predates it).
                                         VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.113] NpcInfo[{}] Name='{}'\n"),
                                              i, tmpName);
-                                        if (std::wstring(tmpName) == m_goatName)
+                                        if (isGoatNameMatch(std::wstring(tmpName)))  // [v8.2.x] tolerates mojibake variant
                                         {
                                             std::memcpy(myGuidPtr, entry + kGuidOff, 16);
                                             adopted = true;
@@ -10804,7 +10860,7 @@
                                                         wchar_t tmpName[256];
                                                         seh_ftextToStringToBuf(entry + kNameOffAdopt, tmpName, 256);
                                                         std::wstring nameStr = tmpName;
-                                                        if (nameStr == m_goatName)
+                                                        if (isGoatNameMatch(nameStr))  // [v8.2.x] tolerates mojibake variant
                                                         {
                                                             uint8_t adoptGuid[16];
                                                             std::memcpy(adoptGuid, entry + kGuidOff, 16);
@@ -15272,7 +15328,7 @@
                 wchar_t nameBuf[256] = L"";
                 seh_ftextToStringToBuf(entry + kNameOff, nameBuf, 256);
                 std::wstring nm = nameBuf;
-                if (nm == m_goatName)
+                if (isGoatNameMatch(nm))  // [v8.2.x] tolerates mojibake variant
                 {
                     std::array<uint8_t,16> g{};
                     std::memcpy(g.data(), entry + kGuidOff, 16);

@@ -216,6 +216,25 @@
                 VLOG(STR("[MoriaCppMod] [Bubble] WorldLayout found: {}\n"), (void*)m_worldLayout);
         }
 
+        // [v8.2.x CRASH FIX 2026-07-12] SEH-wrapped GetFunctionByNameInChain.
+        // Crash dump (EXCEPTION_ACCESS_VIOLATION reading 0x0000000100000040,
+        // moria_hism.inl:244 during logout→login): the rc.118 probes
+        // (isObjectAlive + safeClassName non-empty) can BOTH pass on memory
+        // reused by a different live object, and the subsequent super-chain
+        // walk then dereferences garbage. Only SEH on the walk itself is
+        // airtight. Plain-C body — no unwindable locals allowed with __try.
+        static UFunction* seh_getFnInChain(UObject* obj, const wchar_t* name)
+        {
+            __try
+            {
+                return obj->GetFunctionByNameInChain(name);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                return nullptr;
+            }
+        }
+
         bool updateCurrentBubble()
         {
             if (!m_characterLoaded) return false;
@@ -234,15 +253,15 @@
             // object is garbage; bail instead of iterating.
             if (safeClassName(pawn).empty()) return false;
 
-            auto* getLocFn = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation"));
+            auto* getLocFn = seh_getFnInChain(pawn, STR("K2_GetActorLocation"));  // [v8.2.x] SEH-wrapped
             if (!getLocFn) return false;
             struct { FVec3f ReturnValue; } locP{};
             if (!safeProcessEvent(pawn, getLocFn, &locP)) return false;
 
             if (!isObjectAlive(m_worldLayout)) { m_worldLayout = nullptr; return false; }
             if (safeClassName(m_worldLayout).empty()) { m_worldLayout = nullptr; return false; }  // [rc.118] SEH probe
-            auto* getBubbleFn = m_worldLayout->GetFunctionByNameInChain(STR("GetBubbleAt"));
-            if (!getBubbleFn) getBubbleFn = m_worldLayout->GetFunctionByNameInChain(STR("TryGetBubbleAt"));
+            auto* getBubbleFn = seh_getFnInChain(m_worldLayout, STR("GetBubbleAt"));  // [v8.2.x] SEH-wrapped (crash site)
+            if (!getBubbleFn) getBubbleFn = seh_getFnInChain(m_worldLayout, STR("TryGetBubbleAt"));
             if (!getBubbleFn) return false;
 
             struct { FVec3f pos; UObject* ReturnValue; } bubbleP{};
