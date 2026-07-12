@@ -9887,6 +9887,17 @@
             rec.controllerReplaced = true;   // never swap Tobi's AIController
             rec.interactiveRefired = true;   // leave Tobi's interaction prompts untouched
             rec.postRegDumpDone    = true;
+            // Sync bell state with the ACTOR's hidden state: a goat saved
+            // while bell-dismissed restores hidden — if we defaulted to
+            // "present", the first ring would DISMISS an invisible goat
+            // (visual no-op, "bell doesn't work"). Hidden → first ring
+            // must RECALL.
+            if (auto* hiddenPtr = goat->GetValuePtrByPropertyNameInChain<uint8_t>(STR("bHidden")))
+            {
+                rec.bellDismissed = (*hiddenPtr & 0x01) != 0;
+                if (rec.bellDismissed)
+                    VLOG(STR("[MoriaCppMod] [NativeGoat] adopted goat is HIDDEN — bell state set to dismissed (first ring recalls)\n"));
+            }
             m_followGoats.push_back(rec);
             VLOG(STR("[MoriaCppMod] [NativeGoat] adopted Tobi-summoned {} {:p} (herd={})\n"),
                  cls.c_str(), (void*)goat, (int)m_followGoats.size());
