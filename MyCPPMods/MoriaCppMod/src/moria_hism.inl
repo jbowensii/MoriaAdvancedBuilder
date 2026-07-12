@@ -216,13 +216,10 @@
                 VLOG(STR("[MoriaCppMod] [Bubble] WorldLayout found: {}\n"), (void*)m_worldLayout);
         }
 
-        // [v8.2.x CRASH FIX 2026-07-12] SEH-wrapped GetFunctionByNameInChain.
-        // Crash dump (EXCEPTION_ACCESS_VIOLATION reading 0x0000000100000040,
-        // moria_hism.inl:244 during logout→login): the rc.118 probes
-        // (isObjectAlive + safeClassName non-empty) can BOTH pass on memory
-        // reused by a different live object, and the subsequent super-chain
-        // walk then dereferences garbage. Only SEH on the walk itself is
-        // airtight. Plain-C body — no unwindable locals allowed with __try.
+        // SEH-wrapped GetFunctionByNameInChain: during world transitions the
+        // liveness probes (isObjectAlive + safeClassName) can BOTH pass on
+        // reused memory — only SEH on the chain walk itself is airtight.
+        // Plain-C body: __try forbids unwindable locals.
         static UFunction* seh_getFnInChain(UObject* obj, const wchar_t* name)
         {
             __try

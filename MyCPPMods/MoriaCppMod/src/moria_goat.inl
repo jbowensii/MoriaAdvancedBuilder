@@ -59,13 +59,10 @@
         UObject*   m_goatSaddlebagWidget{nullptr};
         bool       m_enableGoatSaddleUI{false};   // INI: [GoatExperimental] EnableGoatSaddleUI = true
 
-        // [v8.2.x 2026-07-12] UTF-8 double-encoding tolerance for the goat
-        // name. A PowerShell ini round-trip corrupted 'Rûdh' → 'RÃ»dh'
-        // (each non-ASCII wchar expanded to its UTF-8 bytes as latin-1
-        // chars) and that mojibake got written into the save's NpcInfo
-        // entry. Matching BOTH forms lets AutoRestore/GuidAdopt find the
-        // existing marker; the idempotent identity write then repairs the
-        // stored name to the correct form.
+        // UTF-8 double-encoding tolerance: saves may hold a mojibake copy
+        // of the goat name (see memory goat-final-architecture → "name
+        // encoding"). Matching both forms lets the marker scans find the
+        // entry; the idempotent identity write then repairs it.
         std::wstring goatNameMojibake() const
         {
             std::wstring out;
@@ -4590,24 +4587,10 @@
             return true;
         }
 
-        // [v8.2.x FOLLOW FIX] Stop the goat AIController's brain (behavior
-        // tree / FSM logic). Root cause of "stay/follow inert, goat always
-        // At Ease + wandering": since rc.112 the goat is a REGISTERED NPC,
-        // so its native NPC brain runs the settlement idle/wander behavior
-        // — which issues its own move requests every tick, overriding our
-        // 1 Hz MoveToActor drive (pre-registration the goat was passive
-        // fauna, which is why the drive used to work). StopLogic is a
-        // BlueprintCallable UFUNCTION on UBrainComponent (UHT-verified);
-        // with the brain stopped, our MoveToActor / StopMovement are the
-        // only movement sources again. RestartLogic exists if we ever want
-        // the native brain back.
-        // [v8.2.x MENU SIMPLIFICATION 2026-07-12] Per user decision: Stay
-        // cannot survive the native escort catch-up teleport (server-side
-        // C++), so the Follow/Stay row is removed — follow is permanent,
-        // bell dismiss/recall covers "leave the goat". Tobi builds the
-        // Follow/Stay row on the goat's TALK interaction slot; clearing
-        // bTalkInteractionEnabled on the MorNPCComponent removes the row.
-        // The Manage slot (Saddlebags/Equip) is untouched.
+        // Stay is retired (see memory: goat-final-architecture). Clears the
+        // Talk-slot flag behind the Follow/Stay row; the Manage slot
+        // (Saddlebags) is untouched. NOTE: Tobi's v1.12 row ignores this
+        // flag — the dispatch hook's click-neutralizer is the real removal.
         void removeGoatFollowStayRow(UObject* goat)
         {
             if (!goat || !isObjectAlive(goat)) return;
@@ -4633,12 +4616,8 @@
             }
         }
 
-        // [v8.2.x GAIT FIX 2026-07-12] The 13:56 GoatDiag data showed the
-        // follow drive WORKING but the goat moving at 33-80 u/s against a
-        // MaxWalkSpeed of 600 — it is stuck in the FGK Walking GAIT.
-        // AFGKBaseCharacter::SetGait(EFGKGait) is BlueprintCallable
-        // (Walking=0, Running=1, Sprinting=2); set Running so the goat can
-        // actually keep up with the player.
+        // FGK gait gates actual speed (Walking gait ≈ 60 u/s regardless of
+        // MaxWalkSpeed=600). EFGKGait: Walking=0, Running=1, Sprinting=2.
         void setGoatGaitRunning(UObject* goat)
         {
             if (!goat || !isObjectAlive(goat)) return;
@@ -4650,28 +4629,21 @@
             VLOG(STR("[MoriaCppMod] [GoatGait] SetGait(Running) fired on goat={:p}\n"), (void*)goat);
         }
 
-        // onlyIfActive=true (the periodic path): query IsActive() first and
-        // touch nothing unless the game actually re-activated the FSM —
-        // per user directive, no blind re-asserts every 10s.
+        // Disable the goat's FGK FSM — its NPC "brain" (settlement idle/
+        // wander) that otherwise overrides the MoveToActor drive. NOT a UE
+        // BehaviorTree (the AIController has no BrainComponent); FSM comps
+        // live on BOTH pawn and controller. onlyIfActive=true is the quiet
+        // watchdog path: IsActive() query first, touch nothing while the
+        // FSM stays down. History: memory goat-final-architecture.
         bool stopGoatBrainLogic(UObject* goat, const wchar_t* reason, bool onlyIfActive = false)
         {
             if (!goat || !isObjectAlive(goat)) return false;
 
-            // [v8.2.x FOLLOW FIX v2 2026-07-12] Log proved the goat's
-            // AIController has NO BrainComponent ("[GoatBrain] no
-            // BrainComponent ... nothing to stop") — Moria NPC behavior is
-            // the FGK FSM system (FGKActorFSMComponent), not a UE behavior
-            // tree. Disable the FSM component(s) instead: engine-level
-            // UActorComponent::Deactivate + SetComponentTickEnabled(false)
-            // (both BlueprintCallable). Sweep FSM comps on BOTH the pawn
-            // and its controller by class name.
             auto disableFsmOn = [&](UObject* owner, const wchar_t* ownerLabel) -> int {
                 if (!owner || !isObjectAlive(owner)) return 0;
                 int disabled = 0;
-                // Walk all ObjectProperty fields on the owner (same idiom as
-                // the [Goat] component dumper at ~17358) and disable any
-                // whose class name contains "FSM" — covers BodyFSMComp and
-                // siblings regardless of the property name they hang off.
+                // Class name containing "FSM" covers BodyFSMComp + siblings
+                // regardless of which property they hang off.
                 UClass* aCls = nullptr;
                 try { aCls = owner->GetClassPrivate(); } catch (...) {}
                 if (!aCls) return 0;
@@ -4741,15 +4713,10 @@
             {
                 UObject* goat = rec.pawn.Get();
                 if (goat && isObjectAlive(goat)) setRoleFuzzyOnGoat(goat, STR("Porter"));
-                // [v8.2.x] Silence the registered-NPC brain so its wander/
-                // idle behavior can't override our MoveToActor drive.
                 if (goat && isObjectAlive(goat)) stopGoatBrainLogic(goat, STR("MoriaCppMod Follow"));
-                // [v8.2.x] Running gait — Walking gait crawls at ~60 u/s.
                 if (goat && isObjectAlive(goat)) setGoatGaitRunning(goat);
-                // [rc.137] FORCE walking movement — a rc.130 dismiss may have
-                // DisableMovement'd this goat and the recall's re-enable can
-                // land on a different goat after dedupe swaps (user: "follow
-                // stopped working"). Idempotent: safe to set every Follow.
+                // Movement mode can be stuck on MOVE_None from a prior bell
+                // dismiss — force Walking (idempotent).
                 if (goat && isObjectAlive(goat))
                 {
                     UClass* mvCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
@@ -4793,10 +4760,7 @@
                 UObject* goat = rec.pawn.Get();
                 if (!goat || !isObjectAlive(goat)) continue;
                 setRoleFuzzyOnGoat(goat, STR("Wanderer"));
-                // [v8.2.x] Stop the registered-NPC brain BEFORE StopMovement:
-                // the 'Wanderer' role + active brain literally ran the wander
-                // behavior, drifting the goat away from its Stay spot every
-                // few seconds (and re-issuing moves after each StopMovement).
+                // FSM must be down BEFORE StopMovement or it re-issues moves.
                 stopGoatBrainLogic(goat, STR("MoriaCppMod Stay"));
                 if (auto* getCtrlFn = goat->GetFunctionByNameInChain(STR("K2_GetController")))
                 {
@@ -8472,16 +8436,11 @@
                 setInputModeGame();
                 return;
             }
-            // [v8.2.x CURSOR ENFORCEMENT] Re-assert UI input mode at 10 Hz
-            // while OUR widget is open. Log evidence (2026-07-12 13:17):
-            // our open-time set + a 1s one-shot BOTH logged "UI Only,
-            // cursor ON" yet the player kept character control — the game's
-            // UI manager pops input back to GameOnly because OUR screen is
-            // not registered with it (each suppression collapse of the
-            // native singleton re-triggers the pop). The revert is
-            // event-based, not per-frame (a single set stuck for weeks on
-            // the old world), so a periodic re-assert wins the war.
-            // PE budget: 10 Hz only while the storage screen is open.
+            // The game's UI manager pops input back to GameOnly whenever its
+            // own screen stack is empty — our screen isn't registered with
+            // it, so a single SetInputMode gets reverted. Re-assert at 10 Hz
+            // while open (event-based reverts lose to a periodic re-assert).
+            // See memory goat-final-architecture → "input mode".
             {
                 static ULONGLONG s_lastInputAssertMs = 0;
                 static int s_inputAssertLogCounter = 0;
@@ -10062,11 +10021,8 @@
             }
             if (live)
             {
-                // [rc.138] Branch on bellDismissed, NOT stayMode. Keying off
-                // stayMode made the first ring on a visible-but-staying goat
-                // fire RECALL (teleport-to-player = looks like a no-op), so
-                // the user had to ring twice. Bell semantics: visible goat →
-                // leaves; hidden goat → returns. Stay/Follow is orthogonal.
+                // Bell state = presence (bellDismissed), never stayMode:
+                // visible goat → leaves; hidden goat → returns.
                 if (liveRec && !liveRec->bellDismissed)
                 {
                     // [rc.129 2026-07-12] DISMISS = goat visibly LEAVES (hidden +
@@ -15447,14 +15403,10 @@
             }
             VLOG(STR("[MoriaCppMod] [AutoRestore] {} live BP_NpcGoat with NpcGuids\n"), (int)liveGuids.size());
 
-            // [v8.2.x SINGLE-GOAT GATE 2026-07-12] If ANY live goat exists,
-            // do not spawn for orphan markers. The companion is single-
-            // instance (MAX_FOLLOW_GOATS=1): the 13:56 log showed a native-
-            // restored goat + an orphan-marker spawn → herd=2 → dedupe
-            // destroyed one (nameplate churn, blank name). Stale extra
-            // markers (e.g. the mojibake-era entry) must not resurrect
-            // duplicates every load — the live goat gets adopted by
-            // tickAdoptNativeGoat and that is the goat.
+            // SINGLE-GOAT GATE: never spawn for orphan markers while any
+            // live goat exists (MAX_FOLLOW_GOATS=1) — native restore already
+            // brings the goat back; a second spawn causes dedupe churn.
+            // Details: memory goat-final-architecture → identity/restore.
             if (!liveGuids.empty())
             {
                 VLOG(STR("[MoriaCppMod] [AutoRestore] {} live goat(s) present — orphan-marker spawns SKIPPED (single-goat gate)\n"),
@@ -17054,13 +17006,19 @@
             if (rowLabel.find(STR("Follow")) != std::wstring::npos ||
                 rowLabel.find(STR("follow")) != std::wstring::npos)
             {
-                // Follow / Stay toggle — flip stayMode based on first record's current state.
-                bool currentlyStaying = false;
-                if (!m_followGoats.empty()) currentlyStaying = m_followGoats[0].stayMode;
-                if (currentlyStaying)
-                    onGoatFollow();  // sets stayMode=false + role=Porter + toast "following"
-                else
-                    onGoatStay();    // sets stayMode=true + StopMovement + role=Wanderer + toast "staying"
+                // Stay is retired (native escort catch-up makes it
+                // unenforceable; bell = dismiss/recall). Tobi's v1.12 row
+                // ignores bTalkInteractionEnabled, so neutralize here:
+                // force Follow and collapse the row widget.
+                onGoatFollow();
+                if (auto* visFn = widgetCtx->GetFunctionByNameInChain(STR("SetVisibility")))
+                {
+                    std::vector<uint8_t> vb(visFn->GetParmsSize(), 0);
+                    vb[0] = 1;  // Collapsed
+                    try { safeProcessEvent(widgetCtx, visFn, vb.data()); } catch (...) {}
+                }
+                VLOG(STR("[MoriaCppMod] [GoatMenu] Follow/Stay row clicked — forced FOLLOW + row collapsed\n"));
+                showOnScreen(L"Rûdh always follows — ring the bell to dismiss", 2.5f, 0.7f, 0.9f, 0.7f);
             }
             else if (rowLabel.find(STR("Saddlebag")) != std::wstring::npos ||
                      rowLabel.find(STR("saddlebag")) != std::wstring::npos ||
@@ -17850,31 +17808,19 @@
                 if ((now - g.lastMoveTickMs) < 1000) continue;
                 g.lastMoveTickMs = now;
 
-                // [v8.2.x FOLLOW-ALWAYS per user directive 2026-07-12]
-                // Follow is the goat's STANDING state — never at-ease/wander.
-                // ~1s after spawn/adopt (post-possession): disable the FSM
-                // and force Walking movement so the goat follows immediately
-                // without a menu press. Re-assert the FSM disable every 10s —
-                // game events (registration, role changes, Server_CreateFSM)
-                // can re-activate it.
+                // FOLLOW-ALWAYS: ~1s after spawn/adopt (post-possession, so
+                // controller + FSM exist) put the goat in full follow state.
+                // See memory goat-final-architecture for why each piece.
                 if (!g.brainStopped && g.ticksSinceSpawn > 60)
                 {
                     g.brainStopped = true;
                     g.lastBrainStopMs = now;
                     stopGoatBrainLogic(goat, STR("MoriaCppMod spawn"));
-                    setGoatGaitRunning(goat);  // [v8.2.x] Walking gait crawls at ~60 u/s
-                    // [v8.2.x] Default state = FOLLOW in every respect: set
-                    // the Porter role too (user: follow should set the AI
-                    // porter model and be the default). Fixes the leftover
-                    // 'Wanderer' role label after reloads; also keeps the
-                    // native porter path primed should Tobi ever wire
-                    // Bst_NPCGoatWorkPorter to consume LeashActor.
+                    setGoatGaitRunning(goat);
                     setRoleFuzzyOnGoat(goat, STR("Porter"));
-                    // [v8.2.x] Menu = Saddlebags only (user decision: Stay
-                    // is unfixable vs native catch-up; bell covers dismiss).
                     removeGoatFollowStayRow(goat);
-                    // Force Walking (mirrors the rc.137 onGoatFollow block) so
-                    // a stale DisableMovement can never strand a fresh goat.
+                    // Movement mode can be stuck on MOVE_None from a prior
+                    // bell dismiss (DisableMovement) — force Walking.
                     UClass* mvCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
                         STR("/Script/Engine.CharacterMovementComponent"));
                     if (mvCls)
@@ -17898,8 +17844,6 @@
                 else if (g.brainStopped && now - g.lastBrainStopMs >= 10000)
                 {
                     g.lastBrainStopMs = now;
-                    // Quiet watchdog: touches nothing unless the game
-                    // re-activated the FSM (per user: no blind re-asserts).
                     stopGoatBrainLogic(goat, STR("MoriaCppMod watchdog"), /*onlyIfActive=*/true);
                 }
 
@@ -17999,11 +17943,8 @@
                 // AAIController::MoveToActor(player, radius=250) at 1 Hz; on
                 // stay issue StopMovement. This drives the goat directly and
                 // is independent of whatever Tobi's behavior tree does.
-                // [rc.138 MOTION DIAG] Sample goat position at 1 Hz; log
-                // distance-to-player + speed every ~3s, MaxWalkSpeed once.
-                // User report: goat "teleports to the character or moves very
-                // fast" — need numbers to tell teleport (huge instant delta)
-                // from fast-run (large continuous speed).
+                // Motion diagnostics: 1 Hz position sample; logs distance +
+                // speed every ~3s (or instantly on >1200 u/s = teleport).
                 {
                     float gLoc[3] = {0,0,0}, pLoc[3] = {0,0,0};
                     bool haveG = false, haveP = false;
@@ -18078,18 +18019,10 @@
                     }
                 }
 
-                // [rc.139] Manual MoveToActor drive RE-ENABLED. The rc.138
-                // experiment settled it: with our drive off, [GoatDiag]
-                // showed speed=0 in EVERY sample — the goat NEVER walks on
-                // its own even on Tobi v1.12.0 (rc.61 finding still holds).
-                // The only movement was instant 1400-2800-unit jumps (even
-                // in Stay mode): the game's native escort-follow CATCH-UP
-                // TELEPORT, which engages because the goat is a registered
-                // NPC in the post-rescue "following" state. So: our walk
-                // drive is required for real following; the native teleport
-                // remains as an uncontrollable far-distance backstop (also
-                // the reason Stay can't hold beyond ~2000 units — fixing
-                // that means changing the goat's native follow state, TBD).
+                // THE mover: the goat never self-walks (proven on v1.10.0
+                // AND v1.12.0 — the porter BT ignores LeashActor). Do NOT
+                // disable this drive; the native escort teleport is only a
+                // far-distance backstop. See memory goat-final-architecture.
                 static constexpr bool kManualMoveDrive = true;
                 if (kManualMoveDrive && !g.stayMode)
                 {
