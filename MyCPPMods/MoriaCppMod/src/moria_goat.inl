@@ -9602,39 +9602,63 @@
             VLOG(STR("[MoriaCppMod] [Summon] player loc=({:.1f},{:.1f},{:.1f}) rot=({:.1f},{:.1f},{:.1f})\n"),
                  pLoc[0], pLoc[1], pLoc[2], pRot[0], pRot[1], pRot[2]);
 
-            // 3. Find ServerTeleportTo on the goat.
-            auto* teleFn = goat->GetFunctionByNameInChain(STR("ServerTeleportTo"));
-            if (!teleFn)
+            // Destination: 250 units in FRONT of the player, +50 up.
+            // Teleporting onto the player's exact spot fails encroachment;
+            // that silent failure (plus the natively-restored goat sitting
+            // kilometers away) is why the bell "stopped summoning".
+            const float yawRad = pRot[1] * 3.14159265f / 180.0f;
+            float dest[3] = { pLoc[0] + cosf(yawRad) * 250.0f,
+                              pLoc[1] + sinf(yawRad) * 250.0f,
+                              pLoc[2] + 50.0f };
+
+            // 3. PRIMARY: K2_TeleportTo — the NPC-recovery-proven primitive
+            //    (commits through the movement component) and it RETURNS
+            //    success, so failure is visible instead of silent.
+            bool arrived = false;
+            if (auto* k2t = goat->GetFunctionByNameInChain(STR("K2_TeleportTo")))
             {
-                VLOG(STR("[MoriaCppMod] [Summon] ServerTeleportTo not found on goat — bail\n"));
-                return;
+                std::vector<uint8_t> tb(k2t->GetParmsSize(), 0);
+                if (auto* pD = findParam(k2t, STR("DestLocation")))
+                    std::memcpy(tb.data() + pD->GetOffset_Internal(), dest, sizeof(dest));
+                if (auto* pR = findParam(k2t, STR("DestRotation")))
+                    std::memcpy(tb.data() + pR->GetOffset_Internal(), pRot, sizeof(pRot));
+                if (safeProcessEvent(goat, k2t, tb.data()))
+                    if (auto* pRet = findParam(k2t, STR("ReturnValue")))
+                        arrived = *reinterpret_cast<bool*>(tb.data() + pRet->GetOffset_Internal());
+                VLOG(STR("[MoriaCppMod] [Summon] K2_TeleportTo -> {}\n"),
+                     arrived ? STR("OK") : STR("FAILED"));
+            }
+            if (!arrived)
+            {
+                // Fallback: force the location outright (bTeleport=true).
+                if (auto* setLoc = goat->GetFunctionByNameInChain(STR("K2_SetActorLocation")))
+                {
+                    std::vector<uint8_t> sb(setLoc->GetParmsSize(), 0);
+                    if (auto* pD = findParam(setLoc, STR("NewLocation")))
+                        std::memcpy(sb.data() + pD->GetOffset_Internal(), dest, sizeof(dest));
+                    if (auto* pT = findParam(setLoc, STR("bTeleport")))
+                        *reinterpret_cast<bool*>(sb.data() + pT->GetOffset_Internal()) = true;
+                    try { safeProcessEvent(goat, setLoc, sb.data()); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [Summon] fallback K2_SetActorLocation(teleport) fired\n"));
+                }
             }
 
-            // 4. Build parms by reflection — find the FVector + FRotator
-            //    StructProperty offsets in the function's parm layout.
-            int psz = teleFn->GetParmsSize();
-            std::vector<uint8_t> pbuf(psz, 0);
-            auto* destLocProp = findParam(teleFn, STR("DestLocation"));
-            auto* destRotProp = findParam(teleFn, STR("DestRotation"));
-            if (!destLocProp || !destRotProp)
+            // 4. ServerTeleportTo (replication path) — kept as a follow-up,
+            //    no longer the only mechanism.
+            if (auto* teleFn = goat->GetFunctionByNameInChain(STR("ServerTeleportTo")))
             {
-                VLOG(STR("[MoriaCppMod] [Summon] ServerTeleportTo missing expected parms (destLoc={:p} destRot={:p})\n"),
-                     (void*)destLocProp, (void*)destRotProp);
-                return;
+                int psz = teleFn->GetParmsSize();
+                std::vector<uint8_t> pbuf(psz, 0);
+                auto* destLocProp = findParam(teleFn, STR("DestLocation"));
+                auto* destRotProp = findParam(teleFn, STR("DestRotation"));
+                if (destLocProp && destRotProp)
+                {
+                    std::memcpy(pbuf.data() + destLocProp->GetOffset_Internal(), dest, sizeof(dest));
+                    std::memcpy(pbuf.data() + destRotProp->GetOffset_Internal(), pRot, sizeof(pRot));
+                    try { safeProcessEvent(goat, teleFn, pbuf.data()); } catch (...) {}
+                }
             }
-            std::memcpy(pbuf.data() + destLocProp->GetOffset_Internal(), pLoc, sizeof(pLoc));
-            std::memcpy(pbuf.data() + destRotProp->GetOffset_Internal(), pRot, sizeof(pRot));
-
-            // 5. Fire it. ServerTeleportTo is a Server RPC, so the call
-            //    routes through the network layer — must be invoked on the
-            //    client; the server actually performs the move + replicates.
-            if (!safeProcessEvent(goat, teleFn, pbuf.data()))
-            {
-                VLOG(STR("[MoriaCppMod] [Summon] ServerTeleportTo PE returned false\n"));
-                showOnScreen(L"Summon failed (PE call rejected)", 2.0f, 0.9f, 0.4f, 0.4f);
-                return;
-            }
-            VLOG(STR("[MoriaCppMod] [Summon] ServerTeleportTo dispatched — goat should arrive at player\n"));
+            VLOG(STR("[MoriaCppMod] [Summon] teleport sequence complete (arrived={})\n"), arrived);
             // [rc.40] Register the summoned goat into m_followGoats so the
             // bell-toggle path can find/dismiss it later.
             if (!isGoatTracked(goat))
