@@ -154,6 +154,7 @@
             ULONGLONG lastDiagMs{0};                      // [rc.138] timestamp of last motion sample
             bool maxSpeedLogged{false};                   // [rc.138] one-shot MaxWalkSpeed log
             bool brainStopped{false};                     // [v8.2.x] one-shot StopLogic on the registered-NPC brain (~1s post-spawn, after possession)
+            ULONGLONG lastBrainStopMs{0};                 // [v8.2.x] FOLLOW-ALWAYS: 10s re-assert timestamp for the FSM disable
         };
         std::vector<FollowGoatRecord> m_followGoats;
 
@@ -4600,7 +4601,10 @@
         // with the brain stopped, our MoveToActor / StopMovement are the
         // only movement sources again. RestartLogic exists if we ever want
         // the native brain back.
-        bool stopGoatBrainLogic(UObject* goat, const wchar_t* reason)
+        // onlyIfActive=true (the periodic path): query IsActive() first and
+        // touch nothing unless the game actually re-activated the FSM —
+        // per user directive, no blind re-asserts every 10s.
+        bool stopGoatBrainLogic(UObject* goat, const wchar_t* reason, bool onlyIfActive = false)
         {
             if (!goat || !isObjectAlive(goat)) return false;
 
@@ -4635,6 +4639,20 @@
                         if (!isObjectAlive(comp)) continue;
                         std::wstring cls = safeClassName(comp);
                         if (cls.find(STR("FSM")) == std::wstring::npos) continue;
+                        if (onlyIfActive)
+                        {
+                            // Quiet check: skip (no writes, no logs) unless the
+                            // game re-activated this FSM since we disabled it.
+                            bool active = false;
+                            if (auto* isActFn = comp->GetFunctionByNameInChain(STR("IsActive")))
+                            {
+                                std::vector<uint8_t> ab(isActFn->GetParmsSize(), 0);
+                                if (safeProcessEvent(comp, isActFn, ab.data()))
+                                    active = ab[0] != 0;
+                            }
+                            if (!active) continue;
+                            VLOG(STR("[MoriaCppMod] [GoatBrain] FSM re-activated by game — re-disabling (cls={})\n"), cls.c_str());
+                        }
                         if (auto* deactFn = comp->GetFunctionByNameInChain(STR("Deactivate")))
                         { try { safeProcessEvent(comp, deactFn, nullptr); } catch (...) {} }
                         if (auto* tickFn = comp->GetFunctionByNameInChain(STR("SetComponentTickEnabled")))
@@ -4656,7 +4674,7 @@
             UObject* ctrl = (ctrlPtr && *ctrlPtr) ? *ctrlPtr : nullptr;
             if (ctrl && isObjectAlive(ctrl)) total += disableFsmOn(ctrl, STR("controller"));
 
-            if (total == 0)
+            if (total == 0 && !onlyIfActive)
                 VLOG(STR("[MoriaCppMod] [GoatBrain] no FSM components found on goat={:p} (reason='{}')\n"),
                      (void*)goat, reason);
             return total > 0;
@@ -17765,14 +17783,46 @@
                 if ((now - g.lastMoveTickMs) < 1000) continue;
                 g.lastMoveTickMs = now;
 
-                // [v8.2.x] One-shot brain stop ~1-2s after spawn/adopt (after
-                // possession, so the BrainComponent exists). Without this the
-                // registered-NPC brain wanders the goat from the moment it
-                // spawns, before the user ever touches Follow/Stay.
+                // [v8.2.x FOLLOW-ALWAYS per user directive 2026-07-12]
+                // Follow is the goat's STANDING state — never at-ease/wander.
+                // ~1s after spawn/adopt (post-possession): disable the FSM
+                // and force Walking movement so the goat follows immediately
+                // without a menu press. Re-assert the FSM disable every 10s —
+                // game events (registration, role changes, Server_CreateFSM)
+                // can re-activate it.
                 if (!g.brainStopped && g.ticksSinceSpawn > 60)
                 {
                     g.brainStopped = true;
+                    g.lastBrainStopMs = now;
                     stopGoatBrainLogic(goat, STR("MoriaCppMod spawn"));
+                    // Force Walking (mirrors the rc.137 onGoatFollow block) so
+                    // a stale DisableMovement can never strand a fresh goat.
+                    UClass* mvCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                        STR("/Script/Engine.CharacterMovementComponent"));
+                    if (mvCls)
+                        if (auto* gc = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                        {
+                            std::vector<uint8_t> b(gc->GetParmsSize(), 0);
+                            writeGoatParm<UClass*>(gc, b.data(), STR("ComponentClass"), mvCls);
+                            if (safeProcessEvent(goat, gc, b.data()))
+                            {
+                                UObject* mv = readGoatParm<UObject*>(gc, b.data(), STR("ReturnValue"), nullptr);
+                                if (mv && isObjectAlive(mv))
+                                    if (auto* sm = mv->GetFunctionByNameInChain(STR("SetMovementMode")))
+                                    {
+                                        std::vector<uint8_t> mb(sm->GetParmsSize(), 0);
+                                        mb[0] = 1;  // MOVE_Walking
+                                        try { safeProcessEvent(mv, sm, mb.data()); } catch (...) {}
+                                    }
+                            }
+                        }
+                }
+                else if (g.brainStopped && now - g.lastBrainStopMs >= 10000)
+                {
+                    g.lastBrainStopMs = now;
+                    // Quiet watchdog: touches nothing unless the game
+                    // re-activated the FSM (per user: no blind re-asserts).
+                    stopGoatBrainLogic(goat, STR("MoriaCppMod watchdog"), /*onlyIfActive=*/true);
                 }
 
                 // v1.1.0: per-second, write LeashActor blackboard key on
