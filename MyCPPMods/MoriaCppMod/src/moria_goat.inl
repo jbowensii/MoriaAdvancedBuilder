@@ -117,12 +117,166 @@
             bool interactiveRefired{false};               // v1.1.0 fixup: re-enable interaction on existing goats
             bool bellSpawned{false};                      // [rc.46] bell-summoned (skip porter role, run MoveToActor tick)
             bool stayMode{false};                         // [rc.52] goat-menu Stay button: skip MoveToActor
+            bool bellDismissed{false};                    // [rc.138] bell state: true = hidden/away (bell rings RECALL); false = present (bell rings DISMISS)
+            float lastDiagPos[3]{0,0,0};                  // [rc.138] follow-motion diagnostic: last sampled goat location
+            ULONGLONG lastDiagMs{0};                      // [rc.138] timestamp of last motion sample
+            bool maxSpeedLogged{false};                   // [rc.138] one-shot MaxWalkSpeed log
         };
         std::vector<FollowGoatRecord> m_followGoats;
 
         // Companion goat is single-instance only. NUM- is now a toggle:
         // press to spawn if none exists, press to despawn if one does.
         static constexpr size_t MAX_FOLLOW_GOATS = 1;
+
+        // [rc.41 PROBE N 2026-06-10] Fires once at ~3s post-character-load
+        // BEFORE any bell-ring. Dumps NpcInfo state immediately after save
+        // restore so we can empirically tell whether goat-shaped entries
+        // (Role='Default' + Rescued=N) survived the save/reload cycle.
+        // If they do, GUID adoption in spawnBellGoat will find them.
+        bool m_probeNFired{false};
+
+        // [rc.44 PROBE P 2026-06-10] Fires once at ~5s post-character-load.
+        // Empirical world scan to determine WHAT actually persists after
+        // save/reload: goat actors, body containers, item actors. Tells us
+        // whether item persistence is achievable via reconnection (containers
+        // exist) or requires sidecar JSON (nothing persists).
+        bool m_probePFired{false};
+
+        // [rc.45 ROLE STABILITY 2026-06-10] Set true when spawnBellGoat's
+        // adoption block writes an existing GUID into the new actor.
+        // Read by the bell-spawn-tail to SKIP assignPorterRole — adopted
+        // goats keep Role='Default' permanently (no role drift), so our
+        // simple Role='Default' filter stays unambiguous across cycles.
+        // Reset to false at the start of each spawnBellGoat call.
+        bool m_lastSpawnGuidAdopted{false};
+
+        // [rc.47 PROBE Q 2026-06-12] Per DC brief: hunt for manager-side
+        // NPC-restore UFunction(s) that the engine uses to respawn dwarves
+        // with items intact on world load. Three parts:
+        //   Q.1 — unfiltered UFunction dump on MorNPCManager
+        //   Q.2 — unfiltered UFunction dump on MorSaveSystemWorldState
+        //   Q.3 — hex dump of FMorNpcPersistentData unknown region
+        //         (+0x048..+0x190, 0x148 bytes) for dwarf-shape entries.
+        //         Looking for TArray header patterns + FGuid patterns +
+        //         counts that match items the user has placed on a dwarf.
+        // Fires once at ~7s post-character-load (after Probes N+P).
+        bool m_probeQFired{false};
+
+        // [rc.48 PROBE R 2026-06-14] Walks WorldState's class properties
+        // looking for the registered-runtime-actor list/map. We know
+        // StoreRuntimeActor exists (Q.2) but don't know which property
+        // it writes to internally. Probe R dumps every ArrayProperty,
+        // MapProperty, and ObjectProperty on BP_MorSaveSystemWorldState_C
+        // so DC can identify the registration record from the names.
+        // Fires once at ~9s post-character-load (after Probes N+P+Q).
+        bool m_probeRFired{false};
+
+        // [rc.49 PROBE S 2026-06-14] User correction: pivot from Role
+        // marker (drifts on save/reload) to Name marker (per their
+        // original direction). Probe S enumerates ALL UFunctions on
+        // MorNPCComponent with full parm signatures. We need to find
+        // SetName / SetCustomName / Rename / SetDisplayName / etc. — any
+        // UFunction that mutates the entry's Name FText. Fires once at
+        // ~11s post-character-load (after N+P+Q+R).
+        bool m_probeSFired{false};
+
+        // [rc.50 PROBE T 2026-06-14] Probe S confirmed MorNPCComponent
+        // has only Name GETTERS + CanSetCustomDisplayName check, but
+        // no SETTER. The "Can" check strongly implies a setter exists
+        // on a different class. Probe T enumerates BP_NpcGoat_C
+        // (actor class) for name-write candidates so we find the
+        // setter and call it. Fires once at ~13s post-character-load.
+        bool m_probeTFired{false};
+
+        // [rc.53 PROBE U 2026-06-15] IMorSaveGameObject diagnostic.
+        // Dumps SaveGameObjectIgnore / GetId / GetDormancy on the
+        // live goat AND on a nearby BP_StorageChest_Construction_C
+        // for side-by-side comparison. Chests ALWAYS persist —
+        // their interface state is the reference we need to match.
+        // Fires once at ~15s post-character-load.
+        bool m_probeUFired{false};
+
+        // [rc.54 PROBE V 2026-06-16] ValidNpc{Classes,Restores,Roles}
+        // dump on BP_NPCManager_C. Probe U revealed SaveGameObjectId
+        // lives on the MANAGER (off=0x0790), not individual NPCs.
+        // Manager recreates per-NPC actors from NpcInfo metadata,
+        // gated by ValidNpcClasses (off=0x0808). If BP_NpcGoat_C is
+        // not in that list, the actor never respawns on reload no
+        // matter what we do. Probe V iterates each TArray and prints
+        // every entry so we can confirm presence/absence.
+        // Fires once at ~17s post-character-load.
+        bool m_probeVFired{false};
+
+        // [rc.55 PROBE W 2026-06-16] FMorNpcPersistentData full dump.
+        // Probe V confirmed BP_NpcGoat_C IS in ValidNpcClasses (slot
+        // 12). The restore gate must be per-entry — most likely the
+        // UniqueNpc (FMorUniqueNpcRowHandle) or StaticNpcData
+        // (FDataTableRowHandle) row handle being empty/unresolvable
+        // for our bell-spawned goat. Probe W walks the FMorNPCInfo →
+        // PersistentData struct via reflection, logging every field
+        // for every entry. We compare goat[0] to any vanilla
+        // dwarves[1..] in the same save to identify the gating field.
+        // Fires once at ~20s post-character-load.
+        bool m_probeWFired{false};
+
+        // [rc.56 PROBE X 2026-06-16] NPCUnique DataTable enumeration.
+        // Vanilla quest NPCs (Warden/Wanderer/Emissary) persist via
+        // UniqueNpc.RowName lookup in NPCUnique. We need to write the
+        // goat's row name into our bell-spawned NpcInfo entry. Probe X
+        // finds the DataTable whose RowStruct=MorUniqueNPCDefinition,
+        // iterates rows, reads CharacterName + CharacterClass softpath
+        // per row, and logs the row whose CharacterClass = BP_NpcGoat.
+        // That row name is the exact string rc.57 will write into
+        // UniqueNpc.RowName on bell-spawn.
+        // Fires once at ~22s post-character-load.
+        bool m_probeXFired{false};
+
+        // [rc.57 PROBE Y 2026-06-23] Wider net for goat row search.
+        // Probe X (rc.56) found DT_NPCUniqueCharacters with 12 rows,
+        // none being the goat. Probe X also had a CharacterClass
+        // decode bug (read at +0 instead of +16 within TSoftClassPtr).
+        // Probe Y:
+        //   1. Fixes CharacterClass offset (+16 for AssetPathName,
+        //      +24 for SubPath)
+        //   2. Iterates ALL DataTables with RowStruct=MorUniqueNPCDefinition
+        //      (not just first hit)
+        //   3. Brute-force scans every loaded DataTable's RowMap for
+        //      any FName in any row containing "NpcGoat" — catches
+        //      the goat regardless of row struct type
+        // Fires once at ~24s post-character-load.
+        bool m_probeYFired{false};
+
+        // [rc.59 AUTO-RESTORE 2026-06-26] Per save-system-architecture
+        // empirical work: the DT_NPCUniqueCharacters row path is
+        // structurally incompatible with bell-ring registration
+        // (populating ValidNpcRestores forces RegisterWithNPCManager
+        // into "find existing entry" mode → bell-ring stops creating
+        // entries → saddlebag UI breaks). See
+        // [[feedback_validnpcrestores_trap]] for the full analysis.
+        //
+        // Path C instead: on world load, scan NpcInfo for entries
+        // with Name='Rûdh' (our marker from prior bell-rings). If
+        // found AND no live BP_NpcGoat has matching NpcGuid, invoke
+        // spawnBellGoat() — existing GuidAdopt logic finds the
+        // marker entry and binds the new actor to it.
+        //
+        // Fires once at ~5s post-character-load (after Probe N).
+        // Vanilla devs never finished goat persistence wiring —
+        // this completes it from the DLL side without touching
+        // any DataTable.
+        bool m_autoRestoreFired{false};
+
+        // [rc.48 PENDING STORE 2026-06-14] Per DC's Q3 answer: call
+        // WorldState.StoreRuntimeActor AFTER FinishSpawning + at least
+        // one frame of tick delay (so ConstructionScript + BeginPlay
+        // complete first). We queue the goat into this list at
+        // bell-spawn end, then fire StoreRuntimeActor from
+        // tickFollowGoats once readyMs has elapsed.
+        struct PendingStoreRecord {
+            RC::Unreal::FWeakObjectPtr goat;
+            ULONGLONG readyMs{0};   // GetTickCount64() value at which to fire
+        };
+        std::vector<PendingStoreRecord> m_pendingStores;
 
         // ───── helpers ──────────────────────────────────────────────────
 
@@ -354,14 +508,51 @@
         // vanilla path (override, not subclass). All porter wiring lives
         // in the BP's CDO + SCS edits + interaction-struct clones. Runtime
         // just needs SpawnActor + SpawnDefaultController + SetIsInteractive.
+        // [rc.15 PATH A 2026-05-24] BP_PorterGoat_C (Desktop Claude's
+        // PsiPath_PathA_P sibling-clone) is primary. It carries the v1.6.0
+        // porter customizations baked in (mesh + StorageHandle + CharacterData
+        // redirect → DA_NpcGoat_PorterLoadout → BP_SaddleBags_Goat at slot 4),
+        // is its own class identity so save-graph constraints don't bind
+        // against existing BP_NpcGoat instances. Falls back to BP_NpcGoat_C
+        // (Tobi's v1.6.0 baseline) if PathA pak isn't installed, then to
+        // BP_Fauna_Goat_C (vanilla wild goat) as last resort.
+        // [rc.98 2026-07-10] SUMMON TOBI'S GOAT ONLY. Tobi confirmed his design
+        // has no summon — our mod owns it, and it must spawn HIS goat
+        // (BP_NpcGoat_C: StorageHandle=Goat.Slot.EpicPack + DefaultContainers +
+        // NPCGoat DT row + persistor wiring). The old PathA primary
+        // BP_PorterGoat_C is our abandoned custom clone — it is NOT in Tobi's
+        // pak (not in the v1.12.0 changeset); resolving it yields a stale class
+        // with GetName()='' whose BeginDeferred throws an SEH (the 4.3.3 crash).
+        // BP_Fauna_Goat_C is the vanilla wild goat (no saddlebag wiring) — a
+        // silent wrong-goat. Both removed: spawn BP_NpcGoat_C or fail loudly.
         static constexpr const wchar_t* GOAT_CLASS_PATHS[] = {
             STR("/Game/Character/NpcGoat/BP_NpcGoat.BP_NpcGoat_C"),
-            STR("/Game/Character/Creatures/Goat/BP_Fauna_Goat.BP_Fauna_Goat_C"),
         };
         static constexpr const wchar_t* GOAT_CLASS_NAMES[] = {
             STR("BP_NpcGoat_C"),
-            STR("BP_Fauna_Goat_C"),
         };
+
+        // [rc.15 PATH A 2026-05-24] FindAllOf is exact-class match — under
+        // Path A the live goat may be BP_PorterGoat_C (preferred) or
+        // BP_NpcGoat_C (Tobi-only install) or BP_Fauna_Goat_C (no mods at
+        // all). Walk every known goat class name and accumulate. Used by
+        // every "find live goat in world" call site.
+        bool seh_findAnyGoatActor(std::vector<UObject*>* out)
+        {
+            if (!out) return false;
+            out->clear();
+            bool any = false;
+            for (auto* nm : GOAT_CLASS_NAMES)
+            {
+                std::vector<UObject*> hit;
+                if (seh_findAllOf(nm, &hit))
+                {
+                    any = true;
+                    for (UObject* g : hit) out->push_back(g);
+                }
+            }
+            return any;
+        }
 
         // Force the AssetRegistry to scan a directory path on disk so that
         // chunk-streamed assets (like BP_NpcGoat) become loadable without first
@@ -542,6 +733,23 @@
 
         bool ensureGoatSpawnBindings()
         {
+            // [rc.121 2026-07-11] Stale-cache purge: across world loads the
+            // cached pointers can go stale while isObjectAlive still passes
+            // (rc.118 lesson — reused memory). safeObjectName is SEH-wrapped:
+            // empty result = garbage → drop the cache and re-resolve fresh.
+            // (This was the silent bell-summon failure: cached class name=''
+            // → BeginDeferred SEH → bail, every ring.)
+            if (m_goatBPClass && safeObjectName(m_goatBPClass).empty())
+            {
+                VLOG(STR("[MoriaCppMod] [Goat] [rc.121] cached goat class STALE (SEH probe) — purging all spawn bindings\n"));
+                m_goatBPClass = nullptr;
+                m_goatBeginSpawnFn = nullptr;
+                m_goatFinishSpawnFn = nullptr;
+                m_kismetGameplayStaticsCDO = nullptr;
+            }
+            if (m_kismetGameplayStaticsCDO && safeObjectName(m_kismetGameplayStaticsCDO).empty())
+                m_kismetGameplayStaticsCDO = nullptr;
+
             if (!m_goatBPClass)
             {
                 // 0a) Prime the v1.0.1 anchor load. Pulls BP_NpcGoat into
@@ -1349,6 +1557,125 @@
             return nullptr;
         }
 
+        // [rc.88 GOAT CHEST 2026-07-07] The goat's own cargo container can't be
+        // instantiated mod-side (editor-only). A CHEST's inventory works fine,
+        // so give the goat a hidden BP_ChestReceptacle: spawn it invisible + no
+        // collision, keep it, and open its inventory on demand. The StorageMode
+        // widget binds to the chest's real container by handle, so the chest can
+        // stay hidden anywhere — position/visibility don't matter for opening.
+        UObject* m_hiddenGoatChest{nullptr};
+        void spawnHiddenGoatChest(UObject* goat)
+        {
+            if (m_hiddenGoatChest && isObjectAlive(m_hiddenGoatChest)) return;
+            if (!goat || !isObjectAlive(goat)) return;
+            if (!ensureGoatSpawnBindings()) { VLOG(STR("[MoriaCppMod] [GoatChest] spawn bindings not ready\n")); return; }
+            UClass* chestCls = ensurePhantomChestClass();
+            if (!chestCls) { VLOG(STR("[MoriaCppMod] [GoatChest] chest class missing\n")); return; }
+
+            FVec3f loc{};
+            if (auto* gloc = goat->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
+            {
+                struct { FVec3f Ret{}; } lp{};
+                if (safeProcessEvent(goat, gloc, &lp)) loc = lp.Ret;
+            }
+            FTransformRaw xform{};
+            xform.Rotation = {0.0f,0.0f,0.0f,1.0f};
+            xform.Translation = { loc.X, loc.Y, loc.Z - 50.0f };  // slightly under the goat
+            xform.Scale3D = {1.0f,1.0f,1.0f};
+
+            std::vector<uint8_t> buf(m_goatBeginSpawnFn->GetParmsSize(), 0);
+            writeGoatParm<UObject*>     (m_goatBeginSpawnFn, buf.data(), STR("WorldContextObject"), goat);
+            writeGoatParm<UClass*>      (m_goatBeginSpawnFn, buf.data(), STR("ActorClass"),         chestCls);
+            writeGoatParm<FTransformRaw>(m_goatBeginSpawnFn, buf.data(), STR("SpawnTransform"),     xform);
+            writeGoatParm<uint8_t>      (m_goatBeginSpawnFn, buf.data(), STR("CollisionHandlingOverride"), 1);
+            if (!safeProcessEvent(m_kismetGameplayStaticsCDO, m_goatBeginSpawnFn, buf.data())) return;
+            UObject* chest = readGoatParm<UObject*>(m_goatBeginSpawnFn, buf.data(), STR("ReturnValue"), nullptr);
+            if (!chest) { VLOG(STR("[MoriaCppMod] [GoatChest] BeginDeferred returned null\n")); return; }
+
+            std::vector<uint8_t> buf2(m_goatFinishSpawnFn->GetParmsSize(), 0);
+            writeGoatParm<UObject*>     (m_goatFinishSpawnFn, buf2.data(), STR("Actor"),          chest);
+            writeGoatParm<FTransformRaw>(m_goatFinishSpawnFn, buf2.data(), STR("SpawnTransform"), xform);
+            safeProcessEvent(m_kismetGameplayStaticsCDO, m_goatFinishSpawnFn, buf2.data());
+
+            // Hide it and kill collision so the player never sees or bumps it.
+            if (auto* hideFn = chest->GetFunctionByNameInChain(STR("SetActorHiddenInGame")))
+            { struct { bool b{true}; } p{}; try { safeProcessEvent(chest, hideFn, &p); } catch (...) {} }
+            if (auto* collFn = chest->GetFunctionByNameInChain(STR("SetActorEnableCollision")))
+            { struct { bool b{false}; } p{}; try { safeProcessEvent(chest, collFn, &p); } catch (...) {} }
+
+            m_hiddenGoatChest = chest;
+            VLOG(STR("[MoriaCppMod] [GoatChest] spawned + hid chest={:p} (cls={:p})\n"), (void*)chest, (void*)chestCls);
+        }
+
+        // Open the hidden goat chest's inventory (its container is real, unlike
+        // the goat's). Spawns the chest on first use if needed.
+        void openGoatChestStorage()
+        {
+            if (!m_hiddenGoatChest || !isObjectAlive(m_hiddenGoatChest))
+            {
+                UObject* g = findOurGoatAlive();
+                if (g) spawnHiddenGoatChest(g);
+            }
+            if (!m_hiddenGoatChest || !isObjectAlive(m_hiddenGoatChest))
+            {
+                showOnScreen(L"No goat chest (summon a goat first)", 2.5f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+            UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                STR("/Script/Moria.MorInventoryComponent"));
+            UObject* chestInv = nullptr;
+            if (invCls)
+            {
+                if (auto* getComp = m_hiddenGoatChest->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                {
+                    std::vector<uint8_t> b(getComp->GetParmsSize(), 0);
+                    writeGoatParm<UClass*>(getComp, b.data(), STR("ComponentClass"), invCls);
+                    if (safeProcessEvent(m_hiddenGoatChest, getComp, b.data()))
+                        chestInv = readGoatParm<UObject*>(getComp, b.data(), STR("ReturnValue"), nullptr);
+                }
+            }
+            if (!chestInv || !isObjectAlive(chestInv))
+            {
+                VLOG(STR("[MoriaCppMod] [GoatChest] chest has no MorInventoryComponent\n"));
+                showOnScreen(L"Goat chest has no inventory", 2.5f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+            // Chest containers ARE real — GetContainers[0] gives a valid handle.
+            uint8_t bagHandle[20] = {0};
+            int32_t bagId = 0;
+            if (auto* gcFn = chestInv->GetFunctionByNameInChain(STR("GetContainers")))
+            {
+                std::vector<uint8_t> gb(gcFn->GetParmsSize(), 0);
+                try { safeProcessEvent(chestInv, gcFn, gb.data()); } catch (...) {}
+                if (auto* pRet = findParam(gcFn, STR("ReturnValue")))
+                {
+                    uint8_t* arr = gb.data() + pRet->GetOffset_Internal();
+                    uint8_t* data = *reinterpret_cast<uint8_t**>(arr);
+                    int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                    VLOG(STR("[MoriaCppMod] [GoatChest] chest GetContainers -> {}\n"), num);
+                    if (data && num > 0)
+                    {
+                        int32_t id0 = *reinterpret_cast<int32_t*>(data);
+                        if (id0 != 0)
+                        {
+                            std::memcpy(bagHandle, data, 20);
+                            bagId = id0;
+                            RC::Unreal::FWeakObjectPtr ownerWP(chestInv);
+                            std::memcpy(bagHandle + 8, &ownerWP, sizeof(RC::Unreal::FWeakObjectPtr));
+                        }
+                    }
+                }
+            }
+            if (bagId == 0)
+            {
+                VLOG(STR("[MoriaCppMod] [GoatChest] chest container id=0 — cannot open\n"));
+                showOnScreen(L"Goat chest container not ready", 2.5f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [GoatChest] opening chest storage id={}\n"), bagId);
+            openStorageWidgetForHandle(m_hiddenGoatChest, chestInv, bagHandle);
+        }
+
         // [v7.2.0-rc.12a 2026-05-22] Spawn a phantom chest near the goat.
         // For 12a: chest is SPAWNED VISIBLE at goat_location + (0,0,200)
         // so the player can walk up to it, press E (vanilla), and confirm
@@ -1725,6 +2052,428 @@
             }
         }
 
+        // [rc.13 2026-05-24] NpcMgr probe — Desktop Claude's Path D validation.
+        // Hypothesis: the cross-actor inventory mutation gate is at the
+        // UMorNPCManager level, not the component level. RegisterWithNPCManager
+        // (rc.12h) assigns the goat a guid + adds to manager state, but
+        // somehow the manager still rejects player-side Take/Add ops.
+        //
+        // Three things this probe does on first bell-summon:
+        //   1. Acquire UMorNPCManager singleton (via MoriaUtils::GetNpcManager
+        //      static UFunction, fall back to findAllOfSafe scan).
+        //   2. Enumerate ALL properties + UFunctions on the manager's UClass
+        //      and log them — gives Desktop Claude the real names/types
+        //      to plan rc.14 against if Methods below don't crack it.
+        //   3. Method 1: append BP_NpcGoat_C path to ValidNpcClasses
+        //      TArray<FSoftClassPath>. Headroom-checked; skipped if Max==Num.
+        //   4. Method 2: try a candidate list of registration UFunctions
+        //      (RegisterNpc / AddNpc / OnNpcSpawned / etc) and call any
+        //      that exist with the goat actor as the first parm.
+        //
+        // One-shot per session via static flag. After this fires, user
+        // can E-click Saddlebags to test if any of the methods unlocked
+        // the UI's container mutations.
+        // [rc.24 PATH X helper] Read AMorNPCManager.NpcInfo.Items.Num() once.
+        // Resolves the manager via the same MoriaUtils::GetNpcManager + findAllOfSafe
+        // fallback chain that runNpcMgrProbe uses. Returns -1 if manager not findable
+        // or NpcInfo.Items header is unreadable.
+        //
+        // Per saved memory (npc-recovery-architecture.md): NpcInfo struct is at
+        // mgr+0x03a0, with TArray<FMorNPCInfo> Items at offset 0x0108 inside the
+        // struct. TArray header is Data(8B) + Num(4B) + Max(4B) = 16B at the array
+        // base. Num lives at +8.
+        ULONGLONG m_pathXDelayedProbeMs{0};
+        int32_t readNpcInfoItemsNum()
+        {
+            UObject* mgr = nullptr;
+            // Path 1: MoriaUtils::GetNpcManager static UFunction
+            UClass* utilsCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MoriaUtils"));
+            if (utilsCls && isObjectAlive(utilsCls))
+            {
+                UObject* utilsCDO = nullptr;
+                try { utilsCDO = utilsCls->GetClassDefaultObject(); } catch (...) {}
+                if (utilsCDO && isObjectAlive(utilsCDO))
+                {
+                    auto* getMgrFn = utilsCls->GetFunctionByNameInChain(STR("GetNpcManager"));
+                    if (getMgrFn)
+                    {
+                        std::vector<uint8_t> buf(getMgrFn->GetParmsSize(), 0);
+                        auto* pWC = findParam(getMgrFn, STR("WorldContextObject"));
+                        if (pWC && m_localPC)
+                            *reinterpret_cast<UObject**>(buf.data() + pWC->GetOffset_Internal()) = m_localPC;
+                        try { safeProcessEvent(utilsCDO, getMgrFn, buf.data()); } catch (...) {}
+                        auto* pRet = findParam(getMgrFn, STR("ReturnValue"));
+                        if (pRet)
+                            mgr = *reinterpret_cast<UObject**>(buf.data() + pRet->GetOffset_Internal());
+                    }
+                }
+            }
+            // Path 2: findAllOfSafe fallback
+            if (!mgr || !isObjectAlive(mgr))
+            {
+                std::vector<UObject*> candidates;
+                if (findAllOfSafe(STR("MorNPCManager"), candidates))
+                {
+                    for (UObject* o : candidates)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        std::wstring cn = safeClassName(o);
+                        if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                        mgr = o;
+                        break;
+                    }
+                }
+            }
+            if (!mgr || !isObjectAlive(mgr)) return -1;
+
+            // NpcInfo struct at +0x03a0; Items TArray at struct+0x0108; Num at +8.
+            uint8_t* itemsHdr = reinterpret_cast<uint8_t*>(mgr) + 0x03a0 + 0x0108;
+            if (!isReadableMemory(itemsHdr, 16)) return -1;
+            return *reinterpret_cast<int32_t*>(itemsHdr + 8);
+        }
+
+        // Called from gameThreadTick to fire the deferred +1s NpcInfo snapshot.
+        void tickPathXDelayedProbe()
+        {
+            if (m_pathXDelayedProbeMs == 0) return;
+            ULONGLONG now = GetTickCount64();
+            if (now < m_pathXDelayedProbeMs) return;
+            int32_t n = readNpcInfoItemsNum();
+            VLOG(STR("[MoriaCppMod] [PathX-E] +1000ms-DEFERRED NpcInfo.Items.Num={}\n"), n);
+            m_pathXDelayedProbeMs = 0;  // one-shot
+        }
+
+        void runNpcMgrProbe(UObject* goat)
+        {
+            static bool s_probed = false;
+            if (s_probed) return;
+            s_probed = true;
+
+            if (!goat || !isObjectAlive(goat))
+            {
+                VLOG(STR("[MoriaCppMod] [NpcMgrProbe] goat null/dead — skip\n"));
+                return;
+            }
+
+            // --- Step 1a: try MoriaUtils::GetNpcManager static UFunction ---
+            UObject* mgr = nullptr;
+            UClass* utilsCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MoriaUtils"));
+            if (utilsCls && isObjectAlive(utilsCls))
+            {
+                UObject* utilsCDO = nullptr;
+                try { utilsCDO = utilsCls->GetClassDefaultObject(); } catch (...) {}
+                if (utilsCDO && isObjectAlive(utilsCDO))
+                {
+                    auto* getMgrFn = utilsCls->GetFunctionByNameInChain(STR("GetNpcManager"));
+                    if (getMgrFn)
+                    {
+                        VLOG(STR("[MoriaCppMod] [NpcMgrProbe] calling MoriaUtils::GetNpcManager\n"));
+                        std::vector<uint8_t> buf(getMgrFn->GetParmsSize(), 0);
+                        auto* pWC = findParam(getMgrFn, STR("WorldContextObject"));
+                        if (pWC && m_localPC)
+                            *reinterpret_cast<UObject**>(buf.data() + pWC->GetOffset_Internal()) = m_localPC;
+                        try { safeProcessEvent(utilsCDO, getMgrFn, buf.data()); } catch (...) {}
+                        auto* pRet = findParam(getMgrFn, STR("ReturnValue"));
+                        if (pRet)
+                            mgr = *reinterpret_cast<UObject**>(buf.data() + pRet->GetOffset_Internal());
+                    }
+                    else
+                    {
+                        VLOG(STR("[MoriaCppMod] [NpcMgrProbe] MoriaUtils::GetNpcManager UFunction not found\n"));
+                    }
+                }
+            }
+            // --- Step 1b: fallback via findAllOfSafe ---
+            if (!mgr || !isObjectAlive(mgr))
+            {
+                VLOG(STR("[MoriaCppMod] [NpcMgrProbe] MoriaUtils route failed — falling back to findAllOfSafe\n"));
+                std::vector<UObject*> candidates;
+                if (findAllOfSafe(STR("MorNPCManager"), candidates))
+                {
+                    for (UObject* o : candidates)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        std::wstring cn = safeClassName(o);
+                        if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                        mgr = o;
+                        break;
+                    }
+                }
+            }
+            if (!mgr || !isObjectAlive(mgr))
+            {
+                VLOG(STR("[MoriaCppMod] [NpcMgrProbe] manager not findable via either path — bail\n"));
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [NpcMgrProbe] manager={:p} class={}\n"),
+                 (void*)mgr, safeClassName(mgr).c_str());
+
+            UClass* mgrCls = nullptr;
+            try { mgrCls = mgr->GetClassPrivate(); } catch (...) {}
+            if (!mgrCls)
+            {
+                VLOG(STR("[MoriaCppMod] [NpcMgrProbe] manager class null — bail\n"));
+                return;
+            }
+
+            // --- Step 2: Enumerate ALL properties on manager class ---
+            VLOG(STR("[MoriaCppMod] [NpcMgrProbe] === ALL Properties on manager ===\n"));
+            int propCount = 0;
+            FProperty* validProp = nullptr;
+            try {
+                for (auto* p : mgrCls->ForEachPropertyInChain())
+                {
+                    if (!p) continue;
+                    if (propCount >= 400) break;
+                    std::wstring pn;
+                    try { pn = p->GetName(); } catch (...) { continue; }
+                    std::wstring pcn;
+                    try { pcn = p->GetClass().GetName(); } catch (...) {}
+                    int32 off = -1;
+                    try { off = p->GetOffset_Internal(); } catch (...) {}
+                    int32 sz = -1;
+                    try { sz = p->GetSize(); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [NpcMgrProbe]   Prop: {} [type={}] off=0x{:04x} size={}\n"),
+                         pn.c_str(), pcn.c_str(), (unsigned)off, sz);
+                    if (pn == STR("ValidNpcClasses")) validProp = p;
+                    ++propCount;
+                }
+            } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [NpcMgrProbe] === end ({} properties) ===\n"), propCount);
+
+            // --- Step 3: Enumerate UFunctions, log all and registration candidates ---
+            VLOG(STR("[MoriaCppMod] [NpcMgrProbe] === ALL UFunctions on manager ===\n"));
+            int fnCount = 0;
+            try {
+                for (auto* fn : mgrCls->ForEachFunctionInChain())
+                {
+                    if (!fn) continue;
+                    if (fnCount >= 400) break;
+                    std::wstring fname;
+                    try { fname = fn->GetName(); } catch (...) { continue; }
+                    int parms = 0;
+                    try { parms = fn->GetParmsSize(); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [NpcMgrProbe]   Func: {} parmSize={}\n"),
+                         fname.c_str(), parms);
+                    ++fnCount;
+                }
+            } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [NpcMgrProbe] === end ({} functions) ===\n"), fnCount);
+
+            // [rc.23 PATH X PROBES — Desktop Claude, 2026-05-25]
+            // DC's Path X plan requires three probes BEFORE any mutation:
+            //   Probe A: CPF_SaveGame flag on ValidNpcClasses + NpcInfo
+            //            (decides if memory-only mutation is safe)
+            //   Probe B: Register-shaped UFunction param details
+            //            (so DC can pick the right call to make)
+            //   Probe D: NpcInfo TArray count snapshot — if registration is
+            //            adding our goat, this number should grow
+            // CPF_SaveGame = 0x0000000001000000 (bit 24)
+            VLOG(STR("[MoriaCppMod] [PathX-A] === Probe A: PropertyFlags + CPF_SaveGame ===\n"));
+            try {
+                for (auto* p : mgrCls->ForEachPropertyInChain())
+                {
+                    if (!p) continue;
+                    std::wstring pn; try { pn = p->GetName(); } catch (...) { continue; }
+                    // Only care about ValidNpcClasses and NpcInfo for safety analysis.
+                    if (pn != STR("ValidNpcClasses") && pn != STR("NpcInfo")) continue;
+                    uint64_t flags = 0;
+                    try { flags = static_cast<uint64_t>(p->GetPropertyFlags()); } catch (...) {}
+                    bool savegame = (flags & 0x0000000001000000ULL) != 0;
+                    VLOG(STR("[MoriaCppMod] [PathX-A]   {} flags=0x{:016x} CPF_SaveGame={}\n"),
+                         pn.c_str(), flags, savegame ? STR("YES") : STR("no"));
+                }
+            } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [PathX-A] === end Probe A ===\n"));
+
+            VLOG(STR("[MoriaCppMod] [PathX-B] === Probe B: register-shaped UFunctions w/ parm detail ===\n"));
+            try {
+                for (auto* fn : mgrCls->ForEachFunctionInChain())
+                {
+                    if (!fn) continue;
+                    std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                    bool match =
+                        fname.find(STR("Register")) != std::wstring::npos ||
+                        fname.find(STR("Add"))      != std::wstring::npos ||
+                        fname.find(STR("Npc"))      != std::wstring::npos ||
+                        fname.find(STR("NPC"))      != std::wstring::npos ||
+                        fname.find(STR("Spawn"))    != std::wstring::npos;
+                    if (!match) continue;
+                    int parmsSize = 0;
+                    try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                    int parmCount = 0;
+                    VLOG(STR("[MoriaCppMod] [PathX-B]   Fn: {} parmsSize={}\n"),
+                         fname.c_str(), parmsSize);
+                    try {
+                        for (auto* pit : fn->ForEachProperty())
+                        {
+                            if (!pit) continue;
+                            uint64_t pflags = 0;
+                            try { pflags = static_cast<uint64_t>(pit->GetPropertyFlags()); } catch (...) {}
+                            bool isParm = (pflags & 0x0000000000000080ULL) != 0;  // CPF_Parm
+                            if (!isParm) continue;
+                            std::wstring pname; try { pname = pit->GetName(); } catch (...) {}
+                            std::wstring ptype; try { ptype = pit->GetClass().GetName(); } catch (...) {}
+                            int poff = -1; try { poff = pit->GetOffset_Internal(); } catch (...) {}
+                            int psz = -1; try { psz = pit->GetSize(); } catch (...) {}
+                            bool isReturn = (pflags & 0x0000000000000400ULL) != 0; // CPF_ReturnParm
+                            bool isOut    = (pflags & 0x0000000000000100ULL) != 0; // CPF_OutParm
+                            VLOG(STR("[MoriaCppMod] [PathX-B]     parm[{}] '{}' type={} off=0x{:04x} size={} ret={} out={} flags=0x{:016x}\n"),
+                                 parmCount, pname.c_str(), ptype.c_str(),
+                                 (unsigned)poff, psz,
+                                 isReturn ? STR("Y") : STR("n"),
+                                 isOut    ? STR("Y") : STR("n"),
+                                 pflags);
+                            ++parmCount;
+                        }
+                    } catch (...) {}
+                }
+            } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [PathX-B] === end Probe B ===\n"));
+
+            // Probe D: snapshot NpcInfo.Items.Num() to see current registration count.
+            // NpcInfo is StructProperty at +0x03a0; struct holds TArray<FMorNPCInfo>
+            // at offset 0x0108 (per [NpcRecovery] log "NpcInfo offsets resolved").
+            VLOG(STR("[MoriaCppMod] [PathX-D] === Probe D: NpcInfo.Items count snapshot ===\n"));
+            try {
+                FProperty* npcInfoProp = nullptr;
+                for (auto* p : mgrCls->ForEachPropertyInChain())
+                {
+                    if (!p) continue;
+                    std::wstring pn; try { pn = p->GetName(); } catch (...) { continue; }
+                    if (pn == STR("NpcInfo")) { npcInfoProp = p; break; }
+                }
+                if (npcInfoProp)
+                {
+                    int32 niOff = npcInfoProp->GetOffset_Internal();
+                    uint8_t* niBase = reinterpret_cast<uint8_t*>(mgr) + niOff;
+                    // Items TArray at +0x0108 inside the struct (per saved memory).
+                    uint8_t* itemsHdr = niBase + 0x0108;
+                    if (isReadableMemory(itemsHdr, 16))
+                    {
+                        int32_t itemsNum = *reinterpret_cast<int32_t*>(itemsHdr + 8);
+                        int32_t itemsMax = *reinterpret_cast<int32_t*>(itemsHdr + 12);
+                        VLOG(STR("[MoriaCppMod] [PathX-D]   NpcInfo.Items: Num={} Max={} (at base+0x{:04x}+0x0108)\n"),
+                             itemsNum, itemsMax, (unsigned)niOff);
+                    }
+                    else
+                    {
+                        VLOG(STR("[MoriaCppMod] [PathX-D]   NpcInfo.Items header unreadable at base+0x{:04x}+0x0108\n"), (unsigned)niOff);
+                    }
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [PathX-D]   NpcInfo property not found\n"));
+                }
+            } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [PathX-D] === end Probe D ===\n"));
+
+            // [rc.23 PATH X — STOP HERE per DC's Phase-1 directive 2026-05-25]
+            // The original Step 4 (direct-memcpy ValidNpcClasses mutation) and
+            // Step 5 (RegisterNpc-shaped UFunction firing) are DISABLED while
+            // DC reviews Probe A/B/D output. Re-enable by removing the #if 0
+            // wrappers after DC confirms save-safety.
+#if 0
+            // --- Step 4: Method 1 — append BP_NpcGoat_C to ValidNpcClasses ---
+            if (validProp)
+            {
+                auto* arrProp = static_cast<RC::Unreal::FArrayProperty*>(validProp);
+                auto* inner = arrProp->GetInner();
+                int32 innerSize = 0;
+                std::wstring innerType;
+                if (inner)
+                {
+                    try { innerSize = inner->GetSize(); } catch (...) {}
+                    try { innerType = inner->GetClass().GetName(); } catch (...) {}
+                }
+                int32 arrOff = arrProp->GetOffset_Internal();
+                uint8_t* arrField = reinterpret_cast<uint8_t*>(mgr) + arrOff;
+                if (isReadableMemory(arrField, 16))
+                {
+                    uint8_t* arrData = *reinterpret_cast<uint8_t**>(arrField);
+                    int32_t arrNum = *reinterpret_cast<int32_t*>(arrField + 8);
+                    int32_t arrMax = *reinterpret_cast<int32_t*>(arrField + 12);
+                    VLOG(STR("[MoriaCppMod] [NpcMgrProbe] ValidNpcClasses BEFORE: num={} max={} elemSize={} innerType='{}'\n"),
+                         arrNum, arrMax, innerSize, innerType.c_str());
+                    if (innerSize > 0 && arrData && arrNum < arrMax)
+                    {
+                        // Headroom available. Construct new entry.
+                        uint8_t* slot = arrData + arrNum * innerSize;
+                        if (isReadableMemory(slot, innerSize))
+                        {
+                            // Clone an existing entry as template (preserves
+                            // proper FString/etc initialization), then write
+                            // our FName at offset 0.
+                            if (arrNum > 0)
+                            {
+                                std::memcpy(slot, arrData, innerSize);  // clone entry[0]
+                            }
+                            else
+                            {
+                                std::memset(slot, 0, innerSize);  // no template; zero-init
+                            }
+                            // Write our FName at offset 0 (FSoftObjectPath.AssetPathName).
+                            RC::Unreal::FName goatPath(
+                                STR("/Game/Character/NpcGoat/BP_NpcGoat.BP_NpcGoat_C"),
+                                RC::Unreal::FNAME_Add);
+                            std::memcpy(slot, &goatPath, sizeof(RC::Unreal::FName));
+                            // Bump count.
+                            int32_t newNum = arrNum + 1;
+                            std::memcpy(arrField + 8, &newNum, 4);
+                            VLOG(STR("[MoriaCppMod] [NpcMgrProbe] ValidNpcClasses AFTER: num={} (appended BP_NpcGoat_C path at slot {})\n"),
+                                 newNum, arrNum);
+                        }
+                        else
+                        {
+                            VLOG(STR("[MoriaCppMod] [NpcMgrProbe] new slot unreadable — append skipped\n"));
+                        }
+                    }
+                    else
+                    {
+                        VLOG(STR("[MoriaCppMod] [NpcMgrProbe] no headroom or zero size — append skipped\n"));
+                    }
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [NpcMgrProbe] ValidNpcClasses TArray header unreadable\n"));
+                }
+            }
+            else
+            {
+                VLOG(STR("[MoriaCppMod] [NpcMgrProbe] ValidNpcClasses property not found via enumeration\n"));
+            }
+
+            // --- Step 5: Method 2 — try registration UFunction candidates ---
+            const wchar_t* regCandidates[] = {
+                STR("RegisterNpc"), STR("AddNpc"), STR("OnNpcSpawned"),
+                STR("RegisterNPC"), STR("AddNPC"), STR("OnNPCSpawned"),
+                STR("AddNpcToInfo"), STR("RegisterNpcInfo"),
+                STR("AddNpcEntry"), STR("InsertNpc"), STR("TrackNpc"),
+                STR("RegisterManagedNpc"), STR("AddManagedNpc"),
+                nullptr
+            };
+            for (const wchar_t** p = regCandidates; *p; ++p)
+            {
+                auto* fn = mgr->GetFunctionByNameInChain(*p);
+                if (!fn) continue;
+                int parmsSize = 0;
+                try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [NpcMgrProbe] candidate UFunction '{}' PRESENT (parmSize={}), invoking with goat as 1st param\n"),
+                     *p, parmsSize);
+                std::vector<uint8_t> buf(parmsSize, 0);
+                // Write goat actor at offset 0 (most common 1st-parm pattern)
+                if (parmsSize >= sizeof(UObject*))
+                {
+                    *reinterpret_cast<UObject**>(buf.data()) = goat;
+                }
+                try { safeProcessEvent(mgr, fn, buf.data()); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [NpcMgrProbe] '{}' dispatched\n"), *p);
+            }
+#endif // PATH X — review Probe A/B/D output before re-enabling Steps 4-5
+
+            VLOG(STR("[MoriaCppMod] [NpcMgrProbe] === probe complete — Path X probes A/B/D logged above ===\n"));
+        }
+
         // Find the goat's UMorNPCComponent and call SetRoleFuzzy("Porter") on it.
         // This triggers the porter equipment loadout via HandleEquipmentChanged
         // → ResolveEquipmentChanged on the pawn's MorEquipComponent, which is
@@ -1860,12 +2609,19 @@
             setBoolByName(STR("bIsRescued"),                    true,  STR("master-rescued"));
             setBoolByName(STR("bInteractionEnabled"),           true,  STR("master-interaction"));
             setBoolByName(STR("bTalkInteractionEnabled"),       true,  STR("talk"));
-            setBoolByName(STR("bDetailsInteractionEnabled"),    true,  STR("details"));
-            setBoolByName(STR("bManageInteractionEnabled"),     true,  STR("manage"));
+            setBoolByName(STR("bDetailsInteractionEnabled"),    true,  STR("details"));   // Follow/Stay row — KEEP
+            // [rc.94 2026-07-10] RE-ENABLE Manage. Tobi's v1.11.0/v1.12.0 ships
+            // the full craft+equip flow: craft PorterGoatSaddlebags (DT_ItemRecipes
+            // -> EpicPack.Goat_Saddlebags) then drop the pack into the goat's
+            // epic-pack slot (Goat.Slot.EpicPack) via the goat's native Manage
+            // interaction -> 8x8 Goat_Saddlebags. rc.84 had disabled Manage; that
+            // suppressed exactly the interaction the player needs. Turn it back on
+            // and let the native path own the goat storage UI.
+            setBoolByName(STR("bManageInteractionEnabled"),     true,  STR("manage-ON"));
             // Register companions (per desktop: probably bind to input system).
             setBoolByName(STR("bTalkInteractionRegister"),      true,  STR("talk-reg"));
             setBoolByName(STR("bDetailsInteractionRegister"),   true,  STR("details-reg"));
-            setBoolByName(STR("bManagerInteractionRegister"),   true,  STR("manage-reg"));
+            setBoolByName(STR("bManagerInteractionRegister"),   true,  STR("manage-reg-ON"));
             // [v1.1.1 REVERT 2026-05-10] Disabling Rescue/Recruit broke
             // Porter follow behavior (brain likely checks one of these
             // bools to pick pre-rescue vs post-rescue logic). Leave on.
@@ -2649,7 +3405,7 @@
             UObject* goat = nullptr;
             {
                 std::vector<UObject*> hit;
-                if (seh_findAllOf(STR("BP_NpcGoat_C"), &hit) && !hit.empty())
+                if (seh_findAnyGoatActor(&hit) && !hit.empty())
                     for (UObject* g : hit) if (g && isObjectAlive(g)) { goat = g; break; }
             }
             if (goat)
@@ -2768,16 +3524,24 @@
 
         void grantBellToPlayer()
         {
-            if (grantPorterItemToPlayer(
-                    STR("/Game/Mods/PorterGoat/Items/BP_PorterGoatBell.BP_PorterGoatBell_C"),
-                    STR("Bell")))
+            // [rc.16.1 2026-05-25] Tobi's Secrets of Khazad-dum ships the bell
+            // as EQ_GoatBell_C (pickaxe-class tool) at the same path family.
+            // Legacy BP_PorterGoatBell_C (from PorterGoatBell_v1.1.1 pak) is
+            // no longer present in v1.6.0 installs. Try Tobi's class first;
+            // fall back to legacy for users on older pak versions.
+            static constexpr const wchar_t* BELL_PATHS[] = {
+                STR("/Game/Mods/PorterGoat/Items/EQ_GoatBell.EQ_GoatBell_C"),
+                STR("/Game/Mods/PorterGoat/Items/BP_PorterGoatBell.BP_PorterGoatBell_C"),
+            };
+            for (auto* p : BELL_PATHS)
             {
-                showOnScreen(L"Bell of the Goat granted!", 3.0f, 0.4f, 0.9f, 0.4f);
+                if (grantPorterItemToPlayer(p, STR("Bell")))
+                {
+                    showOnScreen(L"Bell of the Goat granted!", 3.0f, 0.4f, 0.9f, 0.4f);
+                    return;
+                }
             }
-            else
-            {
-                showOnScreen(L"Bell grant failed — see log", 2.5f, 0.9f, 0.4f, 0.4f);
-            }
+            showOnScreen(L"Bell grant failed — see log", 2.5f, 0.9f, 0.4f, 0.4f);
         }
 
         void grantSaddlebagsToPlayer()
@@ -3754,27 +4518,103 @@
         // (onInteractionPressPre) when the user E-presses one of our
         // injected rows in the vanilla proximity menu.
 
+        // [rc.64 ROLE HELPER 2026-06-28] Slim SetRoleFuzzy invoker — no
+        // Register, no SetIsInteractive, no equipment refresh. Just changes
+        // the role on the goat's MorNPCComponent. Used by onGoatFollow /
+        // onGoatStay to toggle Porter <-> Wanderer per approved plan.
+        bool setRoleFuzzyOnGoat(UObject* goat, const wchar_t* roleStr)
+        {
+            if (!goat || !isObjectAlive(goat) || !roleStr) return false;
+            UClass* npcCompCls = UObjectGlobals::StaticFindObject<UClass*>(
+                nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+            if (!npcCompCls) return false;
+            auto* getCompFn = goat->GetFunctionByNameInChain(STR("GetComponentByClass"));
+            if (!getCompFn) return false;
+            int gsz = getCompFn->GetParmsSize();
+            std::vector<uint8_t> gbuf(gsz, 0);
+            writeGoatParm<UClass*>(getCompFn, gbuf.data(), STR("ComponentClass"), npcCompCls);
+            if (!safeProcessEvent(goat, getCompFn, gbuf.data())) return false;
+            UObject* npcComp = readGoatParm<UObject*>(getCompFn, gbuf.data(), STR("ReturnValue"), nullptr);
+            if (!npcComp || !isObjectAlive(npcComp)) return false;
+            auto* setRoleFn = npcComp->GetFunctionByNameInChain(STR("SetRoleFuzzy"));
+            if (!setRoleFn) return false;
+            auto* pRole = findParam(setRoleFn, STR("RoleString"));
+            if (!pRole) return false;
+            int32_t strLen = static_cast<int32_t>(wcslen(roleStr)) + 1;
+            void* strBuf = FMemory::Malloc(strLen * sizeof(wchar_t), 8);
+            if (!strBuf) return false;
+            wmemcpy(static_cast<wchar_t*>(strBuf), roleStr, strLen);
+            int sz2 = setRoleFn->GetParmsSize();
+            std::vector<uint8_t> buf2(sz2, 0);
+            uint8_t* fstr = buf2.data() + pRole->GetOffset_Internal();
+            *reinterpret_cast<void**>   (fstr + 0)  = strBuf;
+            *reinterpret_cast<int32_t*> (fstr + 8)  = strLen;
+            *reinterpret_cast<int32_t*> (fstr + 12) = strLen;
+            try { safeProcessEvent(npcComp, setRoleFn, buf2.data()); } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [GoatMenu] setRoleFuzzy('{}') fired on goat={:p} npcComp={:p}\n"),
+                 roleStr, (void*)goat, (void*)npcComp);
+            return true;
+        }
+
         void onGoatFollow()
         {
+            // [rc.64 ROLE TOGGLE 2026-06-28] Per approved plan: FOLLOW
+            // = SetRoleFuzzy("Porter") + stayMode=false so tick re-asserts
+            // LeashActor. The role toggle is defense-in-depth per user
+            // directive; LeashActor refresh in tick is what actually drives
+            // the vanilla Bst_NPCGoatWorkPorter follow.
             for (auto& rec : m_followGoats) rec.stayMode = false;
-            if (UObject* nc = findGoatNpcComp()) setGoatRole(nc, STR("Porter"));
-            VLOG(STR("[MoriaCppMod] [GoatMenu] FOLLOW — stayMode=false + SetRole(Porter)\n"));
+            for (auto& rec : m_followGoats)
+            {
+                UObject* goat = rec.pawn.Get();
+                if (goat && isObjectAlive(goat)) setRoleFuzzyOnGoat(goat, STR("Porter"));
+                // [rc.137] FORCE walking movement — a rc.130 dismiss may have
+                // DisableMovement'd this goat and the recall's re-enable can
+                // land on a different goat after dedupe swaps (user: "follow
+                // stopped working"). Idempotent: safe to set every Follow.
+                if (goat && isObjectAlive(goat))
+                {
+                    UClass* mvCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                        STR("/Script/Engine.CharacterMovementComponent"));
+                    if (mvCls)
+                    {
+                        if (auto* gc = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                        {
+                            std::vector<uint8_t> b(gc->GetParmsSize(), 0);
+                            writeGoatParm<UClass*>(gc, b.data(), STR("ComponentClass"), mvCls);
+                            if (safeProcessEvent(goat, gc, b.data()))
+                            {
+                                UObject* mv = readGoatParm<UObject*>(gc, b.data(), STR("ReturnValue"), nullptr);
+                                if (mv && isObjectAlive(mv))
+                                    if (auto* sm = mv->GetFunctionByNameInChain(STR("SetMovementMode")))
+                                    {
+                                        std::vector<uint8_t> mb(sm->GetParmsSize(), 0);
+                                        mb[0] = 1;  // MOVE_Walking
+                                        try { safeProcessEvent(mv, sm, mb.data()); } catch (...) {}
+                                        VLOG(STR("[MoriaCppMod] [rc.137] Follow: movement mode forced to Walking\n"));
+                                    }
+                            }
+                        }
+                    }
+                }
+            }
+            VLOG(STR("[MoriaCppMod] [GoatMenu] FOLLOW — role=Porter, stayMode=false (tick re-asserts LeashActor)\n"));
             showOnScreen(L"Porter Goat: following", 1.5f, 0.7f, 0.9f, 0.7f);
             clearGoatInjectedRows();
         }
 
         void onGoatStay()
         {
+            // [rc.64 ROLE TOGGLE 2026-06-28] Per approved plan: STAY =
+            // SetRoleFuzzy("Wanderer") + clearGoatLeashActor + StopMovement
+            // + stayMode=true so tick STOPS re-asserting LeashActor. Result:
+            // vanilla Bst_NPCGoatWorkPorter has no LeashActor target -> idles.
             for (auto& rec : m_followGoats) rec.stayMode = true;
-            // Stay = Wanderer role + immediate stop. The goat will idle once
-            // its current MoveTo finishes; we don't issue further MoveToActor
-            // because stayMode gates the tick.
-            if (UObject* nc = findGoatNpcComp()) setGoatRole(nc, STR("Wanderer"));
-            // Try to stop current movement on each goat's controller.
             for (auto& rec : m_followGoats)
             {
                 UObject* goat = rec.pawn.Get();
                 if (!goat || !isObjectAlive(goat)) continue;
+                setRoleFuzzyOnGoat(goat, STR("Wanderer"));
                 if (auto* getCtrlFn = goat->GetFunctionByNameInChain(STR("K2_GetController")))
                 {
                     std::vector<uint8_t> b(getCtrlFn->GetParmsSize(), 0);
@@ -3787,22 +4627,22 @@
                     {
                         try { safeProcessEvent(ctrl, stopFn, nullptr); } catch (...) {}
                     }
+                    clearGoatLeashActor(ctrl);
                 }
             }
-            VLOG(STR("[MoriaCppMod] [GoatMenu] STAY — stayMode=true + SetRole(Wanderer) + StopMovement\n"));
+            VLOG(STR("[MoriaCppMod] [GoatMenu] STAY — role=Wanderer + StopMovement + clearLeash + stayMode=true\n"));
             showOnScreen(L"Porter Goat: staying", 1.5f, 0.7f, 0.9f, 0.7f);
             clearGoatInjectedRows();
         }
 
         void onGoatWander()
         {
-            // Per user spec: Wander = SetRole(Wanderer) + stayMode=false.
-            // stayMode=false means tickFollowGoats still issues MoveToActor
-            // (goat moves toward player) AND vanilla BT runs the Wanderer
-            // role — goat actively wanders nearby.
+            // [rc.42 2026-06-10] No role change. Same logic as onGoatFollow
+            // — clears stayMode so manual MoveToActor tick re-engages.
+            // Wander as a distinct user-facing action is being deprecated
+            // along with Stay per the "always follow" decision.
             for (auto& rec : m_followGoats) rec.stayMode = false;
-            if (UObject* nc = findGoatNpcComp()) setGoatRole(nc, STR("Wanderer"));
-            VLOG(STR("[MoriaCppMod] [GoatMenu] WANDER — stayMode=false + SetRole(Wanderer)\n"));
+            VLOG(STR("[MoriaCppMod] [GoatMenu] WANDER — stayMode=false (role unchanged, permanent Porter)\n"));
             showOnScreen(L"Porter Goat: wandering", 1.5f, 0.7f, 0.9f, 0.7f);
             clearGoatInjectedRows();
         }
@@ -4008,8 +4848,2600 @@
         //      c) Direct UMorInventoryScreen spawn (Path B)
         //   4. Toast user on success/failure
         bool m_goatSaddlebagDiagDumped{false};
+        // [rc.64 B3 HELPER 2026-06-28] Walk player's MorInventoryComponent
+        // Items.List and return the FItemInstance ID whose Item UClass name
+        // matches the given class-name substring. Returns 0 if not found.
+        int32_t findPlayerItemIdByClassName(UObject* playerInv, const wchar_t* classNameSubstr)
+        {
+            if (!playerInv || !isObjectAlive(playerInv) || !classNameSubstr) return 0;
+            FProperty* itemsProp = playerInv->GetPropertyByNameInChain(STR("Items"));
+            if (!itemsProp) return 0;
+            uint8_t* listBase = reinterpret_cast<uint8_t*>(playerInv)
+                              + itemsProp->GetOffset_Internal() + iiaListOff();
+            if (!isReadableMemory(listBase, 16)) return 0;
+            uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+            int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
+            if (!arrData || arrNum <= 0) return 0;
+            int stride  = iiSize();
+            int itemOff = iiItemOff();
+            int idOff   = iiIDOff();
+            for (int i = 0; i < arrNum && i < 256; ++i)
+            {
+                uint8_t* entry = arrData + i * stride;
+                if (!isReadableMemory(entry, stride)) continue;
+                UClass* itemCls = *reinterpret_cast<UClass**>(entry + itemOff);
+                int32_t itemID  = *reinterpret_cast<int32_t*>(entry + idOff);
+                if (itemID == 0 || !itemCls || !isObjectAlive(itemCls)) continue;
+                std::wstring cls;
+                try { cls = itemCls->GetName(); } catch (...) { continue; }
+                if (cls.find(classNameSubstr) != std::wstring::npos)
+                {
+                    VLOG(STR("[MoriaCppMod] [B3] player Items[{}] id={} class='{}' matches '{}'\n"),
+                         i, itemID, cls.c_str(), classNameSubstr);
+                    return itemID;
+                }
+            }
+            return 0;
+        }
+
+        // [rc.64 B3 PRIMARY 2026-06-28] Open the player's equipped EpicPack
+        // saddlebag container. Mirrors openGoatSaddlebagInventory_Test3's
+        // widget-spawn-and-bind technique but targets PLAYER inv, not goat.
+        // Side benefits: vanilla character save serializes player.Items.List
+        // so the bag's contents persist automatically; no DLL persistence
+        // code needed; goat's broken/dwarven inventory is never displayed.
+        void openPlayerEpicPackContainer()
+        {
+            // Dismiss any stale widget from a prior Test3 / repeat click
+            if (m_test3SaddlebagWidget && isObjectAlive(m_test3SaddlebagWidget))
+            {
+                if (auto* rmFn = m_test3SaddlebagWidget->GetFunctionByNameInChain(STR("RemoveFromParent")))
+                {
+                    try { safeProcessEvent(m_test3SaddlebagWidget, rmFn, nullptr); } catch (...) {}
+                }
+                m_test3SaddlebagWidget = nullptr;
+            }
+
+            UObject* pawn = m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr;
+            if (!pawn) { showOnScreen(L"No player pawn", 2.0f, 0.9f, 0.4f, 0.4f); return; }
+
+            // 1. Resolve player MorInventoryComponent
+            UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                STR("/Script/Moria.MorInventoryComponent"));
+            UObject* playerInv = nullptr;
+            if (invCls)
+            {
+                if (auto* getCompFn = pawn->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                {
+                    std::vector<uint8_t> gb(getCompFn->GetParmsSize(), 0);
+                    writeGoatParm<UClass*>(getCompFn, gb.data(), STR("ComponentClass"), invCls);
+                    try { safeProcessEvent(pawn, getCompFn, gb.data()); } catch (...) {}
+                    playerInv = readGoatParm<UObject*>(getCompFn, gb.data(), STR("ReturnValue"), nullptr);
+                }
+            }
+            if (!playerInv || !isObjectAlive(playerInv))
+            {
+                VLOG(STR("[MoriaCppMod] [B3] player has no MorInventoryComponent\n"));
+                showOnScreen(L"Player inventory missing", 2.0f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+
+            // 2. Locate the EpicPack saddlebag item in player's Items
+            // Priority: BP_SaddleBags_Goat_C (the actual bag) > slot wrapper
+            int32_t bagID = findPlayerItemIdByClassName(playerInv, STR("BP_SaddleBags_Goat_C"));
+            if (bagID == 0) bagID = findPlayerItemIdByClassName(playerInv, STR("BP_PorterGoatSaddlebags_C"));
+            if (bagID == 0) bagID = findPlayerItemIdByClassName(playerInv, STR("BP_ContainerItem_Goat_Slot_EpicPack_C"));
+            if (bagID == 0)
+            {
+                VLOG(STR("[MoriaCppMod] [B3] no saddlebag item found in player inventory\n"));
+                showOnScreen(L"No saddlebag equipped - pick one up near the bell",
+                             3.0f, 1.0f, 0.5f, 0.5f);
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [B3] using player saddlebag handle id={} owner=playerInv={:p}\n"),
+                 bagID, (void*)playerInv);
+
+            // 3. Resolve widget class
+            const wchar_t* widgetPath = STR("/Game/UI/Inventory/WBP_UI_Inventory_Screen_StorageMode.WBP_UI_Inventory_Screen_StorageMode_C");
+            UClass* widgetCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, widgetPath);
+            if (!widgetCls) widgetCls = goat_loadClassAssetBlocking(widgetPath);
+            if (!widgetCls)
+            {
+                showOnScreen(L"StorageMode widget class missing", 2.5f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+
+            // 4. Build FInventoryItemHandle (20 B) — id=bagID, owner=playerInv
+            uint8_t bagHandle[20] = {0};
+            *reinterpret_cast<int32_t*>(bagHandle + 0) = bagID;
+            {
+                RC::Unreal::FWeakObjectPtr ownerWP(playerInv);
+                std::memcpy(bagHandle + 8, &ownerWP, sizeof(RC::Unreal::FWeakObjectPtr));
+            }
+
+            // 5. Build FGameplayTag for EpicPack slot (8 B FName)
+            RC::Unreal::FName epicPackName(STR("Inventory.Slot.EpicPack"), RC::Unreal::FNAME_Add);
+            uint8_t epicPackTag[8] = {0};
+            std::memcpy(epicPackTag, &epicPackName, sizeof(RC::Unreal::FName));
+
+            // 6. Player body inventory handle (for right pane)
+            uint8_t playerBodyHandle[20] = {0};
+            if (auto* getByTagFn = playerInv->GetFunctionByNameInChain(STR("GetContainerByTag")))
+            {
+                RC::Unreal::FName bodyTagName(STR("Inventory.BodyInventory"), RC::Unreal::FNAME_Add);
+                int sz = getByTagFn->GetParmsSize();
+                std::vector<uint8_t> tb(sz, 0);
+                auto* pIn  = findParam(getByTagFn, STR("Tag"));
+                if (!pIn) pIn = findParam(getByTagFn, STR("ContainerTag"));
+                auto* pRet = findParam(getByTagFn, STR("ReturnValue"));
+                int tagOff = pIn ? pIn->GetOffset_Internal() : 0;
+                int rOff   = pRet ? pRet->GetOffset_Internal() : 8;
+                std::memcpy(tb.data() + tagOff, &bodyTagName, sizeof(RC::Unreal::FName));
+                try { safeProcessEvent(playerInv, getByTagFn, tb.data()); } catch (...) {}
+                std::memcpy(playerBodyHandle, tb.data() + rOff, 20);
+                RC::Unreal::FWeakObjectPtr ownerWP(playerInv);
+                std::memcpy(playerBodyHandle + 8, &ownerWP, sizeof(RC::Unreal::FWeakObjectPtr));
+            }
+
+            // 7. Spawn the widget
+            UObject* w = jw_createGameWidget(widgetCls);
+            if (!w || !isObjectAlive(w))
+            {
+                showOnScreen(L"StorageMode widget create failed", 2.5f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+
+            // 8. Bind instance vars (memcpy raw bytes via reflection lookup)
+            auto writeBytes = [&](const wchar_t* propName, const uint8_t* src, int size) {
+                if (auto* p = w->GetValuePtrByPropertyNameInChain<uint8_t>(propName))
+                    std::memcpy(p, src, size);
+            };
+            auto writeObj = [&](const wchar_t* propName, UObject* val) {
+                if (auto* p = w->GetValuePtrByPropertyNameInChain<UObject*>(propName))
+                    *p = val;
+            };
+            auto writeBool = [&](const wchar_t* propName, bool val) {
+                if (auto* p = w->GetValuePtrByPropertyNameInChain<bool>(propName))
+                    *p = val;
+            };
+
+            // LEFT pane = player's saddlebag (the bag)
+            writeBytes(STR("storageInventoryHandle"), bagHandle, 20);
+            writeBytes(STR("epicPackTag"), epicPackTag, 8);
+            writeBytes(STR("InventoryContainerEpicPackTag"), epicPackTag, 8);
+
+            // RIGHT pane = player's body inventory
+            writeObj(STR("InventoryComponent"), playerInv);
+            writeBytes(STR("bodyInventoryHandle"), playerBodyHandle, 20);
+
+            // Mode flags: storage view ON, NPC mode OFF (this is the player's own bag)
+            writeBool(STR("isStorageView"), true);
+            writeBool(STR("isOpenedFromNPC"), false);
+            writeObj(STR("AssociatedNPC"), nullptr);
+
+            VLOG(STR("[MoriaCppMod] [B3] widget bound: bagID={} playerInv={:p} (NPC mode OFF, storage view ON)\n"),
+                 bagID, (void*)playerInv);
+
+            // 9. Fire HandleStorageView(false) — non-NPC mode
+            if (auto* hsvFn = w->GetFunctionByNameInChain(STR("HandleStorageView")))
+            {
+                int hsvSz = hsvFn->GetParmsSize();
+                std::vector<uint8_t> hsvBuf(hsvSz, 0);
+                hsvBuf[0] = 0;  // NPCMode = false
+                if (auto* pn = findParam(hsvFn, STR("NPCMode"))) hsvBuf[pn->GetOffset_Internal()] = 0;
+                try { safeProcessEvent(w, hsvFn, hsvBuf.data()); } catch (...) {}
+            }
+
+            // 10. AddToViewport + cache for ESC dismiss
+            m_test3SaddlebagWidget = w;  // reuse Test 3's ESC dismiss cache
+            if (auto* addFn = w->GetFunctionByNameInChain(STR("AddToViewport")))
+            {
+                int addSz = addFn->GetParmsSize();
+                std::vector<uint8_t> addBuf(addSz, 0);
+                if (addSz >= 4) *reinterpret_cast<int32_t*>(addBuf.data()) = 100;
+                try { safeProcessEvent(w, addFn, addBuf.data()); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [B3] Saddlebag widget shown (player EpicPack)\n"));
+            }
+        }
+
+        // ================================================================
+        // [rc.119 SIDECAR PERSISTENCE 2026-07-11] The game's chest save flow
+        // is native-only (BagWatch proved no PE-visible registration), so WE
+        // own saddlebag contents persistence: snapshot the bag's items to a
+        // per-goat-GUID file (close/park), refill the bag on a fresh fit.
+        // Goat identity (GUID/NpcInfo) already persists via rc.112.
+        // ================================================================
+        // ================================================================
+        // [rc.123 B2 NATIVE CARRIER 2026-07-11] The saddlebag as a REAL world
+        // ACTOR (hidden, attached to the goat), registered with the save
+        // system via StoreRuntimeActor — the dropped-item/chest-actor native
+        // persistence model, using Tobi's own BP_SaddleBags_Goat_C. The UI
+        // binds to the ACTOR's inventory. Sidecar remains reserve.
+        // ================================================================
+        UObject* m_saddlebagActor{nullptr};
+
+        std::string saddlebagHandlePath(UObject* goat)
+        {
+            std::string p = goatSidecarPath(goat);
+            return p.substr(0, p.size() - 4) + ".handle";  // .txt -> .handle
+        }
+
+        // Hide + no-collision + attach to the goat (snap location/rotation).
+        void tameSaddlebagActor(UObject* bag, UObject* goat)
+        {
+            if (!bag || !isObjectAlive(bag)) return;
+            if (auto* hideFn = bag->GetFunctionByNameInChain(STR("SetActorHiddenInGame")))
+            { struct { bool b{true}; } p{}; try { safeProcessEvent(bag, hideFn, &p); } catch (...) {} }
+            if (auto* collFn = bag->GetFunctionByNameInChain(STR("SetActorEnableCollision")))
+            { struct { bool b{false}; } p{}; try { safeProcessEvent(bag, collFn, &p); } catch (...) {} }
+            if (goat && isObjectAlive(goat))
+            {
+                if (auto* att = bag->GetFunctionByNameInChain(STR("K2_AttachToActor")))
+                {
+                    std::vector<uint8_t> ab(att->GetParmsSize(), 0);
+                    if (auto* pP = findParam(att, STR("ParentActor")))
+                        *reinterpret_cast<UObject**>(ab.data() + pP->GetOffset_Internal()) = goat;
+                    if (auto* pL = findParam(att, STR("LocationRule")))  ab[pL->GetOffset_Internal()] = 2;  // SnapToTarget
+                    if (auto* pR = findParam(att, STR("RotationRule")))  ab[pR->GetOffset_Internal()] = 2;
+                    if (auto* pS = findParam(att, STR("ScaleRule")))     ab[pS->GetOffset_Internal()] = 1;  // KeepWorld
+                    try { safeProcessEvent(bag, att, ab.data()); } catch (...) {}
+                }
+            }
+        }
+
+        // Register the bag actor with the save system + persist the record
+        // handle bytes (hex) for GetRuntimeActorFromHandle after reload.
+        void registerSaddlebagActor(UObject* bag, UObject* goat)
+        {
+            UObject* ws = nullptr;
+            {
+                std::vector<UObject*> cands;
+                if (findAllOfSafe(STR("MorSaveSystemWorldState"), cands))
+                    for (UObject* o : cands)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        std::wstring cn = safeClassName(o);
+                        if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                        ws = o; break;
+                    }
+            }
+            if (!ws) { VLOG(STR("[MoriaCppMod] [BagActor rc.123] WorldState not found — register skipped\n")); return; }
+            auto* storeFn = ws->GetFunctionByNameInChain(STR("StoreRuntimeActor"));
+            if (!storeFn) { VLOG(STR("[MoriaCppMod] [BagActor rc.123] StoreRuntimeActor missing\n")); return; }
+            std::vector<uint8_t> parms(storeFn->GetParmsSize(), 0);
+            auto* pActor  = findParam(storeFn, STR("Actor"));
+            auto* pHandle = findParam(storeFn, STR("InOutRuntimeActorHandle"));
+            auto* pStab   = findParam(storeFn, STR("bStoreStability"));
+            auto* pRet    = findParam(storeFn, STR("ReturnValue"));
+            if (!pActor || !pHandle || !pRet) return;
+            *reinterpret_cast<UObject**>(parms.data() + pActor->GetOffset_Internal()) = bag;
+            if (pStab) *reinterpret_cast<bool*>(parms.data() + pStab->GetOffset_Internal()) = false;
+            try { safeProcessEvent(ws, storeFn, parms.data()); } catch (...) { return; }
+            bool ok = *reinterpret_cast<bool*>(parms.data() + pRet->GetOffset_Internal());
+            int hs = (int)pHandle->GetSize();
+            uint8_t* h = parms.data() + pHandle->GetOffset_Internal();
+            // persist handle hex
+            std::string hex;
+            char b2[4];
+            for (int i = 0; i < hs; i++) { snprintf(b2, 4, "%02X", h[i]); hex += b2; }
+            std::ofstream f = openOutputFile(saddlebagHandlePath(goat), std::ios::trunc | std::ios::binary);
+            if (f.is_open()) { f << hex << "\n"; f.close(); }
+            VLOG(STR("[MoriaCppMod] [BagActor rc.123] StoreRuntimeActor ret={} handleBytes={} persisted\n"), ok, hs);
+        }
+
+        // Try to fetch the save-system-restored bag actor via the persisted handle.
+        UObject* fetchRestoredSaddlebagActor(UObject* goat)
+        {
+            std::ifstream f(utf8PathToWide(saddlebagHandlePath(goat)));
+            if (!f.is_open()) return nullptr;
+            std::string hex;
+            std::getline(f, hex);
+            while (!hex.empty() && (hex.back()=='\r' || hex.back()=='\n')) hex.pop_back();
+            if (hex.size() < 2 || (hex.size() & 1)) return nullptr;
+            std::vector<uint8_t> hb(hex.size() / 2, 0);
+            for (size_t i = 0; i < hb.size(); i++)
+                hb[i] = (uint8_t)strtoul(hex.substr(i*2, 2).c_str(), nullptr, 16);
+            UObject* ws = nullptr;
+            {
+                std::vector<UObject*> cands;
+                if (findAllOfSafe(STR("MorSaveSystemWorldState"), cands))
+                    for (UObject* o : cands)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        std::wstring cn = safeClassName(o);
+                        if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                        ws = o; break;
+                    }
+            }
+            if (!ws) return nullptr;
+            auto* getFn = ws->GetFunctionByNameInChain(STR("GetRuntimeActorFromHandle"));
+            if (!getFn) return nullptr;
+            std::vector<uint8_t> parms(getFn->GetParmsSize(), 0);
+            auto* pH   = findParam(getFn, STR("ActorHandle"));
+            auto* pOk  = findParam(getFn, STR("bActorIsValid"));
+            auto* pRet = findParam(getFn, STR("ReturnValue"));
+            if (!pH || !pRet) return nullptr;
+            int copyN = (int)pH->GetSize() < (int)hb.size() ? (int)pH->GetSize() : (int)hb.size();
+            std::memcpy(parms.data() + pH->GetOffset_Internal(), hb.data(), copyN);
+            try { safeProcessEvent(ws, getFn, parms.data()); } catch (...) { return nullptr; }
+            bool valid = pOk ? *reinterpret_cast<bool*>(parms.data() + pOk->GetOffset_Internal()) : false;
+            UObject* actor = *reinterpret_cast<UObject**>(parms.data() + pRet->GetOffset_Internal());
+            VLOG(STR("[MoriaCppMod] [BagActor rc.123] GetRuntimeActorFromHandle valid={} actor={:p}\n"),
+                 valid, (void*)actor);
+            return (valid && actor && isObjectAlive(actor)) ? actor : nullptr;
+        }
+
+        // Find-or-restore-or-spawn the saddlebag ACTOR. Returns null only if
+        // spawn is impossible. `allowSpawn` gates fresh creation on the craft check.
+        UObject* ensureSaddlebagActor(UObject* goat, bool allowSpawn)
+        {
+            if (m_saddlebagActor && isObjectAlive(m_saddlebagActor)
+                && !safeObjectName(m_saddlebagActor).empty())
+                return m_saddlebagActor;
+            m_saddlebagActor = nullptr;
+
+            // 1. Any live bag actor in the world (save-system restore or earlier spawn)?
+            {
+                std::vector<UObject*> bags;
+                findAllOfSafe(STR("BP_SaddleBags_Goat_C"), bags);
+                for (auto* b : bags)
+                {
+                    if (!b || !isObjectAlive(b)) continue;
+                    std::wstring nm = safeObjectName(b);
+                    if (nm.empty() || nm.rfind(STR("Default__"), 0) == 0) continue;
+                    m_saddlebagActor = b;
+                    VLOG(STR("[MoriaCppMod] [BagActor rc.123] found live bag actor {:p} '{}' in world — adopting\n"),
+                         (void*)b, nm.c_str());
+                    break;
+                }
+            }
+            // 2. Ask the save system by persisted handle.
+            if (!m_saddlebagActor)
+                m_saddlebagActor = fetchRestoredSaddlebagActor(goat);
+
+            // 3. Spawn fresh (craft-gated by caller).
+            if (!m_saddlebagActor && allowSpawn)
+            {
+                if (!ensureGoatSpawnBindings()) return nullptr;
+                const wchar_t* kBagPath = STR("/Game/Mods/PorterGoat/Items/BP_SaddleBags_Goat.BP_SaddleBags_Goat_C");
+                UClass* bagCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kBagPath);
+                if (!bagCls) bagCls = goat_loadClassAssetBlocking(kBagPath);
+                if (!bagCls || safeObjectName(bagCls).empty()) return nullptr;
+
+                FVec3f loc{};
+                if (auto* gloc = goat->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
+                { struct { FVec3f Ret{}; } lp{}; if (safeProcessEvent(goat, gloc, &lp)) loc = lp.Ret; }
+                FTransformRaw xform{};
+                xform.Rotation = {0,0,0,1};
+                xform.Translation = { loc.X, loc.Y, loc.Z + 60.0f };
+                xform.Scale3D = {1,1,1};
+
+                std::vector<uint8_t> buf(m_goatBeginSpawnFn->GetParmsSize(), 0);
+                writeGoatParm<UObject*>     (m_goatBeginSpawnFn, buf.data(), STR("WorldContextObject"), goat);
+                writeGoatParm<UClass*>      (m_goatBeginSpawnFn, buf.data(), STR("ActorClass"),         bagCls);
+                writeGoatParm<FTransformRaw>(m_goatBeginSpawnFn, buf.data(), STR("SpawnTransform"),     xform);
+                writeGoatParm<uint8_t>      (m_goatBeginSpawnFn, buf.data(), STR("CollisionHandlingOverride"), 1);
+                if (!safeProcessEvent(m_kismetGameplayStaticsCDO, m_goatBeginSpawnFn, buf.data())) return nullptr;
+                UObject* bag = readGoatParm<UObject*>(m_goatBeginSpawnFn, buf.data(), STR("ReturnValue"), nullptr);
+                if (!bag) { VLOG(STR("[MoriaCppMod] [BagActor rc.123] BeginDeferred null\n")); return nullptr; }
+                std::vector<uint8_t> buf2(m_goatFinishSpawnFn->GetParmsSize(), 0);
+                writeGoatParm<UObject*>     (m_goatFinishSpawnFn, buf2.data(), STR("Actor"),          bag);
+                writeGoatParm<FTransformRaw>(m_goatFinishSpawnFn, buf2.data(), STR("SpawnTransform"), xform);
+                safeProcessEvent(m_kismetGameplayStaticsCDO, m_goatFinishSpawnFn, buf2.data());
+                m_saddlebagActor = bag;
+                VLOG(STR("[MoriaCppMod] [BagActor rc.123] SPAWNED fresh bag actor {:p}\n"), (void*)bag);
+                registerSaddlebagActor(bag, goat);
+            }
+
+            if (m_saddlebagActor)
+            {
+                tameSaddlebagActor(m_saddlebagActor, goat);
+                // DISCOVERY: what does this actor carry?
+                UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                    STR("/Script/Moria.MorInventoryComponent"));
+                UObject* bagInv = nullptr;
+                if (invCls)
+                {
+                    if (auto* gc = m_saddlebagActor->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                    {
+                        std::vector<uint8_t> b(gc->GetParmsSize(), 0);
+                        writeGoatParm<UClass*>(gc, b.data(), STR("ComponentClass"), invCls);
+                        if (safeProcessEvent(m_saddlebagActor, gc, b.data()))
+                            bagInv = readGoatParm<UObject*>(gc, b.data(), STR("ReturnValue"), nullptr);
+                    }
+                }
+                int32_t cCnt = -1;
+                if (bagInv)
+                {
+                    if (auto* gcf = bagInv->GetFunctionByNameInChain(STR("GetContainers")))
+                    {
+                        std::vector<uint8_t> gb(gcf->GetParmsSize(), 0);
+                        try { safeProcessEvent(bagInv, gcf, gb.data()); } catch (...) {}
+                        if (auto* pr = findParam(gcf, STR("ReturnValue")))
+                            cCnt = *reinterpret_cast<int32_t*>(gb.data() + pr->GetOffset_Internal() + 8);
+                    }
+                }
+                VLOG(STR("[MoriaCppMod] [BagActor rc.123] bag actor {:p}: MorInventoryComponent={:p} containers={}\n"),
+                     (void*)m_saddlebagActor, (void*)bagInv, cCnt);
+            }
+            return m_saddlebagActor;
+        }
+
+        // [rc.123 B2] Open the storage UI bound to the bag ACTOR's own
+        // inventory container. Returns false if the actor has no container
+        // (caller falls back to the legacy AddItem fit + sidecar).
+        bool openViaBagActor(UObject* goat, UObject* bagActor)
+        {
+            if (!bagActor || !isObjectAlive(bagActor)) return false;
+            UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                STR("/Script/Moria.MorInventoryComponent"));
+            if (!invCls) return false;
+            UObject* bagInv = nullptr;
+            if (auto* gc = bagActor->GetFunctionByNameInChain(STR("GetComponentByClass")))
+            {
+                std::vector<uint8_t> b(gc->GetParmsSize(), 0);
+                writeGoatParm<UClass*>(gc, b.data(), STR("ComponentClass"), invCls);
+                if (safeProcessEvent(bagActor, gc, b.data()))
+                    bagInv = readGoatParm<UObject*>(gc, b.data(), STR("ReturnValue"), nullptr);
+            }
+            if (!bagInv || !isObjectAlive(bagInv))
+            {
+                VLOG(STR("[MoriaCppMod] [BagActor rc.123] open: bag actor has NO MorInventoryComponent\n"));
+                return false;
+            }
+            uint8_t h[20] = {0};
+            int32_t id = 0;
+            if (auto* gcf = bagInv->GetFunctionByNameInChain(STR("GetContainers")))
+            {
+                std::vector<uint8_t> gb(gcf->GetParmsSize(), 0);
+                try { safeProcessEvent(bagInv, gcf, gb.data()); } catch (...) {}
+                if (auto* pr = findParam(gcf, STR("ReturnValue")))
+                {
+                    uint8_t* arr = gb.data() + pr->GetOffset_Internal();
+                    uint8_t* data = *reinterpret_cast<uint8_t**>(arr);
+                    int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                    if (data && num > 0)
+                    {
+                        std::memcpy(h, data, 20);
+                        id = *reinterpret_cast<int32_t*>(data);
+                        RC::Unreal::FWeakObjectPtr wp(bagInv);
+                        std::memcpy(h + 8, &wp, sizeof(wp));
+                    }
+                }
+            }
+            if (id == 0)
+            {
+                VLOG(STR("[MoriaCppMod] [BagActor rc.123] open: bag actor inventory has NO containers\n"));
+                return false;
+            }
+            VLOG(STR("[MoriaCppMod] [BagActor rc.123] opening CHEST-mode bound to BAG ACTOR container id={} (native carrier)\n"), id);
+            openStorageWidgetForHandle(goat, bagInv, h);
+            m_storageSuppressAtMs = GetTickCount64() + 1500;  // [rc.130] suppression WINDOW (sweeps every 150ms)
+            m_storageHarvestAtMs  = GetTickCount64() + 1200;
+            return true;
+        }
+
+        // ================================================================
+        // [rc.126 B5 NATIVE CARRIER 2026-07-11] The goat's cargo = a
+        // MorDroppedItem (the game's native persistent world container —
+        // USER-VERIFIED: a dropped pack keeps its contents across reload).
+        // Created via the game's OWN drop flow (self-registering), then
+        // hidden + attached to the goat. TRUE transfer of the crafted pack.
+        // ================================================================
+
+        // Find a live dropped-item actor carrying the goat saddlebag pack.
+        UObject* findSaddlebagCarrier()
+        {
+            UClass* saddleCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                STR("/Game/Mods/PorterGoat/Items/BP_SaddleBags_Goat.BP_SaddleBags_Goat_C"));
+            for (const wchar_t* dropCls : { STR("BP_DropItem_C"), STR("MorDroppedItem") })
+            {
+                std::vector<UObject*> drops;
+                findAllOfSafe(dropCls, drops);
+                for (auto* d : drops)
+                {
+                    if (!d || !isObjectAlive(d)) continue;
+                    std::wstring nm = safeObjectName(d);
+                    if (nm.empty() || nm.rfind(STR("Default__"), 0) == 0) continue;
+                    // DroppedItem is an FItemCount { TSubclassOf<AInventoryItem> Item; int32 Count; }
+                    if (auto* p = d->GetValuePtrByPropertyNameInChain<UClass*>(STR("DroppedItem")))
+                    {
+                        if (saddleCls && *p == saddleCls)
+                        {
+                            VLOG(STR("[MoriaCppMod] [Carrier rc.126] found saddlebag carrier {:p} '{}'\n"),
+                                 (void*)d, nm.c_str());
+                            return d;
+                        }
+                    }
+                }
+            }
+            return nullptr;
+        }
+
+        // Drop the player's CRAFTED pack via the game's native drop flow —
+        // spawns a self-registered MorDroppedItem containing THAT item.
+        bool dropCraftedPackFromPlayer(UObject* playerInv, UClass* saddleCls)
+        {
+            if (!playerInv || !saddleCls) return false;
+            // locate the crafted pack's item ID in the player's Items array
+            int32_t itemId = 0;
+            if (auto* itemsProp = playerInv->GetPropertyByNameInChain(STR("Items")))
+            {
+                uint8_t* listBase = reinterpret_cast<uint8_t*>(playerInv)
+                                  + itemsProp->GetOffset_Internal() + iiaListOff();
+                if (isReadableMemory(listBase, 16))
+                {
+                    uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+                    int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
+                    int stride = iiSize(), itemOff = iiItemOff(), idOff = iiIDOff();
+                    for (int32_t i = 0; arrData && i < arrNum && i < 2000; i++)
+                    {
+                        uint8_t* entry = arrData + i * stride;
+                        if (!isReadableMemory(entry, stride)) continue;
+                        if (*reinterpret_cast<UClass**>(entry + itemOff) == saddleCls)
+                        {
+                            itemId = *reinterpret_cast<int32_t*>(entry + idOff);
+                            break;
+                        }
+                    }
+                }
+            }
+            if (itemId == 0)
+            {
+                VLOG(STR("[MoriaCppMod] [Carrier rc.126] crafted pack ID not found in player inv\n"));
+                return false;
+            }
+            // build the 20B FItemHandle {ID, Payload, OwnerWP}
+            uint8_t handle[20] = {0};
+            *reinterpret_cast<int32_t*>(handle) = itemId;
+            RC::Unreal::FWeakObjectPtr wp(playerInv);
+            std::memcpy(handle + 8, &wp, sizeof(wp));
+
+            for (const wchar_t* fnName : { STR("ServerDropItem"), STR("DropItem") })
+            {
+                auto* df = playerInv->GetFunctionByNameInChain(fnName);
+                if (!df) continue;
+                std::vector<uint8_t> b(df->GetParmsSize(), 0);
+                // log the real param list once, then fill by name
+                for (auto* p : df->ForEachProperty())
+                {
+                    if (!p) continue;
+                    std::wstring pn; try { pn = p->GetName(); } catch (...) {}
+                    std::wstring pt; try { pt = p->GetClass().GetName(); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [Carrier rc.126] {} param '{}' type={} off={} size={}\n"),
+                         fnName, pn.c_str(), pt.c_str(), p->GetOffset_Internal(), p->GetSize());
+                }
+                auto* pItem  = findParam(df, STR("Item"));
+                auto* pCount = findParam(df, STR("Count"));
+                if (!pItem || (int)pItem->GetSize() < 20) continue;  // want the handle-taking overload
+                std::memcpy(b.data() + pItem->GetOffset_Internal(), handle, 20);
+                if (pCount) *reinterpret_cast<int32_t*>(b.data() + pCount->GetOffset_Internal()) = 1;
+                try { safeProcessEvent(playerInv, df, b.data()); } catch (...) { continue; }
+                VLOG(STR("[MoriaCppMod] [Carrier rc.126] {} fired for crafted pack id={}\n"), fnName, itemId);
+                return true;
+            }
+            VLOG(STR("[MoriaCppMod] [Carrier rc.126] no usable drop fn on player inv\n"));
+            return false;
+        }
+
+        // [rc.131 B5-v2 2026-07-12] Eject the crafted pack as a WORLD DROP via
+        // the inventory's eject family — the equip-slot drop path (proven by
+        // Part A: it spawns the BP_DropItem wrapper that persists contents
+        // natively). Full param logging so a wrong layout is self-diagnosing.
+        bool ejectCraftedPack(UObject* playerInv, UClass* saddleCls)
+        {
+            if (!playerInv || !saddleCls) return false;
+            int32_t itemId = 0;
+            if (auto* itemsProp = playerInv->GetPropertyByNameInChain(STR("Items")))
+            {
+                uint8_t* listBase = reinterpret_cast<uint8_t*>(playerInv)
+                                  + itemsProp->GetOffset_Internal() + iiaListOff();
+                if (isReadableMemory(listBase, 16))
+                {
+                    uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+                    int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
+                    int stride = iiSize(), itemOff = iiItemOff(), idOff = iiIDOff();
+                    for (int32_t i = 0; arrData && i < arrNum && i < 2000; i++)
+                    {
+                        uint8_t* entry = arrData + i * stride;
+                        if (!isReadableMemory(entry, stride)) continue;
+                        if (*reinterpret_cast<UClass**>(entry + itemOff) == saddleCls)
+                        { itemId = *reinterpret_cast<int32_t*>(entry + idOff); break; }
+                    }
+                }
+            }
+            if (itemId == 0)
+            {
+                VLOG(STR("[MoriaCppMod] [B5v2 rc.131] crafted pack ID not found in player inv\n"));
+                return false;
+            }
+            uint8_t handle[20] = {0};
+            *reinterpret_cast<int32_t*>(handle) = itemId;
+            RC::Unreal::FWeakObjectPtr wp(playerInv);
+            std::memcpy(handle + 8, &wp, sizeof(wp));
+
+            for (const wchar_t* fnName : { STR("ServerEjectActorDirection"), STR("EjectActorDirection"),
+                                           STR("ServerEjectActor") })
+            {
+                auto* ef = playerInv->GetFunctionByNameInChain(fnName);
+                if (!ef) continue;
+                std::vector<uint8_t> b(ef->GetParmsSize(), 0);
+                FProperty* pItem = nullptr;
+                for (auto* p : ef->ForEachProperty())
+                {
+                    if (!p) continue;
+                    std::wstring pn; try { pn = p->GetName(); } catch (...) {}
+                    std::wstring pt; try { pt = p->GetClass().GetName(); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [B5v2 rc.131] {} param '{}' type={} off={} size={}\n"),
+                         fnName, pn.c_str(), pt.c_str(), p->GetOffset_Internal(), p->GetSize());
+                    if (!pItem && p->GetSize() == 20 && pt == STR("StructProperty")) pItem = p;
+                }
+                if (!pItem) { VLOG(STR("[MoriaCppMod] [B5v2 rc.131] {} has no 20B handle param — skip\n"), fnName); continue; }
+                std::memcpy(b.data() + pItem->GetOffset_Internal(), handle, 20);
+                try { safeProcessEvent(playerInv, ef, b.data()); } catch (...) { continue; }
+                VLOG(STR("[MoriaCppMod] [B5v2 rc.131] {} fired for crafted pack id={}\n"), fnName, itemId);
+                return true;
+            }
+            VLOG(STR("[MoriaCppMod] [B5v2 rc.131] no eject fn available\n"));
+            return false;
+        }
+
+        // [rc.132 B5 PROBE 2026-07-12] NUM8: drop the crafted pack via
+        // ServerDropItem (the call the REAL equip-drop flow uses — capture-
+        // proven) and scan deferred (+0.6s, +1.5s) for what spawned: the
+        // BP_DropItem wrapper (B5 viable) vs a bare item actor (contents
+        // question) vs both. Pack lands at the player's feet — recoverable.
+        ULONGLONG m_b5ProbeScanAtMs{0};
+        int m_b5ProbeScanPass{0};
+        void probeB5DropCraftedPack()
+        {
+            const wchar_t* kSaddlePath =
+                STR("/Game/Mods/PorterGoat/Items/BP_SaddleBags_Goat.BP_SaddleBags_Goat_C");
+            UClass* saddleCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kSaddlePath);
+            if (!saddleCls) saddleCls = goat_loadClassAssetBlocking(kSaddlePath);
+            UObject* pawn = (m_localPawn && isObjectAlive(m_localPawn)) ? m_localPawn : getPawn();
+            UObject* playerInv = pawn ? findPlayerInventoryComponent(pawn) : nullptr;
+            if (!playerInv || !saddleCls)
+            {
+                showOnScreen(L"B5 probe: player inv / class missing", 2.0f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+            if (dropCraftedPackFromPlayer(playerInv, saddleCls))
+            {
+                m_b5ProbeScanAtMs = GetTickCount64() + 600;
+                m_b5ProbeScanPass = 0;
+                showOnScreen(L"B5 probe: pack dropped - scanning...", 2.0f, 0.4f, 0.9f, 0.9f);
+            }
+            else showOnScreen(L"B5 probe: no crafted pack in inventory", 2.5f, 1.0f, 0.7f, 0.3f);
+        }
+        void tickB5ProbeScan()
+        {
+            if (m_b5ProbeScanAtMs == 0 || GetTickCount64() < m_b5ProbeScanAtMs) return;
+            m_b5ProbeScanPass++;
+            UClass* saddleCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                STR("/Game/Mods/PorterGoat/Items/BP_SaddleBags_Goat.BP_SaddleBags_Goat_C"));
+            int wrappers = 0, raws = 0;
+            {
+                std::vector<UObject*> drops;
+                findAllOfSafe(STR("BP_DropItem_C"), drops);
+                for (auto* d : drops)
+                {
+                    if (!d || !isObjectAlive(d)) continue;
+                    std::wstring nm = safeObjectName(d);
+                    if (nm.empty() || nm.rfind(STR("Default__"), 0) == 0) continue;
+                    UClass** p = d->GetValuePtrByPropertyNameInChain<UClass*>(STR("DroppedItem"));
+                    if (p && saddleCls && *p == saddleCls)
+                    {
+                        wrappers++;
+                        VLOG(STR("[MoriaCppMod] [B5probe rc.132] pass{} WRAPPER {:p} '{}' carries the pack\n"),
+                             m_b5ProbeScanPass, (void*)d, nm.c_str());
+                    }
+                }
+            }
+            {
+                std::vector<UObject*> bags;
+                findAllOfSafe(STR("BP_SaddleBags_Goat_C"), bags);
+                for (auto* b : bags)
+                {
+                    if (!b || !isObjectAlive(b)) continue;
+                    std::wstring nm = safeObjectName(b);
+                    if (nm.empty() || nm.rfind(STR("Default__"), 0) == 0) continue;
+                    raws++;
+                    VLOG(STR("[MoriaCppMod] [B5probe rc.132] pass{} RAW actor {:p} '{}'\n"),
+                         m_b5ProbeScanPass, (void*)b, nm.c_str());
+                }
+            }
+            VLOG(STR("[MoriaCppMod] [B5probe rc.132] pass{} RESULT: wrappers={} rawActors={}\n"),
+                 m_b5ProbeScanPass, wrappers, raws);
+            if (m_b5ProbeScanPass == 1)
+                m_b5ProbeScanAtMs = GetTickCount64() + 900;  // second pass at ~1.5s total
+            else
+            {
+                m_b5ProbeScanAtMs = 0;
+                showOnScreen(wrappers > 0 ? L"B5 probe: WRAPPER found - B5 viable!"
+                                          : L"B5 probe: no wrapper (raw only) - see log",
+                             3.0f, 0.4f, 0.9f, 0.4f);
+            }
+        }
+
+        // ================================================================
+        // [rc.133 B7 2026-07-12] "ONE TRUE PACK": the crafted saddlebag is a
+        // single item instance whose SUB-CONTENTS travel with it (user-proven:
+        // pack in player inventory keeps contents through save/reload —
+        // NATIVE). During play it rides the GOAT; at save-time it is silently
+        // moved into the PLAYER inventory (character save persists it), then
+        // moved back. Real ServerMoveItem transfers — never copies.
+        // ================================================================
+        UObject* playerInvOf(UObject** outPawn = nullptr)
+        {
+            UObject* pawn = (m_localPawn && isObjectAlive(m_localPawn)) ? m_localPawn : getPawn();
+            if (outPawn) *outPawn = pawn;
+            return pawn ? findPlayerInventoryComponent(pawn) : nullptr;
+        }
+        UObject* goatInvOf(UObject* goat)
+        {
+            if (!goat || !isObjectAlive(goat)) return nullptr;
+            UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                STR("/Script/Moria.MorInventoryComponent"));
+            if (!invCls) return nullptr;
+            if (auto* gf = goat->GetFunctionByNameInChain(STR("K2_GetComponentsByClass")))
+            {
+                std::vector<uint8_t> b(gf->GetParmsSize(), 0);
+                if (auto* pCls = findParam(gf, STR("ComponentClass")))
+                    *reinterpret_cast<UClass**>(b.data() + pCls->GetOffset_Internal()) = invCls;
+                try { safeProcessEvent(goat, gf, b.data()); } catch (...) {}
+                if (auto* pRet = findParam(gf, STR("ReturnValue")))
+                {
+                    uint8_t* arr = b.data() + pRet->GetOffset_Internal();
+                    UObject** data = *reinterpret_cast<UObject***>(arr);
+                    int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                    for (int32_t i = 0; data && i < num && i < 16; i++)
+                    {
+                        UObject* c = data[i];
+                        if (!c || !isObjectAlive(c)) continue;
+                        std::wstring nm; try { nm = c->GetName(); } catch (...) {}
+                        if (nm == STR("Inventory Comp")) return c;  // SCS cargo comp
+                    }
+                    for (int32_t i = 0; data && i < num && i < 16; i++)
+                        if (data[i] && isObjectAlive(data[i])) return data[i];
+                }
+            }
+            return nullptr;
+        }
+        // find the pack ENTRY id in an inventory (0 = not present)
+        int32_t findPackId(UObject* inv, UClass* saddleCls)
+        {
+            if (!inv || !saddleCls) return 0;
+            auto* itemsProp = inv->GetPropertyByNameInChain(STR("Items"));
+            if (!itemsProp) return 0;
+            uint8_t* listBase = reinterpret_cast<uint8_t*>(inv)
+                              + itemsProp->GetOffset_Internal() + iiaListOff();
+            if (!isReadableMemory(listBase, 16)) return 0;
+            uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+            int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
+            int stride = iiSize(), itemOff = iiItemOff(), idOff = iiIDOff();
+            // [rc.134] prefer the pack WITH a live container (contents) —
+            // containerStartSlot>0 marks it. Falls back to any pack entry.
+            int32_t anyId = 0;
+            for (int32_t i = 0; arrData && i < arrNum && i < 2000; i++)
+            {
+                uint8_t* entry = arrData + i * stride;
+                if (!isReadableMemory(entry, stride)) continue;
+                if (*reinterpret_cast<UClass**>(entry + itemOff) != saddleCls) continue;
+                int32_t id = *reinterpret_cast<int32_t*>(entry + idOff);
+                int32_t cs = *reinterpret_cast<int32_t*>(entry + 0x2C);
+                if (cs > 0) return id;     // the loaded/containered pack wins
+                if (!anyId) anyId = id;
+            }
+            return anyId;
+        }
+        // MOVE the pack (with contents) from one inventory to another via
+        // ServerMoveItem. Destination = target inventory's first/default
+        // container handle (or zero-id auto-place). Returns true if the pack
+        // ended up in `toInv` (verified by re-scan).
+        bool movePackBetween(UObject* fromInv, UObject* toInv, const wchar_t* tag)
+        {
+            UClass* saddleCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                STR("/Game/Mods/PorterGoat/Items/BP_SaddleBags_Goat.BP_SaddleBags_Goat_C"));
+            if (!fromInv || !toInv || !saddleCls) return false;
+            int32_t packId = findPackId(fromInv, saddleCls);
+            if (packId == 0)
+            {
+                VLOG(STR("[MoriaCppMod] [B7 rc.133] {}: pack not in source inv\n"), tag);
+                return false;
+            }
+            uint8_t itemH[20] = {0};
+            *reinterpret_cast<int32_t*>(itemH) = packId;
+            RC::Unreal::FWeakObjectPtr wpFrom(fromInv);
+            std::memcpy(itemH + 8, &wpFrom, sizeof(wpFrom));
+
+            // destination handle: target inv's first container (id) or zero auto
+            uint8_t destH[20] = {0};
+            RC::Unreal::FWeakObjectPtr wpTo(toInv);
+            std::memcpy(destH + 8, &wpTo, sizeof(wpTo));
+            if (auto* gcf = toInv->GetFunctionByNameInChain(STR("GetContainers")))
+            {
+                std::vector<uint8_t> gb(gcf->GetParmsSize(), 0);
+                try { safeProcessEvent(toInv, gcf, gb.data()); } catch (...) {}
+                if (auto* pr = findParam(gcf, STR("ReturnValue")))
+                {
+                    uint8_t* arr = gb.data() + pr->GetOffset_Internal();
+                    uint8_t* data = *reinterpret_cast<uint8_t**>(arr);
+                    int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                    if (data && num > 0)
+                        *reinterpret_cast<int32_t*>(destH) = *reinterpret_cast<int32_t*>(data);
+                }
+            }
+            for (const wchar_t* fnName : { STR("ServerMoveItem"), STR("MoveItem") })
+            {
+                auto* mf = fromInv->GetFunctionByNameInChain(fnName);
+                if (!mf) continue;
+                FProperty* pItem = nullptr; FProperty* pDest = nullptr; FProperty* pAdd = nullptr;
+                for (auto* p : mf->ForEachProperty())
+                {
+                    if (!p) continue;
+                    std::wstring pn; try { pn = p->GetName(); } catch (...) {}
+                    if (pn == STR("Item"))        pItem = p;
+                    if (pn == STR("Destination")) pDest = p;
+                    if (pn == STR("AddType"))     pAdd  = p;
+                }
+                if (!pItem || !pDest) { VLOG(STR("[MoriaCppMod] [B7 rc.133] {}: Item/Destination params missing — skip\n"), fnName); continue; }
+                // [rc.134] AddType enum decides placement behavior — zero didn't
+                // create a container on a bare inventory. Try each value until
+                // the pack actually ARRIVES (rescan-verified).
+                for (uint8_t addType = 0; addType <= 3; addType++)
+                {
+                    std::vector<uint8_t> b(mf->GetParmsSize(), 0);
+                    std::memcpy(b.data() + pItem->GetOffset_Internal(), itemH, 20);
+                    std::memcpy(b.data() + pDest->GetOffset_Internal(), destH, 20);
+                    if (pAdd) b[pAdd->GetOffset_Internal()] = addType;
+                    try { safeProcessEvent(fromInv, mf, b.data()); } catch (...) { break; }
+                    bool arrived = findPackId(toInv, saddleCls) != 0;
+                    bool left    = findPackId(fromInv, saddleCls) == 0;
+                    VLOG(STR("[MoriaCppMod] [B7 rc.134] {} via {} AddType={}: arrived={} leftSource={}\n"),
+                         tag, fnName, (int)addType, arrived, left);
+                    if (arrived) return true;
+                    if (!pAdd) break;  // no enum to vary
+                }
+            }
+            return false;
+        }
+        // [rc.135] Create Tobi's DESIGNED slot on the goat: the 1×1
+        // Goat.Slot.EpicPack container (AllowedItems=Item.GoatPack) that
+        // DefaultContainers was meant to instantiate. rc.92 tried AddItem of
+        // the slot-container item with Method=0 only — sweep the enum.
+        bool ensureGoatSlotContainer(UObject* goatInv)
+        {
+            if (!goatInv) return false;
+            auto contCountL = [&]() -> int32_t {
+                auto* gc = goatInv->GetFunctionByNameInChain(STR("GetContainers"));
+                if (!gc) return -1;
+                std::vector<uint8_t> gb(gc->GetParmsSize(), 0);
+                try { safeProcessEvent(goatInv, gc, gb.data()); } catch (...) {}
+                auto* pr = findParam(gc, STR("ReturnValue"));
+                if (!pr) return -1;
+                return *reinterpret_cast<int32_t*>(gb.data() + pr->GetOffset_Internal() + 8);
+            };
+            if (contCountL() > 0) return true;
+            const wchar_t* kSlotPath =
+                STR("/Game/Mods/PorterGoat/Items/BP_ContainerItem_Goat_Slot_EpicPack.BP_ContainerItem_Goat_Slot_EpicPack_C");
+            UClass* slotCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kSlotPath);
+            if (!slotCls) slotCls = goat_loadClassAssetBlocking(kSlotPath);
+            if (!slotCls) { VLOG(STR("[MoriaCppMod] [B7 rc.135] slot-container class missing\n")); return false; }
+            auto* af = goatInv->GetFunctionByNameInChain(STR("AddItem"));
+            if (!af) return false;
+            auto* pItem  = findParam(af, STR("Item")); if (!pItem) pItem = findParam(af, STR("Class"));
+            auto* pCount = findParam(af, STR("Count"));
+            auto* pMeth  = findParam(af, STR("Method"));
+            for (uint8_t m = 0; m <= 3; m++)
+            {
+                std::vector<uint8_t> ab(af->GetParmsSize(), 0);
+                if (pItem)  *reinterpret_cast<UClass**>(ab.data() + pItem->GetOffset_Internal()) = slotCls;
+                if (pCount) *reinterpret_cast<int32_t*>(ab.data() + pCount->GetOffset_Internal()) = 1;
+                if (pMeth)  ab[pMeth->GetOffset_Internal()] = m;
+                try { safeProcessEvent(goatInv, af, ab.data()); } catch (...) { break; }
+                int32_t c = contCountL();
+                VLOG(STR("[MoriaCppMod] [B7 rc.135] AddItem(SLOT container) Method={} -> containers={}\n"), (int)m, c);
+                if (c > 0) return true;
+                if (!pMeth) break;
+            }
+            return contCountL() > 0;
+        }
+
+        ULONGLONG m_b7MoveBackAtMs{0};
+        void b7SaveMomentStash(UObject* goat)
+        {
+            UObject* gInv = goatInvOf(goat);
+            UObject* pInv = playerInvOf();
+            if (!gInv || !pInv) return;
+            if (movePackBetween(gInv, pInv, STR("stash goat->player (save)")))
+                m_b7MoveBackAtMs = GetTickCount64() + 4000;  // return after save writes
+        }
+        void tickB7MoveBack()
+        {
+            if (m_b7MoveBackAtMs == 0 || GetTickCount64() < m_b7MoveBackAtMs) return;
+            m_b7MoveBackAtMs = 0;
+            UObject* goat = nullptr;
+            for (auto& g : m_followGoats)
+            {
+                UObject* p = g.pawn.Get();
+                if (p && isObjectAlive(p)) { goat = p; break; }
+            }
+            if (!goat) { VLOG(STR("[MoriaCppMod] [B7 rc.133] move-back: no live goat — pack stays with player\n")); return; }
+            UObject* gInv = goatInvOf(goat);
+            UObject* pInv = playerInvOf();
+            if (gInv && pInv)
+                movePackBetween(pInv, gInv, STR("return player->goat (post-save)"));
+        }
+
+        // [rc.126] Duplicate-goat cleanup: park-not-destroy + per-load orphan
+        // spawns multiplied goats (census: 3 live!). Keep ONE (prefer non-zero
+        // NpcGuid), destroy the rest. Their saddlebag carriers persist as
+        // dropped items and re-attach to the kept goat.
+        void dedupeGoats()
+        {
+            std::vector<UObject*> goats;
+            findAllOfSafe(STR("BP_NpcGoat_C"), goats);
+            std::vector<UObject*> live;
+            for (auto* g : goats)
+            {
+                if (!g || !isObjectAlive(g)) continue;
+                std::wstring nm = safeObjectName(g);
+                if (nm.empty() || nm.rfind(STR("Default__"), 0) == 0) continue;
+                live.push_back(g);
+            }
+            if (live.size() <= 1) return;
+            // prefer the goat with a non-zero NpcGuid (the identified one)
+            auto guidNonZero = [&](UObject* g) -> bool {
+                UClass* npcCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                    STR("/Script/Moria.MorNPCComponent"));
+                if (!npcCls) return false;
+                auto* gc = g->GetFunctionByNameInChain(STR("GetComponentByClass"));
+                if (!gc) return false;
+                std::vector<uint8_t> b(gc->GetParmsSize(), 0);
+                writeGoatParm<UClass*>(gc, b.data(), STR("ComponentClass"), npcCls);
+                if (!safeProcessEvent(g, gc, b.data())) return false;
+                UObject* comp = readGoatParm<UObject*>(gc, b.data(), STR("ReturnValue"), nullptr);
+                if (!comp) return false;
+                uint8_t* gp = comp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                if (!gp) return false;
+                for (int i = 0; i < 16; i++) if (gp[i]) return true;
+                return false;
+            };
+            UObject* keep = nullptr;
+            for (auto* g : live) if (guidNonZero(g)) { keep = g; break; }
+            if (!keep) keep = live[0];
+            int destroyed = 0;
+            for (auto* g : live)
+            {
+                if (g == keep) continue;
+                if (destroyGoat(g)) destroyed++;
+            }
+            // retrack
+            m_followGoats.clear();
+            adoptExistingGoat(keep);
+            VLOG(STR("[MoriaCppMod] [Dedupe rc.126] kept goat {:p}, destroyed {} duplicate(s)\n"),
+                 (void*)keep, destroyed);
+        }
+
+        // [rc.124 2026-07-11] Destroy stray raw BP_SaddleBags_Goat_C world
+        // actors (rc.123 litter — inert props the save system faithfully
+        // restores as visible floaters), unregister their save record, and
+        // remove the persisted handle file. Legit saddlebag items live in
+        // inventories, never as raw world actors, so destroying is safe.
+        void cleanupStraySaddlebagActors(UObject* goat)
+        {
+            m_saddlebagActor = nullptr;
+            int destroyed = 0;
+            std::vector<UObject*> bags;
+            findAllOfSafe(STR("BP_SaddleBags_Goat_C"), bags);
+            for (auto* b : bags)
+            {
+                if (!b || !isObjectAlive(b)) continue;
+                std::wstring nm = safeObjectName(b);
+                if (nm.empty() || nm.rfind(STR("Default__"), 0) == 0) continue;
+                if (auto* d = b->GetFunctionByNameInChain(STR("K2_DestroyActor")))
+                {
+                    std::vector<uint8_t> db(d->GetParmsSize() > 0 ? d->GetParmsSize() : 1, 0);
+                    try { safeProcessEvent(b, d, db.data()); destroyed++; } catch (...) {}
+                }
+            }
+            // Unregister the persisted record so the save stops restoring it.
+            std::string hp = saddlebagHandlePath(goat);
+            std::ifstream hf(utf8PathToWide(hp));
+            if (hf.is_open())
+            {
+                std::string hex;
+                std::getline(hf, hex);
+                hf.close();
+                while (!hex.empty() && (hex.back()=='\r' || hex.back()=='\n')) hex.pop_back();
+                if (hex.size() >= 2 && !(hex.size() & 1))
+                {
+                    std::vector<uint8_t> hb(hex.size() / 2, 0);
+                    for (size_t i = 0; i < hb.size(); i++)
+                        hb[i] = (uint8_t)strtoul(hex.substr(i*2, 2).c_str(), nullptr, 16);
+                    UObject* ws = nullptr;
+                    std::vector<UObject*> cands;
+                    if (findAllOfSafe(STR("MorSaveSystemWorldState"), cands))
+                        for (UObject* o : cands)
+                        {
+                            if (!o || !isObjectAlive(o)) continue;
+                            std::wstring cn = safeClassName(o);
+                            if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                            ws = o; break;
+                        }
+                    if (ws)
+                    {
+                        if (auto* uf = ws->GetFunctionByNameInChain(STR("UnregisterRuntimeActorFromHandle")))
+                        {
+                            std::vector<uint8_t> ub(uf->GetParmsSize(), 0);
+                            if (auto* pH = findParam(uf, STR("ActorHandle")))
+                            {
+                                int n = (int)pH->GetSize() < (int)hb.size() ? (int)pH->GetSize() : (int)hb.size();
+                                std::memcpy(ub.data() + pH->GetOffset_Internal(), hb.data(), n);
+                            }
+                            if (auto* pW = findParam(uf, STR("bWasDestroyed")))
+                                ub[pW->GetOffset_Internal()] = 1;
+                            if (auto* pL = findParam(uf, STR("bUnregisterFromLevelRecord")))
+                                ub[pL->GetOffset_Internal()] = 1;
+                            try { safeProcessEvent(ws, uf, ub.data()); } catch (...) {}
+                            VLOG(STR("[MoriaCppMod] [BagActor rc.124] UnregisterRuntimeActorFromHandle fired for stray record\n"));
+                        }
+                    }
+                }
+                _wremove(utf8PathToWide(hp).c_str());
+            }
+            if (destroyed > 0)
+                VLOG(STR("[MoriaCppMod] [BagActor rc.124] cleanup: destroyed {} stray saddlebag actor(s)\n"), destroyed);
+        }
+
+        ULONGLONG m_sbWidgetOpenMs{0};       // [rc.130] widget-open time (Esc/Tab grace)
+        bool m_sidecarRestoreFailed{false};  // [rc.122] clobber-guard flag
+        std::string goatSidecarPath(UObject* goat)
+        {
+            std::string guid = "default";
+            do {
+                if (!goat || !isObjectAlive(goat)) break;
+                UClass* npcCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                    STR("/Script/Moria.MorNPCComponent"));
+                if (!npcCls) break;
+                auto* getComp = goat->GetFunctionByNameInChain(STR("GetComponentByClass"));
+                if (!getComp) break;
+                std::vector<uint8_t> gb(getComp->GetParmsSize(), 0);
+                writeGoatParm<UClass*>(getComp, gb.data(), STR("ComponentClass"), npcCls);
+                if (!safeProcessEvent(goat, getComp, gb.data())) break;
+                UObject* npcComp = readGoatParm<UObject*>(getComp, gb.data(), STR("ReturnValue"), nullptr);
+                if (!npcComp || !isObjectAlive(npcComp)) break;
+                uint8_t* g = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                if (!g) break;
+                const uint32_t* u = reinterpret_cast<const uint32_t*>(g);
+                char buf[40];
+                snprintf(buf, sizeof(buf), "%08X%08X%08X%08X", u[0], u[1], u[2], u[3]);
+                guid = buf;
+            } while (false);
+            return modPath("Mods/MoriaCppMod/goat-saddlebag-" + guid + ".txt");
+        }
+
+        // [rc.135] TEMPORARILY DISABLED per user (interference isolation while
+        // testing B7 slot+move). Flip back to true to re-enable the sidecar.
+        static constexpr bool kSidecarEnabled = false;
+
+        // Snapshot current saddlebag contents -> sidecar. Called on widget
+        // close and on bell-park. Skips container items themselves.
+        void snapshotGoatSaddlebag()
+        {
+            if (!kSidecarEnabled) { VLOG(STR("[MoriaCppMod] [Sidecar] snapshot SKIPPED (rc.135 temp-disabled)\n")); return; }
+            UObject* goat = nullptr;
+            for (auto& g : m_followGoats)
+            {
+                UObject* p = g.pawn.Get();
+                if (p && isObjectAlive(p)) { goat = p; break; }
+            }
+            if (!goat) return;
+
+            // Find the goat inventory component that actually has containers.
+            UObject* goatInv = nullptr;
+            UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                STR("/Script/Moria.MorInventoryComponent"));
+            if (!invCls) return;
+            if (auto* gf = goat->GetFunctionByNameInChain(STR("K2_GetComponentsByClass")))
+            {
+                std::vector<uint8_t> b(gf->GetParmsSize(), 0);
+                if (auto* pCls = findParam(gf, STR("ComponentClass")))
+                    *reinterpret_cast<UClass**>(b.data() + pCls->GetOffset_Internal()) = invCls;
+                try { safeProcessEvent(goat, gf, b.data()); } catch (...) {}
+                if (auto* pRet = findParam(gf, STR("ReturnValue")))
+                {
+                    uint8_t* arr = b.data() + pRet->GetOffset_Internal();
+                    UObject** data = *reinterpret_cast<UObject***>(arr);
+                    int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                    for (int32_t i = 0; data && i < num && i < 16; i++)
+                    {
+                        UObject* c = data[i];
+                        if (!c || !isObjectAlive(c)) continue;
+                        auto* hc = c->GetFunctionByNameInChain(STR("HasContainers"));
+                        if (!hc) continue;
+                        std::vector<uint8_t> hb(hc->GetParmsSize(), 0);
+                        try { safeProcessEvent(c, hc, hb.data()); } catch (...) {}
+                        if (auto* pr = findParam(hc, STR("ReturnValue")))
+                            if (*reinterpret_cast<bool*>(hb.data() + pr->GetOffset_Internal()))
+                            { goatInv = c; break; }
+                    }
+                }
+            }
+            if (!goatInv) return;
+
+            FProperty* itemsProp = goatInv->GetPropertyByNameInChain(STR("Items"));
+            if (!itemsProp) return;
+            uint8_t* listBase = reinterpret_cast<uint8_t*>(goatInv)
+                              + itemsProp->GetOffset_Internal() + iiaListOff();
+            if (!isReadableMemory(listBase, 16)) return;
+            uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+            int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
+            if (!arrData || arrNum < 0 || arrNum > 10000) return;
+
+            const int stride = iiSize(), itemOff = iiItemOff();
+            const int countOff = 0x18, csOff = 0x2C;
+
+            // [rc.122 CLOBBER GUARD] After a FAILED restore the bag is empty but
+            // the sidecar still holds the real contents — a close would snapshot
+            // 0 stacks over them (data loss; happened with the wood scraps).
+            // Count first; skip the write if bag-empty + last restore failed.
+            int stacksNow = 0;
+            for (int32_t i = 0; i < arrNum; i++)
+            {
+                uint8_t* entry = arrData + i * stride;
+                if (!isReadableMemory(entry, stride)) continue;
+                if (*reinterpret_cast<int32_t*>(entry + csOff) > 0) continue;
+                UClass* ic = *reinterpret_cast<UClass**>(entry + itemOff);
+                if (!ic || !isObjectAlive(ic)) continue;
+                if (*reinterpret_cast<int32_t*>(entry + countOff) > 0) stacksNow++;
+            }
+            if (stacksNow == 0 && m_sidecarRestoreFailed)
+            {
+                VLOG(STR("[MoriaCppMod] [Sidecar rc.122] snapshot SKIPPED (bag empty + last restore failed — preserving sidecar)\n"));
+                return;
+            }
+            m_sidecarRestoreFailed = false;
+
+            std::string path = goatSidecarPath(goat);
+            std::ofstream f = openOutputFile(path, std::ios::trunc);
+            if (!f.is_open())
+            {
+                VLOG(STR("[MoriaCppMod] [Sidecar rc.119] snapshot FAILED to open file\n"));
+                return;
+            }
+            int written = 0;
+            for (int32_t i = 0; i < arrNum; i++)
+            {
+                uint8_t* entry = arrData + i * stride;
+                if (!isReadableMemory(entry, stride)) continue;
+                int32_t cs = *reinterpret_cast<int32_t*>(entry + csOff);
+                if (cs > 0) continue;  // the container item itself — recreated at fit
+                UClass* ic = *reinterpret_cast<UClass**>(entry + itemOff);
+                if (!ic || !isObjectAlive(ic)) continue;
+                int32_t cnt = *reinterpret_cast<int32_t*>(entry + countOff);
+                if (cnt <= 0) continue;
+                std::string cpath = safeGetPathName(ic);
+                if (cpath.empty()) continue;
+                // [rc.124] safeGetPathName returns FULL-name format
+                // ("BlueprintGeneratedClass /Game/...") — strip the class
+                // prefix; StaticFindObject wants the bare object path.
+                size_t sp = cpath.find_last_of(' ');
+                if (sp != std::string::npos) cpath = cpath.substr(sp + 1);
+                f << cpath << "|" << cnt << "\n";
+                written++;
+            }
+            f.close();
+            VLOG(STR("[MoriaCppMod] [Sidecar rc.119] snapshot: {} stack(s) -> {}\n"),
+                 written, std::wstring(path.begin(), path.end()).c_str());
+        }
+
+        // Refill a freshly fitted (empty) saddlebag from the sidecar.
+        void restoreGoatSaddlebagFromSidecar(UObject* goat, UObject* goatInv)
+        {
+            if (!kSidecarEnabled) { VLOG(STR("[MoriaCppMod] [Sidecar] restore SKIPPED (rc.135 temp-disabled)\n")); return; }
+            if (!goat || !goatInv) return;
+            std::string path = goatSidecarPath(goat);
+            std::ifstream f(utf8PathToWide(path));
+            if (!f.is_open())
+            {
+                VLOG(STR("[MoriaCppMod] [Sidecar rc.119] no sidecar file — nothing to restore\n"));
+                return;
+            }
+            auto* af = goatInv->GetFunctionByNameInChain(STR("AddItem"));
+            if (!af)
+            {
+                VLOG(STR("[MoriaCppMod] [Sidecar rc.119] AddItem missing — restore aborted\n"));
+                return;
+            }
+            auto* pItem  = findParam(af, STR("Item")); if (!pItem) pItem = findParam(af, STR("Class"));
+            auto* pCount = findParam(af, STR("Count"));
+            int restored = 0, failed = 0;
+            std::string line;
+            while (std::getline(f, line))
+            {
+                // [rc.122] strip CR/whitespace — text-mode writes produce \r\n and
+                // getline leaves the \r glued to the class path → lookup failed
+                // ("restore: 0 re-added, 1 failed" was exactly this).
+                while (!line.empty() && (line.back() == '\r' || line.back() == '\n' ||
+                                         line.back() == ' '  || line.back() == '\t'))
+                    line.pop_back();
+                size_t bar = line.find('|');
+                if (bar == std::string::npos) continue;
+                std::string cpath = line.substr(0, bar);
+                int cnt = atoi(line.c_str() + bar + 1);
+                // [rc.124] strip full-name class prefix if present (older files
+                // wrote "BlueprintGeneratedClass /Game/..." — recovers them too)
+                size_t sp = cpath.find_last_of(' ');
+                if (sp != std::string::npos) cpath = cpath.substr(sp + 1);
+                if (cpath.empty() || cnt <= 0) continue;
+                std::wstring wpath = utf8ToWide(cpath);
+                UClass* cc = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, wpath.c_str());
+                if (!cc) cc = goat_loadClassAssetBlocking(wpath.c_str());
+                if (!cc || !isObjectAlive(cc)) { failed++; continue; }
+                std::vector<uint8_t> ab(af->GetParmsSize(), 0);
+                if (pItem)  *reinterpret_cast<UClass**>(ab.data() + pItem->GetOffset_Internal()) = cc;
+                if (pCount) *reinterpret_cast<int32_t*>(ab.data() + pCount->GetOffset_Internal()) = cnt;
+                try { safeProcessEvent(goatInv, af, ab.data()); restored++; } catch (...) { failed++; }
+            }
+            VLOG(STR("[MoriaCppMod] [Sidecar rc.119] restore: {} stack(s) re-added, {} failed\n"),
+                 restored, failed);
+            m_sidecarRestoreFailed = (failed > 0);  // [rc.122] arms the clobber guard
+            if (restored > 0)
+                showOnScreen(L"Saddlebag contents restored", 2.0f, 0.4f, 0.9f, 0.4f);
+        }
+
+        // [rc.109 2026-07-11] Cache for the one-shot delayed container re-drive
+        // (protects the saddlebag grid against later NPC-path rebuilds).
+        uint8_t   m_sbHandleCache[20]{};
+        UObject*  m_sbGoatInvCache{nullptr};
+        UObject*  m_sbPlayerInvCache{nullptr};
+        ULONGLONG m_contReSetupAtMs{0};
+
+        // [rc.109] Drive the screen's Storage_Container child down the chest
+        // path: write its members (storageHandle + components + screen ref),
+        // then call its own 'Set Up Storage Container' (which ClearChildren's
+        // the pane and builds the grid widget from the handle).
+        void driveSaddlebagStorageContainer(UObject* screen, UObject* goatInv, UObject* playerInv,
+                                            const uint8_t bagHandle[20], const wchar_t* tag)
+        {
+            UObject* cont = jw_findChildInTree(screen, STR("WBP_UI_Inventory_Storage_Container"));
+            if (!cont || !isObjectAlive(cont))
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [{}] Storage_Container child NOT FOUND\n"), tag);
+                return;
+            }
+            if (auto* p = cont->GetValuePtrByPropertyNameInChain<uint8_t>(STR("storageHandle")))
+                std::memcpy(p, bagHandle, 20);
+            if (auto* p = cont->GetValuePtrByPropertyNameInChain<UObject*>(STR("storageInventoryComponent")))
+                *p = goatInv;
+            if (auto* p = cont->GetValuePtrByPropertyNameInChain<UObject*>(STR("InventoryComponent")))
+                *p = playerInv;
+            if (auto* p = cont->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageScreenRef")))
+                *p = screen;
+            // [rc.110 2026-07-11] NULL InteractableRef BEFORE setup. Decoded
+            // 'Is NPC Type Container?' = InteractableRef valid AND its actor
+            // has a MorNPCComponent — the goat qualifies, so CreateStorageWidget
+            // built WBP_UI_Inventory_NPC_C (the dwarf 4×3) instead of falling
+            // through to the generic WBP_UI_Storage_Dynamic grid. Chests never
+            // hit this (no NPC component). FInterfaceProperty = {UObject*,void*}.
+            if (auto* p = cont->GetValuePtrByPropertyNameInChain<uint8_t>(STR("InteractableRef")))
+            {
+                UObject* prev = *reinterpret_cast<UObject**>(p);
+                std::memset(p, 0, 16);
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.110] InteractableRef was {:p} -> NULLED (kills NPC-type classification)\n"),
+                     (void*)prev);
+            }
+            else VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.110] InteractableRef property NOT FOUND\n"));
+            if (auto* f = cont->GetFunctionByNameInChain(STR("Set Up Storage Container")))
+            {
+                int psz = (int)f->GetParmsSize(); if (psz < 1) psz = 1;
+                std::vector<uint8_t> b((size_t)psz, 0);
+                try { safeProcessEvent(cont, f, b.data()); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [{}] Storage_Container driven: handle+comps written, 'Set Up Storage Container' called (cont={:p})\n"),
+                     tag, (void*)cont);
+            }
+            else VLOG(STR("[MoriaCppMod] [GoatSaddle] [{}] 'Set Up Storage Container' fn NOT FOUND\n"), tag);
+        }
+
+        // [rc.67 STORAGE WIDGET HELPER 2026-06-29] Spawn vanilla
+        // WBP_UI_Inventory_Screen_StorageMode_C bound to the given container
+        // handle on the goat. Used by rc.67 openGoatSaddlebagInventory.
+        void openStorageWidgetForHandle(UObject* goat, UObject* goatInv, const uint8_t bagHandle[20])
+        {
+            // Dismiss any prior widget instance (anti-stack)
+            if (m_test3SaddlebagWidget && isObjectAlive(m_test3SaddlebagWidget))
+            {
+                if (auto* rmFn = m_test3SaddlebagWidget->GetFunctionByNameInChain(STR("RemoveFromParent")))
+                {
+                    try { safeProcessEvent(m_test3SaddlebagWidget, rmFn, nullptr); } catch (...) {}
+                }
+                m_test3SaddlebagWidget = nullptr;
+            }
+
+            const wchar_t* widgetPath = STR("/Game/UI/Inventory/WBP_UI_Inventory_Screen_StorageMode.WBP_UI_Inventory_Screen_StorageMode_C");
+            UClass* widgetCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, widgetPath);
+            if (!widgetCls) widgetCls = goat_loadClassAssetBlocking(widgetPath);
+            if (!widgetCls) { showOnScreen(L"StorageMode widget class missing", 2.5f, 0.9f, 0.4f, 0.4f); return; }
+
+            UObject* w = jw_createGameWidget(widgetCls);
+            if (!w || !isObjectAlive(w)) { showOnScreen(L"Widget create failed", 2.5f, 0.9f, 0.4f, 0.4f); return; }
+
+            auto writeBytes = [&](const wchar_t* propName, const uint8_t* src, int size) {
+                if (auto* p = w->GetValuePtrByPropertyNameInChain<uint8_t>(propName))
+                    std::memcpy(p, src, size);
+            };
+            auto writeObj = [&](const wchar_t* propName, UObject* val) {
+                if (auto* p = w->GetValuePtrByPropertyNameInChain<UObject*>(propName)) *p = val;
+            };
+            auto writeBool = [&](const wchar_t* propName, bool val) {
+                if (auto* p = w->GetValuePtrByPropertyNameInChain<bool>(propName)) *p = val;
+            };
+
+            // [rc.103 CHEST MODE 2026-07-10] LEFT pane = the passed container
+            // handle, rendered as a storage GRID. The old NPC-mode bindings
+            // (isOpenedFromNPC=true + AssociatedNPC + stale Dwarf.BodyInventoryGOAT
+            // epicPackTag) routed the left pane to WBP_UI_Inventory_NPC_C — a
+            // widget with 12 HARDCODED dwarf body slots (rc.102 dump proof).
+            // Chest mode is what chests use and renders the actual grid shape
+            // (Goat_Saddlebags = 8x8).
+            writeBytes(STR("storageInventoryHandle"), bagHandle, 20);
+
+            // RIGHT pane = player's body inventory
+            UObject* pawn = m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr;
+            UObject* playerInv = pawn ? findPlayerInventoryComponent(pawn) : nullptr;
+            if (playerInv)
+            {
+                uint8_t bodyHandle[20] = {0};
+                if (auto* gbtFn = playerInv->GetFunctionByNameInChain(STR("GetContainerByTag")))
+                {
+                    RC::Unreal::FName bodyTag(STR("Inventory.BodyInventory"), RC::Unreal::FNAME_Add);
+                    int sz = gbtFn->GetParmsSize();
+                    std::vector<uint8_t> tb(sz, 0);
+                    auto* pIn  = findParam(gbtFn, STR("Tag"));
+                    if (!pIn) pIn = findParam(gbtFn, STR("ContainerTag"));
+                    auto* pRet = findParam(gbtFn, STR("ReturnValue"));
+                    int tagOff = pIn ? pIn->GetOffset_Internal() : 0;
+                    int rOff   = pRet ? pRet->GetOffset_Internal() : 8;
+                    std::memcpy(tb.data() + tagOff, &bodyTag, sizeof(RC::Unreal::FName));
+                    try { safeProcessEvent(playerInv, gbtFn, tb.data()); } catch (...) {}
+                    std::memcpy(bodyHandle, tb.data() + rOff, 20);
+                    RC::Unreal::FWeakObjectPtr ownerWP(playerInv);
+                    std::memcpy(bodyHandle + 8, &ownerWP, sizeof(RC::Unreal::FWeakObjectPtr));
+                }
+                writeObj(STR("InventoryComponent"), playerInv);
+                writeBytes(STR("bodyInventoryHandle"), bodyHandle, 20);
+            }
+
+            writeBool(STR("isStorageView"), true);
+            // [rc.103] CHEST mode: isOpenedFromNPC stays false, NO AssociatedNPC —
+            // those two are exactly what forced the dwarf NPC widget.
+            writeBool(STR("isOpenedFromNPC"), false);
+            (void)goat;  // goat not bound in chest mode (kept in signature for logging/callers)
+
+            // [rc.106 2026-07-10] Zeroing ALL of HandleStorageView's params told
+            // the screen "non-storage view": it HID storageOverlay (left pane
+            // empty despite Pack_Dynamic being built inside!) and picked the
+            // wrong background (Background visible / BackgroundWStorage
+            // collapsed = the "corrupt" right side). Log the real param list,
+            // then call it with storage-ish bools TRUE and NPC-ish bools FALSE.
+            if (auto* hsvFn = w->GetFunctionByNameInChain(STR("HandleStorageView")))
+            {
+                int sz = hsvFn->GetParmsSize();
+                std::vector<uint8_t> b(sz, 0);
+                for (auto* p : hsvFn->ForEachProperty())
+                {
+                    if (!p) continue;
+                    std::wstring pn; try { pn = p->GetName(); } catch (...) {}
+                    std::wstring pt; try { pt = p->GetClass().GetName(); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.106] HandleStorageView param '{}' type={} off={} size={}\n"),
+                         pn.c_str(), pt.c_str(), p->GetOffset_Internal(), p->GetSize());
+                    if (pt == STR("BoolProperty"))
+                    {
+                        bool val = false;
+                        // NPC-ish → false; storage/view/show-ish → true
+                        if (pn.find(STR("NPC")) != std::wstring::npos || pn.find(STR("Npc")) != std::wstring::npos)
+                            val = false;
+                        else if (pn.find(STR("torage")) != std::wstring::npos ||
+                                 pn.find(STR("View"))   != std::wstring::npos ||
+                                 pn.find(STR("Show"))   != std::wstring::npos ||
+                                 pn.find(STR("Enable")) != std::wstring::npos)
+                            val = true;
+                        b[p->GetOffset_Internal()] = val ? 1 : 0;
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.106]   -> set '{}' = {}\n"), pn.c_str(), val);
+                    }
+                }
+                try { safeProcessEvent(w, hsvFn, b.data()); } catch (...) {}
+            }
+
+            m_test3SaddlebagWidget = w;
+            if (auto* addFn = w->GetFunctionByNameInChain(STR("AddToViewport")))
+            {
+                int sz = addFn->GetParmsSize();
+                std::vector<uint8_t> b(sz, 0);
+                if (sz >= 4) *reinterpret_cast<int32_t*>(b.data()) = 100;
+                try { safeProcessEvent(w, addFn, b.data()); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.104] OUR chest-mode widget={:p} added to viewport (Z=100)\n"),
+                     (void*)w);
+            }
+
+            // [rc.106] Belt-and-braces: force the storage view-state to the
+            // exact values captured from the WORKING native screen dump —
+            //   storageOverlay      vis=4 (SelfHitTestInvisible)
+            //   Background          vis=1 (Collapsed)
+            //   BackgroundWStorage  vis=0 (Visible)
+            {
+                auto setVis = [&](const wchar_t* childName, uint8_t v) {
+                    UObject* c = jw_findChildInTree(w, childName);
+                    if (!c || !isObjectAlive(c))
+                    {
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.106] setVis: '{}' NOT FOUND\n"), childName);
+                        return;
+                    }
+                    if (auto* f = c->GetFunctionByNameInChain(STR("SetVisibility")))
+                    {
+                        std::vector<uint8_t> vb(f->GetParmsSize(), 0);
+                        vb[0] = v;
+                        try { safeProcessEvent(c, f, vb.data()); } catch (...) {}
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.106] setVis '{}' -> {}\n"), childName, (int)v);
+                    }
+                };
+                setVis(STR("storageOverlay"), 4);
+                setVis(STR("Background"), 1);
+                setVis(STR("BackgroundWStorage"), 0);
+            }
+
+            // [rc.109 ORDER FIX 2026-07-11] rc.108 fired the show events AFTER
+            // our container setup — they re-ran the container down the NPC path
+            // and the dwarf 4×3 came back (dump proof: WBP_UI_Inventory_NPC_C
+            // re-stacked). Correct order: native show events FIRST (build the
+            // player pane), OUR container setup LAST — 'Set Up Storage
+            // Container' starts with ClearChildren, so it wipes whatever the
+            // show flow put in the pane and builds the saddlebag grid.
+            for (const wchar_t* evName : { STR("OnBeforeShow"), STR("OnAfterShow") })
+            {
+                if (auto* f = w->GetFunctionByNameInChain(evName))
+                {
+                    int psz = (int)f->GetParmsSize(); if (psz < 1) psz = 1;
+                    std::vector<uint8_t> b((size_t)psz, 0);
+                    try { safeProcessEvent(w, f, b.data()); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.108] fired native '{}'\n"), evName);
+                }
+            }
+
+            // [rc.107 2026-07-10] Drive the Storage_Container child EXACTLY the
+            // way the game's chest flow does (decoded from the vanilla widget BP):
+            // 'Set Up Storage Container' (parmless) reads MEMBER state —
+            // validates storageHandle, ClearChildren, CreateStorageWidget
+            // (pack-type → 'Set Up Pack Dynamic Container' → Create New Grid of
+            // GetStorageMaxSlots(storageHandle)), adds to its overlay, shows
+            // RootGrid, updates TakeAll/Deposit buttons. So: write the members,
+            // call the function. "Like any other storage chest."
+            driveSaddlebagStorageContainer(w, goatInv, playerInv, bagHandle, STR("rc.107"));
+
+            // [rc.109] one-shot delayed re-drive: if anything later rebuilds
+            // the pane down the NPC path, we re-assert the saddlebag grid.
+            std::memcpy(m_sbHandleCache, bagHandle, 20);
+            m_sbGoatInvCache   = goatInv;
+            m_sbPlayerInvCache = playerInv;
+            m_contReSetupAtMs  = GetTickCount64() + 600;
+
+            // [rc.108] Collapse the NPC placeholder banner ("NPC Name • NPC
+            // Role / This dwarf needs...") + skill panel — chest mode has no
+            // NPC, so these render design-time defaults.
+            {
+                auto collapse = [&](const wchar_t* childName) {
+                    UObject* c = jw_findChildInTree(w, childName);
+                    if (!c || !isObjectAlive(c)) return;
+                    if (auto* f = c->GetFunctionByNameInChain(STR("SetVisibility")))
+                    {
+                        std::vector<uint8_t> vb(f->GetParmsSize(), 0);
+                        vb[0] = 1;  // Collapsed
+                        try { safeProcessEvent(c, f, vb.data()); } catch (...) {}
+                    }
+                };
+                collapse(STR("NPCTitleCluster"));
+                collapse(STR("SkillPanel"));
+                collapse(STR("NPCDetailsBox"));
+            }
+
+            // [rc.108] UI input mode — screen was left in GAME input (Swing/
+            // Look prompts, clicks swung the pickaxe). Match native screens.
+            setInputModeUI(w);
+
+            // [rc.107] register with the Esc/Tab close tick (it watches
+            // m_goatSaddlebagWidget — our open only set m_test3SaddlebagWidget,
+            // so the screen had NO close handler). Also enables the per-tick
+            // visibility re-assert against the screen's self-reverting state.
+            m_goatSaddlebagWidget = w;
+            m_sbWidgetOpenMs = GetTickCount64();  // [rc.130] Esc/Tab grace anchor
+        }
+
+        // [rc.67 BODYINVENTORYGOAT 2026-06-29] Per approved plan
+        // deep-percolating-parnas.md — open the goat's MorInventoryComponent
+        // bound to its `Dwarf.BodyInventoryGOAT` container (8x8). Pak edits
+        // A2/A3/A4 added the DT_Storage row + new BP_ContainerItem class +
+        // DT_NPCUniqueCharacters row. The goat's MorInventoryComponent will
+        // have the BodyInventoryGOAT container once we either modify the
+        // BP_NpcGoat CDO (deferred A5 — high risk) OR mutate at runtime
+        // (deferred to rc.68). For NOW the container may not exist yet;
+        // this handler logs the binding attempt and either succeeds or
+        // shows a clear diagnostic toast.
+        // [rc.101 LIVE UI HARVEST 2026-07-10] Deferred deep-dump of the live
+        // StorageMode screen after the Saddlebags menu row opens it. 800ms
+        // delay lets the screen finish binding/populating. Produces:
+        //   1. widget-harvest/StorageMode_GoatLive.json — full recursive tree
+        //      (class, name, slot, brush, size, visibility, color, font) for
+        //      future recreation;
+        //   2. compact [UIDump] VLOG tree (class 'name' vis=) in the log.
+        ULONGLONG m_storageHarvestAtMs{0};
+        // [rc.104 2026-07-10] E-release on the goat menu row ALSO fires the
+        // vanilla interact (OnReleaseInteract -> ServerRescueNpc) which opens
+        // the game's own StorageMode in NPC mode ON TOP of our chest-mode
+        // widget (log: instances=2). Suppress pass: shortly after our open,
+        // RemoveFromParent any StorageMode instance that is not ours.
+        ULONGLONG m_storageSuppressAtMs{0};
+        void tickPendingStorageHarvest()
+        {
+            ULONGLONG now = GetTickCount64();
+
+            // [rc.130 2026-07-12] Suppression is now a WINDOW (sweeps every
+            // ~150ms until the deadline) instead of a one-shot at +500ms — the
+            // vanilla NPC screen was visible long enough that the user Esc'd
+            // it, and that same Esc killed OUR screen underneath.
+            if (m_storageSuppressAtMs != 0 && now < m_storageSuppressAtMs)
+            {
+                static ULONGLONG s_lastSweep = 0;
+                if (now - s_lastSweep >= 150)
+                {
+                    s_lastSweep = now;
+                    std::vector<UObject*> all;
+                    seh_findAllOf(STR("WBP_UI_Inventory_Screen_StorageMode_C"), &all);
+                    for (auto* w : all)
+                    {
+                        if (!w || !isObjectAlive(w)) continue;
+                        if (w == m_test3SaddlebagWidget) continue;
+                        bool inViewport = false;
+                        if (auto* ivFn = w->GetFunctionByNameInChain(STR("IsInViewport")))
+                        {
+                            std::vector<uint8_t> b(ivFn->GetParmsSize(), 0);
+                            try { safeProcessEvent(w, ivFn, b.data()); } catch (...) {}
+                            if (auto* pr = findParam(ivFn, STR("ReturnValue")))
+                                inViewport = *reinterpret_cast<bool*>(b.data() + pr->GetOffset_Internal());
+                        }
+                        if (inViewport)
+                        {
+                            // [rc.137] COLLAPSE, don't RemoveFromParent — ripping the
+                            // game's SINGLETON screen from the viewport broke every
+                            // later chest open (Show() can't re-add it). Collapse is
+                            // reversible: the native Show restores visibility.
+                            if (auto* svFn = w->GetFunctionByNameInChain(STR("SetVisibility")))
+                            {
+                                std::vector<uint8_t> vb(svFn->GetParmsSize(), 0);
+                                vb[0] = 1;  // Collapsed
+                                try { safeProcessEvent(w, svFn, vb.data()); } catch (...) {}
+                                VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.137 SWEEP] native StorageMode {:p} collapsed\n"), (void*)w);
+                            }
+                        }
+                    }
+                }
+            }
+            else if (m_storageSuppressAtMs != 0 && now >= m_storageSuppressAtMs)
+            {
+                m_storageSuppressAtMs = 0;
+                std::vector<UObject*> all;
+                seh_findAllOf(STR("WBP_UI_Inventory_Screen_StorageMode_C"), &all);
+                for (auto* w : all)
+                {
+                    if (!w || !isObjectAlive(w)) continue;
+                    bool ours = (w == m_test3SaddlebagWidget);
+                    bool inViewport = false;
+                    if (auto* ivFn = w->GetFunctionByNameInChain(STR("IsInViewport")))
+                    {
+                        std::vector<uint8_t> b(ivFn->GetParmsSize(), 0);
+                        try { safeProcessEvent(w, ivFn, b.data()); } catch (...) {}
+                        if (auto* pr = findParam(ivFn, STR("ReturnValue")))
+                            inViewport = *reinterpret_cast<bool*>(b.data() + pr->GetOffset_Internal());
+                    }
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.104 SUPPRESS] instance={:p} ours={} inViewport={}\n"),
+                         (void*)w, ours, inViewport);
+                    if (!ours && inViewport)
+                    {
+                        // [rc.137] collapse, don't remove (see sweep note — removal
+                        // permanently broke chest opens this session)
+                        if (auto* svFn = w->GetFunctionByNameInChain(STR("SetVisibility")))
+                        {
+                            std::vector<uint8_t> vb(svFn->GetParmsSize(), 0);
+                            vb[0] = 1;  // Collapsed
+                            try { safeProcessEvent(w, svFn, vb.data()); } catch (...) {}
+                            VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.137 SUPPRESS] native StorageMode {:p} collapsed\n"),
+                                 (void*)w);
+                        }
+                    }
+                }
+            }
+
+            if (m_storageHarvestAtMs == 0) return;
+            if (now < m_storageHarvestAtMs) return;
+            m_storageHarvestAtMs = 0;
+
+            // Dump ALL live instances' bindings; walk OUR widget (else first).
+            std::vector<UObject*> found;
+            seh_findAllOf(STR("WBP_UI_Inventory_Screen_StorageMode_C"), &found);
+            UObject* screen = nullptr;
+            for (auto* w : found)
+            {
+                if (!w || !isObjectAlive(w)) continue;
+                bool ours = (w == m_test3SaddlebagWidget);
+                UObject* np = nullptr; bool fromNpc = false; UObject* ic = nullptr;
+                if (auto* p = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("AssociatedNPC"))) np = *p;
+                if (auto* p = w->GetValuePtrByPropertyNameInChain<bool>(STR("isOpenedFromNPC"))) fromNpc = *p;
+                if (auto* p = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("InventoryComponent"))) ic = *p;
+                VLOG(STR("[MoriaCppMod] [UIDump rc.101] instance={:p} ours={} AssociatedNPC={:p} isOpenedFromNPC={} InventoryComponent={:p}\n"),
+                     (void*)w, ours, (void*)np, fromNpc, (void*)ic);
+                if (!screen) screen = w;
+            }
+            // Prefer OUR widget explicitly if alive.
+            if (m_test3SaddlebagWidget && isObjectAlive(m_test3SaddlebagWidget))
+                screen = m_test3SaddlebagWidget;
+            VLOG(STR("[MoriaCppMod] [UIDump rc.101] live StorageMode instances={} using={:p} (ours={})\n"),
+                 found.size(), (void*)screen, screen == m_test3SaddlebagWidget);
+            if (!screen) return;
+
+            // 1. Full-detail JSON for future recreation.
+            harvestLiveWidgetToFile(screen, STR("StorageMode_GoatLive"));
+
+            // 2. Compact tree in the log: class 'name' vis=<0..4> [+key bindings].
+            //    Visibility enum: 0=Visible 1=Collapsed 2=Hidden 3=HitTestInvisible 4=SelfHitTestInvisible
+            int lines = 0;
+            std::function<void(UObject*, int)> walk = [&](UObject* w, int depth) {
+                if (!w || !isObjectAlive(w) || lines > 2000 || depth > 16) return;
+                std::wstring cls = safeClassName(w);
+                std::wstring nm  = safeObjectName(w);
+                // [rc.102] Skip the hidden NPC debug overlay subtree — its huge
+                // tree ate the line budget before the walk reached the elements
+                // we actually need (storageOverlay + epicPack+DetailsHBox).
+                if (nm == STR("DebugNPCOverlay") || cls == STR("WBP_NPC_Debug_C"))
+                {
+                    VLOG(STR("[MoriaCppMod] [UIDump rc.101] {}{} '{}' (subtree SKIPPED)\n"),
+                         std::wstring(depth * 2, L' ').c_str(), cls.c_str(), nm.c_str());
+                    lines++;
+                    return;
+                }
+                uint8_t vis = 255;
+                if (auto* v = w->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility"))) vis = *v;
+                VLOG(STR("[MoriaCppMod] [UIDump rc.101] {}{} '{}' vis={}\n"),
+                     std::wstring(depth * 2, L' ').c_str(), cls.c_str(), nm.c_str(), (int)vis);
+                lines++;
+                // Panel children
+                if (auto* gcc = w->GetFunctionByNameInChain(STR("GetChildrenCount")))
+                {
+                    std::vector<uint8_t> b(gcc->GetParmsSize(), 0);
+                    try { safeProcessEvent(w, gcc, b.data()); } catch (...) {}
+                    int32_t n = 0;
+                    if (auto* pr = findParam(gcc, STR("ReturnValue")))
+                        n = *reinterpret_cast<int32_t*>(b.data() + pr->GetOffset_Internal());
+                    if (auto* gca = w->GetFunctionByNameInChain(STR("GetChildAt")))
+                    {
+                        for (int32_t i = 0; i < n && i < 64; i++)
+                        {
+                            std::vector<uint8_t> cb(gca->GetParmsSize(), 0);
+                            if (auto* pi = findParam(gca, STR("Index")))
+                                *reinterpret_cast<int32_t*>(cb.data() + pi->GetOffset_Internal()) = i;
+                            try { safeProcessEvent(w, gca, cb.data()); } catch (...) {}
+                            UObject* child = nullptr;
+                            if (auto* pr2 = findParam(gca, STR("ReturnValue")))
+                                child = *reinterpret_cast<UObject**>(cb.data() + pr2->GetOffset_Internal());
+                            if (child) walk(child, depth + 1);
+                        }
+                    }
+                }
+                // Nested user-widget: descend into its own tree
+                if (auto* wt = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree")))
+                {
+                    if (*wt)
+                    {
+                        if (auto* rp = (*wt)->GetValuePtrByPropertyNameInChain<UObject*>(STR("RootWidget")))
+                            if (*rp) walk(*rp, depth + 1);
+                    }
+                }
+            };
+            // Key screen-level bindings first.
+            if (auto* np = screen->GetValuePtrByPropertyNameInChain<UObject*>(STR("AssociatedNPC")))
+                VLOG(STR("[MoriaCppMod] [UIDump rc.101] screen.AssociatedNPC={:p} ({})\n"),
+                     (void*)*np, *np ? safeClassName(*np).c_str() : STR("null"));
+            if (auto* bp = screen->GetValuePtrByPropertyNameInChain<bool>(STR("isOpenedFromNPC")))
+                VLOG(STR("[MoriaCppMod] [UIDump rc.101] screen.isOpenedFromNPC={}\n"), *bp);
+            if (auto* ic = screen->GetValuePtrByPropertyNameInChain<UObject*>(STR("InventoryComponent")))
+                VLOG(STR("[MoriaCppMod] [UIDump rc.101] screen.InventoryComponent={:p}\n"), (void*)*ic);
+            walk(screen, 0);
+            VLOG(STR("[MoriaCppMod] [UIDump rc.101] DONE ({} widgets logged; full JSON in widget-harvest/StorageMode_GoatLive.json)\n"), lines);
+            showOnScreen(L"UI dump written (log + StorageMode_GoatLive.json)", 2.5f, 0.4f, 0.9f, 0.4f);
+        }
+
         void openGoatSaddlebagInventory()
         {
+            // [rc.67 SCOPED 2026-06-29] Wrap in a block so locals don't
+            // collide with the unreachable legacy code that follows after
+            // the return; statement at the end of this block.
+            {
+                UObject* goat = nullptr;
+                for (auto& g : m_followGoats) {
+                    UObject* p = g.pawn.Get();
+                    if (p && isObjectAlive(p)) { goat = p; break; }
+                }
+                if (!goat) {
+                    showOnScreen(L"No goat present", 2.0f, 0.9f, 0.4f, 0.4f);
+                    return;
+                }
+
+                // [rc.99 EPIC-SLOT 2026-07-10] Option A: open Tobi's native
+                // StorageMode bound to the goat's epic-pack slot so the player
+                // can drop a CRAFTED PorterGoatSaddlebags in. Native manage showed
+                // a corrupt default grid because the goat's epic-pack slot
+                // (Goat.Slot.EpicPack, from DefaultContainers) is NOT instantiated
+                // on a summoned goat (GetContainers=0 → nothing to bind). Try to
+                // instantiate it, log the result, then fire native manage. Deep
+                // logging tells us whether the slot finally appears.
+                {
+                    UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                        STR("/Script/Moria.MorInventoryComponent"));
+                    UObject* goatInv = nullptr;
+                    auto readSH = [&](UObject* c) -> std::wstring {
+                        if (!c) return STR("");
+                        auto* p = c->GetPropertyByNameInChain(STR("StorageHandle"));
+                        if (!p) return STR("");
+                        auto* rn = reinterpret_cast<RC::Unreal::FName*>(reinterpret_cast<uint8_t*>(c) + p->GetOffset_Internal() + 8);
+                        try { return rn->ToString(); } catch (...) { return STR(""); }
+                    };
+                    auto contCount = [&](UObject* c) -> int32_t {
+                        auto* f = c ? c->GetFunctionByNameInChain(STR("GetContainers")) : nullptr;
+                        if (!f) return -1;
+                        std::vector<uint8_t> b(f->GetParmsSize(), 0);
+                        try { safeProcessEvent(c, f, b.data()); } catch (...) {}
+                        auto* pr = findParam(f, STR("ReturnValue"));
+                        if (!pr) return -1;
+                        return *reinterpret_cast<int32_t*>(b.data() + pr->GetOffset_Internal() + 8);
+                    };
+                    if (invCls)
+                    {
+                        if (auto* gf = goat->GetFunctionByNameInChain(STR("K2_GetComponentsByClass")))
+                        {
+                            std::vector<uint8_t> b(gf->GetParmsSize(), 0);
+                            if (auto* pCls = findParam(gf, STR("ComponentClass")))
+                                *reinterpret_cast<UClass**>(b.data() + pCls->GetOffset_Internal()) = invCls;
+                            try { safeProcessEvent(goat, gf, b.data()); } catch (...) {}
+                            if (auto* pRet = findParam(gf, STR("ReturnValue"))) {
+                                uint8_t* arr = b.data() + pRet->GetOffset_Internal();
+                                UObject** data = *reinterpret_cast<UObject***>(arr);
+                                int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                                UObject* firstAny = nullptr;
+                                for (int32_t i = 0; data && i < num && i < 16; i++) {
+                                    UObject* c = data[i];
+                                    if (!c || !isObjectAlive(c)) continue;
+                                    std::wstring nm; try { nm = c->GetName(); } catch (...) {}
+                                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.99] comp[{}] name='{}' SH='{}' containers={}\n"),
+                                         i, nm.c_str(), readSH(c).c_str(), contCount(c));
+                                    if (!firstAny) firstAny = c;
+                                    if (nm == STR("Inventory Comp")) goatInv = c;   // prefer the SCS cargo comp
+                                }
+                                if (!goatInv) goatInv = firstAny;
+                            }
+                        }
+                    }
+                    // [rc.103 CHEST-MODE 2026-07-10] The rc.102 dump PROVED the
+                    // NPC-mode left pane is WBP_UI_Inventory_NPC_C with 12
+                    // HARDCODED dwarf body slots — the goat can never render
+                    // correctly there. New flow (uses Tobi's craft recipe):
+                    //   1. If the goat has no container yet: require a CRAFTED
+                    //      PorterGoatSaddlebags in the player inventory, consume
+                    //      it, AddItem(BP_SaddleBags_Goat_C) on the goat (the one
+                    //      call proven to create the container, rc.92).
+                    //   2. Open StorageMode in CHEST mode (storageInventoryHandle
+                    //      bound to the goat container, isOpenedFromNPC=false)
+                    //      → left pane renders the 8x8 Goat_Saddlebags grid.
+                    if (!goatInv) {
+                        showOnScreen(L"Goat has no inventory component", 2.5f, 0.9f, 0.4f, 0.4f);
+                        return;
+                    }
+                    // [rc.128 2026-07-12] cleanupStraySaddlebagActors DISABLED —
+                    // it was destroying LEGIT dropped packs: the game drops
+                    // equippables as raw BP_SaddleBags_Goat_C actors, exactly
+                    // what the cleanup deleted (it ate the user's crafted pack
+                    // right after the B5 drop). rc.123's litter is long gone.
+                    // cleanupStraySaddlebagActors(goat);
+
+                    // [rc.126 B5] carrier-first find kept (wrapper carriers only).
+                    if (UObject* carrier = findSaddlebagCarrier())
+                    {
+                        tameSaddlebagActor(carrier, goat);   // hide + attach
+                        if (openViaBagActor(goat, carrier)) return;
+                        VLOG(STR("[MoriaCppMod] [Carrier rc.126] carrier found but unopenable — continuing legacy path\n"));
+                    }
+
+                    // [rc.136 FINAL 2026-07-12] THE PLAYER-CARRIED PACK IS THE
+                    // BAG. Slot creation impossible (all Methods fail); moving
+                    // pack instances INTO the goat impossible (all AddTypes
+                    // fail); AddItem only mints empty duplicates. The pack in
+                    // the PLAYER inventory persists natively with its contents
+                    // (user-proven). Goat = access gate + visuals.
+                    {
+                        const wchar_t* kSaddlePathF =
+                            STR("/Game/Mods/PorterGoat/Items/BP_SaddleBags_Goat.BP_SaddleBags_Goat_C");
+                        UClass* saddleClsF = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kSaddlePathF);
+                        if (!saddleClsF) saddleClsF = goat_loadClassAssetBlocking(kSaddlePathF);
+                        UObject* pInvF = playerInvOf();
+                        int32_t packIdF = (pInvF && saddleClsF) ? findPackId(pInvF, saddleClsF) : 0;
+                        if (packIdF != 0)
+                        {
+                            // find the pack's 8×8 container on the PLAYER inventory
+                            int32_t cid = 0;
+                            if (auto* gbt = pInvF->GetFunctionByNameInChain(STR("GetContainerByTag")))
+                            {
+                                std::vector<uint8_t> tb(gbt->GetParmsSize(), 0);
+                                auto* pIn = findParam(gbt, STR("Tag")); if (!pIn) pIn = findParam(gbt, STR("ContainerTag"));
+                                auto* pRet = findParam(gbt, STR("ReturnValue"));
+                                RC::Unreal::FName t(STR("Goat_Saddlebags"), RC::Unreal::FNAME_Add);
+                                if (pIn) std::memcpy(tb.data() + pIn->GetOffset_Internal(), &t, sizeof(t));
+                                try { safeProcessEvent(pInvF, gbt, tb.data()); } catch (...) {}
+                                if (pRet) cid = *reinterpret_cast<int32_t*>(tb.data() + pRet->GetOffset_Internal());
+                            }
+                            VLOG(STR("[MoriaCppMod] [rc.136] player pack id={} GetContainerByTag('Goat_Saddlebags') -> cid={}\n"),
+                                 packIdF, cid);
+                            if (cid == 0)
+                            {
+                                // diagnosis: list ALL player containers
+                                if (auto* gcf = pInvF->GetFunctionByNameInChain(STR("GetContainers")))
+                                {
+                                    std::vector<uint8_t> gb(gcf->GetParmsSize(), 0);
+                                    try { safeProcessEvent(pInvF, gcf, gb.data()); } catch (...) {}
+                                    if (auto* pr = findParam(gcf, STR("ReturnValue")))
+                                    {
+                                        uint8_t* arr = gb.data() + pr->GetOffset_Internal();
+                                        uint8_t* data = *reinterpret_cast<uint8_t**>(arr);
+                                        int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                                        VLOG(STR("[MoriaCppMod] [rc.136] player inv has {} container(s):\n"), num);
+                                        for (int32_t i = 0; data && i < num && i < 24; i++)
+                                            VLOG(STR("[MoriaCppMod] [rc.136]   container[{}] id={}\n"),
+                                                 i, *reinterpret_cast<int32_t*>(data + i * 20));
+                                        // heuristic: the pack's container is the LAST one
+                                        if (data && num > 0)
+                                            cid = *reinterpret_cast<int32_t*>(data + (num - 1) * 20);
+                                    }
+                                }
+                                VLOG(STR("[MoriaCppMod] [rc.136] tag miss — using LAST player container id={}\n"), cid);
+                            }
+                            if (cid != 0)
+                            {
+                                uint8_t ph[20] = {0};
+                                *reinterpret_cast<int32_t*>(ph) = cid;
+                                RC::Unreal::FWeakObjectPtr wpP(pInvF);
+                                std::memcpy(ph + 8, &wpP, sizeof(wpP));
+                                equipPorterSaddlebag(goat);  // visual saddle on the goat (rc.87, cosmetic)
+                                VLOG(STR("[MoriaCppMod] [rc.136] opening PLAYER-side pack container id={} via goat menu\n"), cid);
+                                openStorageWidgetForHandle(goat, pInvF, ph);
+                                m_storageSuppressAtMs = GetTickCount64() + 1500;
+                                m_storageHarvestAtMs  = GetTickCount64() + 1200;
+                                return;
+                            }
+                        }
+                    }
+
+                    int32_t cnt = contCount(goatInv);
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.103] containers at open={}\n"), cnt);
+                    if (cnt <= 0)
+                    {
+                        // [rc.116 RESTORED-BAG SCAN 2026-07-11] Before fitting a
+                        // NEW bag, look for a save-system-RESTORED saddlebag actor
+                        // from a previous session (Channel-C restore recreates
+                        // registered container actors on world load). Pure
+                        // discovery this round — logs what reload gives us.
+                        {
+                            std::vector<UObject*> bags;
+                            findAllOfSafe(STR("BP_SaddleBags_Goat_C"), bags);
+                            int liveBags = 0;
+                            for (auto* b : bags)
+                            {
+                                if (!b || !isObjectAlive(b)) continue;
+                                std::wstring nm = safeObjectName(b);
+                                if (nm.rfind(STR("Default__"), 0) == 0) continue;
+                                UObject* owner = nullptr;
+                                if (auto* f = b->GetFunctionByNameInChain(STR("GetOwner")))
+                                {
+                                    std::vector<uint8_t> ob(f->GetParmsSize(), 0);
+                                    try { safeProcessEvent(b, f, ob.data()); } catch (...) {}
+                                    if (auto* pr = findParam(f, STR("ReturnValue")))
+                                        owner = *reinterpret_cast<UObject**>(ob.data() + pr->GetOffset_Internal());
+                                }
+                                VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.116 SCAN] live saddlebag actor '{}' {:p} owner={} \n"),
+                                     nm.c_str(), (void*)b, owner ? safeClassName(owner).c_str() : STR("(none)"));
+                                liveBags++;
+                            }
+                            VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.116 SCAN] {} live saddlebag actor(s) in world before fit\n"), liveBags);
+                        }
+                        const wchar_t* kSaddlePath =
+                            STR("/Game/Mods/PorterGoat/Items/BP_SaddleBags_Goat.BP_SaddleBags_Goat_C");
+                        UClass* saddleCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kSaddlePath);
+                        if (!saddleCls) saddleCls = goat_loadClassAssetBlocking(kSaddlePath);
+                        UObject* pawn = (m_localPawn && isObjectAlive(m_localPawn)) ? m_localPawn : getPawn();
+                        UObject* playerInv = pawn ? findPlayerInventoryComponent(pawn) : nullptr;
+                        // Count crafted saddlebags in the player inventory.
+                        int32_t playerHas = 0;
+                        if (playerInv && saddleCls)
+                        {
+                            if (auto* itemsProp = playerInv->GetPropertyByNameInChain(STR("Items")))
+                            {
+                                uint8_t* listBase = reinterpret_cast<uint8_t*>(playerInv)
+                                                  + itemsProp->GetOffset_Internal() + iiaListOff();
+                                if (isReadableMemory(listBase, 16))
+                                {
+                                    uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+                                    int32_t arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
+                                    int stride = iiSize(), itemOff = iiItemOff();
+                                    for (int32_t i = 0; arrData && i < arrNum && i < 2000; i++)
+                                    {
+                                        uint8_t* entry = arrData + i * stride;
+                                        if (!isReadableMemory(entry, stride)) continue;
+                                        if (*reinterpret_cast<UClass**>(entry + itemOff) == saddleCls) playerHas++;
+                                    }
+                                }
+                            }
+                        }
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.103] saddleCls={:p} playerInv={:p} playerHas={}\n"),
+                             (void*)saddleCls, (void*)playerInv, playerHas);
+                        if (playerHas <= 0)
+                        {
+                            showOnScreen(L"Craft Goat Saddlebags first, then use Saddlebags again",
+                                         3.5f, 1.0f, 0.7f, 0.3f);
+                            // [rc.128] still suppress the vanilla NPC screen the
+                            // E-release opens — otherwise the dwarf 4×3 appears
+                            // and reads as "the saddlebags broke".
+                            m_storageSuppressAtMs = GetTickCount64() + 1500;  // [rc.130] suppression WINDOW (sweeps every 150ms)
+                            return;
+                        }
+
+                        // [rc.131 B5-v2] Craft confirmed → EJECT the crafted pack
+                        // (equip-slot drop family → BP_DropItem wrapper, the
+                        // natively-persistent container Part A proved) → tame →
+                        // open bound to the wrapper's own inventory. TRUE
+                        // transfer of the crafted item; contents ride the SAVE.
+                        {
+                            if (ejectCraftedPack(playerInv, saddleCls))
+                            {
+                                UObject* carrier = findSaddlebagCarrier();
+                                if (carrier)
+                                {
+                                    tameSaddlebagActor(carrier, goat);
+                                    if (openViaBagActor(goat, carrier))
+                                    {
+                                        showOnScreen(L"Saddlebags fitted to the goat", 2.0f, 0.4f, 0.9f, 0.4f);
+                                        return;
+                                    }
+                                    VLOG(STR("[MoriaCppMod] [B5v2 rc.131] carrier unopenable — legacy fallback\n"));
+                                }
+                                else VLOG(STR("[MoriaCppMod] [B5v2 rc.131] eject fired but NO wrapper carrier found — legacy fallback\n"));
+                            }
+                        }
+
+                        // [rc.133 B7] TRUE TRANSFER first: MOVE the player's
+                        // crafted pack (with any contents inside!) onto the
+                        // goat — one item instance forever. AddItem below only
+                        // runs if the move fails.
+                        {
+                            UObject* gInvB7 = goatInvOf(goat);
+                            // [rc.135] Tobi's designed home first: instantiate the
+                            // 1×1 Goat.Slot.EpicPack container (Method sweep), THEN
+                            // move the pack into it — pack-in-slot, dwarf-style.
+                            if (gInvB7) ensureGoatSlotContainer(gInvB7);
+                            if (gInvB7 && movePackBetween(playerInv, gInvB7, STR("fit player->goat")))
+                            {
+                                cnt = contCount(goatInv);
+                                VLOG(STR("[MoriaCppMod] [B7 rc.133] fit-by-move: goat containers now={}\n"), cnt);
+                            }
+                        }
+                        if (cnt > 0)
+                        {
+                            showOnScreen(L"Saddlebags fitted to the goat", 2.0f, 0.4f, 0.9f, 0.4f);
+                        }
+                        else
+                        {
+                        // [rc.124] B2 spawn removed (inert prop — see above).
+                        // Create the goat's container by adding the pack item.
+                        for (const wchar_t* fnName : { STR("AddItem"), STR("RequestAddItem") })
+                        {
+                            auto* af = goatInv->GetFunctionByNameInChain(fnName);
+                            if (!af) continue;
+                            std::vector<uint8_t> ab(af->GetParmsSize(), 0);
+                            auto* pItem = findParam(af, STR("Item")); if (!pItem) pItem = findParam(af, STR("Class"));
+                            auto* pCount = findParam(af, STR("Count"));
+                            if (pItem)  *reinterpret_cast<UClass**>(ab.data() + pItem->GetOffset_Internal()) = saddleCls;
+                            if (pCount) *reinterpret_cast<int32_t*>(ab.data() + pCount->GetOffset_Internal()) = 1;
+                            try { safeProcessEvent(goatInv, af, ab.data()); } catch (...) {}
+                            break;
+                        }
+                        cnt = contCount(goatInv);
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.103] after AddItem(saddlebag): containers={}\n"), cnt);
+                        if (cnt <= 0)
+                        {
+                            showOnScreen(L"Failed to fit saddlebags to goat (see log)", 2.5f, 0.9f, 0.4f, 0.4f);
+                            return;
+                        }
+
+                        // [rc.116 SAVE-REGISTER 2026-07-11] The fitted bag is a
+                        // real container but the save system knows nothing about
+                        // it (no GUID record) — that's why contents vanish on
+                        // reload. Register the newly created saddlebag ACTOR via
+                        // StoreRuntimeActor (Channel-C, same as chests): its
+                        // contents then serialize with the save keyed by GUID.
+                        {
+                            std::vector<UObject*> bags;
+                            findAllOfSafe(STR("BP_SaddleBags_Goat_C"), bags);
+                            UObject* newest = nullptr;
+                            for (auto* b : bags)
+                            {
+                                if (!b || !isObjectAlive(b)) continue;
+                                std::wstring nm = safeObjectName(b);
+                                if (nm.rfind(STR("Default__"), 0) == 0) continue;
+                                newest = b;  // FindAllOf order: last = most recently created
+                            }
+                            if (newest)
+                            {
+                                VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.116] registering fitted saddlebag actor {:p} '{}' with save system...\n"),
+                                     (void*)newest, safeObjectName(newest).c_str());
+                                storeGoatInWorldState(newest);
+                            }
+                            else VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.116] NO saddlebag actor found after fit — container may be item-entry only (no actor); Channel-C not applicable, need alternate contents persistence\n"));
+                        }
+
+                        // [rc.119] freshly fitted (empty) bag → refill from the
+                        // per-goat sidecar written at last close/park.
+                        restoreGoatSaddlebagFromSidecar(goat, goatInv);
+                        // [rc.105 2026-07-10] DO NOT consume the crafted saddlebag
+                        // yet. Goat persistence isn't wired, so every fresh summon
+                        // has an empty inventory — consuming would burn one crafted
+                        // bag per summon (user lost one this way). The crafted item
+                        // still gates the feature (playerHas check above). Re-enable
+                        // consumption when goat GUID + container persistence lands.
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.105] crafted saddlebag NOT consumed (persistence pending)\n"));
+                        showOnScreen(L"Saddlebags fitted to the goat", 2.0f, 0.4f, 0.9f, 0.4f);
+                        }  // [rc.133] end AddItem fallback (B7 move failed)
+                    }
+                    // Bind the first container's 20-byte handle and open CHEST mode.
+                    uint8_t bagH[20] = {0};
+                    int32_t bagId2 = 0;
+                    if (auto* gcFn = goatInv->GetFunctionByNameInChain(STR("GetContainers")))
+                    {
+                        std::vector<uint8_t> gb(gcFn->GetParmsSize(), 0);
+                        try { safeProcessEvent(goatInv, gcFn, gb.data()); } catch (...) {}
+                        if (auto* pRet = findParam(gcFn, STR("ReturnValue")))
+                        {
+                            uint8_t* arr = gb.data() + pRet->GetOffset_Internal();
+                            uint8_t* data = *reinterpret_cast<uint8_t**>(arr);
+                            int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                            if (data && num > 0)
+                            {
+                                // [rc.135] bind the LAST container — with the slot
+                                // architecture GetContainers = [1×1 slot, pack 8×8];
+                                // the cargo grid is the newest entry.
+                                uint8_t* elem = data + (num - 1) * 20;
+                                std::memcpy(bagH, elem, 20);
+                                bagId2 = *reinterpret_cast<int32_t*>(elem);
+                                RC::Unreal::FWeakObjectPtr wp(goatInv);
+                                std::memcpy(bagH + 8, &wp, sizeof(wp));
+                                VLOG(STR("[MoriaCppMod] [B7 rc.135] {} container(s); binding LAST id={}\n"), num, bagId2);
+                            }
+                        }
+                    }
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.103] opening CHEST-mode StorageMode, container id={}\n"), bagId2);
+                    if (bagId2 == 0)
+                    {
+                        showOnScreen(L"Goat container not found (see log)", 2.5f, 0.9f, 0.4f, 0.4f);
+                        return;
+                    }
+                    openStorageWidgetForHandle(goat, goatInv, bagH);
+                    // [rc.104] the vanilla E-release interact opens the native
+                    // NPC-mode screen ~100-300ms later ON TOP of ours — suppress
+                    // it at +500ms, then dump the (now unobstructed) UI at +1200ms.
+                    m_storageSuppressAtMs = GetTickCount64() + 1500;  // [rc.130] suppression WINDOW (sweeps every 150ms)
+                    m_storageHarvestAtMs  = GetTickCount64() + 1200;
+                    return;
+                }
+
+                // [rc.87 EQUIP PACK 2026-07-06] The goat's Goat_Saddlebags storage
+                // is an EQUIP-BASED pack (DT_Storage row has AllowedEquip[4], a
+                // proper clone of the vanilla AdventurersPack_Large). StorageHandle
+                // alone does NOT instantiate the container (HasContainers=false) —
+                // the cargo grid is created when a PACK ITEM is equipped. So equip
+                // Tobi's saddlebag (BP_SaddleBags_Goat, whose storage IS
+                // Goat_Saddlebags 8x8) onto the goat's MorEquipComponent via
+                // ServerEquipDummyItem, THEN open. One-shot per goat.
+                {
+                    UClass* saddleCls = ensureSaddlebagItemClass();
+                    UClass* equipCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                        STR("/Script/Moria.MorEquipComponent"));
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.87] saddleCls={:p} equipCls={:p}\n"),
+                         (void*)saddleCls, (void*)equipCls);
+                    if (saddleCls && equipCls)
+                    {
+                        if (auto* getComp = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                        {
+                            std::vector<uint8_t> gb(getComp->GetParmsSize(), 0);
+                            writeGoatParm<UClass*>(getComp, gb.data(), STR("ComponentClass"), equipCls);
+                            UObject* equipComp = nullptr;
+                            if (safeProcessEvent(goat, getComp, gb.data()))
+                                equipComp = readGoatParm<UObject*>(getComp, gb.data(), STR("ReturnValue"), nullptr);
+                            if (equipComp && isObjectAlive(equipComp))
+                            {
+                                if (auto* sedFn = equipComp->GetFunctionByNameInChain(STR("ServerEquipDummyItem")))
+                                {
+                                    std::vector<uint8_t> eb(sedFn->GetParmsSize(), 0);
+                                    auto* pIt = findParam(sedFn, STR("ItemToEquip"));
+                                    if (!pIt) pIt = findParam(sedFn, STR("Item"));
+                                    if (pIt) *reinterpret_cast<UClass**>(eb.data() + pIt->GetOffset_Internal()) = saddleCls;
+                                    try { safeProcessEvent(equipComp, sedFn, eb.data()); } catch (...) {}
+                                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.87] ServerEquipDummyItem(BP_SaddleBags_Goat) fired on EquipComp={:p}\n"),
+                                         (void*)equipComp);
+                                }
+                                else VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.87] ServerEquipDummyItem missing on EquipComp\n"));
+                            }
+                            else VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.87] no MorEquipComponent on goat\n"));
+                        }
+                    }
+                }
+
+                // [rc.86 NATIVE MANAGE 2026-07-06] Per the vanilla BP_NpcGoat
+                // analysis: the goat's inventory is StorageHandle-based, and its
+                // ubergraph wires MorNpcOnManageLocalInteraction -> the StorageMode
+                // screen bound to the goat's primary storage. Fire that native
+                // handler (now valid GUID via adoption + rc.85). After the equip
+                // above instantiates the Goat_Saddlebags container, this shows it.
+                {
+                    UClass* gc = nullptr; try { gc = goat->GetClassPrivate(); } catch (...) {}
+                    UFunction* mgFn = nullptr;
+                    if (gc)
+                    {
+                        try {
+                            for (auto* fn : gc->ForEachFunctionInChain())
+                            {
+                                if (!fn) continue;
+                                std::wstring fn2; try { fn2 = fn->GetName(); } catch (...) { continue; }
+                                if (fn2.find(STR("MorNpcOnManageLocalInteraction")) != std::wstring::npos)
+                                { mgFn = fn; break; }
+                            }
+                        } catch (...) {}
+                    }
+                    // [rc.90 2026-07-07] DISABLED. The native manage handler
+                    // opens the goat's BASE MorInventoryComponent (equipment /
+                    // "body" slots = the 4x3 "helmet" grid the user keeps
+                    // seeing), NOT the Goat.Slot.EpicPack cargo container Tobi
+                    // v1.11.0 added via DefaultContainers. Firing it + returning
+                    // here bypassed the whole container hunt below (log proves
+                    // it: rc.76 enumeration never ran). Skip native manage and
+                    // let the container hunt target the real container.
+                    const bool kUseNativeManage = false;
+                    if (kUseNativeManage && mgFn)
+                    {
+                        std::wstring fn2; try { fn2 = mgFn->GetName(); } catch (...) {}
+                        int psz = mgFn->GetParmsSize();
+                        std::vector<uint8_t> pbuf(psz, 0);
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.86] firing native '{}' (parmSize={}) on goat={:p}\n"),
+                             fn2.c_str(), psz, (void*)goat);
+                        try { safeProcessEvent(goat, mgFn, pbuf.data()); } catch (...) {}
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.86] native manage handler dispatched — watch for the storage screen\n"));
+                        showOnScreen(L"Opening goat storage (native)", 1.5f, 0.4f, 0.9f, 0.5f);
+                        return;  // native path owns the UI; do not run the container hunt
+                    }
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.90] native manage SKIPPED (shows base 4x3); running container hunt for Goat.Slot.EpicPack\n"));
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.86] MorNpcOnManageLocalInteraction NOT found on goat — falling back to container path\n"));
+                }
+
+                UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                    STR("/Script/Moria.MorInventoryComponent"));
+                UObject* goatInv = nullptr;
+
+                // [rc.76 2026-07-03] The goat has TWO MorInventoryComponents:
+                // Tobi's "Inventory Comp" (StorageHandle=Goat_Saddlebags, the
+                // real one) and a base "InventoryComp" (empty, inherited).
+                // GetComponentByClass returns the FIRST — often the empty base
+                // one, which is why we always read StorageHandle='None'/Items=0.
+                // Enumerate ALL and prefer the one whose StorageHandle.RowName
+                // is Goat_Saddlebags (fall back to first non-empty, then any).
+                auto readStorageRow = [&](UObject* comp) -> std::wstring {
+                    if (!comp) return STR("");
+                    auto* shP = comp->GetPropertyByNameInChain(STR("StorageHandle"));
+                    if (!shP) return STR("");
+                    RC::Unreal::FName* rn = reinterpret_cast<RC::Unreal::FName*>(
+                        reinterpret_cast<uint8_t*>(comp) + shP->GetOffset_Internal() + 8);
+                    try { return rn->ToString(); } catch (...) { return STR(""); }
+                };
+                if (invCls)
+                {
+                    // Try the array enumerator first (K2_GetComponentsByClass),
+                    // else GetComponentsByClass, else fall back to single.
+                    UObject* firstAny = nullptr;
+                    for (const wchar_t* enumFn : { STR("K2_GetComponentsByClass"), STR("GetComponentsByClass") })
+                    {
+                        auto* gf = goat->GetFunctionByNameInChain(enumFn);
+                        if (!gf) continue;
+                        std::vector<uint8_t> b(gf->GetParmsSize(), 0);
+                        if (auto* pCls = findParam(gf, STR("ComponentClass")))
+                            *reinterpret_cast<UClass**>(b.data() + pCls->GetOffset_Internal()) = invCls;
+                        try { safeProcessEvent(goat, gf, b.data()); } catch (...) {}
+                        auto* pRet = findParam(gf, STR("ReturnValue"));
+                        if (!pRet) continue;
+                        uint8_t* arr = b.data() + pRet->GetOffset_Internal();
+                        UObject** data = *reinterpret_cast<UObject***>(arr);
+                        int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.76] {} -> {} MorInventoryComponent(s)\n"), enumFn, num);
+                        for (int32_t i = 0; data && i < num && i < 16; i++)
+                        {
+                            UObject* comp = data[i];
+                            if (!comp || !isObjectAlive(comp)) continue;
+                            std::wstring nm; try { nm = comp->GetName(); } catch (...) {}
+                            std::wstring sh = readStorageRow(comp);
+                            // [rc.90] Ground-truth per component: does it actually
+                            // have a container now (Tobi v1.11.0 DefaultContainers)?
+                            bool compHas = false; int compDefNum = -1;
+                            if (auto* hcF = comp->GetFunctionByNameInChain(STR("HasContainers"))) {
+                                std::vector<uint8_t> hb(hcF->GetParmsSize(), 0);
+                                try { safeProcessEvent(comp, hcF, hb.data()); } catch (...) {}
+                                if (auto* pr = findParam(hcF, STR("ReturnValue")))
+                                    compHas = *reinterpret_cast<bool*>(hb.data() + pr->GetOffset_Internal());
+                            }
+                            if (auto* dcP = comp->GetPropertyByNameInChain(STR("DefaultContainers"))) {
+                                uint8_t* a = reinterpret_cast<uint8_t*>(comp) + dcP->GetOffset_Internal();
+                                if (isReadableMemory(a, 16)) compDefNum = *reinterpret_cast<int32_t*>(a + 8);
+                            }
+                            VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.90]   comp[{}] name='{}' StorageHandle='{}' HasContainers={} DefaultContainers.Num={}\n"),
+                                 i, nm.c_str(), sh.c_str(), compHas, compDefNum);
+                            if (!firstAny) firstAny = comp;
+                            // Prefer a component that ACTUALLY has containers and
+                            // whose StorageHandle is the goat cargo/epic-pack slot.
+                            if (compHas && (sh == STR("Goat.Slot.EpicPack") || sh == STR("Goat_Saddlebags"))) { goatInv = comp; }
+                            else if (!goatInv && compHas) { goatInv = comp; }
+                        }
+                        if (goatInv || firstAny) break;
+                    }
+                    if (!goatInv) goatInv = firstAny;
+                    // Absolute fallback: single-component API.
+                    if (!goatInv)
+                    {
+                        if (auto* getCompFn = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                        {
+                            std::vector<uint8_t> b(getCompFn->GetParmsSize(), 0);
+                            writeGoatParm<UClass*>(getCompFn, b.data(), STR("ComponentClass"), invCls);
+                            if (safeProcessEvent(goat, getCompFn, b.data()))
+                                goatInv = readGoatParm<UObject*>(getCompFn, b.data(), STR("ReturnValue"), nullptr);
+                        }
+                    }
+                }
+                if (!goatInv || !isObjectAlive(goatInv)) {
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.67] goat has no MorInventoryComponent\n"));
+                    showOnScreen(L"Goat has no inventory component", 2.5f, 0.9f, 0.4f, 0.4f);
+                    return;
+                }
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.76] chosen goatInv={:p} StorageHandle='{}'\n"),
+                     (void*)goatInv, readStorageRow(goatInv).c_str());
+
+                // [rc.75 LOADOUT APPLY 2026-07-03] Tobi's BP_NpcGoat.InventoryComp
+                // has an EMPTY DefaultContainers (unlike the dwarf), so no grid is
+                // ever created on our raw-spawned goat (HasContainers=false,
+                // Items=0). His BP_PorterGoatLoader would apply DA_NpcGoat_Porter-
+                // Loadout via GA_Bell, which we bypass. Try to reproduce that here:
+                // if the inventory has no containers, apply the porter loadout
+                // ourselves via ServerDebugApplyLoadout / SetStartingLoadout. Zero
+                // pak edits — if this builds the container we're done.
+                auto goatHasContainers = [&]() -> bool {
+                    auto* hc = goatInv->GetFunctionByNameInChain(STR("HasContainers"));
+                    if (!hc) return false;
+                    std::vector<uint8_t> hb(hc->GetParmsSize(), 0);
+                    try { safeProcessEvent(goatInv, hc, hb.data()); } catch (...) {}
+                    auto* pr = findParam(hc, STR("ReturnValue"));
+                    return pr ? *reinterpret_cast<bool*>(hb.data() + pr->GetOffset_Internal()) : false;
+                };
+                bool hc0 = goatHasContainers();
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.75] HasContainers(before)={}\n"), hc0);
+                // [rc.92 INSTANTIATE 2026-07-07] Tobi v1.11.0 populated
+                // DefaultContainers (Num=1) but nothing runs the native
+                // instantiation on our bell-spawned goat (HasContainers=false;
+                // his BP_PorterGoatPersistor is a TimeManager clone with no
+                // inventory code). The MorInventoryComponent has NO
+                // Create/Add/Init-Container UFUNCTION (native only), BUT it does
+                // expose ResetToStarting() (re-runs starting init → re-processes
+                // DefaultContainers) and AddItem(Class,Count,Method) (a container
+                // ITEM added to the inventory becomes a container). Force it:
+                //   1. ResetToStarting()  → build the 1x1 Goat.Slot.EpicPack slot
+                //   2. AddItem(epic-slot container class) if step 1 didn't
+                //   3. AddItem(BP_SaddleBags_Goat pack) → fills slot → 8x8 cargo
+                // Log HasContainers + container count after each so we see what
+                // actually builds. Runs once per open while HasContainers=false.
+                auto goatContainerCount = [&]() -> int32_t {
+                    auto* gc = goatInv->GetFunctionByNameInChain(STR("GetContainers"));
+                    if (!gc) return -1;
+                    std::vector<uint8_t> gb(gc->GetParmsSize(), 0);
+                    try { safeProcessEvent(goatInv, gc, gb.data()); } catch (...) {}
+                    auto* pr = findParam(gc, STR("ReturnValue"));
+                    if (!pr) return -1;
+                    uint8_t* arr = gb.data() + pr->GetOffset_Internal();
+                    return *reinterpret_cast<int32_t*>(arr + 8);
+                };
+                auto goatAddItem = [&](const wchar_t* clsPath) -> void {
+                    UClass* cc = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, clsPath);
+                    if (!cc) cc = goat_loadClassAssetBlocking(clsPath);
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.92] AddItem class={:p} '{}'\n"), (void*)cc, clsPath);
+                    if (!cc) return;
+                    // Prefer server RPC if present, else the plain AddItem.
+                    for (const wchar_t* fnName : { STR("AddItem"), STR("RequestAddItem") })
+                    {
+                        auto* af = goatInv->GetFunctionByNameInChain(fnName);
+                        if (!af) continue;
+                        std::vector<uint8_t> ab(af->GetParmsSize(), 0);
+                        auto* pItem = findParam(af, STR("Item"));
+                        if (!pItem) pItem = findParam(af, STR("Class"));
+                        auto* pCount = findParam(af, STR("Count"));
+                        if (pItem)  *reinterpret_cast<UClass**>(ab.data() + pItem->GetOffset_Internal()) = cc;
+                        if (pCount) *reinterpret_cast<int32_t*>(ab.data() + pCount->GetOffset_Internal()) = 1;
+                        try { safeProcessEvent(goatInv, af, ab.data()); } catch (...) {}
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.92] {}('{}') -> HasContainers={} count={}\n"),
+                             fnName, clsPath, goatHasContainers(), goatContainerCount());
+                        break;  // one add fn is enough
+                    }
+                };
+
+                if (!hc0)
+                {
+                    // Step 1 — ResetToStarting (zero-arg; re-processes DefaultContainers)
+                    if (auto* rs = goatInv->GetFunctionByNameInChain(STR("ResetToStarting")))
+                    {
+                        std::vector<uint8_t> rb(rs->GetParmsSize(), 0);
+                        try { safeProcessEvent(goatInv, rs, rb.data()); } catch (...) {}
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.92] ResetToStarting() -> HasContainers={} count={}\n"),
+                             goatHasContainers(), goatContainerCount());
+                    }
+                    else VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.92] ResetToStarting NOT FOUND\n"));
+
+                    // Step 2 — AddItem the epic-slot container class if still empty
+                    if (!goatHasContainers())
+                        goatAddItem(STR("/Game/Mods/PorterGoat/Items/BP_ContainerItem_Goat_Slot_EpicPack.BP_ContainerItem_Goat_Slot_EpicPack_C"));
+
+                    // Step 3 — AddItem the saddlebag pack (fills the epic slot → 8x8 cargo)
+                    goatAddItem(STR("/Game/Mods/PorterGoat/Items/BP_SaddleBags_Goat.BP_SaddleBags_Goat_C"));
+
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.92] AFTER injection: HasContainers={} count={}\n"),
+                         goatHasContainers(), goatContainerCount());
+                }
+
+                // [rc.93 NATIVE OPEN 2026-07-07] The container now EXISTS
+                // (saddlebag added -> HasContainers=true). Our custom
+                // openStorageWidgetForHandle hand-binds the StorageMode widget
+                // with stale "Dwarf.BodyInventoryGOAT" tags + AssociatedNPC=goat,
+                // which makes the widget re-derive from the goat tag and fall
+                // back to a default 4x3 (the "axes/helmets" placeholder). Now
+                // that a real container is present, let the GAME open the goat's
+                // storage its own way (MorNpcOnManageLocalInteraction) — the
+                // epic-pack slot expands to show the saddlebag's 8x8 (vanilla
+                // pack behavior). Fall through to the custom widget only if the
+                // native handler isn't found.
+                if (goatHasContainers())
+                {
+                    UClass* gc2 = nullptr; try { gc2 = goat->GetClassPrivate(); } catch (...) {}
+                    UFunction* mg2 = nullptr;
+                    if (gc2)
+                    {
+                        try {
+                            for (auto* fn : gc2->ForEachFunctionInChain())
+                            {
+                                if (!fn) continue;
+                                std::wstring n; try { n = fn->GetName(); } catch (...) { continue; }
+                                if (n.find(STR("MorNpcOnManageLocalInteraction")) != std::wstring::npos) { mg2 = fn; break; }
+                            }
+                        } catch (...) {}
+                    }
+                    if (mg2)
+                    {
+                        std::vector<uint8_t> pb(mg2->GetParmsSize(), 0);
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.93] container exists -> firing native manage '{}' (parm={})\n"),
+                             mg2->GetName().c_str(), mg2->GetParmsSize());
+                        try { safeProcessEvent(goat, mg2, pb.data()); } catch (...) {}
+                        showOnScreen(L"Opening goat saddlebags", 1.5f, 0.4f, 0.9f, 0.5f);
+                        return;
+                    }
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.93] native manage fn NOT found; using custom widget path\n"));
+                }
+
+                // [rc.72 2026-07-03] Tobi's v1.10.0 goat uses its native
+                // MorInventoryComponent whose StorageHandle.RowName is
+                // "Goat_Saddlebags" (8x8). The old "Dwarf.BodyInventoryGOAT"
+                // tag was OUR abandoned build's name and never resolves on his
+                // goat (log: GetContainerByTag(...) -> id=0). Try the real
+                // candidate tags in priority order and open the first that
+                // resolves; log every attempt so a miss tells us the exact tag.
+                uint8_t bagHandle[20] = {0};
+                int32_t bagId = 0;
+                const wchar_t* kCandidateTags[] = {
+                    STR("Goat_Saddlebags"),        // 8x8 cargo (present once a pack is in the epic slot)
+                    STR("Goat.Slot.EpicPack"),     // 1x1 epic-pack slot (Tobi v1.11.0 DefaultContainers)
+                    STR("Inventory.BodyInventory"),
+                    STR("BodyInventory"),
+                    STR("Goat.BodyInventory"),
+                    STR("Dwarf.BodyInventoryGOAT"), // our legacy name (last resort)
+                };
+                if (auto* getByTagFn = goatInv->GetFunctionByNameInChain(STR("GetContainerByTag")))
+                {
+                    auto* pIn  = findParam(getByTagFn, STR("Tag"));
+                    if (!pIn) pIn = findParam(getByTagFn, STR("ContainerTag"));
+                    auto* pRet = findParam(getByTagFn, STR("ReturnValue"));
+                    int tagOff = pIn ? pIn->GetOffset_Internal() : 0;
+                    int rOff   = pRet ? pRet->GetOffset_Internal() : 8;
+                    int sz = getByTagFn->GetParmsSize();
+                    for (const wchar_t* cand : kCandidateTags)
+                    {
+                        std::vector<uint8_t> tb(sz, 0);
+                        RC::Unreal::FName bagTag(cand, RC::Unreal::FNAME_Add);
+                        std::memcpy(tb.data() + tagOff, &bagTag, sizeof(RC::Unreal::FName));
+                        try { safeProcessEvent(goatInv, getByTagFn, tb.data()); } catch (...) {}
+                        int32_t id = *reinterpret_cast<int32_t*>(tb.data() + rOff);
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.72] GetContainerByTag('{}') -> id={}\n"), cand, id);
+                        if (id != 0)
+                        {
+                            std::memcpy(bagHandle, tb.data() + rOff, 20);
+                            bagId = id;
+                            RC::Unreal::FWeakObjectPtr ownerWP(goatInv);
+                            std::memcpy(bagHandle + 8, &ownerWP, sizeof(RC::Unreal::FWeakObjectPtr));
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.72] GetContainerByTag missing on goat InvComp\n"));
+                }
+
+                // [rc.79 2026-07-03] Tag lookup failed but a container exists
+                // (rc.78 injection -> HasContainers=true). Enumerate GetContainers
+                // and take the first container's handle directly. Log the element
+                // bytes so we can see the handle layout.
+                if (bagId == 0)
+                {
+                    if (auto* gcFn = goatInv->GetFunctionByNameInChain(STR("GetContainers")))
+                    {
+                        std::vector<uint8_t> gb(gcFn->GetParmsSize(), 0);
+                        try { safeProcessEvent(goatInv, gcFn, gb.data()); } catch (...) {}
+                        if (auto* pRet = findParam(gcFn, STR("ReturnValue")))
+                        {
+                            uint8_t* arr = gb.data() + pRet->GetOffset_Internal();
+                            uint8_t* data = *reinterpret_cast<uint8_t**>(arr);
+                            int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                            VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.79] GetContainers -> {} container(s)\n"), num);
+                            if (data && num > 0)
+                            {
+                                uint8_t* e0 = data;
+                                int32_t id0 = *reinterpret_cast<int32_t*>(e0);
+                                VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.79] elem0 id={} b0..3={:02x}{:02x}{:02x}{:02x} b8..11={:02x}{:02x}{:02x}{:02x}\n"),
+                                     id0, e0[0],e0[1],e0[2],e0[3], e0[8],e0[9],e0[10],e0[11]);
+                                if (id0 != 0)
+                                {
+                                    std::memcpy(bagHandle, e0, 20);
+                                    bagId = id0;
+                                    RC::Unreal::FWeakObjectPtr ownerWP(goatInv);
+                                    std::memcpy(bagHandle + 8, &ownerWP, sizeof(RC::Unreal::FWeakObjectPtr));
+                                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.79] using container id={} from GetContainers -> opening\n"), bagId);
+                                }
+                            }
+                        }
+                    }
+                    else VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.79] GetContainers missing on goat InvComp\n"));
+                }
+
+                if (bagId == 0)
+                {
+                    // [rc.91 FULL FN ENUM 2026-07-07] Tobi's v1.11.0 added
+                    // DefaultContainers (Num=1) but nothing instantiates it
+                    // (HasContainers=false). His BP_PorterGoatPersistor is a
+                    // TimeManager clone with NO inventory code, and neither
+                    // GA_Bell nor BP_NPCManager creates containers — so no BP
+                    // runs the DefaultContainers processing on our goat. We must
+                    // call the instantiation function ourselves. Enumerate EVERY
+                    // function on the MorInventoryComponent so we can see the real
+                    // create/add/init-container API (stop guessing 4 names).
+                    {
+                        UClass* icls = nullptr; try { icls = goatInv->GetClassPrivate(); } catch (...) {}
+                        int total = 0, interesting = 0;
+                        if (icls)
+                        {
+                            try {
+                                for (auto* fn : icls->ForEachFunctionInChain())
+                                {
+                                    if (!fn) continue;
+                                    std::wstring fnn; try { fnn = fn->GetName(); } catch (...) { continue; }
+                                    total++;
+                                    // Log ALL names compactly; expand params only for
+                                    // names hinting at container creation/mutation.
+                                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.91 FNENUM] {} (parm={})\n"),
+                                         fnn.c_str(), fn->GetParmsSize());
+                                    bool hot =
+                                        fnn.find(STR("Container")) != std::wstring::npos ||
+                                        fnn.find(STR("Init"))      != std::wstring::npos ||
+                                        fnn.find(STR("Create"))    != std::wstring::npos ||
+                                        fnn.find(STR("Add"))       != std::wstring::npos ||
+                                        fnn.find(STR("Give"))      != std::wstring::npos ||
+                                        fnn.find(STR("Setup"))     != std::wstring::npos ||
+                                        fnn.find(STR("Default"))   != std::wstring::npos ||
+                                        fnn.find(STR("Spawn"))     != std::wstring::npos ||
+                                        fnn.find(STR("Loadout"))   != std::wstring::npos ||
+                                        fnn.find(STR("Register"))  != std::wstring::npos ||
+                                        fnn.find(STR("Populate"))  != std::wstring::npos;
+                                    if (hot)
+                                    {
+                                        interesting++;
+                                        for (auto* p : fn->ForEachProperty())
+                                        {
+                                            if (!p) continue;
+                                            std::wstring pn; try { pn = p->GetName(); } catch (...) {}
+                                            std::wstring pt; try { pt = p->GetClass().GetName(); } catch (...) {}
+                                            VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.91 FNENUM]      * param '{}' type={} off={} size={}\n"),
+                                                 pn.c_str(), pt.c_str(), p->GetOffset_Internal(), p->GetSize());
+                                        }
+                                    }
+                                }
+                            } catch (...) {}
+                        }
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.91 FNENUM] component class='{}' total functions={} hot={}\n"),
+                             icls ? icls->GetName().c_str() : STR("(null)"), total, interesting);
+                    }
+                    if (auto* shProp = goatInv->GetPropertyByNameInChain(STR("StorageHandle")))
+                    {
+                        uint8_t* sh = reinterpret_cast<uint8_t*>(goatInv) + shProp->GetOffset_Internal();
+                        // MorStorageRowHandle = { UDataTable* (8) ; FName RowName (@+8) }
+                        RC::Unreal::FName* rn = reinterpret_cast<RC::Unreal::FName*>(sh + 8);
+                        try {
+                            std::wstring rnStr = rn->ToString();
+                            VLOG(STR("[MoriaCppMod] [GoatSaddle] [DISCOVERY] StorageHandle.RowName='{}'\n"), rnStr.c_str());
+                        } catch (...) {}
+                    }
+                    if (auto* itemsProp = goatInv->GetPropertyByNameInChain(STR("Items")))
+                    {
+                        int itemsOff = itemsProp->GetOffset_Internal();
+                        uint8_t* listBase = reinterpret_cast<uint8_t*>(goatInv) + itemsOff + iiaListOff();
+                        if (isReadableMemory(listBase, 16))
+                        {
+                            uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+                            int32_t arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
+                            int stride = iiSize(), itemOff = iiItemOff(), idOff = iiIDOff();
+                            VLOG(STR("[MoriaCppMod] [GoatSaddle] [DISCOVERY] goat inventory Items={}\n"), arrNum);
+                            if (arrData && arrNum > 0 && arrNum < 2000)
+                            {
+                                for (int32_t i = 0; i < arrNum; i++)
+                                {
+                                    uint8_t* entry = arrData + i * stride;
+                                    if (!isReadableMemory(entry, stride)) continue;
+                                    UClass* ic = *reinterpret_cast<UClass**>(entry + itemOff);
+                                    int32_t id  = *reinterpret_cast<int32_t*>(entry + idOff);
+                                    int32_t slot= *reinterpret_cast<int32_t*>(entry + 0x1C);
+                                    int32_t cs  = *reinterpret_cast<int32_t*>(entry + 0x2C);
+                                    std::wstring nm = ic ? ic->GetName() : STR("(null)");
+                                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [DISCOVERY]   [{}] id={} slot={} containerStart={} class={}\n"),
+                                         i, id, slot, cs, nm.c_str());
+                                }
+                            }
+                        }
+                    }
+                    showOnScreen(
+                        L"Goat storage not found - see log DISCOVERY dump",
+                        3.5f, 1.0f, 0.7f, 0.3f);
+                    return;
+                }
+
+                // Container exists! Open StorageMode widget bound to it
+                openStorageWidgetForHandle(goat, goatInv, bagHandle);
+                return;
+            }
+
+            // ───── LEGACY rc.66 placeholder + earlier paths preserved below ─────
+
+            // ───── LEGACY paths below are unreachable. Kept for reference
+            //       until rc.67+ builds the sidecar persistence layer.
             // Find first live goat
             UObject* goat = nullptr;
             for (auto& g : m_followGoats) {
@@ -4250,91 +7682,416 @@
             VLOG(STR("[MoriaCppMod] [GoatSaddle] targeting handle id={} class='{}' tier={}\n"),
                  targetID, targetCls.empty() ? STR("?") : targetCls.c_str(), tier);
 
-            // [rc.12f 2026-05-23] Angle-1 from Desktop Claude's broker hunt.
-            // rc.12e probe surfaced TWO BP-generated handlers on goat:
-            //   BndEvt__BP_NpcGoat_..._MorNpcOnManageInteraction__DelegateSignature
-            //   BndEvt__BP_NpcGoat_..._MorNpcOnManageLocalInteraction__DelegateSignature
+            // [rc.18 TEST 1 — Desktop Claude plan, 2026-05-25]
+            // The BndEvt__..._MorNpcOnManageLocalInteraction__DelegateSignature
+            // handler IS the compiled BP-graph body. Firing it (rc.12f-rc.17)
+            // dispatched cleanly via ProcessEvent but produced NO UI — the
+            // graph likely branches internally on NpcInfo / role registration
+            // which our bell-summoned goat lacks. DC's Test 1: skip the NPC
+            // manage chain entirely. Treat the bag at goat.InvComp[id=bagID]
+            // as a container item the player is "using" — same code path the
+            // engine uses to open a placed chest. No NPC-registration gate.
             //
-            // These are the same handlers BP_NpcDwarf binds — when a player
-            // clicks "Manage" on a recruited dwarf, the MorNpcOnManage*
-            // delegate fires and these BndEvt handlers run the UI-spawn
-            // flow. Tobi's BP_NpcGoat has them bound too. We can call them
-            // directly via ProcessEvent — parmSize=0, no arguments needed.
-            // The "Local" variant is client-side and most likely to surface
-            // UI on the calling player's view.
+            // FItemHandle layout (parmSize=20):
+            //   int32 ID at +0, int32 Payload at +4, FWeakObjectPtr (8 B) at +8, 4 B pad
+            // We write only ID; engine resolves the rest via container lookup.
             //
-            // Strategy: find each handler by substring match on its name
-            // (full name includes BP class + component + event index so
-            // we can't use a fixed string). Try LocalInteraction first.
+            // Priority order if ServerUse no-ops: UseFromItemHandle (parmSize=20),
+            // UseOrEquipItem (parmSize=20). All three are container-open shaped
+            // per the GoatSaddleDiag dump in this morning's log.
+            // [rc.20 TEST 3 — Desktop Claude, 2026-05-25]
+            // Tests 1, 1b, 1c (rc.17-19) all silent-fail. DC's bytecode
+            // disasm confirmed BP_SaddleBags_Goat_C is passive data with
+            // zero opener UFunctions — the 4-call C++ engine chain
+            // (BPGetManager → screen getter → SetInteracting → Show) is
+            // the only path AND it bails silently inside one of those C++
+            // calls for our non-registered goat.
+            //
+            // Test 3: bypass the whole BP entry chain. Spawn the StorageMode
+            // screen widget directly, set its instance vars to point at the
+            // goat's epic-pack sub-container, fire HandleStorageView(true),
+            // AddToViewport. Widget doesn't care about NpcInfo — it just
+            // renders whatever container its inst vars reference.
+            openGoatSaddlebagInventory_Test3(goat, goatInv, targetID);
+        }
+
+        // Test 3 — direct widget spawn + bind path. Per DC spec:
+        //   1. Resolve WBP_UI_Inventory_Screen_StorageMode_C
+        //   2. Call goatInv->GetContainerByTag(Tag="Inventory.Slot.EpicPack")
+        //      → returns FInventoryItemHandle (20 B) for the pack container
+        //   3. CreateWidget via WidgetBlueprintLibrary::Create
+        //   4. Reflect-write inst vars on the spawned widget:
+        //        storageInventoryHandle   (FStructProperty, 20 B FInventoryItemHandle)
+        //        epicPackTag              (FStructProperty, 8 B FGameplayTag)
+        //        InventoryContainerEpicPackTag (FStructProperty, 8 B FGameplayTag)
+        //        isStorageView            (FBoolProperty, true)
+        //   5. Fire HandleStorageView(bool NPCMode=true)
+        //   6. AddToViewport
+        void openGoatSaddlebagInventory_Test3(UObject* goat, UObject* goatInv, int32_t targetID)
+        {
+            // [rc.34 STACKED-WIDGET FIX 2026-06-02] If a Test 3 widget is
+            // already alive (user re-clicked Saddlebags without ESC), dismiss
+            // it first. Otherwise we stack widgets and ESC only removes the
+            // top one — underlying widgets continue to swallow input.
+            if (m_test3SaddlebagWidget && isObjectAlive(m_test3SaddlebagWidget))
+            {
+                if (auto* rmFn = m_test3SaddlebagWidget->GetFunctionByNameInChain(STR("RemoveFromParent")))
+                {
+                    try { safeProcessEvent(m_test3SaddlebagWidget, rmFn, nullptr); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] dismissed stale Test 3 widget 0x{:p} before re-spawn\n"),
+                         (void*)m_test3SaddlebagWidget);
+                }
+                m_test3SaddlebagWidget = nullptr;
+            }
+
+            // [rc.34 PATH C — NATIVE BNDEVT 2026-06-02]
+            // Now that Path A adopted a valid NpcGuid (3720658F-...) and the
+            // goat IS in NpcInfo, retry the BndEvt MorNpcOnManageLocalInteraction
+            // handler. rc.17 tried this with NpcGuid=0 and the engine's screen-
+            // getter returned null. With a valid GUID + NpcInfo entry, the
+            // 4-call C++ chain (BPGetManager → screen-getter → SetInteracting →
+            // Show) should now resolve. If the engine shows native UI, we skip
+            // Test 3 entirely (engine handles its own ESC + state).
             UClass* goatCls = nullptr;
             try { goatCls = goat->GetClassPrivate(); } catch (...) {}
-            UFunction* localManageFn = nullptr;
-            UFunction* netManageFn = nullptr;
+            UFunction* localMgmtFn = nullptr;
             if (goatCls)
             {
                 try {
                     for (auto* fn : goatCls->ForEachFunctionInChain())
                     {
                         if (!fn) continue;
-                        std::wstring fnName;
-                        try { fnName = fn->GetName(); } catch (...) { continue; }
-                        if (fnName.find(STR("MorNpcOnManageLocalInteraction")) != std::wstring::npos)
-                            localManageFn = fn;
-                        else if (fnName.find(STR("MorNpcOnManageInteraction")) != std::wstring::npos)
-                            netManageFn = fn;
+                        std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                        if (fname.find(STR("MorNpcOnManageLocalInteraction")) != std::wstring::npos)
+                        {
+                            localMgmtFn = fn;
+                            break;
+                        }
                     }
                 } catch (...) {}
             }
+            if (localMgmtFn)
+            {
+                std::wstring fname; try { fname = localMgmtFn->GetName(); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [PathC] firing BndEvt '{}' on goat (NpcGuid is now valid — engine state should resolve)\n"),
+                     fname.c_str());
+                try { safeProcessEvent(goat, localMgmtFn, nullptr); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [PathC] BndEvt dispatch returned — observe if engine native UI appears (Test 3 will NOT fire)\n"));
+                showOnScreen(L"PathC: Native BndEvt fired (look for engine UI)", 2.0f, 0.4f, 0.9f, 0.4f);
+                return;  // Don't fall through to Test 3 — give the native path a clean test
+            }
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] [PathC] MorNpcOnManageLocalInteraction not found — falling back to Test 3\n"));
 
-            auto fireHandler = [&](UFunction* fn, const wchar_t* label) -> bool {
-                if (!fn) return false;
-                int parmsSize = 0;
-                try { parmsSize = fn->GetParmsSize(); } catch (...) {}
-                std::wstring fnName;
-                try { fnName = fn->GetName(); } catch (...) {}
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] firing {} handler '{}' (parmSize={}) on goat={:p}\n"),
-                     label, fnName.c_str(), parmsSize, (void*)goat);
-                if (parmsSize == 0)
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] === direct widget spawn + bind ===\n"));
+
+            // 1) Resolve widget class. May not be resident; LoadClassAsset_Blocking
+            //    is the canonical lazy-load. Same pattern used for BP_PorterGoat.
+            const wchar_t* widgetPath = STR("/Game/UI/Inventory/WBP_UI_Inventory_Screen_StorageMode.WBP_UI_Inventory_Screen_StorageMode_C");
+            UClass* widgetCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, widgetPath);
+            if (!widgetCls)
+            {
+                widgetCls = goat_loadClassAssetBlocking(widgetPath);
+                if (!widgetCls)
                 {
-                    try { safeProcessEvent(goat, fn, nullptr); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] widget class missing (StorageMode_C): {}\n"), widgetPath);
+                    showOnScreen(L"StorageMode widget class not found", 2.5f, 0.9f, 0.4f, 0.4f);
+                    return;
                 }
-                else
+            }
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] widget class resolved: {:p}\n"), (void*)widgetCls);
+
+            // 2) Build FGameplayTag for "Inventory.Slot.EpicPack" (NM[748]).
+            //    FGameplayTag = { FName TagName; } — 8 bytes, just the name.
+            RC::Unreal::FName epicPackName(STR("Inventory.Slot.EpicPack"), RC::Unreal::FNAME_Add);
+            uint8_t epicPackTag[8] = {0};
+            std::memcpy(epicPackTag, &epicPackName, sizeof(RC::Unreal::FName));
+
+            // 3) Call goatInv->GetContainerByTag(epicPackTag) → FInventoryItemHandle (20 B).
+            //    parmSize=28 per the GoatSaddleDiag dump (8 in + 20 out).
+            auto* getByTagFn = goatInv->GetFunctionByNameInChain(STR("GetContainerByTag"));
+            if (!getByTagFn)
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] GetContainerByTag missing on goat.InvComp — bail\n"));
+                showOnScreen(L"goat.InvComp has no GetContainerByTag", 2.5f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+            int tagBufSz = getByTagFn->GetParmsSize();
+            std::vector<uint8_t> tagBuf(tagBufSz, 0);
+            auto* pTagIn = findParam(getByTagFn, STR("Tag"));
+            if (!pTagIn) pTagIn = findParam(getByTagFn, STR("ContainerTag"));
+            if (!pTagIn) pTagIn = findParam(getByTagFn, STR("InTag"));
+            auto* pTagRet = findParam(getByTagFn, STR("ReturnValue"));
+            if (pTagIn)
+            {
+                std::memcpy(tagBuf.data() + pTagIn->GetOffset_Internal(), epicPackTag, 8);
+            }
+            else
+            {
+                // Best-effort: write tag at offset 0
+                std::memcpy(tagBuf.data(), epicPackTag, 8);
+            }
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] firing GetContainerByTag(Tag='Inventory.Slot.EpicPack') on goatInv={:p} (parmSize={}, tagOff={}, retOff={})\n"),
+                 (void*)goatInv, tagBufSz,
+                 pTagIn ? pTagIn->GetOffset_Internal() : -1,
+                 pTagRet ? pTagRet->GetOffset_Internal() : -1);
+            try { safeProcessEvent(goatInv, getByTagFn, tagBuf.data()); } catch (...) {}
+
+            // 4) Read back the 20-byte FInventoryItemHandle from GetContainerByTag,
+            //    but [rc.21 2026-05-25] OVERRIDE it with the BAG's handle (targetID,
+            //    typically =4 = BP_SaddleBags_Goat_C). Yesterday's rc.20 run showed
+            //    GetContainerByTag(Inventory.Slot.EpicPack) returns ID=3 — the slot
+            //    WRAPPER (BP_ContainerItem_Goat_Slot_EpicPack_C), a 1-slot container
+            //    that just holds the bag. Binding the widget to the wrapper renders
+            //    a 1-slot panel showing the bag icon — not the 8×8 bag contents.
+            //    The bag at id=4 IS the storage we want; use it directly.
+            int retOff = pTagRet ? pTagRet->GetOffset_Internal() : 8;
+            uint8_t slotHandle[20] = {0};
+            std::memcpy(slotHandle, tagBuf.data() + retOff, 20);
+            int32_t slotHandleId = *reinterpret_cast<int32_t*>(slotHandle + 0);
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] GetContainerByTag returned SLOT handle ID={} (informational only; binding to BAG instead)\n"),
+                 slotHandleId);
+
+            // [rc.22 CRITICAL FIX 2026-05-25] FInventoryItemHandle layout per
+            // moria_goat.inl:4260 is: int32 ID(+0) + int32 Payload(+4) +
+            // FWeakObjectPtr OwnerComp(+8, 8B) + 4B pad. Writing only ID
+            // (rc.20/21) left OwnerComp=null → engine can't dereference the
+            // handle, both panes render empty/wrong. Wire OwnerComp = goatInv
+            // so id=4 resolves against the goat's MorInventoryComponent.
+            uint8_t packHandle[20] = {0};
+            *reinterpret_cast<int32_t*>(packHandle + 0) = targetID;
+            {
+                RC::Unreal::FWeakObjectPtr ownerWP(goatInv);
+                std::memcpy(packHandle + 8, &ownerWP, sizeof(RC::Unreal::FWeakObjectPtr));
+            }
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] binding storageInventoryHandle to BAG ID={} with OwnerComp=goatInv={:p}\n"), targetID, (void*)goatInv);
+
+            // 5) Spawn the widget.
+            UObject* w = jw_createGameWidget(widgetCls);
+            if (!w || !isObjectAlive(w))
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] CreateWidget returned null/dead\n"));
+                showOnScreen(L"StorageMode widget create failed", 2.5f, 0.9f, 0.4f, 0.4f);
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] widget spawned: {:p}\n"), (void*)w);
+
+            // [rc.21 DIAG 2026-05-25] Dump every FProperty on the widget class
+            // so we can see what other inst vars exist beyond the 4 DC specced.
+            // User reports player-inventory pane also broken — likely there's a
+            // playerInventoryComponent / playerHandle inst var that needs binding.
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] === ALL widget instance vars (FProperty) ===\n"));
+            UClass* wCls = nullptr;
+            try { wCls = w->GetClassPrivate(); } catch (...) {}
+            int propCount = 0;
+            if (wCls)
+            {
+                try {
+                    for (auto* prop : wCls->ForEachPropertyInChain())
+                    {
+                        if (!prop) continue;
+                        std::wstring pn; try { pn = prop->GetName(); } catch (...) { continue; }
+                        std::wstring tn; try { tn = prop->GetClass().GetName(); } catch (...) {}
+                        int off = -1; try { off = prop->GetOffset_Internal(); } catch (...) {}
+                        int sz  = -1; try { sz  = prop->GetSize(); } catch (...) {}
+                        // Filter to widget-class-defined props (skip massive UUserWidget base churn);
+                        // keep anything whose name suggests inventory/handle/storage/NPC/player/tag.
+                        bool keep =
+                            pn.find(STR("storage")) != std::wstring::npos ||
+                            pn.find(STR("Storage")) != std::wstring::npos ||
+                            pn.find(STR("npc"))     != std::wstring::npos ||
+                            pn.find(STR("NPC"))     != std::wstring::npos ||
+                            pn.find(STR("Npc"))     != std::wstring::npos ||
+                            pn.find(STR("inventory")) != std::wstring::npos ||
+                            pn.find(STR("Inventory")) != std::wstring::npos ||
+                            pn.find(STR("Handle")) != std::wstring::npos ||
+                            pn.find(STR("handle")) != std::wstring::npos ||
+                            pn.find(STR("Container")) != std::wstring::npos ||
+                            pn.find(STR("Tag")) != std::wstring::npos ||
+                            pn.find(STR("player")) != std::wstring::npos ||
+                            pn.find(STR("Player")) != std::wstring::npos ||
+                            pn.find(STR("epic")) != std::wstring::npos ||
+                            pn.find(STR("Epic")) != std::wstring::npos ||
+                            pn.find(STR("Pack")) != std::wstring::npos ||
+                            pn.find(STR("Owner")) != std::wstring::npos ||
+                            pn.find(STR("Target")) != std::wstring::npos ||
+                            pn.find(STR("Root")) != std::wstring::npos ||
+                            pn.find(STR("isOpened")) != std::wstring::npos ||
+                            pn.find(STR("IsOpened")) != std::wstring::npos;
+                        if (keep)
+                        {
+                            VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3]   prop '{}' type={} off=0x{:04x} size={}\n"),
+                                 pn.c_str(), tn.c_str(), off, sz);
+                            ++propCount;
+                        }
+                    }
+                } catch (...) {}
+            }
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] === end ({} keyword-matched props) ===\n"), propCount);
+
+            // 6) Write instance vars via reflection. memcpy raw bytes into the
+            //    struct slots; UE doesn't care as long as the layout matches.
+            auto writeStruct = [&](const wchar_t* propName, const uint8_t* src, int size) {
+                auto* propPtr = w->GetValuePtrByPropertyNameInChain<uint8_t>(propName);
+                if (!propPtr)
                 {
-                    std::vector<uint8_t> mbuf(parmsSize, 0);
-                    try { safeProcessEvent(goat, fn, mbuf.data()); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] inst var '{}' not found on widget\n"), propName);
+                    return false;
                 }
+                std::memcpy(propPtr, src, size);
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] wrote '{}' ({} B) at {:p}\n"),
+                     propName, size, (void*)propPtr);
                 return true;
             };
 
-            // Priority 1: LocalInteraction (client-side UI most likely).
-            if (fireHandler(localManageFn, STR("MorNpcOnManageLocalInteraction")))
+            writeStruct(STR("storageInventoryHandle"), packHandle, 20);
+            writeStruct(STR("epicPackTag"), epicPackTag, 8);
+            writeStruct(STR("InventoryContainerEpicPackTag"), epicPackTag, 8);
+
+            auto* boolPtr = w->GetValuePtrByPropertyNameInChain<bool>(STR("isStorageView"));
+            if (boolPtr)
             {
-                showOnScreen(L"Manage (Local) handler fired — expect UI", 1.5f, 0.4f, 0.9f, 0.4f);
-                return;
-            }
-            // Priority 2: network variant.
-            if (fireHandler(netManageFn, STR("MorNpcOnManageInteraction")))
-            {
-                showOnScreen(L"Manage (Net) handler fired — expect UI", 1.5f, 0.4f, 0.9f, 0.4f);
-                return;
+                *boolPtr = true;
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] wrote isStorageView=true\n"));
             }
 
-            // Last resort: rc.12c ServerUse(bag handle) — known to no-op
-            // but kept as belt-and-suspenders in case Manage handler is
-            // bound but empty.
-            VLOG(STR("[MoriaCppMod] [GoatSaddle] no Manage handler found — falling back to ServerUse(bag) which is known to no-op\n"));
-            auto* useFn = goatInv->GetFunctionByNameInChain(STR("ServerUse"));
-            if (!useFn)
+            // [rc.22 PLAYER PANE 2026-05-25] Bind right-side pane to the player's
+            // body inventory. From the FProperty dump:
+            //   InventoryComponent (ObjectProperty @ 0x0538) — main InvComp ref
+            //   bodyInventoryHandle (StructProperty 20B @ 0x0548) — body container handle
+            //   AssociatedNPC (ObjectProperty @ 0x0748) — NPC actor for storage view
+            //   isOpenedFromNPC (BoolProperty @ 0x0740) — distinct from isStorageView
+            //
+            // Without these, the widget renders with null component refs and the
+            // panes show garbage/empty.
+            UObject* pc = m_localPC && isObjectAlive(m_localPC) ? m_localPC : findPlayerController();
+            UObject* pawn = m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr;
+            UObject* playerInv = nullptr;
+            if (pawn)
             {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse also missing on goat InvComp\n"));
-                return;
+                UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                    STR("/Script/Moria.MorInventoryComponent"));
+                if (invCls)
+                {
+                    auto* getCompFn = pawn->GetFunctionByNameInChain(STR("GetComponentByClass"));
+                    if (getCompFn)
+                    {
+                        std::vector<uint8_t> gb(getCompFn->GetParmsSize(), 0);
+                        writeGoatParm<UClass*>(getCompFn, gb.data(), STR("ComponentClass"), invCls);
+                        try { safeProcessEvent(pawn, getCompFn, gb.data()); } catch (...) {}
+                        playerInv = readGoatParm<UObject*>(getCompFn, gb.data(), STR("ReturnValue"), nullptr);
+                    }
+                }
             }
-            std::vector<uint8_t> buf(useFn->GetParmsSize(), 0);
-            *reinterpret_cast<int32_t*>(buf.data() + 0) = targetID;
-            try { safeProcessEvent(goatInv, useFn, buf.data()); } catch (...) {}
-            VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse(ItemHandle.ID={}) fired on goat InvComp (fallback)\n"),
-                 targetID);
-            showOnScreen(L"Saddlebag click dispatched (fallback ServerUse)", 1.5f, 0.9f, 0.7f, 0.4f);
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] resolved player InvComp={:p}\n"), (void*)playerInv);
+
+            // Write InventoryComponent = playerInv (right-pane component).
+            if (auto* invCompPtr = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("InventoryComponent")))
+            {
+                *invCompPtr = playerInv;
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] wrote InventoryComponent={:p}\n"), (void*)playerInv);
+            }
+            else
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] InventoryComponent prop not found\n"));
+            }
+
+            // Build the player's body inventory handle.
+            // Query playerInv->GetContainerByTag("Inventory.BodyInventory") → 20B handle.
+            uint8_t playerBodyHandle[20] = {0};
+            if (playerInv)
+            {
+                RC::Unreal::FName bodyTagName(STR("Inventory.BodyInventory"), RC::Unreal::FNAME_Add);
+                auto* getByTagFn2 = playerInv->GetFunctionByNameInChain(STR("GetContainerByTag"));
+                if (getByTagFn2)
+                {
+                    int sz = getByTagFn2->GetParmsSize();
+                    std::vector<uint8_t> tb(sz, 0);
+                    auto* pIn = findParam(getByTagFn2, STR("Tag"));
+                    if (!pIn) pIn = findParam(getByTagFn2, STR("ContainerTag"));
+                    if (!pIn) pIn = findParam(getByTagFn2, STR("InTag"));
+                    auto* pRet = findParam(getByTagFn2, STR("ReturnValue"));
+                    int tagOff = pIn ? pIn->GetOffset_Internal() : 0;
+                    int rOff   = pRet ? pRet->GetOffset_Internal() : 8;
+                    std::memcpy(tb.data() + tagOff, &bodyTagName, sizeof(RC::Unreal::FName));
+                    try { safeProcessEvent(playerInv, getByTagFn2, tb.data()); } catch (...) {}
+                    std::memcpy(playerBodyHandle, tb.data() + rOff, 20);
+                    int32_t bodyId = *reinterpret_cast<int32_t*>(playerBodyHandle + 0);
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] player body handle: id={} (from GetContainerByTag Inventory.BodyInventory)\n"), bodyId);
+                    // Ensure owner = playerInv (GetContainerByTag may already populate it, but
+                    // overwrite to be safe).
+                    RC::Unreal::FWeakObjectPtr ownerWP(playerInv);
+                    std::memcpy(playerBodyHandle + 8, &ownerWP, sizeof(RC::Unreal::FWeakObjectPtr));
+                }
+            }
+            if (auto* bodyPtr = w->GetValuePtrByPropertyNameInChain<uint8_t>(STR("bodyInventoryHandle")))
+            {
+                std::memcpy(bodyPtr, playerBodyHandle, 20);
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] wrote bodyInventoryHandle (20 B) at {:p}\n"), (void*)bodyPtr);
+            }
+
+            // AssociatedNPC = goat actor.
+            if (auto* npcPtr = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("AssociatedNPC")))
+            {
+                *npcPtr = goat;
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] wrote AssociatedNPC=goat={:p}\n"), (void*)goat);
+            }
+            else
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] AssociatedNPC prop not found\n"));
+            }
+
+            // isOpenedFromNPC = true (distinct from isStorageView).
+            if (auto* nbPtr = w->GetValuePtrByPropertyNameInChain<bool>(STR("isOpenedFromNPC")))
+            {
+                *nbPtr = true;
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] wrote isOpenedFromNPC=true\n"));
+            }
+
+            // 7) Fire HandleStorageView(bool NPCMode=true).
+            auto* hsvFn = w->GetFunctionByNameInChain(STR("HandleStorageView"));
+            if (hsvFn)
+            {
+                int hsvSz = hsvFn->GetParmsSize();
+                std::vector<uint8_t> hsvBuf(hsvSz, 0);
+                // First (and only) param is bool NPCMode. Write at offset 0.
+                hsvBuf[0] = 1;  // true
+                auto* pNpcMode = findParam(hsvFn, STR("NPCMode"));
+                if (!pNpcMode) pNpcMode = findParam(hsvFn, STR("NPC Mode?"));
+                if (!pNpcMode) pNpcMode = findParam(hsvFn, STR("bNPCMode"));
+                if (pNpcMode)
+                {
+                    hsvBuf[pNpcMode->GetOffset_Internal()] = 1;
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] HandleStorageView NPCMode param off={}\n"),
+                         pNpcMode->GetOffset_Internal());
+                }
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] firing HandleStorageView(NPCMode=true) parmSize={}\n"), hsvSz);
+                try { safeProcessEvent(w, hsvFn, hsvBuf.data()); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] HandleStorageView returned\n"));
+            }
+            else
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] HandleStorageView UFunction not found on widget\n"));
+            }
+
+            // 8) AddToViewport.
+            // [rc.22] Cache widget for ESC dismissal (see tickTest3EscDismiss in dllmain.cpp).
+            m_test3SaddlebagWidget = w;
+            auto* addFn = w->GetFunctionByNameInChain(STR("AddToViewport"));
+            if (addFn)
+            {
+                int addSz = addFn->GetParmsSize();
+                std::vector<uint8_t> addBuf(addSz, 0);
+                // ZOrder int32 at offset 0 (first param). Use 100 to sit above HUD.
+                if (addSz >= 4) *reinterpret_cast<int32_t*>(addBuf.data()) = 100;
+                try { safeProcessEvent(w, addFn, addBuf.data()); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] AddToViewport fired (ZOrder=100)\n"));
+                showOnScreen(L"Test 3: StorageMode widget added to viewport", 1.5f, 0.4f, 0.9f, 0.4f);
+            }
+            else
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] AddToViewport UFunction missing\n"));
+                showOnScreen(L"Test 3: widget spawned but cannot show", 2.5f, 0.9f, 0.4f, 0.4f);
+            }
         }
 
         // Dormant rc.4-rc.7 implementations preserved as commented source
@@ -4532,6 +8289,116 @@
                 setInputModeGame();
                 return;
             }
+            // [rc.107 2026-07-10] The screen's own logic re-asserts the
+            // "non-storage" view every frame (rc.106 proof: our SetVisibility
+            // wins the call, loses the next tick). While OUR widget is open,
+            // re-assert the storage view-state at 4 Hz — the same three values
+            // captured from the working native screen.
+            {
+                static ULONGLONG s_lastVisAssert = 0;
+                ULONGLONG now = GetTickCount64();
+                if (now - s_lastVisAssert >= 250)
+                {
+                    s_lastVisAssert = now;
+                    auto setVis = [&](const wchar_t* childName, uint8_t v) {
+                        UObject* c = jw_findChildInTree(m_goatSaddlebagWidget, childName);
+                        if (!c || !isObjectAlive(c)) return;
+                        if (auto* f = c->GetFunctionByNameInChain(STR("SetVisibility")))
+                        {
+                            std::vector<uint8_t> vb(f->GetParmsSize(), 0);
+                            vb[0] = v;
+                            try { safeProcessEvent(c, f, vb.data()); } catch (...) {}
+                        }
+                    };
+                    setVis(STR("storageOverlay"), 4);
+                    setVis(STR("Background"), 1);
+                    setVis(STR("BackgroundWStorage"), 0);
+                    // [rc.108] keep the NPC placeholder banner collapsed too
+                    setVis(STR("NPCTitleCluster"), 1);
+                    setVis(STR("SkillPanel"), 1);
+                    setVis(STR("NPCDetailsBox"), 1);
+
+                    // [rc.110/111] detect broken pane states: (a) a
+                    // WBP_UI_Inventory_NPC_C (dwarf 4×3) got rebuilt into the
+                    // pane by drag/interaction handlers, or (b) the pane got
+                    // cleared/hidden (RootGrid no longer Visible). Either way,
+                    // RE-DRIVE the saddlebag grid (rc.111) — collapse alone left
+                    // the pane empty ("8×8 disappears when grabbing an item").
+                    {
+                        int found = 0;
+                        std::function<void(UObject*, int)> hunt = [&](UObject* ww, int depth) {
+                            if (!ww || !isObjectAlive(ww) || depth > 14 || found > 4) return;
+                            if (safeClassName(ww) == STR("WBP_UI_Inventory_NPC_C"))
+                            {
+                                if (auto* f = ww->GetFunctionByNameInChain(STR("SetVisibility")))
+                                {
+                                    std::vector<uint8_t> vb(f->GetParmsSize(), 0);
+                                    vb[0] = 1;  // Collapsed
+                                    try { safeProcessEvent(ww, f, vb.data()); } catch (...) {}
+                                }
+                                found++;
+                                return;
+                            }
+                            if (auto* gcc = ww->GetFunctionByNameInChain(STR("GetChildrenCount")))
+                            {
+                                std::vector<uint8_t> b(gcc->GetParmsSize(), 0);
+                                try { safeProcessEvent(ww, gcc, b.data()); } catch (...) {}
+                                int32_t n = 0;
+                                if (auto* pr = findParam(gcc, STR("ReturnValue")))
+                                    n = *reinterpret_cast<int32_t*>(b.data() + pr->GetOffset_Internal());
+                                if (auto* gca = ww->GetFunctionByNameInChain(STR("GetChildAt")))
+                                {
+                                    for (int32_t i = 0; i < n && i < 32; i++)
+                                    {
+                                        std::vector<uint8_t> cb(gca->GetParmsSize(), 0);
+                                        if (auto* pi = findParam(gca, STR("Index")))
+                                            *reinterpret_cast<int32_t*>(cb.data() + pi->GetOffset_Internal()) = i;
+                                        try { safeProcessEvent(ww, gca, cb.data()); } catch (...) {}
+                                        UObject* child = nullptr;
+                                        if (auto* pr2 = findParam(gca, STR("ReturnValue")))
+                                            child = *reinterpret_cast<UObject**>(cb.data() + pr2->GetOffset_Internal());
+                                        if (child) hunt(child, depth + 1);
+                                    }
+                                }
+                            }
+                            if (auto* wt = ww->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree")))
+                                if (*wt)
+                                    if (auto* rp = (*wt)->GetValuePtrByPropertyNameInChain<UObject*>(STR("RootWidget")))
+                                        if (*rp) hunt(*rp, depth + 1);
+                        };
+                        hunt(m_goatSaddlebagWidget, 0);
+
+                        // [rc.111] pane-health check: RootGrid must be Visible(0).
+                        bool paneBroken = (found > 0);
+                        if (!paneBroken)
+                        {
+                            if (UObject* rg = jw_findChildInTree(m_goatSaddlebagWidget, STR("RootGrid")))
+                            {
+                                if (auto* v = rg->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility")))
+                                    if (*v == 1 || *v == 2)  // Collapsed / Hidden
+                                        paneBroken = true;
+                            }
+                        }
+                        if (paneBroken && m_sbGoatInvCache && isObjectAlive(m_sbGoatInvCache))
+                        {
+                            VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.111] pane broken (npcWidget={} ) — re-driving saddlebag grid\n"), found);
+                            driveSaddlebagStorageContainer(m_goatSaddlebagWidget, m_sbGoatInvCache,
+                                                           m_sbPlayerInvCache, m_sbHandleCache, STR("rc.111 heal"));
+                        }
+                    }
+                }
+            }
+
+            // [rc.109] one-shot delayed re-drive of the saddlebag grid — wins
+            // against any late NPC-path rebuild of the container pane.
+            if (m_contReSetupAtMs != 0 && GetTickCount64() >= m_contReSetupAtMs)
+            {
+                m_contReSetupAtMs = 0;
+                if (m_sbGoatInvCache && isObjectAlive(m_sbGoatInvCache))
+                    driveSaddlebagStorageContainer(m_goatSaddlebagWidget, m_sbGoatInvCache,
+                                                   m_sbPlayerInvCache, m_sbHandleCache, STR("rc.109 re-drive"));
+            }
+
             // Edge-trigger Esc OR Tab.
             static bool s_lastEsc = false;
             static bool s_lastTab = false;
@@ -4540,6 +8407,13 @@
             bool fire = (eDown && !s_lastEsc) || (tDown && !s_lastTab);
             s_lastEsc = eDown;
             s_lastTab = tDown;
+            // [rc.130] grace period: a reflexive Esc aimed at the (about-to-be-
+            // suppressed) vanilla screen must not kill OUR screen underneath.
+            if (fire && GetTickCount64() - m_sbWidgetOpenMs < 800)
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.130] Esc/Tab within grace window - ignored\n"));
+                fire = false;
+            }
             if (fire)
             {
                 VLOG(STR("[MoriaCppMod] [GoatSaddle] Esc/Tab pressed — closing widget\n"));
@@ -4554,6 +8428,9 @@
         void closeGoatSaddlebagInventory()
         {
             if (!m_goatSaddlebagWidget) return;
+            // [rc.119] snapshot contents on every close — the sidecar is the
+            // contents' persistence (identity persists via NpcInfo rc.112).
+            snapshotGoatSaddlebag();
             if (isObjectAlive(m_goatSaddlebagWidget))
             {
                 if (auto* fn = m_goatSaddlebagWidget->GetFunctionByNameInChain(STR("RemoveFromParent")))
@@ -5686,7 +9563,7 @@
             UObject* goat = nullptr;
             {
                 std::vector<UObject*> hit;
-                if (seh_findAllOf(STR("BP_NpcGoat_C"), &hit))
+                if (seh_findAnyGoatActor(&hit))
                 {
                     for (UObject* g : hit)
                         if (g && isObjectAlive(g)) { goat = g; break; }
@@ -5694,8 +9571,15 @@
             }
             if (!goat)
             {
-                VLOG(STR("[MoriaCppMod] [Summon] no live BP_NpcGoat_C in loaded chunks — bail\n"));
-                showOnScreen(L"No goat in world (must be in same area)", 2.0f, 0.9f, 0.6f, 0.4f);
+                // [rc.68 2026-06-29] No live goat -> SPAWN one via the same
+                // path GA_Bell would use. This makes NUM+ a universal summon
+                // key that works even without the bell BP (which Tobi removed
+                // from 4.3.0). spawnBellGoat handles BeginDeferredActorSpawn,
+                // FinishSpawningActor, SpawnDefaultController, and pushes
+                // to m_followGoats.
+                VLOG(STR("[MoriaCppMod] [Summon] no live goat -> spawning fresh via spawnBellGoat()\n"));
+                showOnScreen(L"Summoning goat (no bell needed)", 2.0f, 0.4f, 0.9f, 0.4f);
+                spawnBellGoat();
                 return;
             }
             VLOG(STR("[MoriaCppMod] [Summon] target goat ptr={:p}\n"), (void*)goat);
@@ -5808,6 +9692,69 @@
             return false;
         }
 
+        // [Native-goat adoption 2026-07-03] Tobi's Goat-v1.10.0 summons the
+        // porter goat through its own GA_Bell ability, so the actor never
+        // flows through our bell-spawn path and m_followGoats stays empty.
+        // That leaves BOTH the menu press/open handlers (which early-return on
+        // an empty herd) AND the Follow/Stay handlers with nothing to act on,
+        // so the goat never follows. Adopt the live BP_NpcGoat_C into
+        // m_followGoats with all one-shot mutation flags PRE-SET so
+        // tickFollowGoats SKIPS the wild-fauna controller/component surgery and
+        // runs only the per-second LeashActor assert (line ~14602) that drives
+        // Tobi's Bst_NPCGoatWorkPorter follow. Strictly filtered to the porter
+        // NPC class — never the wild BP_Fauna_Goat_C.
+        void adoptNativeGoat(UObject* goat)
+        {
+            if (!goat || !isObjectAlive(goat)) return;
+            if (isGoatTracked(goat)) return;
+            if (m_followGoats.size() >= MAX_FOLLOW_GOATS) return;
+            std::wstring cls;
+            try { cls = goat->GetClassPrivate()->GetName(); } catch (...) { return; }
+            if (cls != STR("BP_NpcGoat_C") && cls != STR("BP_PorterGoat_C")) return;
+            FollowGoatRecord rec{};
+            rec.pawn               = RC::Unreal::FWeakObjectPtr(goat);
+            rec.bellSpawned        = false;  // porter-role goat: leash-follow, not manual MoveToActor
+            rec.stayMode           = false;  // default to following on adoption
+            rec.componentsLogged   = true;   // skip the one-shot component-deactivation block
+            rec.porterRoleAssigned = true;   // Tobi's BP already assigns the Porter role
+            rec.controllerReplaced = true;   // never swap Tobi's AIController
+            rec.interactiveRefired = true;   // leave Tobi's interaction prompts untouched
+            rec.postRegDumpDone    = true;
+            m_followGoats.push_back(rec);
+            VLOG(STR("[MoriaCppMod] [NativeGoat] adopted Tobi-summoned {} {:p} (herd={})\n"),
+                 cls.c_str(), (void*)goat, (int)m_followGoats.size());
+            showOnScreen(L"Porter Goat linked", 1.5f, 0.7f, 0.9f, 0.7f);
+        }
+
+        // Throttled world-scan (2s) that adopts a native porter goat once
+        // Tobi's bell has summoned it. Self-limiting: stops once the herd is
+        // full (MAX_FOLLOW_GOATS). Cheap — a couple of FindAllOf calls at 0.5 Hz,
+        // and it goes quiet the moment a goat is linked.
+        ULONGLONG m_lastNativeGoatScanMs{0};
+        void tickAdoptNativeGoat()
+        {
+            if (!m_characterLoaded) return;
+            if (m_followGoats.size() >= MAX_FOLLOW_GOATS) return;
+            ULONGLONG now = GetTickCount64();
+            if (now - m_lastNativeGoatScanMs < 2000) return;
+            m_lastNativeGoatScanMs = now;
+
+            std::vector<UObject*> hits;
+            if (!seh_findAnyGoatActor(&hits)) return;
+            for (UObject* g : hits)
+            {
+                if (!g || !isObjectAlive(g)) continue;
+                std::wstring cls;
+                try { cls = g->GetClassPrivate()->GetName(); } catch (...) { continue; }
+                if (cls != STR("BP_NpcGoat_C") && cls != STR("BP_PorterGoat_C")) continue;
+                std::wstring nm;
+                try { nm = g->GetName(); } catch (...) {}
+                if (nm.rfind(STR("Default__"), 0) == 0) continue;  // skip the CDO
+                adoptNativeGoat(g);
+                break;  // MAX_FOLLOW_GOATS == 1
+            }
+        }
+
         UObject* findOurGoatAlive()
         {
             for (auto& rec : m_followGoats)
@@ -5821,7 +9768,7 @@
         UObject* findAnyGoatInWorld()
         {
             std::vector<UObject*> hit;
-            if (seh_findAllOf(STR("BP_NpcGoat_C"), &hit))
+            if (seh_findAnyGoatActor(&hit))
             {
                 for (UObject* g : hit)
                     if (g && isObjectAlive(g)) return g;
@@ -5881,17 +9828,114 @@
                     }),
                 m_followGoats.end());
 
-            // Toggle: if a tracked goat exists → dismiss, else → summon.
-            if (!m_followGoats.empty())
+            // [rc.114 PARK-NOT-DESTROY 2026-07-11] The old dismiss destroyed
+            // the goat actor — and the fitted saddlebag container + CONTENTS
+            // died with it (user lost wood+stone). Native unique NPCs are
+            // never destroyed; the goat now follows that model:
+            //   bell while FOLLOWING → park (goat + cargo stay in world)
+            //   bell while PARKED    → teleport to player + follow
+            //   no goat in world     → spawn (GUID adopt as before)
+            UObject* live = nullptr;
+            FollowGoatRecord* liveRec = nullptr;
+            for (auto& g : m_followGoats)
             {
-                VLOG(STR("[MoriaCppMod] [BellToggle] DISMISS (herd size {})\n"),
-                     m_followGoats.size());
-                despawnAllFollowGoats();
-                showOnScreen(L"Goat dismissed", 2.0f, 0.7f, 0.7f, 0.7f);
+                UObject* p = g.pawn.Get();
+                if (p && isObjectAlive(p)) { live = p; liveRec = &g; break; }
+            }
+            if (!live)
+            {
+                live = findAnyGoatInWorld();
+                if (live)
+                {
+                    adoptExistingGoat(live);
+                    liveRec = m_followGoats.empty() ? nullptr : &m_followGoats.back();
+                    VLOG(STR("[MoriaCppMod] [BellToggle] [rc.114] adopted untracked world goat {:p}\n"), (void*)live);
+                }
+            }
+            if (live)
+            {
+                // [rc.138] Branch on bellDismissed, NOT stayMode. Keying off
+                // stayMode made the first ring on a visible-but-staying goat
+                // fire RECALL (teleport-to-player = looks like a no-op), so
+                // the user had to ring twice. Bell semantics: visible goat →
+                // leaves; hidden goat → returns. Stay/Follow is orthogonal.
+                if (liveRec && !liveRec->bellDismissed)
+                {
+                    // [rc.129 2026-07-12] DISMISS = goat visibly LEAVES (hidden +
+                    // intangible) but the ACTOR stays alive — cargo + identity
+                    // preserved (destroying was how the wood scraps died).
+                    VLOG(STR("[MoriaCppMod] [BellToggle] [rc.129] DISMISS — hide goat (actor + cargo kept alive)\n"));
+                    liveRec->bellDismissed = true;
+                    onGoatStay();
+                    snapshotGoatSaddlebag();      // [rc.119] natural save point
+                    storeGoatInWorldState(live);  // [rc.127 B6] enroll in level records
+                    if (auto* hideFn = live->GetFunctionByNameInChain(STR("SetActorHiddenInGame")))
+                    { struct { bool b{true}; } p{}; try { safeProcessEvent(live, hideFn, &p); } catch (...) {} }
+                    if (auto* collFn = live->GetFunctionByNameInChain(STR("SetActorEnableCollision")))
+                    { struct { bool b{false}; } p{}; try { safeProcessEvent(live, collFn, &p); } catch (...) {} }
+                    // [rc.130] freeze movement — collision-off + gravity was
+                    // dropping the hidden goat through the floor.
+                    {
+                        UClass* mvCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                            STR("/Script/Engine.CharacterMovementComponent"));
+                        if (mvCls)
+                        {
+                            if (auto* gc = live->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                            {
+                                std::vector<uint8_t> b(gc->GetParmsSize(), 0);
+                                writeGoatParm<UClass*>(gc, b.data(), STR("ComponentClass"), mvCls);
+                                if (safeProcessEvent(live, gc, b.data()))
+                                {
+                                    UObject* mv = readGoatParm<UObject*>(gc, b.data(), STR("ReturnValue"), nullptr);
+                                    if (mv && isObjectAlive(mv))
+                                        if (auto* dm = mv->GetFunctionByNameInChain(STR("DisableMovement")))
+                                        { try { safeProcessEvent(mv, dm, nullptr); } catch (...) {} }
+                                }
+                            }
+                        }
+                    }
+                    showOnScreen(L"Rûdh wanders off (saddlebags safe)", 2.0f, 0.7f, 0.9f, 0.7f);
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [BellToggle] [rc.129] RECALL — unhide + teleport to player + follow\n"));
+                    if (liveRec) liveRec->bellDismissed = false;  // [rc.138]
+                    if (auto* hideFn = live->GetFunctionByNameInChain(STR("SetActorHiddenInGame")))
+                    { struct { bool b{false}; } p{}; try { safeProcessEvent(live, hideFn, &p); } catch (...) {} }
+                    if (auto* collFn = live->GetFunctionByNameInChain(STR("SetActorEnableCollision")))
+                    { struct { bool b{true}; } p{}; try { safeProcessEvent(live, collFn, &p); } catch (...) {} }
+                    // [rc.130] restore walking movement (dismiss froze it)
+                    {
+                        UClass* mvCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                            STR("/Script/Engine.CharacterMovementComponent"));
+                        if (mvCls)
+                        {
+                            if (auto* gc = live->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                            {
+                                std::vector<uint8_t> b(gc->GetParmsSize(), 0);
+                                writeGoatParm<UClass*>(gc, b.data(), STR("ComponentClass"), mvCls);
+                                if (safeProcessEvent(live, gc, b.data()))
+                                {
+                                    UObject* mv = readGoatParm<UObject*>(gc, b.data(), STR("ReturnValue"), nullptr);
+                                    if (mv && isObjectAlive(mv))
+                                        if (auto* sm = mv->GetFunctionByNameInChain(STR("SetMovementMode")))
+                                        {
+                                            std::vector<uint8_t> mb(sm->GetParmsSize(), 0);
+                                            mb[0] = 1;  // MOVE_Walking
+                                            try { safeProcessEvent(mv, sm, mb.data()); } catch (...) {}
+                                        }
+                                }
+                            }
+                        }
+                    }
+                    summonGoatToPlayer();   // teleports the live goat (won't spawn — goat exists)
+                    onGoatFollow();
+                    showOnScreen(L"Rûdh returns to you", 2.0f, 0.7f, 0.9f, 0.7f);
+                }
                 return;
             }
 
-            VLOG(STR("[MoriaCppMod] [BellToggle] SUMMON (no porter role — wild fauna with manual follow)\n"));
+            VLOG(STR("[MoriaCppMod] [BellToggle] SUMMON (no live goat in world)\n"));
             spawnBellGoat();
         }
 
@@ -5906,6 +9950,129 @@
         // The 8×8 storage is on the saddlebags item the player carries; the
         // goat actor has no accessible inventory (we'll explicitly suppress
         // any E-interact in rc.47 + add our custom menu).
+        // [rc.81 RUNTIME DEFAULTCONTAINERS 2026-07-04] Write a container class
+        // into the goat's configured "Inventory Comp".DefaultContainers at spawn
+        // time (after BeginDeferred, BEFORE FinishSpawning) so the component's
+        // BeginPlay builds the container from it — reproducing what a pak
+        // DefaultContainers edit would do, but at runtime (dodging retoc's
+        // import mangling). The container class's RowHandle -> DT_ContainerItems
+        // -> DT_Storage determines the grid size. Returns true if written.
+        bool writeGoatDefaultContainers(UObject* goat, UClass* containerCls)
+        {
+            if (!goat || !containerCls) return false;
+            UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                STR("/Script/Moria.MorInventoryComponent"));
+            if (!invCls) return false;
+
+            // Find the configured "Inventory Comp" (StorageHandle=Goat_Saddlebags),
+            // not the empty inherited base component.
+            UObject* inv = nullptr;
+            UObject* firstAny = nullptr;
+            if (auto* gf = goat->GetFunctionByNameInChain(STR("K2_GetComponentsByClass")))
+            {
+                std::vector<uint8_t> b(gf->GetParmsSize(), 0);
+                if (auto* pCls = findParam(gf, STR("ComponentClass")))
+                    *reinterpret_cast<UClass**>(b.data() + pCls->GetOffset_Internal()) = invCls;
+                try { safeProcessEvent(goat, gf, b.data()); } catch (...) {}
+                if (auto* pRet = findParam(gf, STR("ReturnValue")))
+                {
+                    uint8_t* arr = b.data() + pRet->GetOffset_Internal();
+                    UObject** data = *reinterpret_cast<UObject***>(arr);
+                    int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                    for (int32_t i = 0; data && i < num && i < 16; i++)
+                    {
+                        UObject* c = data[i];
+                        if (!c || !isObjectAlive(c)) continue;
+                        if (!firstAny) firstAny = c;
+                        if (auto* shP = c->GetPropertyByNameInChain(STR("StorageHandle")))
+                        {
+                            RC::Unreal::FName* rn = reinterpret_cast<RC::Unreal::FName*>(
+                                reinterpret_cast<uint8_t*>(c) + shP->GetOffset_Internal() + 8);
+                            std::wstring sh; try { sh = rn->ToString(); } catch (...) {}
+                            if (sh == STR("Goat_Saddlebags")) { inv = c; break; }
+                        }
+                    }
+                }
+            }
+            if (!inv) inv = firstAny;
+            if (!inv || !isObjectAlive(inv))
+            {
+                VLOG(STR("[MoriaCppMod] [DefCont] no Inventory Comp on deferred goat\n"));
+                return false;
+            }
+            auto* dcProp = inv->GetPropertyByNameInChain(STR("DefaultContainers"));
+            if (!dcProp)
+            {
+                VLOG(STR("[MoriaCppMod] [DefCont] DefaultContainers property missing on inv={:p}\n"), (void*)inv);
+                return false;
+            }
+            uint8_t* arrPtr = reinterpret_cast<uint8_t*>(inv) + dcProp->GetOffset_Internal();
+            int32_t oldNum = *reinterpret_cast<int32_t*>(arrPtr + 8);
+            // TArray<UClass*> layout: [Data ptr(8)][Num(4)][Max(4)]. Empty arrays
+            // have null Data so overwriting the header doesn't leak.
+            void* elemMem = FMemory::Malloc(sizeof(UClass*), alignof(UClass*));
+            if (!elemMem) return false;
+            *reinterpret_cast<UClass**>(elemMem) = containerCls;
+            *reinterpret_cast<void**>(arrPtr + 0) = elemMem;
+            *reinterpret_cast<int32_t*>(arrPtr + 8) = 1;   // Num
+            *reinterpret_cast<int32_t*>(arrPtr + 12) = 1;  // Max
+            VLOG(STR("[MoriaCppMod] [DefCont] wrote DefaultContainers=[{:p}] on Inventory Comp={:p} (was Num={})\n"),
+                 (void*)containerCls, (void*)inv, oldNum);
+            return true;
+        }
+
+        // [rc.82 ARCHETYPE PATCH 2026-07-04] Patch the goat's "Inventory Comp"
+        // component TEMPLATE (the archetype loaded with BP_NpcGoat_C) so every
+        // SCS-instantiated instance inherits DefaultContainers. This is the true
+        // runtime equivalent of the pak DefaultContainers edit — no retoc, and
+        // it beats the SCS timing (rc.81 proved the instance is created during
+        // FinishSpawning). Idempotent; runs once a valid template is patched.
+        bool m_goatArchetypePatched{false};
+        void ensureGoatInventoryArchetypePatched()
+        {
+            if (m_goatArchetypePatched) return;
+            const wchar_t* contPath =
+                STR("/Game/Mods/PorterGoat/Items/BP_ContainerItem_Goat_Slot_EpicPack.BP_ContainerItem_Goat_Slot_EpicPack_C");
+            UClass* cc = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, contPath);
+            if (!cc) cc = goat_loadClassAssetBlocking(contPath);
+            if (!cc) { VLOG(STR("[MoriaCppMod] [DefCont] archetype: container class not loadable\n")); return; }
+
+            std::vector<UObject*> comps;
+            if (!seh_findAllOf(STR("MorInventoryComponent"), &comps)) return;
+            int patched = 0, goatComps = 0;
+            for (auto* c : comps)
+            {
+                if (!c || !isObjectAlive(c)) continue;
+                auto* shP = c->GetPropertyByNameInChain(STR("StorageHandle"));
+                if (!shP) continue;
+                RC::Unreal::FName* rn = reinterpret_cast<RC::Unreal::FName*>(
+                    reinterpret_cast<uint8_t*>(c) + shP->GetOffset_Internal() + 8);
+                std::wstring sh; try { sh = rn->ToString(); } catch (...) {}
+                if (sh != STR("Goat_Saddlebags")) continue;
+                goatComps++;
+                std::wstring nm; try { nm = c->GetName(); } catch (...) {}
+                auto* dcProp = c->GetPropertyByNameInChain(STR("DefaultContainers"));
+                if (!dcProp) continue;
+                uint8_t* arrPtr = reinterpret_cast<uint8_t*>(c) + dcProp->GetOffset_Internal();
+                int32_t oldNum = *reinterpret_cast<int32_t*>(arrPtr + 8);
+                VLOG(STR("[MoriaCppMod] [DefCont] Goat_Saddlebags comp '{}' {:p} DefaultContainers Num={}\n"),
+                     nm.c_str(), (void*)c, oldNum);
+                if (oldNum > 0) { patched++; continue; }
+                void* elemMem = FMemory::Malloc(sizeof(UClass*), alignof(UClass*));
+                if (!elemMem) continue;
+                *reinterpret_cast<UClass**>(elemMem) = cc;
+                *reinterpret_cast<void**>(arrPtr + 0) = elemMem;
+                *reinterpret_cast<int32_t*>(arrPtr + 8) = 1;
+                *reinterpret_cast<int32_t*>(arrPtr + 12) = 1;
+                VLOG(STR("[MoriaCppMod] [DefCont] PATCHED '{}' {:p} DefaultContainers=[{:p}]\n"),
+                     nm.c_str(), (void*)c, (void*)cc);
+                patched++;
+            }
+            VLOG(STR("[MoriaCppMod] [DefCont] archetype patch: {} Goat_Saddlebags comps, {} patched\n"),
+                 goatComps, patched);
+            if (patched > 0) m_goatArchetypePatched = true;
+        }
+
         //
         // Spawn path mirrors spawnFollowGoat (proven, used by NUM- earlier)
         // minus the Porter role assignment + with bellSpawned=true so the
@@ -5913,6 +10080,7 @@
         void spawnBellGoat()
         {
             VLOG(STR("[MoriaCppMod] [BellSpawn] entry — checking bindings\n"));
+            m_lastSpawnGuidAdopted = false;  // [rc.45] reset per spawn; set inside adoption block
             if (!ensureGoatSpawnBindings())
             {
                 VLOG(STR("[MoriaCppMod] [BellSpawn] bindings not ready\n"));
@@ -5973,7 +10141,8 @@
             // a fresh class lookup if the cached pointer is dead. Use
             // safeClassName (SEH-wrapped) instead of bare GetName — C++
             // try/catch does NOT catch SEH access violations.
-            bool clsAlive = (m_goatBPClass && isObjectAlive(m_goatBPClass));
+            bool clsAlive = (m_goatBPClass && isObjectAlive(m_goatBPClass)
+                             && !safeObjectName(m_goatBPClass).empty());  // [rc.121] SEH probe — isObjectAlive lies on reused memory
             if (!clsAlive)
             {
                 VLOG(STR("[MoriaCppMod] [BellSpawn] cached class STALE/null — re-resolving via GOAT_CLASS_PATHS\n"));
@@ -6040,30 +10209,50 @@
             VLOG(STR("[MoriaCppMod] [BellSpawn] BeginDeferred returned goat={:p} (mode=1=AlwaysSpawn)\n"),
                  (void*)goat);
             if (!goat) {
-                showOnScreen(L"Goat spawn null", 2.0f, 0.9f, 0.4f, 0.4f);
-                // Re-resolve the BP class fresh — pointer may have gone stale
-                // if anything in the engine reloaded the asset.
-                UClass* freshCls = nullptr;
-                for (auto* path : GOAT_CLASS_PATHS)
-                {
-                    freshCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, path);
-                    if (freshCls) break;
-                }
-                VLOG(STR("[MoriaCppMod] [BellSpawn] null goat — actorClass(cached)={:p} freshLookup={:p} cdo={:p} pawn={:p} spawnLoc=({},{},{})\n"),
-                     (void*)m_goatBPClass, (void*)freshCls, (void*)m_kismetGameplayStaticsCDO, (void*)pawn,
+                VLOG(STR("[MoriaCppMod] [BellSpawn] null goat — actorClass(cached)={:p} cdo={:p} pawn={:p} spawnLoc=({},{},{})\n"),
+                     (void*)m_goatBPClass, (void*)m_kismetGameplayStaticsCDO, (void*)pawn,
                      spawnLoc.X, spawnLoc.Y, spawnLoc.Z);
-                if (freshCls && freshCls != m_goatBPClass)
+                // [rc.17 FALLBACK 2026-05-25] BeginDeferred returned null.
+                // Common cause: the cached class is a half-formed BP (e.g.
+                // PathA's sibling-clone BP_PorterGoat_C — GetName() returns
+                // 'None'/garbage, UE refuses to spawn). Walk GOAT_CLASS_PATHS
+                // in order, skipping the cached pointer; accept the first one
+                // that BeginDeferred actually spawns. Caches the successful
+                // fallback so subsequent spawns skip the broken primary.
+                for (auto* altPath : GOAT_CLASS_PATHS)
                 {
-                    VLOG(STR("[MoriaCppMod] [BellSpawn] cached class was STALE — refreshing m_goatBPClass and retrying once\n"));
-                    m_goatBPClass = freshCls;
-                    // Retry with fresh class.
-                    writeGoatParm<UClass*>(m_goatBeginSpawnFn, buf.data(), STR("ActorClass"), m_goatBPClass);
-                    safeProcessEvent(m_kismetGameplayStaticsCDO, m_goatBeginSpawnFn, buf.data());
+                    UClass* altCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, altPath);
+                    if (!altCls) altCls = goat_loadClassAssetBlocking(altPath);
+                    if (!altCls || !isObjectAlive(altCls)) continue;
+                    if (altCls == m_goatBPClass) continue; // already failed with this one
+                    VLOG(STR("[MoriaCppMod] [BellSpawn] fallback retry with {} (cls={:p})\n"),
+                         altPath, (void*)altCls);
+                    writeGoatParm<UClass*>(m_goatBeginSpawnFn, buf.data(), STR("ActorClass"), altCls);
+                    if (!safeProcessEvent(m_kismetGameplayStaticsCDO, m_goatBeginSpawnFn, buf.data())) continue;
                     goat = readGoatParm<UObject*>(m_goatBeginSpawnFn, buf.data(), STR("ReturnValue"), nullptr);
-                    VLOG(STR("[MoriaCppMod] [BellSpawn] retry returned goat={:p}\n"), (void*)goat);
+                    if (goat)
+                    {
+                        VLOG(STR("[MoriaCppMod] [BellSpawn] fallback SUCCESS with {} → goat={:p} (caching as new primary)\n"),
+                             altPath, (void*)goat);
+                        m_goatBPClass = altCls; // cache so subsequent spawns skip broken primary
+                        break;
+                    }
                 }
-                if (!goat) return;
+                if (!goat)
+                {
+                    showOnScreen(L"Goat spawn null (all classes failed)", 2.5f, 0.9f, 0.4f, 0.4f);
+                    return;
+                }
+                showOnScreen(L"Goat spawned via fallback class", 2.0f, 0.4f, 0.9f, 0.4f);
             }
+
+            // [rc.82] The instance's SCS "Inventory Comp" is created DURING
+            // FinishSpawning (rc.81 proved a pre-finish write hits the wrong
+            // component). Instead modify the component ARCHETYPE/template (the
+            // "Inventory Comp_GEN_VARIABLE" object loaded with the class) so the
+            // instance inherits DefaultContainers when SCS instantiates it —
+            // the true runtime equivalent of the pak edit, no retoc.
+            ensureGoatInventoryArchetypePatched();
 
             // FinishSpawningActor
             int sz2 = m_goatFinishSpawnFn->GetParmsSize();
@@ -6076,6 +10265,231 @@
             if (auto* sdc = goat->GetFunctionByNameInChain(STR("SpawnDefaultController")))
             {
                 safeProcessEvent(goat, sdc, nullptr);
+            }
+
+            // [rc.98 VERIFY 2026-07-10] Confirm we summoned TOBI'S goat
+            // (BP_NpcGoat_C — the one wired with Goat.Slot.EpicPack +
+            // DefaultContainers + persistor + NPCGoat DT row), not a stale
+            // class or the vanilla fauna goat. safeObjectName on the instance's
+            // UClass returns the concrete BP class name.
+            {
+                UClass* gcls = nullptr;
+                try { gcls = goat->GetClassPrivate(); } catch (...) {}
+                std::wstring spawnedCls = gcls ? safeObjectName(gcls) : STR("(null)");
+                bool isTobiGoat = (spawnedCls == STR("BP_NpcGoat_C"));
+                VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.98 VERIFY] spawned actor class='{}' isTobiGoat={}\n"),
+                     spawnedCls.c_str(), isTobiGoat);
+                if (!isTobiGoat)
+                    showOnScreen(L"WARNING: wrong goat class spawned!", 3.5f, 0.9f, 0.4f, 0.4f);
+            }
+
+            // [rc.100 REGISTER EXPERIMENT 2026-07-10] Dwarven NPCs get their
+            // DefaultContainers instantiated by the native NPC lifecycle
+            // (AMorNPCManager). Our raw-spawned goat skips the manager, and
+            // NOTHING else builds the epic-pack slot (proven: containers=0
+            // after every init call; Tobi's manage handler only opens the UI —
+            // decoded ubergraph: GetScreen(StorageMode)+AssociatedNPC+Show).
+            // Experiment: RegisterWithNPCManager on the goat's MorNPCComponent
+            // — if manager registration triggers native NPC init, the 1x1
+            // Goat.Slot.EpicPack container appears (AllowedItems=Item.GoatPack:
+            // ONLY the crafted saddlebag fits) and Tobi's screen shows it.
+            // Log containers on every MorInventoryComponent before/after.
+            {
+                auto logContainers = [&](const wchar_t* tag) {
+                    UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                        STR("/Script/Moria.MorInventoryComponent"));
+                    if (!invCls) return;
+                    auto* gf = goat->GetFunctionByNameInChain(STR("K2_GetComponentsByClass"));
+                    if (!gf) return;
+                    std::vector<uint8_t> b(gf->GetParmsSize(), 0);
+                    if (auto* pCls = findParam(gf, STR("ComponentClass")))
+                        *reinterpret_cast<UClass**>(b.data() + pCls->GetOffset_Internal()) = invCls;
+                    try { safeProcessEvent(goat, gf, b.data()); } catch (...) {}
+                    auto* pRet = findParam(gf, STR("ReturnValue"));
+                    if (!pRet) return;
+                    uint8_t* arr = b.data() + pRet->GetOffset_Internal();
+                    UObject** data = *reinterpret_cast<UObject***>(arr);
+                    int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                    for (int32_t i = 0; data && i < num && i < 8; i++)
+                    {
+                        UObject* c = data[i];
+                        if (!c || !isObjectAlive(c)) continue;
+                        int32_t cnt = -1;
+                        if (auto* f = c->GetFunctionByNameInChain(STR("GetContainers")))
+                        {
+                            std::vector<uint8_t> cb(f->GetParmsSize(), 0);
+                            try { safeProcessEvent(c, f, cb.data()); } catch (...) {}
+                            if (auto* pr = findParam(f, STR("ReturnValue")))
+                                cnt = *reinterpret_cast<int32_t*>(cb.data() + pr->GetOffset_Internal() + 8);
+                        }
+                        std::wstring nm; try { nm = c->GetName(); } catch (...) {}
+                        VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.100 {}] comp '{}' containers={}\n"),
+                             tag, nm.c_str(), cnt);
+                    }
+                };
+
+                UObject* npcComp = nullptr;
+                UClass* npcCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                    STR("/Script/Moria.MorNPCComponent"));
+                if (npcCls)
+                {
+                    if (auto* getComp = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                    {
+                        std::vector<uint8_t> gb(getComp->GetParmsSize(), 0);
+                        writeGoatParm<UClass*>(getComp, gb.data(), STR("ComponentClass"), npcCls);
+                        if (safeProcessEvent(goat, getComp, gb.data()))
+                            npcComp = readGoatParm<UObject*>(getComp, gb.data(), STR("ReturnValue"), nullptr);
+                    }
+                }
+                if (npcComp && isObjectAlive(npcComp))
+                {
+                    logContainers(STR("PRE-REGISTER"));
+
+                    // [rc.112 PERSIST IDENTITY 2026-07-11] Full identity pass
+                    // (reconnected from the pre-strip rc.42/50/85 machinery):
+                    //   1. ADOPT: scan NpcInfo (stride 0x260, Name FText @+0x30,
+                    //      GUID @+0x1C) backwards for Name==m_goatName — an entry
+                    //      from a previous session. Found → copy its GUID into
+                    //      npcComp.NpcGuid and SKIP Register (no duplicates).
+                    //   2. Else REGISTER (mints GUID + should append an entry —
+                    //      count logged to detect the ValidNpcRestores trap).
+                    //   3. Write Name=m_goatName + UniqueNpc.RowName='NPCGoat'
+                    //      into our entry → manager reload lookup resolves via
+                    //      Tobi's DT_NPCUniqueCharacters['NPCGoat'] → native respawn.
+                    auto findMgr = [&]() -> UObject* {
+                        UObject* mgr = nullptr;
+                        std::vector<UObject*> mgrs;
+                        if (findAllOfSafe(STR("MorNPCManager"), mgrs))
+                            for (UObject* o : mgrs)
+                            {
+                                if (!o || !isObjectAlive(o)) continue;
+                                std::wstring cn = safeClassName(o);
+                                if (cn.size() >= 9 && cn.substr(0, 9) == STR("Default__")) continue;
+                                mgr = o; break;
+                            }
+                        return mgr;
+                    };
+                    auto npcInfoCount = [&]() -> int32_t {
+                        UObject* mgr = findMgr();
+                        if (!mgr) return -1;
+                        uint8_t* hdr = reinterpret_cast<uint8_t*>(mgr) + 0x03a0 + 0x0108;
+                        if (!isReadableMemory(hdr, 16)) return -1;
+                        return *reinterpret_cast<int32_t*>(hdr + 8);
+                    };
+
+                    bool adopted = false;
+                    uint8_t* myGuidPtr = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                    {
+                        UObject* mgr = findMgr();
+                        if (mgr && myGuidPtr)
+                        {
+                            uint8_t* hdr = reinterpret_cast<uint8_t*>(mgr) + 0x03a0 + 0x0108;
+                            if (isReadableMemory(hdr, 16))
+                            {
+                                uint8_t* data = *reinterpret_cast<uint8_t**>(hdr);
+                                int32_t  num  = *reinterpret_cast<int32_t*>(hdr + 8);
+                                constexpr int kStride = 0x260, kGuidOff = 0x001c, kNameOff = 0x0030;
+                                if (data && num > 0 && num < 500)
+                                {
+                                    for (int i = num - 1; i >= 0 && !adopted; --i)
+                                    {
+                                        uint8_t* entry = data + i * kStride;
+                                        if (!isReadableMemory(entry, kStride)) continue;
+                                        wchar_t tmpName[256] = {0};
+                                        seh_ftextToStringToBuf(entry + kNameOff, tmpName, 256);
+                                        // [rc.113] list every entry — proves the NpcInfo↔DT-row
+                                        // mapping (12 entries == 12 vanilla unique rows; goat row
+                                        // missing because world predates it).
+                                        VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.113] NpcInfo[{}] Name='{}'\n"),
+                                             i, tmpName);
+                                        if (std::wstring(tmpName) == m_goatName)
+                                        {
+                                            std::memcpy(myGuidPtr, entry + kGuidOff, 16);
+                                            adopted = true;
+                                            m_lastSpawnGuidAdopted = true;
+                                            uint32_t* g = reinterpret_cast<uint32_t*>(entry + kGuidOff);
+                                            VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.112 ADOPT] NpcInfo[{}] Name='{}' GUID={:08X}-{:08X}-{:08X}-{:08X} adopted into npcComp\n"),
+                                                 i, m_goatName.c_str(), g[0], g[1], g[2], g[3]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    int32_t cnt0 = npcInfoCount();
+                    if (!adopted)
+                    {
+                        if (auto* regFn = npcComp->GetFunctionByNameInChain(STR("RegisterWithNPCManager")))
+                        {
+                            std::vector<uint8_t> rb(regFn->GetParmsSize(), 0);
+                            try { safeProcessEvent(npcComp, regFn, rb.data()); } catch (...) {}
+                        }
+                    }
+                    int32_t cnt1 = npcInfoCount();
+                    VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.112] adopted={} NpcInfo count {}->{} ({})\n"),
+                         adopted, cnt0, cnt1,
+                         adopted ? STR("Register SKIPPED") : (cnt1 > cnt0 ? STR("Register CREATED entry") : STR("Register created NOTHING — trap?")));
+
+                    // 3. identity writes (idempotent for the adopt path)
+                    if (myGuidPtr)
+                    {
+                        bool nOk = writeGoatNameDirectToNpcInfoEntry(myGuidPtr, m_goatName);
+                        bool rOk = writeUniqueNpcRowNameToEntry(myGuidPtr, STR("NPCGoat"));
+                        VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.112] identity writes: Name='{}' ok={} UniqueNpc.RowName='NPCGoat' ok={}\n"),
+                             m_goatName.c_str(), nOk, rOk);
+                    }
+                    else VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.112] NpcGuid property NOT FOUND — identity writes skipped\n"));
+
+                    logContainers(STR("POST-REGISTER"));
+                }
+                else VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.100] no MorNPCComponent on goat — register skipped\n"));
+            }
+
+            // [rc.64 BARE TOBI 2026-06-28] Per approved plan
+            // deep-percolating-parnas.md — bell-spawn does ONLY tracking.
+            // rc.63's spawn-time wiring (SetIsInteractive + SetRoleFuzzy +
+            // equipPorterSaddlebag + initial setGoatLeashActor) broke both
+            // follow AND saddlebag, so we revert to the rc.62 baseline that
+            // works:
+            //   - tickFollowGoats lazily resolves the controller via
+            //     APawn::Controller and writes the LeashActor blackboard
+            //     every 1s when !stayMode (moria_goat.inl ~14242).
+            //   - Vanilla Bst_NPCGoatWorkPorter reads LeashActor → follow.
+            //   - Tobi's BP CDO defaults already set Role=Porter so the
+            //     root state routes correctly without our intervention.
+            //
+            // Stay/Follow is handled in onGoatStay/onGoatFollow (B2) by
+            // toggling the AI role + LeashActor.
+            // Saddlebag click is handled in openGoatSaddlebagInventory (B3)
+            // by opening the PLAYER's EpicPack container — never the goat's
+            // own inventory.
+            {
+                // [rc.66 ROLLBACK 2026-06-28] User rejected rc.65's player-
+                // EpicPack approach: "I need to ADD the saddlebag to the
+                // character save, not replace the backpack with the
+                // saddlebag... the saddlebag will only be accessible through
+                // the goat... contents save with the character not the game
+                // file, that way each character will have a goat with a
+                // saddlebag and that contents will go with the character
+                // between worlds."
+                //
+                // Removed: B5 DLL item-grant to player. The saddlebag is no
+                // longer an item in player inventory.
+                //
+                // Saddlebag UI temporarily routed to a placeholder until the
+                // sidecar persistence layer is approved + built (see
+                // openCharacterSaddlebagPlaceholder).
+                FollowGoatRecord rec{};
+                rec.pawn               = RC::Unreal::FWeakObjectPtr(goat);
+                rec.controller         = RC::Unreal::FWeakObjectPtr();
+                rec.bellSpawned        = true;
+                rec.interactiveRefired = true;
+                m_followGoats.push_back(rec);
+                VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.66 Rollback] goat={:p} at ({:.1f},{:.1f},{:.1f}); herd size={}; NO player saddlebag grant (per user correction 2026-06-28)\n"),
+                     (void*)goat, spawnLoc.X, spawnLoc.Y, spawnLoc.Z, m_followGoats.size());
+                showOnScreen(L"Goat summoned", 2.0f, 0.4f, 0.9f, 0.4f);
+                return;
             }
 
             // [v7.2.0-rc.3 2026-05-22] Auto-equip Tobi's saddlebag onto the
@@ -6135,11 +10549,940 @@
                                     safeProcessEvent(npcComp, siFn, &sip);
                                     VLOG(STR("[MoriaCppMod] [BellSpawn] SetIsInteractive(true) fired (safety belt)\n"));
                                 }
+
+                                // [rc.60 TAME GOAT 2026-06-28] Two changes to make
+                                // the goat behave like a goat, not a dwarf:
+                                //   1. Destroy dwarven inventory child actors
+                                //      (BP_ContainerItem_Dwarf_*) — DwarfMirror_v1
+                                //      BP brings these in at construction; they're
+                                //      what make the goat get "Standing By/Working"
+                                //      dwarf status, fight our MoveToActor, etc.
+                                //   2. Stop the goat's behavior tree — keeps the
+                                //      AI controller (so our MoveTo calls still
+                                //      route) but prevents autonomous BT from
+                                //      driving the goat against our intent.
+                                // Per user's feedback when DC's modified pak (which
+                                // removed the dwarven imports) had working follow/stay.
+                                tameSpawnedGoat(goat);
+
+
+                                // [rc.12h 2026-05-24] Re-enable RegisterWithNPCManager.
+                                // rc.12g's component-side NpcGuid synthesis confirmed not
+                                // sufficient — Take and Add still rejected in the Manage UI.
+                                // The goat needs an actual entry in AMorNPCManager.NpcInfo.Items
+                                // so the manager-side validation passes when the UI commits
+                                // container mutations.
+                                //
+                                // RegisterWithNPCManager is a UFunction on MorNPCComponent that
+                                // walks back up to AMorNPCManager and inserts a real NpcInfo
+                                // entry for this NPC. We DROPPED this call in rc.49 era because
+                                // it triggered "dwarf-treatment" — goat showed dwarf UIs etc. —
+                                // and we wanted a wild-fauna feel. The trade is now inverted:
+                                // we EXPLICITLY want dwarf-treatment because rc.12f's Manage
+                                // handler depends on it.
+                                //
+                                // The engine will assign its own NpcGuid as part of registration,
+                                // which overwrites whatever rc.12g synthesized below — that's
+                                // fine. The synthesis remains as fallback IF registration fails.
+                                // [rc.27 RESTORED 2026-05-27] RegisterWithNPCManager was NOT
+                                // the cause of "all NPCs missing" — that was Peace Mode
+                                // (PeaceMode=true in INI) zeroing AMorAISpawnManager.MaxSpawnLimit.
+                                // Restored to operational state.
+                                if (auto* regFn = npcComp->GetFunctionByNameInChain(STR("RegisterWithNPCManager")))
+                                {
+                                    // [rc.24 PATH X PROBE 2026-05-25] Pre/Post NpcInfo.Items.Num()
+                                    // snapshot around the RegisterWithNPCManager call. If the count
+                                    // grows from N → N+1 after the call, registration is doing the
+                                    // job and the goat IS in NpcInfo. If it stays flat, we need a
+                                    // different path (manual NpcInfo append).
+                                    int32_t preNum = readNpcInfoItemsNum();
+                                    VLOG(STR("[MoriaCppMod] [PathX-E] PRE-Register NpcInfo.Items.Num={}\n"), preNum);
+
+                                    // [rc.31 PATH X PROBE F 2026-06-01] Dump MorNPCComponent
+                                    // properties that might gate RegisterWithNPCManager. If a
+                                    // bIsRegistered/bRegistered/RegistrationStatus flag is set,
+                                    // the call will silently no-op. Earlier sessions had delta=+1;
+                                    // current session has delta=0 — something on this component
+                                    // changed.
+                                    auto dumpNpcCompState = [&](const wchar_t* phase) {
+                                        VLOG(STR("[MoriaCppMod] [PathX-F] === {} MorNPCComponent state ===\n"), phase);
+                                        UClass* compCls = nullptr;
+                                        try { compCls = npcComp->GetClassPrivate(); } catch (...) {}
+                                        if (!compCls) return;
+                                        try {
+                                            for (auto* p : compCls->ForEachPropertyInChain())
+                                            {
+                                                if (!p) continue;
+                                                std::wstring pn; try { pn = p->GetName(); } catch (...) { continue; }
+                                                // Filter to gating-relevant names.
+                                                bool relevant =
+                                                    pn.find(STR("Regist"))     != std::wstring::npos ||
+                                                    pn.find(STR("Valid"))      != std::wstring::npos ||
+                                                    pn.find(STR("Manage"))     != std::wstring::npos ||
+                                                    pn.find(STR("Active"))     != std::wstring::npos ||
+                                                    pn.find(STR("Settlement")) != std::wstring::npos ||
+                                                    pn.find(STR("Role"))       != std::wstring::npos ||
+                                                    pn.find(STR("NpcGuid"))    != std::wstring::npos ||
+                                                    pn.find(STR("Interacting")) != std::wstring::npos ||
+                                                    (pn.size() > 1 && pn[0] == 'b' && (pn[1] >= 'A' && pn[1] <= 'Z'));  // bool flags bXxx
+                                                if (!relevant) continue;
+                                                std::wstring pcn; try { pcn = p->GetClass().GetName(); } catch (...) {}
+                                                int32 off = -1; try { off = p->GetOffset_Internal(); } catch (...) {}
+                                                uint8_t* base = reinterpret_cast<uint8_t*>(npcComp) + off;
+                                                // Best-effort: log value for common types.
+                                                if (pcn == STR("BoolProperty") && isReadableMemory(base, 1))
+                                                {
+                                                    VLOG(STR("[MoriaCppMod] [PathX-F]   {}={} (bool @ +0x{:04x})\n"),
+                                                         pn.c_str(), *base ? STR("true") : STR("false"), (unsigned)off);
+                                                }
+                                                else if (pcn == STR("IntProperty") && isReadableMemory(base, 4))
+                                                {
+                                                    VLOG(STR("[MoriaCppMod] [PathX-F]   {}={} (int @ +0x{:04x})\n"),
+                                                         pn.c_str(), *reinterpret_cast<int32_t*>(base), (unsigned)off);
+                                                }
+                                                else if (pcn == STR("UInt32Property") && isReadableMemory(base, 4))
+                                                {
+                                                    VLOG(STR("[MoriaCppMod] [PathX-F]   {}=0x{:08x} (uint32 @ +0x{:04x})\n"),
+                                                         pn.c_str(), *reinterpret_cast<uint32_t*>(base), (unsigned)off);
+                                                }
+                                                else if (pcn == STR("ObjectProperty") && isReadableMemory(base, 8))
+                                                {
+                                                    UObject* o = *reinterpret_cast<UObject**>(base);
+                                                    VLOG(STR("[MoriaCppMod] [PathX-F]   {}={:p} (object @ +0x{:04x} cls={})\n"),
+                                                         pn.c_str(), (void*)o, (unsigned)off,
+                                                         (o && isObjectAlive(o)) ? safeClassName(o).c_str() : STR("null/dead"));
+                                                }
+                                                else
+                                                {
+                                                    VLOG(STR("[MoriaCppMod] [PathX-F]   {} [type={} @ +0x{:04x} — not printable]\n"),
+                                                         pn.c_str(), pcn.c_str(), (unsigned)off);
+                                                }
+                                            }
+                                        } catch (...) {}
+                                        VLOG(STR("[MoriaCppMod] [PathX-F] === end {} dump ===\n"), phase);
+                                    };
+                                    dumpNpcCompState(STR("PRE-Register"));
+
+                                    // [rc.42 GUID ADOPTION v2 2026-06-10] Walk NpcInfo for an
+                                    // existing goat-shaped entry. Filter broadened to include
+                                    // 'Porter' (set by assignPorterRole) and 'Wanderer' (legacy
+                                    // from setGoatRole on Stay clicks) — rc.41's 'Default'-only
+                                    // filter missed entries our own code had relabeled. Iterate
+                                    // BACKWARDS so multi-entry saves adopt the most recent goat
+                                    // (the one user actually used last).
+                                    //
+                                    // If adoption succeeds, SKIP the RegisterWithNPCManager call
+                                    // entirely. This is THE fix for "never save more than 1 goat":
+                                    // Register always appends, so the only way to avoid duplicates
+                                    // is to not call it when the entry already exists.
+                                    bool guidAdopted = false;
+                                    {
+                                        UObject* mgrAdopt = nullptr;
+                                        std::vector<UObject*> mgrsAdopt;
+                                        if (findAllOfSafe(STR("MorNPCManager"), mgrsAdopt))
+                                        {
+                                            for (UObject* o : mgrsAdopt)
+                                            {
+                                                if (!o || !isObjectAlive(o)) continue;
+                                                std::wstring cn = safeClassName(o);
+                                                if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                                                mgrAdopt = o; break;
+                                            }
+                                        }
+                                        if (mgrAdopt && isObjectAlive(mgrAdopt))
+                                        {
+                                            uint8_t* niBase = reinterpret_cast<uint8_t*>(mgrAdopt) + 0x03a0;
+                                            uint8_t* itemsHdr = niBase + 0x0108;
+                                            if (isReadableMemory(itemsHdr, 16))
+                                            {
+                                                uint8_t* itemsData = *reinterpret_cast<uint8_t**>(itemsHdr);
+                                                int32_t  itemsNum  = *reinterpret_cast<int32_t*>(itemsHdr + 8);
+                                                constexpr int kStride         = 0x260;
+                                                constexpr int kGuidOff        = 0x001c;
+                                                constexpr int kRoleRowNameOff = 0x0050;
+                                                constexpr int kIsRescuedOff   = 0x01A0;
+                                                if (itemsData && itemsNum > 0 && itemsNum < 500
+                                                    && isReadableMemory(itemsData, itemsNum * kStride))
+                                                {
+                                                    // [rc.50 FILTER NAME 2026-06-14] Pivoted from
+                                                    // Role=='Porter' to Name=='Rûdh' (m_goatName).
+                                                    // Role drifted back to 'Default' across save/
+                                                    // reload despite our SetRoleFuzzy call —
+                                                    // empirically proven rc.48 T3.3. Name is more
+                                                    // inert: no engine logic actively resets it.
+                                                    // We write m_goatName via writeGoatNameToEntry
+                                                    // at bell-spawn (rc.50). Filter reads the
+                                                    // entry's Name FText (abs offset +0x030) and
+                                                    // matches against m_goatName.
+                                                    constexpr int kNameOffAdopt = 0x0030;
+                                                    for (int i = itemsNum - 1; i >= 0; --i)
+                                                    {
+                                                        uint8_t* entry = itemsData + i * kStride;
+                                                        wchar_t tmpName[256];
+                                                        seh_ftextToStringToBuf(entry + kNameOffAdopt, tmpName, 256);
+                                                        std::wstring nameStr = tmpName;
+                                                        if (nameStr == m_goatName)
+                                                        {
+                                                            uint8_t adoptGuid[16];
+                                                            std::memcpy(adoptGuid, entry + kGuidOff, 16);
+                                                            uint32_t* g = reinterpret_cast<uint32_t*>(adoptGuid);
+                                                            VLOG(STR("[MoriaCppMod] [GuidAdopt] FOUND existing goat-shape at NpcInfo[{}] (Name='{}'): GUID={:08X}-{:08X}-{:08X}-{:08X}\n"),
+                                                                 i, nameStr.c_str(), g[0], g[1], g[2], g[3]);
+                                                            uint8_t* myGuidPtr = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                                                            if (myGuidPtr)
+                                                            {
+                                                                std::memcpy(myGuidPtr, adoptGuid, 16);
+                                                                guidAdopted = true;
+                                                                m_lastSpawnGuidAdopted = true;  // [rc.45] for assignPorterRole gate at spawn tail
+                                                                VLOG(STR("[MoriaCppMod] [GuidAdopt] Wrote 16 bytes into npcComp.NpcGuid; Register call will be SKIPPED to prevent duplicate entry\n"));
+                                                            }
+                                                            else
+                                                            {
+                                                                VLOG(STR("[MoriaCppMod] [GuidAdopt] NpcGuid property not found on npcComp — adoption SKIPPED, Register will run\n"));
+                                                            }
+                                                            break;  // most-recent match wins
+                                                        }
+                                                    }
+                                                }
+                                                if (!guidAdopted)
+                                                    VLOG(STR("[MoriaCppMod] [GuidAdopt] No existing goat-shape (Name=='{}') found in {} NpcInfo entries; Register will mint fresh GUID + writeGoatNameToEntry will mark the new entry\n"), m_goatName.c_str(), itemsNum);
+                                            }
+                                        }
+                                    }
+
+                                    // [rc.61 PATH A 2026-06-28] Path A — skip
+                                    // RegisterWithNPCManager entirely. The Register
+                                    // call engages the dwarven NPC interaction UI
+                                    // (helmet slots, "Standing By/Working" labels)
+                                    // as a side effect — surfacing on the goat as
+                                    // dwarf inventory. Per-character persistence
+                                    // moves to a sidecar JSON keyed by save slot.
+                                    if (guidAdopted)
+                                    {
+                                        VLOG(STR("[MoriaCppMod] [GoatRegister] SKIPPING RegisterWithNPCManager on npcComp={:p} (GUID adopted; existing entry will bind)\n"),
+                                             (void*)npcComp);
+                                    }
+                                    else
+                                    {
+                                        VLOG(STR("[MoriaCppMod] [GoatRegister] SKIPPING RegisterWithNPCManager on npcComp={:p} — rc.61 Path A: no NpcInfo registration, sidecar JSON handles persistence\n"),
+                                             (void*)npcComp);
+                                    }
+                                    (void)regFn;  // unused under Path A; retained for diagnostic dumps
+
+                                    dumpNpcCompState(STR("POST-Register"));
+
+                                    int32_t postNum = readNpcInfoItemsNum();
+                                    VLOG(STR("[MoriaCppMod] [PathX-E] POST-Register NpcInfo.Items.Num={} (delta={})\n"),
+                                         postNum, postNum - preNum);
+
+                                    // [rc.32 PATH X PROBE G 2026-06-01] Walk all NpcInfo.Items
+                                    // entries and log: GUID + curRow FName + intRow FName.
+                                    // Per saved memory: stride=0x260, guid@+0x001c, curRow@+0x0218,
+                                    // intRow@+0x0228. Goal: find any entry whose row name matches
+                                    // goat/porter/fauna patterns — that's an existing NPC slot we
+                                    // could potentially adopt instead of spawning a fresh goat.
+                                    {
+                                        UObject* mgr = nullptr;
+                                        std::vector<UObject*> mgrs;
+                                        if (findAllOfSafe(STR("MorNPCManager"), mgrs))
+                                        {
+                                            for (UObject* o : mgrs)
+                                            {
+                                                if (!o || !isObjectAlive(o)) continue;
+                                                std::wstring cn = safeClassName(o);
+                                                if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                                                mgr = o; break;
+                                            }
+                                        }
+                                        if (mgr && isObjectAlive(mgr))
+                                        {
+                                            uint8_t* niBase = reinterpret_cast<uint8_t*>(mgr) + 0x03a0;
+                                            uint8_t* itemsHdr = niBase + 0x0108;
+                                            if (isReadableMemory(itemsHdr, 16))
+                                            {
+                                                uint8_t* itemsData = *reinterpret_cast<uint8_t**>(itemsHdr);
+                                                int32_t  itemsNum  = *reinterpret_cast<int32_t*>(itemsHdr + 8);
+                                                constexpr int kStride = 0x260;
+                                                constexpr int kGuidOff = 0x001c;
+                                                constexpr int kCurRowOff = 0x0218;
+                                                constexpr int kIntRowOff = 0x0228;
+                                                VLOG(STR("[MoriaCppMod] [PathX-G] === walking {} NpcInfo entries (stride=0x{:x}) ===\n"), itemsNum, kStride);
+                                                // [rc.35 PROBE J 2026-06-02] Per FMorNPCInfo struct (from
+                                                // CXXHeaderDump/Moria.hpp:3868):
+                                                //   PersistentData @ +0x0010 (FMorNpcPersistentData, 0x200 B)
+                                                //     NpcGuid       @ +0x000C (within Persistent → abs +0x001C)
+                                                //     Name          @ +0x0020 (FText, abs +0x0030)
+                                                //     CurrentRole   @ +0x0038 (FMorNPCRoleRowHandle, abs +0x0048)
+                                                //       DataTable*  @ +0x00 → abs +0x0048
+                                                //       RowName     @ +0x08 → abs +0x0050
+                                                //     bIsRescued    @ +0x0190 (abs +0x01A0)
+                                                //     StaticNpcData @ +0x01B0 (FDataTableRowHandle, abs +0x01C0)
+                                                //       DataTable*  @ +0x00 → abs +0x01C0
+                                                //       RowName     @ +0x08 → abs +0x01C8
+                                                constexpr int kRoleRowNameOff   = 0x0050;
+                                                constexpr int kStaticRowNameOff = 0x01C8;
+                                                constexpr int kIsRescuedOff     = 0x01A0;
+                                                int goatLike = 0;
+                                                if (itemsData && itemsNum > 0 && itemsNum < 200 && isReadableMemory(itemsData, itemsNum * kStride))
+                                                {
+                                                    for (int i = 0; i < itemsNum; ++i)
+                                                    {
+                                                        uint8_t* entry = itemsData + i * kStride;
+                                                        uint32_t* g = reinterpret_cast<uint32_t*>(entry + kGuidOff);
+                                                        wchar_t tmpRole[256], tmpStatic[256];
+                                                        seh_fnameToStringToBuf(entry + kRoleRowNameOff,   tmpRole,   256);
+                                                        seh_fnameToStringToBuf(entry + kStaticRowNameOff, tmpStatic, 256);
+                                                        std::wstring roleStr  = tmpRole;
+                                                        std::wstring staticStr = tmpStatic;
+                                                        bool isRescued = false;
+                                                        if (isReadableMemory(entry + kIsRescuedOff, 1))
+                                                            isRescued = *(entry + kIsRescuedOff) != 0;
+                                                        bool matchGoat =
+                                                            roleStr.find(STR("Goat"))   != std::wstring::npos ||
+                                                            roleStr.find(STR("Porter")) != std::wstring::npos ||
+                                                            roleStr.find(STR("Fauna"))  != std::wstring::npos ||
+                                                            staticStr.find(STR("Goat"))   != std::wstring::npos ||
+                                                            staticStr.find(STR("Porter")) != std::wstring::npos ||
+                                                            staticStr.find(STR("Fauna"))  != std::wstring::npos;
+                                                        // Always log last 10 + any goat-like + first 3.
+                                                        bool dump = matchGoat || i < 3 || i >= itemsNum - 10;
+                                                        if (dump)
+                                                        {
+                                                            VLOG(STR("[MoriaCppMod] [PathX-J]   [{}] GUID={:08X}-{:08X}-{:08X}-{:08X} Role='{}' StaticData='{}' Rescued={}{}\n"),
+                                                                 i, g[0], g[1], g[2], g[3], roleStr.c_str(), staticStr.c_str(),
+                                                                 isRescued ? STR("Y") : STR("n"),
+                                                                 matchGoat ? STR(" *** GOAT-LIKE ***") : STR(""));
+                                                            if (matchGoat) ++goatLike;
+                                                        }
+                                                    }
+                                                }
+                                                VLOG(STR("[MoriaCppMod] [PathX-J] === end — {} goat-like entries found across all {} entries ===\n"), goatLike, itemsNum);
+                                            }
+                                            else
+                                            {
+                                                VLOG(STR("[MoriaCppMod] [PathX-G] NpcInfo.Items header unreadable\n"));
+                                            }
+                                        }
+                                        else
+                                        {
+                                            VLOG(STR("[MoriaCppMod] [PathX-G] MorNPCManager singleton not findable\n"));
+                                        }
+                                    }
+
+                                    // [rc.32 PATH X PROBE H 2026-06-01] Enumerate UFunctions on
+                                    // MorAIPopulationManager and friends. Saved memory says the
+                                    // C++ SpawnNpc path lives there. If any BP-callable variant
+                                    // exists (e.g., RequestSpawn, SpawnAtLocation), we can route
+                                    // the goat spawn through it for proper registration.
+                                    {
+                                        const wchar_t* spawnClsCands[] = {
+                                            STR("MorAIPopulationManager"),
+                                            STR("MorAILair"),
+                                            STR("MorAILairBase"),
+                                            STR("MorAIPatrolManager"),
+                                            STR("MorAISpawnManager"),
+                                            STR("MorNPCManager"),
+                                            nullptr
+                                        };
+                                        for (const wchar_t** cn = spawnClsCands; *cn; ++cn)
+                                        {
+                                            std::vector<UObject*> cands;
+                                            if (!findAllOfSafe(*cn, cands)) continue;
+                                            UObject* inst = nullptr;
+                                            for (UObject* o : cands)
+                                            {
+                                                if (!o || !isObjectAlive(o)) continue;
+                                                std::wstring oc = safeClassName(o);
+                                                if (oc.size() >= 9 && oc.substr(0,9) == STR("Default__")) continue;
+                                                inst = o; break;
+                                            }
+                                            if (!inst) continue;
+                                            UClass* iCls = nullptr;
+                                            try { iCls = inst->GetClassPrivate(); } catch (...) {}
+                                            if (!iCls) continue;
+                                            VLOG(STR("[MoriaCppMod] [PathX-H] === UFunctions on {} (inst={:p}) ===\n"), *cn, (void*)inst);
+                                            int hits = 0;
+                                            try {
+                                                for (auto* fn : iCls->ForEachFunctionInChain())
+                                                {
+                                                    if (!fn) continue;
+                                                    std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                                                    bool m =
+                                                        fname.find(STR("Spawn"))   != std::wstring::npos ||
+                                                        fname.find(STR("Create"))  != std::wstring::npos ||
+                                                        fname.find(STR("Request")) != std::wstring::npos ||
+                                                        fname.find(STR("Add"))     != std::wstring::npos ||
+                                                        fname.find(STR("Npc"))     != std::wstring::npos ||
+                                                        fname.find(STR("NPC"))     != std::wstring::npos;
+                                                    if (!m) continue;
+                                                    int parmsSize = 0;
+                                                    try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                                                    VLOG(STR("[MoriaCppMod] [PathX-H]   {} parmsSize={}\n"), fname.c_str(), parmsSize);
+                                                    ++hits;
+                                                }
+                                            } catch (...) {}
+                                            VLOG(STR("[MoriaCppMod] [PathX-H] === end {} ({} hits) ===\n"), *cn, hits);
+                                        }
+                                    }
+
+                                    // [rc.33 PATH X PROBE I 2026-06-02] Dump BP_RequestSpawn
+                                    // parm list with name/type/offset/size. parmsSize=105 — we
+                                    // need the parm schema to craft a proper call (path B).
+                                    {
+                                        std::vector<UObject*> spawnMgrs;
+                                        UObject* spawnMgr = nullptr;
+                                        if (findAllOfSafe(STR("MorAISpawnManager"), spawnMgrs))
+                                        {
+                                            for (UObject* o : spawnMgrs)
+                                            {
+                                                if (!o || !isObjectAlive(o)) continue;
+                                                std::wstring oc = safeClassName(o);
+                                                if (oc.size() >= 9 && oc.substr(0,9) == STR("Default__")) continue;
+                                                spawnMgr = o; break;
+                                            }
+                                        }
+                                        if (spawnMgr)
+                                        {
+                                            auto* reqSpawnFn = spawnMgr->GetFunctionByNameInChain(STR("BP_RequestSpawn"));
+                                            if (reqSpawnFn)
+                                            {
+                                                VLOG(STR("[MoriaCppMod] [PathX-I] === BP_RequestSpawn parm schema ===\n"));
+                                                int pi = 0;
+                                                try {
+                                                    for (auto* p : reqSpawnFn->ForEachProperty())
+                                                    {
+                                                        if (!p) continue;
+                                                        uint64_t pflags = 0;
+                                                        try { pflags = static_cast<uint64_t>(p->GetPropertyFlags()); } catch (...) {}
+                                                        bool isParm = (pflags & 0x0000000000000080ULL) != 0;
+                                                        if (!isParm) continue;
+                                                        std::wstring pn; try { pn = p->GetName(); } catch (...) {}
+                                                        std::wstring pcn; try { pcn = p->GetClass().GetName(); } catch (...) {}
+                                                        int off = -1; try { off = p->GetOffset_Internal(); } catch (...) {}
+                                                        int sz = -1; try { sz = p->GetSize(); } catch (...) {}
+                                                        bool isRet = (pflags & 0x0000000000000400ULL) != 0;
+                                                        bool isOut = (pflags & 0x0000000000000100ULL) != 0;
+                                                        VLOG(STR("[MoriaCppMod] [PathX-I]   parm[{}] '{}' type={} off=0x{:04x} size={} ret={} out={} flags=0x{:016x}\n"),
+                                                             pi, pn.c_str(), pcn.c_str(), (unsigned)off, sz,
+                                                             isRet ? STR("Y") : STR("n"),
+                                                             isOut ? STR("Y") : STR("n"),
+                                                             pflags);
+                                                        ++pi;
+                                                    }
+                                                } catch (...) {}
+                                                VLOG(STR("[MoriaCppMod] [PathX-I] === end ({} parms) ===\n"), pi);
+                                            }
+                                            else
+                                            {
+                                                VLOG(STR("[MoriaCppMod] [PathX-I] BP_RequestSpawn UFunction not found on MorAISpawnManager\n"));
+                                            }
+                                        }
+                                        else
+                                        {
+                                            VLOG(STR("[MoriaCppMod] [PathX-I] MorAISpawnManager singleton not findable\n"));
+                                        }
+                                    }
+
+                                    // [rc.37 PROBE K — Desktop Claude Hypothesis B 2026-06-06]
+                                    // Now that registration works (delta=+1 + real NpcGuid),
+                                    // search MorNPCManager for UFunctions that might do "open
+                                    // the manage screen for this NPC properly". DC's hypothesis:
+                                    // there may be a manager-side function (Open*/Manage*/Show*/
+                                    // Begin*/Recruit*) that takes an NpcGuid or NPC component
+                                    // and routes UI binding through the manager — vs the BndEvt
+                                    // path which defaults to player body inventory.
+                                    {
+                                        UObject* npcMgr = nullptr;
+                                        std::vector<UObject*> mgrs2;
+                                        if (findAllOfSafe(STR("MorNPCManager"), mgrs2))
+                                        {
+                                            for (UObject* o : mgrs2)
+                                            {
+                                                if (!o || !isObjectAlive(o)) continue;
+                                                std::wstring oc = safeClassName(o);
+                                                if (oc.size() >= 9 && oc.substr(0,9) == STR("Default__")) continue;
+                                                npcMgr = o; break;
+                                            }
+                                        }
+                                        if (npcMgr)
+                                        {
+                                            UClass* mc = nullptr;
+                                            try { mc = npcMgr->GetClassPrivate(); } catch (...) {}
+                                            if (mc)
+                                            {
+                                                VLOG(STR("[MoriaCppMod] [PathX-K] === MorNPCManager UFunctions matching Open/Manage/Show/Begin/Interact/Screen ===\n"));
+                                                int hits = 0;
+                                                try {
+                                                    for (auto* fn : mc->ForEachFunctionInChain())
+                                                    {
+                                                        if (!fn) continue;
+                                                        std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                                                        bool m =
+                                                            fname.find(STR("Open"))     != std::wstring::npos ||
+                                                            fname.find(STR("Manage"))   != std::wstring::npos ||
+                                                            fname.find(STR("Show"))     != std::wstring::npos ||
+                                                            fname.find(STR("Begin"))    != std::wstring::npos ||
+                                                            fname.find(STR("Interact")) != std::wstring::npos ||
+                                                            fname.find(STR("Screen"))   != std::wstring::npos ||
+                                                            fname.find(STR("Display"))  != std::wstring::npos;
+                                                        if (!m) continue;
+                                                        int parmsSize = 0;
+                                                        try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                                                        VLOG(STR("[MoriaCppMod] [PathX-K]   {} parmsSize={}\n"), fname.c_str(), parmsSize);
+                                                        // For each match, dump parm details so we know the signature.
+                                                        try {
+                                                            int pi = 0;
+                                                            for (auto* p : fn->ForEachProperty())
+                                                            {
+                                                                if (!p) continue;
+                                                                uint64_t pflags = 0;
+                                                                try { pflags = static_cast<uint64_t>(p->GetPropertyFlags()); } catch (...) {}
+                                                                bool isParm = (pflags & 0x0000000000000080ULL) != 0;
+                                                                if (!isParm) continue;
+                                                                std::wstring pname; try { pname = p->GetName(); } catch (...) {}
+                                                                std::wstring ptype; try { ptype = p->GetClass().GetName(); } catch (...) {}
+                                                                int psz = -1; try { psz = p->GetSize(); } catch (...) {}
+                                                                VLOG(STR("[MoriaCppMod] [PathX-K]     parm[{}] '{}' type={} size={}\n"),
+                                                                     pi, pname.c_str(), ptype.c_str(), psz);
+                                                                ++pi;
+                                                            }
+                                                        } catch (...) {}
+                                                        ++hits;
+                                                    }
+                                                } catch (...) {}
+                                                VLOG(STR("[MoriaCppMod] [PathX-K] === end ({} hits) ===\n"), hits);
+                                            }
+                                        }
+                                        else
+                                        {
+                                            VLOG(STR("[MoriaCppMod] [PathX-K] MorNPCManager singleton not found\n"));
+                                        }
+                                        // Also probe MorPlayerController for similar shapes (DC's
+                                        // earlier disasm showed the manage flow may originate from PC).
+                                        if (m_localPC && isObjectAlive(m_localPC))
+                                        {
+                                            UClass* pcCls = nullptr;
+                                            try { pcCls = m_localPC->GetClassPrivate(); } catch (...) {}
+                                            if (pcCls)
+                                            {
+                                                VLOG(STR("[MoriaCppMod] [PathX-K] === MorPlayerController UFunctions matching Open/Manage/Show/Begin/Interact/Screen ===\n"));
+                                                int hits = 0;
+                                                try {
+                                                    for (auto* fn : pcCls->ForEachFunctionInChain())
+                                                    {
+                                                        if (!fn) continue;
+                                                        std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                                                        bool m =
+                                                            fname.find(STR("Open"))     != std::wstring::npos ||
+                                                            fname.find(STR("Manage"))   != std::wstring::npos ||
+                                                            fname.find(STR("Show"))     != std::wstring::npos ||
+                                                            fname.find(STR("Begin"))    != std::wstring::npos ||
+                                                            fname.find(STR("Interact")) != std::wstring::npos ||
+                                                            fname.find(STR("Screen"))   != std::wstring::npos ||
+                                                            fname.find(STR("Display"))  != std::wstring::npos;
+                                                        if (!m) continue;
+                                                        // Skip noise — only manage-shaped functions
+                                                        if (fname.find(STR("CinematicMode")) != std::wstring::npos ||
+                                                            fname.find(STR("MovieMode"))     != std::wstring::npos ||
+                                                            fname.find(STR("ConsoleCommand")) != std::wstring::npos)
+                                                            continue;
+                                                        int parmsSize = 0;
+                                                        try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                                                        VLOG(STR("[MoriaCppMod] [PathX-K]   PC.{} parmsSize={}\n"), fname.c_str(), parmsSize);
+                                                        ++hits;
+                                                        if (hits >= 40) break;  // cap output
+                                                    }
+                                                } catch (...) {}
+                                                VLOG(STR("[MoriaCppMod] [PathX-K] === end PC ({} hits) ===\n"), hits);
+                                            }
+                                        }
+                                    }
+
+                                    // [rc.38 PROBE L — empirical UIManager discovery 2026-06-08]
+                                    // Probe K found CloseUIScreen() on PC but no Open* counterpart on
+                                    // either PC or MorNPCManager. The Open* function must live on
+                                    // whatever object PC delegates UI management to. Two strategies:
+                                    //   1) Walk PC's property chain for ObjectProperties whose name
+                                    //      contains UI/Manager/Screen/HUD/Viewport. Dereference each
+                                    //      and enumerate UFunctions on the target's class.
+                                    //   2) Class-name shortlist fallback: try a handful of likely
+                                    //      class names directly via findAllOfSafe.
+                                    {
+                                        if (m_localPC && isObjectAlive(m_localPC))
+                                        {
+                                            UClass* pcCls2 = nullptr;
+                                            try { pcCls2 = m_localPC->GetClassPrivate(); } catch (...) {}
+                                            if (pcCls2)
+                                            {
+                                                VLOG(STR("[MoriaCppMod] [PathX-L] === PC property chain — UI-related ObjectProperties ===\n"));
+                                                int candidates = 0;
+                                                try {
+                                                    for (auto* p : pcCls2->ForEachProperty())
+                                                    {
+                                                        if (!p) continue;
+                                                        std::wstring pname; try { pname = p->GetName(); } catch (...) { continue; }
+                                                        std::wstring pcls; try { pcls = p->GetClass().GetName(); } catch (...) { continue; }
+                                                        bool isObj =
+                                                            pcls == STR("ObjectProperty") ||
+                                                            pcls == STR("WeakObjectProperty") ||
+                                                            pcls == STR("SoftObjectProperty");
+                                                        if (!isObj) continue;
+                                                        bool nameHit =
+                                                            pname.find(STR("UI"))       != std::wstring::npos ||
+                                                            pname.find(STR("Manager"))  != std::wstring::npos ||
+                                                            pname.find(STR("Screen"))   != std::wstring::npos ||
+                                                            pname.find(STR("HUD"))      != std::wstring::npos ||
+                                                            pname.find(STR("Viewport")) != std::wstring::npos;
+                                                        if (!nameHit) continue;
+
+                                                        int32_t off = -1;
+                                                        try { off = p->GetOffset_Internal(); } catch (...) {}
+                                                        UObject* target = nullptr;
+                                                        try {
+                                                            uint8_t* base = reinterpret_cast<uint8_t*>(m_localPC);
+                                                            if (off >= 0)
+                                                                target = *reinterpret_cast<UObject**>(base + off);
+                                                        } catch (...) {}
+
+                                                        std::wstring tcls = target ? safeClassName(target) : STR("(null)");
+                                                        VLOG(STR("[MoriaCppMod] [PathX-L]   PC.{} type={} off=0x{:X} target={:p} cls={}\n"),
+                                                             pname.c_str(), pcls.c_str(), (uint32_t)off, (void*)target, tcls.c_str());
+                                                        ++candidates;
+
+                                                        if (!target || !isObjectAlive(target)) continue;
+                                                        UClass* tCls = nullptr;
+                                                        try { tCls = target->GetClassPrivate(); } catch (...) {}
+                                                        if (!tCls) continue;
+
+                                                        VLOG(STR("[MoriaCppMod] [PathX-L]     -- UFunctions on {} matching filter --\n"), tcls.c_str());
+                                                        int fh = 0;
+                                                        try {
+                                                            for (auto* fn : tCls->ForEachFunctionInChain())
+                                                            {
+                                                                if (!fn) continue;
+                                                                std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                                                                bool m =
+                                                                    fname.find(STR("Open"))     != std::wstring::npos ||
+                                                                    fname.find(STR("Manage"))   != std::wstring::npos ||
+                                                                    fname.find(STR("Show"))     != std::wstring::npos ||
+                                                                    fname.find(STR("Begin"))    != std::wstring::npos ||
+                                                                    fname.find(STR("Interact")) != std::wstring::npos ||
+                                                                    fname.find(STR("Screen"))   != std::wstring::npos ||
+                                                                    fname.find(STR("Display"))  != std::wstring::npos ||
+                                                                    fname.find(STR("Push"))     != std::wstring::npos ||
+                                                                    fname.find(STR("Bind"))     != std::wstring::npos;
+                                                                if (!m) continue;
+                                                                int parmsSize = 0;
+                                                                try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                                                                VLOG(STR("[MoriaCppMod] [PathX-L]       {} parmsSize={}\n"), fname.c_str(), parmsSize);
+                                                                try {
+                                                                    int pi = 0;
+                                                                    for (auto* fp : fn->ForEachProperty())
+                                                                    {
+                                                                        if (!fp) continue;
+                                                                        uint64_t pflags = 0;
+                                                                        try { pflags = static_cast<uint64_t>(fp->GetPropertyFlags()); } catch (...) {}
+                                                                        bool isParm = (pflags & 0x0000000000000080ULL) != 0;
+                                                                        if (!isParm) continue;
+                                                                        std::wstring fpname; try { fpname = fp->GetName(); } catch (...) {}
+                                                                        std::wstring fptype; try { fptype = fp->GetClass().GetName(); } catch (...) {}
+                                                                        int psz = -1; try { psz = fp->GetSize(); } catch (...) {}
+                                                                        VLOG(STR("[MoriaCppMod] [PathX-L]         parm[{}] '{}' type={} size={}\n"),
+                                                                             pi, fpname.c_str(), fptype.c_str(), psz);
+                                                                        ++pi;
+                                                                    }
+                                                                } catch (...) {}
+                                                                ++fh;
+                                                                if (fh >= 30) break;
+                                                            }
+                                                        } catch (...) {}
+                                                        VLOG(STR("[MoriaCppMod] [PathX-L]     -- end ({} hits) --\n"), fh);
+                                                    }
+                                                } catch (...) {}
+                                                VLOG(STR("[MoriaCppMod] [PathX-L] === end PC chain ({} UI-candidates) ===\n"), candidates);
+                                            }
+                                        }
+
+                                        // Class-name shortlist fallback
+                                        static const wchar_t* candidateClasses[] = {
+                                            STR("MorUIManager"),
+                                            STR("MorHUD"),
+                                            STR("FGKUIScreenManager"),
+                                            STR("FGKUIManager"),
+                                            STR("MorGameViewportClient"),
+                                            STR("MorViewportClient"),
+                                            STR("FGKHUDComponent"),
+                                        };
+                                        VLOG(STR("[MoriaCppMod] [PathX-L] === Class-name shortlist probe ===\n"));
+                                        for (const wchar_t* cname : candidateClasses)
+                                        {
+                                            std::vector<UObject*> hits2;
+                                            if (!findAllOfSafe(cname, hits2))
+                                            {
+                                                VLOG(STR("[MoriaCppMod] [PathX-L]   {} -> findAllOf failed\n"), cname);
+                                                continue;
+                                            }
+                                            UObject* live = nullptr;
+                                            for (UObject* o : hits2)
+                                            {
+                                                if (!o || !isObjectAlive(o)) continue;
+                                                std::wstring oc = safeClassName(o);
+                                                if (oc.size() >= 9 && oc.substr(0,9) == STR("Default__")) continue;
+                                                live = o; break;
+                                            }
+                                            if (!live)
+                                            {
+                                                VLOG(STR("[MoriaCppMod] [PathX-L]   {} -> not found (or only CDOs)\n"), cname);
+                                                continue;
+                                            }
+                                            std::wstring lc = safeClassName(live);
+                                            VLOG(STR("[MoriaCppMod] [PathX-L]   {} -> live instance {:p} cls={}\n"),
+                                                 cname, (void*)live, lc.c_str());
+                                            UClass* lcCls = nullptr;
+                                            try { lcCls = live->GetClassPrivate(); } catch (...) {}
+                                            if (!lcCls) continue;
+                                            int fh = 0;
+                                            try {
+                                                for (auto* fn : lcCls->ForEachFunctionInChain())
+                                                {
+                                                    if (!fn) continue;
+                                                    std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                                                    bool m =
+                                                        fname.find(STR("Open"))     != std::wstring::npos ||
+                                                        fname.find(STR("Manage"))   != std::wstring::npos ||
+                                                        fname.find(STR("Show"))     != std::wstring::npos ||
+                                                        fname.find(STR("Begin"))    != std::wstring::npos ||
+                                                        fname.find(STR("Interact")) != std::wstring::npos ||
+                                                        fname.find(STR("Screen"))   != std::wstring::npos ||
+                                                        fname.find(STR("Display"))  != std::wstring::npos ||
+                                                        fname.find(STR("Push"))     != std::wstring::npos ||
+                                                        fname.find(STR("Bind"))     != std::wstring::npos;
+                                                    if (!m) continue;
+                                                    int parmsSize = 0;
+                                                    try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                                                    VLOG(STR("[MoriaCppMod] [PathX-L]     {}.{} parmsSize={}\n"),
+                                                         cname, fname.c_str(), parmsSize);
+                                                    ++fh;
+                                                    if (fh >= 30) break;
+                                                }
+                                            } catch (...) {}
+                                            VLOG(STR("[MoriaCppMod] [PathX-L]   -- {} end ({} hits) --\n"), cname, fh);
+                                        }
+                                        VLOG(STR("[MoriaCppMod] [PathX-L] === end class shortlist ===\n"));
+                                    }
+
+                                    // [rc.33 PATH A — GHOST GOAT ADOPT 2026-06-02] If our register
+                                    // failed (NpcGuid stayed 0), adopt the GUID of a known prior-
+                                    // session goat that's still in NpcInfo. Entry [79]'s GUID
+                                    // 3720658F-4C7E9C03-B14A938E-1B09119E was our goat from a
+                                    // prior session and the entry survived in NpcInfo. By
+                                    // writing that GUID to our newly-spawned goat, the engine's
+                                    // FMorNPCInfoArray::Find lookup will resolve.
+                                    //
+                                    // Fallback: if 3720658F isn't found, adopt the LAST entry's
+                                    // GUID (likely the most recent goat from prior sessions).
+                                    {
+                                        // Re-read our goat's NpcGuid; only adopt if still zero.
+                                        uint8_t* myGuidPtr = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                                        if (myGuidPtr)
+                                        {
+                                            uint32_t* mg = reinterpret_cast<uint32_t*>(myGuidPtr);
+                                            bool stillZero = (mg[0] | mg[1] | mg[2] | mg[3]) == 0;
+                                            if (stillZero)
+                                            {
+                                                // Find NpcInfo manager again (cheap).
+                                                UObject* mgrAdopt = nullptr;
+                                                std::vector<UObject*> mgrsAdopt;
+                                                if (findAllOfSafe(STR("MorNPCManager"), mgrsAdopt))
+                                                {
+                                                    for (UObject* o : mgrsAdopt)
+                                                    {
+                                                        if (!o || !isObjectAlive(o)) continue;
+                                                        std::wstring oc = safeClassName(o);
+                                                        if (oc.size() >= 9 && oc.substr(0,9) == STR("Default__")) continue;
+                                                        mgrAdopt = o; break;
+                                                    }
+                                                }
+                                                if (mgrAdopt && isObjectAlive(mgrAdopt))
+                                                {
+                                                    uint8_t* itemsHdr = reinterpret_cast<uint8_t*>(mgrAdopt) + 0x03a0 + 0x0108;
+                                                    if (isReadableMemory(itemsHdr, 16))
+                                                    {
+                                                        uint8_t* itemsData = *reinterpret_cast<uint8_t**>(itemsHdr);
+                                                        int32_t  itemsNum  = *reinterpret_cast<int32_t*>(itemsHdr + 8);
+                                                        constexpr int kStride = 0x260;
+                                                        constexpr int kGuidOff = 0x001c;
+                                                        // Target: GUID 3720658F-4C7E9C03-B14A938E-1B09119E
+                                                        constexpr uint32_t kTargetG0 = 0x3720658Fu;
+                                                        constexpr uint32_t kTargetG1 = 0x4C7E9C03u;
+                                                        constexpr uint32_t kTargetG2 = 0xB14A938Eu;
+                                                        constexpr uint32_t kTargetG3 = 0x1B09119Eu;
+                                                        int adoptIdx = -1;
+                                                        uint32_t adoptG[4] = {0,0,0,0};
+                                                        if (itemsData && itemsNum > 0 && itemsNum < 200 && isReadableMemory(itemsData, itemsNum * kStride))
+                                                        {
+                                                            // Prefer matching target GUID; fallback to last entry.
+                                                            for (int i = 0; i < itemsNum; ++i)
+                                                            {
+                                                                uint32_t* g = reinterpret_cast<uint32_t*>(itemsData + i * kStride + kGuidOff);
+                                                                if (g[0] == kTargetG0 && g[1] == kTargetG1 && g[2] == kTargetG2 && g[3] == kTargetG3)
+                                                                {
+                                                                    adoptIdx = i;
+                                                                    adoptG[0] = g[0]; adoptG[1] = g[1]; adoptG[2] = g[2]; adoptG[3] = g[3];
+                                                                    break;
+                                                                }
+                                                            }
+                                                            if (adoptIdx < 0 && itemsNum > 0)
+                                                            {
+                                                                // Fallback: last entry.
+                                                                int i = itemsNum - 1;
+                                                                uint32_t* g = reinterpret_cast<uint32_t*>(itemsData + i * kStride + kGuidOff);
+                                                                adoptIdx = i;
+                                                                adoptG[0] = g[0]; adoptG[1] = g[1]; adoptG[2] = g[2]; adoptG[3] = g[3];
+                                                            }
+                                                        }
+                                                        if (adoptIdx >= 0)
+                                                        {
+                                                            // [rc.35 SUSPENDED 2026-06-02] Adoption disabled
+                                                            // while we identify whether those tail entries
+                                                            // are actually goats or recruited dwarves
+                                                            // (Probe J dumps Role + StaticNpcData FNames).
+                                                            // The "helmets in bag" symptom suggests we
+                                                            // adopted a dwarf's GUID and the engine bound
+                                                            // UI to the dwarf's body inventory.
+                                                            VLOG(STR("[MoriaCppMod] [PathA-Adopt] WOULD adopt from NpcInfo[{}] GUID={:08X}-{:08X}-{:08X}-{:08X} — SUSPENDED pending Probe J row identification\n"),
+                                                                 adoptIdx, adoptG[0], adoptG[1], adoptG[2], adoptG[3]);
+                                                        }
+                                                        else
+                                                        {
+                                                            VLOG(STR("[MoriaCppMod] [PathA-Adopt] no adoptable entry found in NpcInfo (itemsNum={})\n"), itemsNum);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            else
+                                            {
+                                                VLOG(STR("[MoriaCppMod] [PathA-Adopt] NpcGuid already non-zero — skip adoption\n"));
+                                            }
+                                        }
+                                    }
+
+                                    // Arm a +1s deferred snapshot in case OnRep_NpcInfo replication
+                                    // is async and the count grows on the next replication tick.
+                                    m_pathXDelayedProbeMs = GetTickCount64() + 1000;
+                                    VLOG(STR("[MoriaCppMod] [PathX-E] armed deferred snapshot at +1000ms\n"));
+
+                                    // Re-read NpcGuid AFTER registration — engine should have
+                                    // assigned a manager-issued guid.
+                                    uint8_t* postPtr = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                                    if (postPtr)
+                                    {
+                                        uint32_t* gp = reinterpret_cast<uint32_t*>(postPtr);
+                                        bool postZero = (gp[0] | gp[1] | gp[2] | gp[3]) == 0;
+                                        VLOG(STR("[MoriaCppMod] [GoatRegister] POST-REG NpcGuid={:08X}-{:08X}-{:08X}-{:08X} (zero={})\n"),
+                                             gp[0], gp[1], gp[2], gp[3], postZero);
+                                    }
+                                }
+                                else
+                                {
+                                    VLOG(STR("[MoriaCppMod] [GoatRegister] RegisterWithNPCManager UFunction missing on npcComp — falling back to synthesis\n"));
+                                }
+
+                                // [rc.12g 2026-05-24] NpcGuid synthesis.
+                                // The goat spawns with NpcGuid=0 because we use SpawnActorFromClass
+                                // instead of AMorNPCManager.SpawnNpc (which is the path that
+                                // assigns guids for ValidNpcClasses-registered NPCs). Containers
+                                // in Moria refuse modifications when their owner-key is zero,
+                                // which matches the "uninitialized / red X / can't add or take"
+                                // symptom in rc.12f Manage UI tests 2/3/5.
+                                //
+                                // Fix: write a synthesized non-zero 16-byte FGuid into
+                                // NpcGuid via reflection. Engine doesn't care if the value came
+                                // from the manager or from us — it just needs a non-zero stable
+                                // key to bind container handles to a persistent identity.
+                                //
+                                // Synthesis: byte 0-7 from goat actor pointer (stable per
+                                // instance for the session, unique per spawned goat); byte 8-15
+                                // = "GOATCPP*" magic + session counter (ensures non-zero +
+                                // distinguishes our synthesized guids from manager-issued ones).
+                                {
+                                    uint8_t* guidPtr = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                                    if (guidPtr)
+                                    {
+                                        uint32_t* g = reinterpret_cast<uint32_t*>(guidPtr);
+                                        bool isZero = (g[0] | g[1] | g[2] | g[3]) == 0;
+                                        // [rc.30 2026-05-29] GUID synthesis DISABLED.
+                                        // User correctly identified that the synthesized
+                                        // 'GOATCPP' magic GUID causes downstream
+                                        //   LogMoriaNPC: Error: [FMorNPCInfoArray::Find] ID ... not found!
+                                        // errors because the engine looks up our fake GUID
+                                        // in NpcInfo and finds nothing. If RegisterWithNPCManager
+                                        // didn't assign a GUID, the goat genuinely isn't
+                                        // registered — pretending it is just causes errors
+                                        // downstream. Leave the GUID at 0; let the engine
+                                        // know this goat is non-registered.
+                                        VLOG(STR("[MoriaCppMod] [GoatGuid] NpcGuid={:08X}-{:08X}-{:08X}-{:08X} (zero={}; synthesis DISABLED — would cause FMorNPCInfoArray::Find errors)\n"),
+                                             g[0], g[1], g[2], g[3], isZero);
+                                    }
+                                    else
+                                    {
+                                        VLOG(STR("[MoriaCppMod] [GoatGuid] NpcGuid property not found on npcComp\n"));
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
+
+            // [rc.13 2026-05-24] NpcMgr probe — Desktop Claude's Path D
+            // hypothesis test. Enumerates UMorNPCManager properties +
+            // UFunctions, appends BP_NpcGoat_C to ValidNpcClasses, calls
+            // candidate registration UFunctions. One-shot per session.
+            runNpcMgrProbe(goat);
+
+            // [rc.14.1 2026-05-24 ROLLBACK] Settlement assignment removed.
+            // The runtime probe (rc.13) revealed:
+            //   - ValidNpcClasses is full (12/12) — no append room
+            //   - No callable RegisterNpc UFunction on BP_NPCManager_C
+            //   - rc.12h's RegisterWithNPCManager likely early-exits on the
+            //     internal ValidNpcClasses check, never adding to NpcInfo
+            // Settlement-membership assignment would also gate on
+            // ValidNpcClasses, so it's a no-op AND potentially teleports
+            // the goat to settlement waypoint as a side effect. The real
+            // fix is a pak edit that adds BP_NpcGoat_C to ValidNpcClasses
+            // at the BP_NPCManager CDO level — pending Desktop Claude.
+            // Keeping the assignment code in #if 0 for revival when the
+            // pak edit lands.
+#if 0
+            {
+                UClass* settlNpcCompCls = UObjectGlobals::StaticFindObject<UClass*>(
+                    nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+                UObject* settlNpcComp = nullptr;
+                if (settlNpcCompCls)
+                {
+                    if (auto* getCompFn = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                    {
+                        std::vector<uint8_t> gbuf(getCompFn->GetParmsSize(), 0);
+                        writeGoatParm<UClass*>(getCompFn, gbuf.data(), STR("ComponentClass"), settlNpcCompCls);
+                        if (safeProcessEvent(goat, getCompFn, gbuf.data()))
+                        {
+                            settlNpcComp = readGoatParm<UObject*>(getCompFn, gbuf.data(), STR("ReturnValue"), nullptr);
+                        }
+                    }
+                }
+                if (settlNpcComp && isObjectAlive(settlNpcComp))
+                {
+                    VLOG(STR("[MoriaCppMod] [GoatSettlement] dispatching assignGoatToSettlement (waypoint=0) on npcComp={:p}\n"),
+                         (void*)settlNpcComp);
+                    assignGoatToSettlement(settlNpcComp, /*waypointId=*/0);
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [GoatSettlement] npcComp re-resolve failed — skipped settlement assignment\n"));
+                }
+            }
+#endif
 
             // [rc.47.1 2026-05-12] DON'T touch interaction flags. Original
             // spawnFollowGoat() (which user confirmed worked perfectly for
@@ -6167,29 +11510,233 @@
                  spawnLoc.X, spawnLoc.Y, spawnLoc.Z, m_followGoats.size());
             showOnScreen(L"Goat summoned!", 2.0f, 0.4f, 0.9f, 0.4f);
 
-            // [Phase 3] Assign Porter role so vanilla menu header shows
-            // "Porter Goat" instead of "Citizen". Requires v1.3.8 pak with
-            // Porter.EnabledState=Live; pre-v1.3.8 this is a silent no-op.
-            UClass* npcCompCls2 = UObjectGlobals::StaticFindObject<UClass*>(
-                nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
-            if (npcCompCls2)
+            // [rc.48 ROLE + WORLDSTATE 2026-06-14]
+            //
+            // CRITICAL ARCHITECTURAL CHANGE per DC's Q-answers:
+            //   - SetRoleFuzzy("Porter") is now ALWAYS called (fresh +
+            //     adopt). This makes Role='Porter' the unique goat
+            //     marker for next session's adoption filter, fixing
+            //     the dwarf-hijack bug discovered 2026-06-14.
+            //   - StoreRuntimeActor(goat) is queued for next tick (per
+            //     DC Q3: post-FinishSpawning + frame delay for
+            //     ConstructionScript+BeginPlay completion). This is the
+            //     missing piece for actor + container + items
+            //     persistence across save/reload.
+            //   - For FRESH spawn only: assignPorterRole still fires
+            //     (Register + SetIsInteractive + SetRoleFuzzy bundle).
+            //     For ADOPT: SKIP assignPorterRole (preserves rc.45
+            //     "no duplicate entry" invariant — empirically proven
+            //     across rc.42-rc.46).
+
+            if (m_lastSpawnGuidAdopted)
             {
-                if (auto* getCompFn2 = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                VLOG(STR("[MoriaCppMod] [BellSpawn] SKIP assignPorterRole — goat was adopted (rc.45 invariant: empirical evidence shows Register would duplicate the NpcInfo entry)\n"));
+            }
+            else if (!assignPorterRole(goat))
+            {
+                VLOG(STR("[MoriaCppMod] [BellSpawn] assignPorterRole returned false — porter BT pipeline NOT active for this goat\n"));
+            }
+
+            // [rc.48] Role='Porter' kept as cosmetic. The Role marker is
+            // proven to drift back to 'Default' across save/reload — it's
+            // unreliable as a filter. We keep the call for vanilla menu
+            // header display ("Porter Goat") only.
+            setGoatRoleFuzzy_Porter_Standalone(goat);
+
+            // [rc.51 NAME MARKER — DIRECT WRITE 2026-06-14] Probe T (rc.50)
+            // proved no name-setter UFunction exists on BP_NpcGoat_C or
+            // its inheritance chain. Pivoting to direct memory write of
+            // FText into NpcInfo entry +0x030. Need the goat's NpcGuid
+            // first — get it via reflection from the npcComp.
+            //
+            // Note: we attempt this in BOTH fresh-spawn and adopt paths.
+            // For adopt, the Name should already be present from a prior
+            // session, but rewriting is idempotent. For fresh, this is
+            // the only chance to install the marker.
+            {
+                UObject* npcCompForName = nullptr;
+                UClass* npcCompCls = UObjectGlobals::StaticFindObject<UClass*>(
+                    nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+                if (npcCompCls)
                 {
-                    std::vector<uint8_t> gb(getCompFn2->GetParmsSize(), 0);
-                    writeGoatParm<UClass*>(getCompFn2, gb.data(), STR("ComponentClass"), npcCompCls2);
-                    if (safeProcessEvent(goat, getCompFn2, gb.data()))
+                    auto* getCompFn = goat->GetFunctionByNameInChain(STR("GetComponentByClass"));
+                    if (getCompFn)
                     {
-                        UObject* npc = readGoatParm<UObject*>(getCompFn2, gb.data(), STR("ReturnValue"), nullptr);
-                        if (npc && isObjectAlive(npc))
+                        int sz = getCompFn->GetParmsSize();
+                        std::vector<uint8_t> buf(sz, 0);
+                        writeGoatParm<UClass*>(getCompFn, buf.data(), STR("ComponentClass"), npcCompCls);
+                        if (safeProcessEvent(goat, getCompFn, buf.data()))
                         {
-                            setGoatRole(npc, STR("Porter"));
-                            // [Desktop probe] Read back GetCurrentRole to
-                            // confirm whether SetRole(Porter) propagated.
-                            probeCurrentRole(npc);
+                            npcCompForName = readGoatParm<UObject*>(getCompFn, buf.data(), STR("ReturnValue"), nullptr);
                         }
                     }
                 }
+                if (!npcCompForName || !isObjectAlive(npcCompForName))
+                {
+                    VLOG(STR("[MoriaCppMod] [BellSpawn] [NameMarker] npcComp not findable — name marker write SKIPPED\n"));
+                }
+                else
+                {
+                    uint8_t* myGuidPtr = npcCompForName->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                    if (!myGuidPtr)
+                    {
+                        VLOG(STR("[MoriaCppMod] [BellSpawn] [NameMarker] NpcGuid property not findable — name marker write SKIPPED\n"));
+                    }
+                    else
+                    {
+                        if (writeGoatNameDirectToNpcInfoEntry(myGuidPtr, m_goatName))
+                        {
+                            VLOG(STR("[MoriaCppMod] [BellSpawn] [NameMarker] Name='{}' written to NpcInfo entry — adoption filter will find this goat on next bell-ring\n"),
+                                 m_goatName.c_str());
+                        }
+                        else
+                        {
+                            VLOG(STR("[MoriaCppMod] [BellSpawn] [NameMarker] writeGoatNameDirectToNpcInfoEntry returned false — name marker NOT installed\n"));
+                        }
+
+                        // [rc.85 UNIQUENPC ROWNAME FIX 2026-07-06] Write
+                        // UniqueNpc.RowName='NPCGoat' — Tobi's v1.10.0
+                        // DT_NPCUniqueCharacters row is 'NPCGoat' (CharacterName
+                        // 'Rûdh', CharacterClass=BP_NpcGoat_C). The old 'Goat'
+                        // value never matched his table, so the manager's reload
+                        // lookup (§7a: UniqueNpc.RowName -> DT_NPCUniqueCharacters
+                        // -> CharacterClass -> SpawnActor) silently failed and the
+                        // goat never restored. This makes the restore path resolve.
+                        if (writeUniqueNpcRowNameToEntry(myGuidPtr, STR("NPCGoat")))
+                        {
+                            VLOG(STR("[MoriaCppMod] [BellSpawn] [UniqueNpcWrite] UniqueNpc.RowName='NPCGoat' written — restore lookup will hit DT_NPCUniqueCharacters['NPCGoat'] on reload\n"));
+                        }
+                        else
+                        {
+                            VLOG(STR("[MoriaCppMod] [BellSpawn] [UniqueNpcWrite] writeUniqueNpcRowNameToEntry returned false — restore lookup will fail\n"));
+                        }
+                    }
+                }
+            }
+
+            // [rc.53 STAGE 1 ID-SET 2026-06-15] Per save-system-architecture.md:
+            // canonical persistence is via IMorSaveGameObject, keyed by
+            // FMorSaveGameObjectId. If our goat's Id is zero/empty (which it
+            // probably is, since UE4SS spawn bypasses the building system's
+            // native registration), the save system can't track it. Call
+            // UMorSaveSystemBlueprintLibrary::CreatePersistentSaveGameObjectId
+            // to mint a fresh Id, then SaveGameObjectSetId on the goat.
+            // Probe U will compare resulting state against a chest.
+            try {
+                UClass* bpLibCls = UObjectGlobals::StaticFindObject<UClass*>(
+                    nullptr, nullptr, STR("/Script/Moria.MorSaveSystemBlueprintLibrary"));
+                UFunction* fnCreate = nullptr;
+                UFunction* fnSetId  = nullptr;
+                UFunction* fnGetId  = nullptr;
+                if (bpLibCls)
+                {
+                    for (auto* fn : bpLibCls->ForEachFunctionInChain())
+                    {
+                        if (!fn) continue;
+                        std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                        if (fname == STR("CreatePersistentSaveGameObjectId")) fnCreate = fn;
+                    }
+                }
+                UClass* goatCls = nullptr;
+                try { goatCls = goat->GetClassPrivate(); } catch (...) {}
+                if (goatCls)
+                {
+                    for (auto* fn : goatCls->ForEachFunctionInChain())
+                    {
+                        if (!fn) continue;
+                        std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                        if (fname == STR("SaveGameObjectSetId")) fnSetId = fn;
+                        else if (fname == STR("SaveGameObjectGetId")) fnGetId = fn;
+                    }
+                }
+                VLOG(STR("[MoriaCppMod] [BellSpawn] [SaveId] resolved Create={:p} GetId={:p} SetId={:p}\n"),
+                     (void*)fnCreate, (void*)fnGetId, (void*)fnSetId);
+
+                bool needsId = true;
+                int  getPsz  = 0;
+                if (fnGetId)
+                {
+                    try { getPsz = fnGetId->GetParmsSize(); } catch (...) {}
+                    std::vector<uint8_t> gbuf(getPsz > 0 ? getPsz : 64, 0);
+                    if (safeProcessEvent(goat, fnGetId, gbuf.data()))
+                    {
+                        bool allZero = true;
+                        for (int i = 0; i < getPsz; ++i) if (gbuf[i] != 0) { allZero = false; break; }
+                        needsId = allZero;
+                        VLOG(STR("[MoriaCppMod] [BellSpawn] [SaveId] pre-set GetId psz={} {}\n"),
+                             getPsz,
+                             allZero ? STR("ALL ZERO (needs Id)") : STR("ALREADY SET"));
+                    }
+                }
+
+                if (needsId && fnCreate && fnSetId && bpLibCls)
+                {
+                    // Get CDO for the static BP library call
+                    UObject* bpLibCDO = bpLibCls->GetClassDefaultObject();
+                    if (bpLibCDO)
+                    {
+                        int createPsz = 0;
+                        try { createPsz = fnCreate->GetParmsSize(); } catch (...) {}
+                        std::vector<uint8_t> cbuf(createPsz > 0 ? createPsz : 64, 0);
+                        if (safeProcessEvent(bpLibCDO, fnCreate, cbuf.data()))
+                        {
+                            // The return value (FMorSaveGameObjectId) occupies the
+                            // tail of the parms buffer. We don't know its exact size
+                            // but we can pass the whole cbuf as the SetId arg —
+                            // SetId's parms layout will read what it needs.
+                            int setPsz = 0;
+                            try { setPsz = fnSetId->GetParmsSize(); } catch (...) {}
+                            std::vector<uint8_t> sbuf(setPsz > 0 ? setPsz : 64, 0);
+                            // Copy the freshly-created Id bytes from cbuf into sbuf
+                            // (Id is the only parm to SetId, return-only on Create)
+                            int copyN = std::min((int)cbuf.size(), (int)sbuf.size());
+                            std::memcpy(sbuf.data(), cbuf.data(), copyN);
+                            if (safeProcessEvent(goat, fnSetId, sbuf.data()))
+                            {
+                                std::wstring hex;
+                                for (int i = 0; i < copyN && i < 32; ++i)
+                                {
+                                    wchar_t tmp[8]; std::swprintf(tmp, 8, L"%02X ", sbuf[i]);
+                                    hex += tmp;
+                                }
+                                VLOG(STR("[MoriaCppMod] [BellSpawn] [SaveId] *** Created+Set Id on goat — first {} bytes: {} ***\n"),
+                                     copyN < 32 ? copyN : 32, hex.c_str());
+                            }
+                            else
+                            {
+                                VLOG(STR("[MoriaCppMod] [BellSpawn] [SaveId] SaveGameObjectSetId FAILED\n"));
+                            }
+                        }
+                        else
+                        {
+                            VLOG(STR("[MoriaCppMod] [BellSpawn] [SaveId] CreatePersistentSaveGameObjectId FAILED\n"));
+                        }
+                    }
+                }
+                else if (!needsId)
+                {
+                    VLOG(STR("[MoriaCppMod] [BellSpawn] [SaveId] Skipped — goat already has non-zero Id\n"));
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [BellSpawn] [SaveId] Skipped — missing UFunctions (Create={:p} SetId={:p})\n"),
+                         (void*)fnCreate, (void*)fnSetId);
+                }
+            } catch (...) {
+                VLOG(STR("[MoriaCppMod] [BellSpawn] [SaveId] Exception during Id mint/set\n"));
+            }
+
+            // [rc.48] Queue StoreRuntimeActor for ~100ms later. Per DC Q3:
+            // post-FinishSpawning + frame delay ensures ConstructionScript
+            // + BeginPlay are complete so we capture full actor state, not
+            // CDO defaults.
+            {
+                PendingStoreRecord rec;
+                rec.goat = RC::Unreal::FWeakObjectPtr(goat);
+                rec.readyMs = GetTickCount64() + 100;
+                m_pendingStores.push_back(rec);
+                VLOG(STR("[MoriaCppMod] [BellSpawn] queued StoreRuntimeActor for goat={:p} (fires in ~100ms after ConstructionScript+BeginPlay complete)\n"),
+                     (void*)goat);
             }
         }
 
@@ -6581,7 +12128,7 @@
             UObject* deepsGoat = nullptr;
             {
                 std::vector<UObject*> hit;
-                if (seh_findAllOf(STR("BP_NpcGoat_C"), &hit))
+                if (seh_findAnyGoatActor(&hit))
                     for (UObject* g : hit) if (g && isObjectAlive(g)) { deepsGoat = g; break; }
             }
             VLOG(STR("[MoriaCppMod] [Probe] deeps goat ptr (for match detection): {:p}\n"),
@@ -6690,7 +12237,7 @@
             UObject* deepsGoat = nullptr;
             {
                 std::vector<UObject*> hit;
-                if (seh_findAllOf(STR("BP_NpcGoat_C"), &hit))
+                if (seh_findAnyGoatActor(&hit))
                     for (UObject* g : hit) if (g && isObjectAlive(g)) { deepsGoat = g; break; }
             }
             VLOG(STR("[MoriaCppMod] [Probe] deeps goat ptr (for match): {:p}\n"),
@@ -6921,7 +12468,7 @@
             // Look up the LIVE goat actor's actual AI controller — gives us
             // class name even if the path guess above is wrong.
             std::vector<UObject*> hit;
-            if (seh_findAllOf(STR("BP_NpcGoat_C"), &hit) && !hit.empty())
+            if (seh_findAnyGoatActor(&hit) && !hit.empty())
             {
                 UObject* goat = nullptr;
                 for (UObject* g : hit) if (g && isObjectAlive(g)) { goat = g; break; }
@@ -7603,7 +13150,7 @@
             UObject* deepsGoat = nullptr;
             {
                 std::vector<UObject*> hit;
-                if (seh_findAllOf(STR("BP_NpcGoat_C"), &hit))
+                if (seh_findAnyGoatActor(&hit))
                     for (UObject* g : hit) if (g && isObjectAlive(g)) { deepsGoat = g; break; }
             }
             VLOG(STR("[MoriaCppMod] [Probe] deeps goat ptr (for match detection): {:p}\n"),
@@ -7745,17 +13292,98 @@
         // the leash target (EQS_Npc_PorterLeashPlayer) doesn't pick up
         // the player, so we set the key directly. Re-set per tick because
         // EQS may overwrite it.
+        // [DIAG 2026-07-03] Throttled so a follow-state toggle logs the full
+        // chain without spamming at 1 Hz forever. Logs once, then goes quiet
+        // for 5s. Reveals: controller class, whether the Blackboard component
+        // was found (and under which property), and whether SetValueAsObject
+        // dispatched — the exact point where follow silently dies on Tobi's
+        // v1.10.0 goat if it does.
+        ULONGLONG m_lastLeashDiagMs{0};
         void setGoatLeashActor(UObject* ctrl, UObject* playerPawn)
         {
-            if (!ctrl || !isObjectAlive(ctrl)) return;
-            if (!playerPawn || !isObjectAlive(playerPawn)) return;
+            ULONGLONG nowd = GetTickCount64();
+            bool diag = (nowd - m_lastLeashDiagMs) > 5000;
+            if (diag) m_lastLeashDiagMs = nowd;
+
+            if (!ctrl || !isObjectAlive(ctrl)) {
+                if (diag) VLOG(STR("[MoriaCppMod] [Leash] ABORT: ctrl null/dead\n"));
+                return;
+            }
+            if (!playerPawn || !isObjectAlive(playerPawn)) {
+                if (diag) VLOG(STR("[MoriaCppMod] [Leash] ABORT: playerPawn null/dead\n"));
+                return;
+            }
+            std::wstring ctrlCls;
+            try { ctrlCls = ctrl->GetClassPrivate()->GetName(); } catch (...) {}
             // AAIController has a "Blackboard" UPROPERTY (UE4 standard) —
             // alternative name "BlackboardComp" on some custom controllers.
+            const wchar_t* bbProp = STR("Blackboard");
+            UObject** bbPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("Blackboard"));
+            if (!bbPtr || !*bbPtr || !isObjectAlive(*bbPtr)) {
+                bbPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("BlackboardComp"));
+                bbProp = STR("BlackboardComp");
+            }
+            if (!bbPtr || !*bbPtr || !isObjectAlive(*bbPtr)) {
+                if (diag) VLOG(STR("[MoriaCppMod] [Leash] ABORT: no Blackboard on ctrl cls='{}' (tried Blackboard + BlackboardComp)\n"),
+                               ctrlCls.c_str());
+                return;
+            }
+            UObject* bb = *bbPtr;
+            auto* setObjFn = bb->GetFunctionByNameInChain(STR("SetValueAsObject"));
+            if (!setObjFn) {
+                if (diag) VLOG(STR("[MoriaCppMod] [Leash] ABORT: SetValueAsObject missing on bb\n"));
+                return;
+            }
+            auto* pKey = findParam(setObjFn, STR("KeyName"));
+            auto* pVal = findParam(setObjFn, STR("ObjectValue"));
+            if (!pKey || !pVal) {
+                if (diag) VLOG(STR("[MoriaCppMod] [Leash] ABORT: SetValueAsObject params missing (key={:p} val={:p})\n"),
+                               (void*)pKey, (void*)pVal);
+                return;
+            }
+            int sz = setObjFn->GetParmsSize();
+            std::vector<uint8_t> buf(sz, 0);
+            // FName "LeashActor"
+            RC::Unreal::FName keyName(STR("LeashActor"), RC::Unreal::FNAME_Add);
+            std::memcpy(buf.data() + pKey->GetOffset_Internal(), &keyName, sizeof(RC::Unreal::FName));
+            *reinterpret_cast<UObject**>(buf.data() + pVal->GetOffset_Internal()) = playerPawn;
+            bool ok = safeProcessEvent(bb, setObjFn, buf.data());
+            if (diag) VLOG(STR("[MoriaCppMod] [Leash] SET LeashActor=player on ctrl='{}' bbProp='{}' PE_ok={}\n"),
+                           ctrlCls.c_str(), bbProp, ok);
+        }
+
+        // [rc.40 STAY FIX 2026-06-10] Clear the LeashActor blackboard key
+        // so the BT FollowPlayer task has no target and idles. Gating
+        // setGoatLeashActor refresh alone (rc.39) wasn't enough — the
+        // stored value persists after we stop refreshing, so the BT keeps
+        // following the cached pointer. Must actively clear on entry to
+        // stayMode. Uses ClearValue if available, falls back to
+        // SetValueAsObject(nullptr).
+        void clearGoatLeashActor(UObject* ctrl)
+        {
+            if (!ctrl || !isObjectAlive(ctrl)) return;
             UObject** bbPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("Blackboard"));
             if (!bbPtr || !*bbPtr || !isObjectAlive(*bbPtr))
                 bbPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("BlackboardComp"));
             if (!bbPtr || !*bbPtr || !isObjectAlive(*bbPtr)) return;
             UObject* bb = *bbPtr;
+            RC::Unreal::FName keyName(STR("LeashActor"), RC::Unreal::FNAME_Add);
+
+            // Preferred: ClearValue(KeyName) — leaves key in "unset" state
+            if (auto* clearFn = bb->GetFunctionByNameInChain(STR("ClearValue")))
+            {
+                auto* pKey = findParam(clearFn, STR("KeyName"));
+                if (pKey)
+                {
+                    int sz = clearFn->GetParmsSize();
+                    std::vector<uint8_t> buf(sz, 0);
+                    std::memcpy(buf.data() + pKey->GetOffset_Internal(), &keyName, sizeof(RC::Unreal::FName));
+                    try { safeProcessEvent(bb, clearFn, buf.data()); } catch (...) {}
+                    return;
+                }
+            }
+
+            // Fallback: SetValueAsObject(KeyName, nullptr) — writes null
             auto* setObjFn = bb->GetFunctionByNameInChain(STR("SetValueAsObject"));
             if (!setObjFn) return;
             auto* pKey = findParam(setObjFn, STR("KeyName"));
@@ -7763,11 +13391,2587 @@
             if (!pKey || !pVal) return;
             int sz = setObjFn->GetParmsSize();
             std::vector<uint8_t> buf(sz, 0);
-            // FName "LeashActor"
-            RC::Unreal::FName keyName(STR("LeashActor"), RC::Unreal::FNAME_Add);
             std::memcpy(buf.data() + pKey->GetOffset_Internal(), &keyName, sizeof(RC::Unreal::FName));
-            *reinterpret_cast<UObject**>(buf.data() + pVal->GetOffset_Internal()) = playerPawn;
-            safeProcessEvent(bb, setObjFn, buf.data());
+            *reinterpret_cast<UObject**>(buf.data() + pVal->GetOffset_Internal()) = nullptr;
+            try { safeProcessEvent(bb, setObjFn, buf.data()); } catch (...) {}
+        }
+
+        // [rc.41 PROBE N 2026-06-10] Walk NpcInfo at character-load BEFORE
+        // any bell-ring. Dumps ALL entries (not just goat-shaped) so we can
+        // empirically tell whether goat entries persisted across save/reload.
+        // Callsite: dllmain.cpp tick at ~3s post-character-load (one-shot
+        // gated by m_probeNFired).
+        void runProbeN()
+        {
+            VLOG(STR("[MoriaCppMod] [PathX-N] === Probe N: NpcInfo dump at character-load ===\n"));
+            UObject* mgr = nullptr;
+            std::vector<UObject*> mgrs;
+            if (findAllOfSafe(STR("MorNPCManager"), mgrs))
+            {
+                for (UObject* o : mgrs)
+                {
+                    if (!o || !isObjectAlive(o)) continue;
+                    std::wstring cn = safeClassName(o);
+                    if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                    mgr = o; break;
+                }
+            }
+            if (!mgr || !isObjectAlive(mgr))
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-N] MorNPCManager singleton not findable — bail\n"));
+                return;
+            }
+            uint8_t* niBase = reinterpret_cast<uint8_t*>(mgr) + 0x03a0;
+            uint8_t* itemsHdr = niBase + 0x0108;
+            if (!isReadableMemory(itemsHdr, 16))
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-N] NpcInfo.Items header unreadable\n"));
+                return;
+            }
+            uint8_t* itemsData = *reinterpret_cast<uint8_t**>(itemsHdr);
+            int32_t  itemsNum  = *reinterpret_cast<int32_t*>(itemsHdr + 8);
+            constexpr int kStride          = 0x260;
+            constexpr int kGuidOff         = 0x001c;
+            constexpr int kRoleRowNameOff  = 0x0050;
+            constexpr int kStaticRowNameOff = 0x01C8;
+            constexpr int kIsRescuedOff    = 0x01A0;
+            VLOG(STR("[MoriaCppMod] [PathX-N] NpcInfo.Items.Num={} (stride=0x{:x}, data={:p})\n"),
+                 itemsNum, kStride, (void*)itemsData);
+            if (!itemsData || itemsNum <= 0 || itemsNum >= 500
+                || !isReadableMemory(itemsData, itemsNum * kStride))
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-N] entries unreadable / out-of-range — bail\n"));
+                return;
+            }
+            // [rc.45 NAME 2026-06-10] Also dump the Name FText so we can
+            // verify what the engine writes there for our goats vs
+            // recruited dwarves. User's hypothesis: filter by configured
+            // goat name (m_goatName, default "Rûdh") as the unique
+            // fingerprint. FMorNpcPersistentData.Name is FText @ +0x020
+            // within persistent → abs +0x030 within FMorNPCInfo.
+            constexpr int kNameOff = 0x0030;
+            int goatLike = 0;
+            for (int i = 0; i < itemsNum; ++i)
+            {
+                uint8_t* entry = itemsData + i * kStride;
+                uint32_t* g = reinterpret_cast<uint32_t*>(entry + kGuidOff);
+                wchar_t tmpRole[256], tmpStatic[256], tmpName[256];
+                seh_fnameToStringToBuf(entry + kRoleRowNameOff,   tmpRole,   256);
+                seh_fnameToStringToBuf(entry + kStaticRowNameOff, tmpStatic, 256);
+                seh_ftextToStringToBuf(entry + kNameOff, tmpName, 256);
+                std::wstring roleStr  = tmpRole;
+                std::wstring staticStr = tmpStatic;
+                std::wstring nameStr  = tmpName;
+                bool isRescued = false;
+                if (isReadableMemory(entry + kIsRescuedOff, 1))
+                    isRescued = *(entry + kIsRescuedOff) != 0;
+                // [rc.45] Goat-shape filter: Role IN ('Default', 'Porter').
+                // Per user: Porter is goat-exclusive (DT_NPCRoles.Porter
+                // row added by goat pak). Rescued constraint dropped.
+                bool maybeGoat = (roleStr == STR("Default") || roleStr == STR("Porter"));
+                VLOG(STR("[MoriaCppMod] [PathX-N]   [{}] GUID={:08X}-{:08X}-{:08X}-{:08X} Role='{}' Name='{}' StaticData='{}' Rescued={}{}\n"),
+                     i, g[0], g[1], g[2], g[3], roleStr.c_str(), nameStr.c_str(), staticStr.c_str(),
+                     isRescued ? STR("Y") : STR("n"),
+                     maybeGoat ? STR(" *** GOAT-SHAPE (adoptable) ***") : STR(""));
+                if (maybeGoat) ++goatLike;
+            }
+            VLOG(STR("[MoriaCppMod] [PathX-N] === end — {} goat-shape candidates across {} entries (m_goatName='{}') ===\n"),
+                 goatLike, itemsNum, m_goatName.c_str());
+        }
+
+        // [rc.44 PROBE P 2026-06-10] Post-reload world scan. Empirical
+        // diagnostic to determine what ACTUALLY persists in memory after
+        // save/reload. Three scans, each read-only, no behavior change:
+        //   1. BP_NpcGoat_C actors  — do goat actors survive world unload?
+        //   2. BP_ContainerItem_Dwarf_BodyInventoryNPC_C actors — do body
+        //      containers persist independently?
+        //   3. BP_Wood_C actors — are wood items floating in the world
+        //      after reload (orphaned from destroyed containers)?
+        // Plus: for each live goat, dump its MorInventoryComponent.Items
+        // array so we can see if the persisted entry has wood inside.
+        void runProbeP()
+        {
+            VLOG(STR("[MoriaCppMod] [PathX-P] === Probe P: Post-reload world scan ===\n"));
+
+            // Scan 1 — BP_NpcGoat_C actors
+            {
+                std::vector<UObject*> goats;
+                findAllOfSafe(STR("BP_NpcGoat_C"), goats);
+                VLOG(STR("[MoriaCppMod] [PathX-P] === Scan 1: BP_NpcGoat_C ({} total via FindAllOf) ===\n"), goats.size());
+                UClass* npcCompCls = UObjectGlobals::StaticFindObject<UClass*>(
+                    nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+                UClass* invCompCls = UObjectGlobals::StaticFindObject<UClass*>(
+                    nullptr, nullptr, STR("/Script/Moria.MorInventoryComponent"));
+                int liveGoats = 0;
+                for (UObject* g : goats)
+                {
+                    if (!g || !isObjectAlive(g)) continue;
+                    std::wstring cn = safeClassName(g);
+                    if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                    ++liveGoats;
+
+                    // Read NpcGuid via MorNPCComponent
+                    std::wstring guidStr = STR("?");
+                    if (npcCompCls)
+                    {
+                        if (auto* getCompFn = g->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                        {
+                            int sz = getCompFn->GetParmsSize();
+                            std::vector<uint8_t> buf(sz, 0);
+                            writeGoatParm<UClass*>(getCompFn, buf.data(), STR("ComponentClass"), npcCompCls);
+                            if (safeProcessEvent(g, getCompFn, buf.data()))
+                            {
+                                UObject* npcComp = readGoatParm<UObject*>(getCompFn, buf.data(), STR("ReturnValue"), nullptr);
+                                if (npcComp && isObjectAlive(npcComp))
+                                {
+                                    uint8_t* guidPtr = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                                    if (guidPtr)
+                                    {
+                                        uint32_t* g32 = reinterpret_cast<uint32_t*>(guidPtr);
+                                        guidStr = std::format(STR("{:08X}-{:08X}-{:08X}-{:08X}"),
+                                                              g32[0], g32[1], g32[2], g32[3]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    VLOG(STR("[MoriaCppMod] [PathX-P]   goat={:p} cls='{}' GUID={}\n"),
+                         (void*)g, cn.c_str(), guidStr.c_str());
+
+                    // Walk InvComp.Items to look for inventory
+                    if (invCompCls)
+                    {
+                        if (auto* getCompFn = g->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                        {
+                            int sz = getCompFn->GetParmsSize();
+                            std::vector<uint8_t> buf(sz, 0);
+                            writeGoatParm<UClass*>(getCompFn, buf.data(), STR("ComponentClass"), invCompCls);
+                            if (safeProcessEvent(g, getCompFn, buf.data()))
+                            {
+                                UObject* invComp = readGoatParm<UObject*>(getCompFn, buf.data(), STR("ReturnValue"), nullptr);
+                                if (invComp && isObjectAlive(invComp))
+                                {
+                                    FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
+                                    if (itemsProp)
+                                    {
+                                        int itemsOff = itemsProp->GetOffset_Internal();
+                                        uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp) + itemsOff + iiaListOff();
+                                        if (isReadableMemory(listBase, 16))
+                                        {
+                                            uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+                                            int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
+                                            int stride = iiSize();
+                                            int itemOff = iiItemOff();
+                                            int countOff = 0x18;
+                                            int slotOff  = 0x1C;
+                                            int idOff    = iiIDOff();
+                                            VLOG(STR("[MoriaCppMod] [PathX-P]     InvComp={:p} Items.Num={}\n"),
+                                                 (void*)invComp, arrNum);
+                                            if (arrData && arrNum > 0 && arrNum < 200
+                                                && isReadableMemory(arrData, arrNum * stride))
+                                            {
+                                                int woodCount = 0;
+                                                for (int32_t i = 0; i < arrNum; ++i)
+                                                {
+                                                    uint8_t* entry = arrData + i * stride;
+                                                    if (!isReadableMemory(entry, stride)) continue;
+                                                    UClass* ic = *reinterpret_cast<UClass**>(entry + itemOff);
+                                                    int32_t cnt = *reinterpret_cast<int32_t*>(entry + countOff);
+                                                    int32_t sl  = *reinterpret_cast<int32_t*>(entry + slotOff);
+                                                    int32_t id  = *reinterpret_cast<int32_t*>(entry + idOff);
+                                                    std::wstring nm = ic ? safeObjectName(ic) : STR("(null)");
+                                                    bool wood = nm.find(STR("Wood")) != std::wstring::npos;
+                                                    if (wood) ++woodCount;
+                                                    VLOG(STR("[MoriaCppMod] [PathX-P]       item[{}] id={} slot={} count={} class='{}'{}\n"),
+                                                         i, id, sl, cnt, nm.c_str(),
+                                                         wood ? STR(" *** WOOD ***") : STR(""));
+                                                }
+                                                if (woodCount > 0)
+                                                {
+                                                    VLOG(STR("[MoriaCppMod] [PathX-P]     *** GOAT {:p} HAS {} WOOD ITEM(S) ***\n"),
+                                                         (void*)g, woodCount);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                VLOG(STR("[MoriaCppMod] [PathX-P] === end Scan 1 ({} live goats) ===\n"), liveGoats);
+            }
+
+            // Scan 2 — BP_ContainerItem_Dwarf_BodyInventoryNPC_C actors
+            {
+                std::vector<UObject*> containers;
+                findAllOfSafe(STR("BP_ContainerItem_Dwarf_BodyInventoryNPC_C"), containers);
+                VLOG(STR("[MoriaCppMod] [PathX-P] === Scan 2: BP_ContainerItem_Dwarf_BodyInventoryNPC_C ({} total) ===\n"), containers.size());
+                int live = 0;
+                for (UObject* c : containers)
+                {
+                    if (!c || !isObjectAlive(c)) continue;
+                    std::wstring cn = safeClassName(c);
+                    if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                    ++live;
+                    UObject* owner = nullptr;
+                    if (auto* getOwnerFn = c->GetFunctionByNameInChain(STR("GetOwner")))
+                    {
+                        struct { UObject* Ret{nullptr}; } op{};
+                        if (safeProcessEvent(c, getOwnerFn, &op)) owner = op.Ret;
+                    }
+                    std::wstring ownerCls = (owner && isObjectAlive(owner)) ? safeClassName(owner) : STR("(null)");
+                    VLOG(STR("[MoriaCppMod] [PathX-P]   container={:p} cls='{}' owner={:p} ownerCls='{}'\n"),
+                         (void*)c, cn.c_str(), (void*)owner, ownerCls.c_str());
+                }
+                VLOG(STR("[MoriaCppMod] [PathX-P] === end Scan 2 ({} live body containers) ===\n"), live);
+            }
+
+            // Scan 3 — BP_Wood_C actors (floating items)
+            {
+                std::vector<UObject*> woods;
+                findAllOfSafe(STR("BP_Wood_C"), woods);
+                VLOG(STR("[MoriaCppMod] [PathX-P] === Scan 3: BP_Wood_C ({} total) ===\n"), woods.size());
+                int live = 0;
+                for (UObject* w : woods)
+                {
+                    if (!w || !isObjectAlive(w)) continue;
+                    std::wstring cn = safeClassName(w);
+                    if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                    ++live;
+                    UObject* owner = nullptr;
+                    if (auto* getOwnerFn = w->GetFunctionByNameInChain(STR("GetOwner")))
+                    {
+                        struct { UObject* Ret{nullptr}; } op{};
+                        if (safeProcessEvent(w, getOwnerFn, &op)) owner = op.Ret;
+                    }
+                    std::wstring ownerCls = (owner && isObjectAlive(owner)) ? safeClassName(owner) : STR("(null)");
+                    if (live <= 20)
+                    {
+                        VLOG(STR("[MoriaCppMod] [PathX-P]   wood={:p} cls='{}' owner={:p} ownerCls='{}'\n"),
+                             (void*)w, cn.c_str(), (void*)owner, ownerCls.c_str());
+                    }
+                }
+                VLOG(STR("[MoriaCppMod] [PathX-P] === end Scan 3 ({} live BP_Wood_C actors, first 20 logged) ===\n"), live);
+            }
+
+            VLOG(STR("[MoriaCppMod] [PathX-P] === Probe P END ===\n"));
+        }
+
+        // [rc.47 PROBE Q 2026-06-12] Hunts for the manager-side UFunction
+        // chain the engine uses to respawn dwarves from saved NpcInfo
+        // entries with their items intact. If we find a usable
+        // RestoreNpc(FGuid)/SpawnFromInfo/etc, our bell-spawn DLL calls it
+        // instead of spawning fresh and inherits dwarf persistence
+        // wholesale — no pak surgery required.
+        //
+        // Three parts (all read-only, no behavior change):
+        //   Q.1 — All MorNPCManager UFunctions, UNFILTERED. Probe K's
+        //         keyword filter was too narrow; this dumps everything
+        //         with full parm signatures.
+        //   Q.2 — All MorSaveSystemWorldState UFunctions (the WorldState
+        //         class is the save graph's central registry — receives
+        //         the WorldState parameter for all 6 save-iface methods).
+        //   Q.3 — Hex dump of FMorNpcPersistentData unknown region
+        //         (+0x048..+0x190, 328 bytes) for entries with dwarf-shape
+        //         (Role != 'Default' AND Role != 'Porter'). Looking for
+        //         TArray header (8B ptr + 4B Num + 4B Max), FGuid bytes,
+        //         or item-count integers.
+        void runProbeQ()
+        {
+            VLOG(STR("[MoriaCppMod] [PathX-Q] === Probe Q: Manager + WorldState UFunction hunt + dwarf PersistentData hex ===\n"));
+
+            // ─────────────────────────────────────────────────────────
+            // Q.1 — MorNPCManager: ALL UFunctions, unfiltered
+            // ─────────────────────────────────────────────────────────
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-Q.1] === All MorNPCManager UFunctions (unfiltered) ===\n"));
+                UObject* mgr = nullptr;
+                std::vector<UObject*> mgrs;
+                if (findAllOfSafe(STR("MorNPCManager"), mgrs))
+                {
+                    for (UObject* o : mgrs)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        std::wstring cn = safeClassName(o);
+                        if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                        mgr = o; break;
+                    }
+                }
+                if (!mgr)
+                {
+                    VLOG(STR("[MoriaCppMod] [PathX-Q.1] MorNPCManager singleton not findable — skip\n"));
+                }
+                else
+                {
+                    UClass* mc = nullptr;
+                    try { mc = mgr->GetClassPrivate(); } catch (...) {}
+                    if (mc)
+                    {
+                        VLOG(STR("[MoriaCppMod] [PathX-Q.1] mgr={:p} cls={}\n"), (void*)mgr, cn_safe(mc));
+                        int idx = 0;
+                        try {
+                            for (auto* fn : mc->ForEachFunctionInChain())
+                            {
+                                if (!fn) continue;
+                                std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                                int parmsSize = 0;
+                                try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                                VLOG(STR("[MoriaCppMod] [PathX-Q.1] [{:03d}] {} ParmsSize={}\n"),
+                                     idx, fname.c_str(), parmsSize);
+                                // Dump parm details
+                                try {
+                                    int pi = 0;
+                                    for (auto* p : fn->ForEachProperty())
+                                    {
+                                        if (!p) continue;
+                                        uint64_t pflags = 0;
+                                        try { pflags = static_cast<uint64_t>(p->GetPropertyFlags()); } catch (...) {}
+                                        bool isParm = (pflags & 0x0000000000000080ULL) != 0;
+                                        if (!isParm) continue;
+                                        bool isReturn = (pflags & 0x0000000000000400ULL) != 0;
+                                        std::wstring pname; try { pname = p->GetName(); } catch (...) {}
+                                        std::wstring ptype; try { ptype = p->GetClass().GetName(); } catch (...) {}
+                                        int psz = -1; try { psz = p->GetSize(); } catch (...) {}
+                                        VLOG(STR("[MoriaCppMod] [PathX-Q.1]        parm[{}] {} '{}' type={} size={}\n"),
+                                             pi, isReturn ? STR("[ret]") : STR("[in ]"),
+                                             pname.c_str(), ptype.c_str(), psz);
+                                        ++pi;
+                                    }
+                                } catch (...) {}
+                                ++idx;
+                            }
+                        } catch (...) {}
+                        VLOG(STR("[MoriaCppMod] [PathX-Q.1] === end MorNPCManager ({} total UFunctions) ===\n"), idx);
+                    }
+                }
+            }
+
+            // ─────────────────────────────────────────────────────────
+            // Q.2 — MorSaveSystemWorldState: ALL UFunctions
+            // ─────────────────────────────────────────────────────────
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-Q.2] === All MorSaveSystemWorldState UFunctions (unfiltered) ===\n"));
+                // Try a list of candidate class names
+                static const wchar_t* worldStateCands[] = {
+                    STR("MorSaveSystemWorldState"),
+                    STR("MorWorldState"),
+                    STR("MorSaveWorldState"),
+                    STR("SaveSystemWorldState"),
+                    STR("MorSaveSystem"),
+                    STR("MorSaveGameWorldState"),
+                    nullptr
+                };
+                UObject* ws = nullptr;
+                std::wstring foundCls;
+                for (const wchar_t** cn = worldStateCands; *cn; ++cn)
+                {
+                    std::vector<UObject*> cands;
+                    if (!findAllOfSafe(*cn, cands)) continue;
+                    for (UObject* o : cands)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        std::wstring oc = safeClassName(o);
+                        if (oc.size() >= 9 && oc.substr(0,9) == STR("Default__")) continue;
+                        ws = o; foundCls = *cn; break;
+                    }
+                    if (ws) break;
+                }
+                if (!ws)
+                {
+                    VLOG(STR("[MoriaCppMod] [PathX-Q.2] No WorldState class found across candidates — listing what we tried:\n"));
+                    for (const wchar_t** cn = worldStateCands; *cn; ++cn)
+                        VLOG(STR("[MoriaCppMod] [PathX-Q.2]   tried '{}': not found\n"), *cn);
+                }
+                else
+                {
+                    UClass* wc = nullptr;
+                    try { wc = ws->GetClassPrivate(); } catch (...) {}
+                    if (wc)
+                    {
+                        VLOG(STR("[MoriaCppMod] [PathX-Q.2] ws={:p} class={} (found via candidate '{}')\n"),
+                             (void*)ws, cn_safe(wc), foundCls.c_str());
+                        int idx = 0;
+                        try {
+                            for (auto* fn : wc->ForEachFunctionInChain())
+                            {
+                                if (!fn) continue;
+                                std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                                int parmsSize = 0;
+                                try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                                VLOG(STR("[MoriaCppMod] [PathX-Q.2] [{:03d}] {} ParmsSize={}\n"),
+                                     idx, fname.c_str(), parmsSize);
+                                try {
+                                    int pi = 0;
+                                    for (auto* p : fn->ForEachProperty())
+                                    {
+                                        if (!p) continue;
+                                        uint64_t pflags = 0;
+                                        try { pflags = static_cast<uint64_t>(p->GetPropertyFlags()); } catch (...) {}
+                                        bool isParm = (pflags & 0x0000000000000080ULL) != 0;
+                                        if (!isParm) continue;
+                                        bool isReturn = (pflags & 0x0000000000000400ULL) != 0;
+                                        std::wstring pname; try { pname = p->GetName(); } catch (...) {}
+                                        std::wstring ptype; try { ptype = p->GetClass().GetName(); } catch (...) {}
+                                        int psz = -1; try { psz = p->GetSize(); } catch (...) {}
+                                        VLOG(STR("[MoriaCppMod] [PathX-Q.2]        parm[{}] {} '{}' type={} size={}\n"),
+                                             pi, isReturn ? STR("[ret]") : STR("[in ]"),
+                                             pname.c_str(), ptype.c_str(), psz);
+                                        ++pi;
+                                    }
+                                } catch (...) {}
+                                ++idx;
+                            }
+                        } catch (...) {}
+                        VLOG(STR("[MoriaCppMod] [PathX-Q.2] === end WorldState ({} total UFunctions) ===\n"), idx);
+                    }
+                }
+            }
+
+            // ─────────────────────────────────────────────────────────
+            // Q.3 — FMorNpcPersistentData hex dump for dwarf-shape entries
+            //       (+0x048..+0x190 = 0x148 bytes = 328 bytes of unknown)
+            // ─────────────────────────────────────────────────────────
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-Q.3] === FMorNpcPersistentData +0x048..+0x190 hex dump (dwarf entries) ===\n"));
+                UObject* mgr = nullptr;
+                std::vector<UObject*> mgrs;
+                if (findAllOfSafe(STR("MorNPCManager"), mgrs))
+                {
+                    for (UObject* o : mgrs)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        std::wstring cn = safeClassName(o);
+                        if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                        mgr = o; break;
+                    }
+                }
+                if (!mgr)
+                {
+                    VLOG(STR("[MoriaCppMod] [PathX-Q.3] MorNPCManager singleton not findable — skip\n"));
+                }
+                else
+                {
+                    uint8_t* niBase = reinterpret_cast<uint8_t*>(mgr) + 0x03a0;
+                    uint8_t* itemsHdr = niBase + 0x0108;
+                    if (!isReadableMemory(itemsHdr, 16))
+                    {
+                        VLOG(STR("[MoriaCppMod] [PathX-Q.3] NpcInfo.Items header unreadable\n"));
+                    }
+                    else
+                    {
+                        uint8_t* itemsData = *reinterpret_cast<uint8_t**>(itemsHdr);
+                        int32_t  itemsNum  = *reinterpret_cast<int32_t*>(itemsHdr + 8);
+                        constexpr int kStride          = 0x260;
+                        constexpr int kGuidOff         = 0x001c;
+                        constexpr int kRoleRowNameOff  = 0x0050;
+                        constexpr int kStaticRowNameOff = 0x01C8;
+                        constexpr int kIsRescuedOff    = 0x01A0;
+                        constexpr int kDumpStart       = 0x0048;  // PersistentData +0x038 = abs +0x048
+                        constexpr int kDumpLen         = 0x0148;  // 328 bytes
+                        VLOG(STR("[MoriaCppMod] [PathX-Q.3] NpcInfo has {} entries; scanning for dwarf-shape (Role != Default/Porter)\n"),
+                             itemsNum);
+                        if (itemsData && itemsNum > 0 && itemsNum < 500
+                            && isReadableMemory(itemsData, itemsNum * kStride))
+                        {
+                            int dwarvesFound = 0;
+                            int maxToDump = 5;  // cap dump to first 5 dwarves to keep log size sane
+                            for (int i = 0; i < itemsNum && dwarvesFound < maxToDump; ++i)
+                            {
+                                uint8_t* entry = itemsData + i * kStride;
+                                wchar_t tmpRole[256], tmpStatic[256];
+                                seh_fnameToStringToBuf(entry + kRoleRowNameOff,   tmpRole,   256);
+                                seh_fnameToStringToBuf(entry + kStaticRowNameOff, tmpStatic, 256);
+                                std::wstring roleStr  = tmpRole;
+                                std::wstring staticStr = tmpStatic;
+                                bool isRescued = false;
+                                if (isReadableMemory(entry + kIsRescuedOff, 1))
+                                    isRescued = *(entry + kIsRescuedOff) != 0;
+                                bool isDwarf = (roleStr != STR("Default") && roleStr != STR("Porter"));
+                                if (!isDwarf) continue;
+                                ++dwarvesFound;
+
+                                uint32_t* g = reinterpret_cast<uint32_t*>(entry + kGuidOff);
+                                VLOG(STR("[MoriaCppMod] [PathX-Q.3] --- Entry [{}] GUID={:08X}-{:08X}-{:08X}-{:08X} Role='{}' StaticData='{}' Rescued={} ---\n"),
+                                     i, g[0], g[1], g[2], g[3],
+                                     roleStr.c_str(), staticStr.c_str(),
+                                     isRescued ? STR("Y") : STR("n"));
+
+                                // Hex dump 0x148 bytes from entry + 0x048
+                                uint8_t* dump = entry + kDumpStart;
+                                if (!isReadableMemory(dump, kDumpLen))
+                                {
+                                    VLOG(STR("[MoriaCppMod] [PathX-Q.3]     [region unreadable]\n"));
+                                    continue;
+                                }
+                                for (int off = 0; off < kDumpLen; off += 16)
+                                {
+                                    uint8_t* row = dump + off;
+                                    // ASCII column
+                                    wchar_t ascii[17] = {0};
+                                    for (int j = 0; j < 16; ++j)
+                                    {
+                                        uint8_t b = row[j];
+                                        ascii[j] = (b >= 0x20 && b < 0x7F) ? (wchar_t)b : L'.';
+                                    }
+                                    VLOG(STR("[MoriaCppMod] [PathX-Q.3]   +0x{:04X}: {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}  {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}  |{}|\n"),
+                                         (unsigned)(kDumpStart + off),
+                                         row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7],
+                                         row[8], row[9], row[10], row[11], row[12], row[13], row[14], row[15],
+                                         ascii);
+                                }
+                                VLOG(STR("[MoriaCppMod] [PathX-Q.3] --- end entry [{}] ---\n"), i);
+                            }
+                            VLOG(STR("[MoriaCppMod] [PathX-Q.3] === Found {} dwarf-shape entries (dumped first {}); total entries={} ===\n"),
+                                 dwarvesFound, dwarvesFound < maxToDump ? dwarvesFound : maxToDump, itemsNum);
+
+                            // Fallback: if no dwarves, dump the FIRST entry regardless
+                            // (might be a goat — still useful for layout reference)
+                            if (dwarvesFound == 0 && itemsNum > 0)
+                            {
+                                VLOG(STR("[MoriaCppMod] [PathX-Q.3] No dwarves found — dumping entry [0] as layout reference\n"));
+                                uint8_t* entry = itemsData;
+                                wchar_t tmpRole[256], tmpStatic[256];
+                                seh_fnameToStringToBuf(entry + kRoleRowNameOff,   tmpRole,   256);
+                                seh_fnameToStringToBuf(entry + kStaticRowNameOff, tmpStatic, 256);
+                                uint32_t* g = reinterpret_cast<uint32_t*>(entry + kGuidOff);
+                                VLOG(STR("[MoriaCppMod] [PathX-Q.3] --- Entry [0] GUID={:08X}-{:08X}-{:08X}-{:08X} Role='{}' StaticData='{}' ---\n"),
+                                     g[0], g[1], g[2], g[3], tmpRole, tmpStatic);
+                                uint8_t* dump = entry + kDumpStart;
+                                if (isReadableMemory(dump, kDumpLen))
+                                {
+                                    for (int off = 0; off < kDumpLen; off += 16)
+                                    {
+                                        uint8_t* row = dump + off;
+                                        wchar_t ascii[17] = {0};
+                                        for (int j = 0; j < 16; ++j)
+                                        {
+                                            uint8_t b = row[j];
+                                            ascii[j] = (b >= 0x20 && b < 0x7F) ? (wchar_t)b : L'.';
+                                        }
+                                        VLOG(STR("[MoriaCppMod] [PathX-Q.3]   +0x{:04X}: {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}  {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}  |{}|\n"),
+                                             (unsigned)(kDumpStart + off),
+                                             row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7],
+                                             row[8], row[9], row[10], row[11], row[12], row[13], row[14], row[15],
+                                             ascii);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                VLOG(STR("[MoriaCppMod] [PathX-Q.3] === end Q.3 ===\n"));
+            }
+
+            VLOG(STR("[MoriaCppMod] [PathX-Q] === Probe Q END ===\n"));
+        }
+
+        // Small helper for class-name string in Probe Q logs.
+        std::wstring cn_safe(UClass* c)
+        {
+            if (!c || !isObjectAlive(c)) return STR("(null)");
+            try { return c->GetName(); } catch (...) { return STR("(throw)"); }
+        }
+
+        // [rc.48 PROBE R 2026-06-14] Walk BP_MorSaveSystemWorldState_C
+        // class properties hunting for the runtime-actor registry.
+        // Q.2 showed StoreRuntimeActor exists but didn't reveal where
+        // it writes to. Probe R dumps every ArrayProperty + MapProperty
+        // + ObjectProperty with name + offset + size + current count
+        // (for arrays). Highlights properties whose name contains
+        // 'Runtime', 'Actor', 'Registered', 'Saved', 'Persistent',
+        // 'Handle', 'Record', 'Map', 'Set'.
+        void runProbeR()
+        {
+            VLOG(STR("[MoriaCppMod] [PathX-R] === Probe R: WorldState property walk ===\n"));
+            UObject* ws = nullptr;
+            std::vector<UObject*> wsCands;
+            if (findAllOfSafe(STR("MorSaveSystemWorldState"), wsCands))
+            {
+                for (UObject* o : wsCands)
+                {
+                    if (!o || !isObjectAlive(o)) continue;
+                    std::wstring cn = safeClassName(o);
+                    if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                    ws = o; break;
+                }
+            }
+            if (!ws)
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-R] MorSaveSystemWorldState singleton not findable — skip\n"));
+                return;
+            }
+            UClass* wc = nullptr;
+            try { wc = ws->GetClassPrivate(); } catch (...) {}
+            if (!wc)
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-R] WorldState class unreadable\n"));
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [PathX-R] ws={:p} class={}\n"), (void*)ws, cn_safe(wc));
+
+            int total = 0, interesting = 0;
+            try {
+                for (auto* p : wc->ForEachPropertyInChain())
+                {
+                    if (!p) continue;
+                    ++total;
+                    std::wstring pname; try { pname = p->GetName(); } catch (...) { continue; }
+                    std::wstring pcls; try { pcls = p->GetClass().GetName(); } catch (...) {}
+                    int32 off = -1; try { off = p->GetOffset_Internal(); } catch (...) {}
+                    int psz = -1; try { psz = p->GetSize(); } catch (...) {}
+
+                    bool isContainer = (pcls == STR("ArrayProperty") ||
+                                        pcls == STR("MapProperty") ||
+                                        pcls == STR("SetProperty"));
+                    bool keywordHit =
+                        pname.find(STR("Runtime"))     != std::wstring::npos ||
+                        pname.find(STR("Actor"))       != std::wstring::npos ||
+                        pname.find(STR("Registered"))  != std::wstring::npos ||
+                        pname.find(STR("Saved"))       != std::wstring::npos ||
+                        pname.find(STR("Persistent"))  != std::wstring::npos ||
+                        pname.find(STR("Handle"))      != std::wstring::npos ||
+                        pname.find(STR("Record"))      != std::wstring::npos ||
+                        pname.find(STR("Stability"))   != std::wstring::npos ||
+                        pname.find(STR("Level"))       != std::wstring::npos;
+
+                    if (!isContainer && !keywordHit) continue;
+                    ++interesting;
+
+                    VLOG(STR("[MoriaCppMod] [PathX-R]   {} '{}' type={} off=0x{:04X} size={}\n"),
+                         keywordHit ? STR("***") : STR("   "),
+                         pname.c_str(), pcls.c_str(), (unsigned)off, psz);
+
+                    // For ArrayProperty, dump the TArray header (data ptr + Num + Max)
+                    if (pcls == STR("ArrayProperty") && off >= 0)
+                    {
+                        uint8_t* base = reinterpret_cast<uint8_t*>(ws) + off;
+                        if (isReadableMemory(base, 16))
+                        {
+                            uint8_t* data = *reinterpret_cast<uint8_t**>(base);
+                            int32_t num   = *reinterpret_cast<int32_t*>(base + 8);
+                            int32_t cap   = *reinterpret_cast<int32_t*>(base + 12);
+                            VLOG(STR("[MoriaCppMod] [PathX-R]       TArray data={:p} Num={} Max={}\n"),
+                                 (void*)data, num, cap);
+                        }
+                    }
+                    // For MapProperty / SetProperty: TSparseArray internals are
+                    // complex; just log the offset for now. DC can decode.
+                }
+            } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [PathX-R] === end ({} interesting / {} total properties) ===\n"),
+                 interesting, total);
+        }
+
+        // [rc.49 PROBE S 2026-06-14] Per user correction: pivot from
+        // Role marker (proven to drift across save/reload) to Name
+        // marker. Probe S enumerates ALL UFunctions on MorNPCComponent
+        // with full parm signatures so we can find the right
+        // name-write UFunction (SetName / SetCustomName / Rename /
+        // SetDisplayName / etc.). Once found, rc.50 wires the call.
+        void runProbeS()
+        {
+            VLOG(STR("[MoriaCppMod] [PathX-S] === Probe S: All MorNPCComponent UFunctions (unfiltered) ===\n"));
+            UClass* compCls = UObjectGlobals::StaticFindObject<UClass*>(
+                nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+            if (!compCls)
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-S] MorNPCComponent UClass not findable\n"));
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [PathX-S] cls={:p} {}\n"), (void*)compCls, cn_safe(compCls));
+            int idx = 0, hits = 0;
+            // Pre-pass: count and emit highlighted name/rename hits first
+            VLOG(STR("[MoriaCppMod] [PathX-S] --- highlighted: name/rename/display candidates ---\n"));
+            try {
+                for (auto* fn : compCls->ForEachFunctionInChain())
+                {
+                    if (!fn) continue;
+                    std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                    bool isCandidate =
+                        fname.find(STR("Name"))    != std::wstring::npos ||
+                        fname.find(STR("Rename"))  != std::wstring::npos ||
+                        fname.find(STR("Display")) != std::wstring::npos ||
+                        fname.find(STR("Custom"))  != std::wstring::npos ||
+                        fname.find(STR("Text"))    != std::wstring::npos ||
+                        fname.find(STR("Title"))   != std::wstring::npos ||
+                        fname.find(STR("Label"))   != std::wstring::npos;
+                    if (!isCandidate) continue;
+                    int parmsSize = 0;
+                    try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [PathX-S] *** [{}] {} ParmsSize={}\n"),
+                         idx, fname.c_str(), parmsSize);
+                    try {
+                        int pi = 0;
+                        for (auto* p : fn->ForEachProperty())
+                        {
+                            if (!p) continue;
+                            uint64_t pflags = 0;
+                            try { pflags = static_cast<uint64_t>(p->GetPropertyFlags()); } catch (...) {}
+                            bool isParm = (pflags & 0x0000000000000080ULL) != 0;
+                            if (!isParm) continue;
+                            bool isReturn = (pflags & 0x0000000000000400ULL) != 0;
+                            std::wstring pname; try { pname = p->GetName(); } catch (...) {}
+                            std::wstring ptype; try { ptype = p->GetClass().GetName(); } catch (...) {}
+                            int psz = -1; try { psz = p->GetSize(); } catch (...) {}
+                            VLOG(STR("[MoriaCppMod] [PathX-S] ***        parm[{}] {} '{}' type={} size={}\n"),
+                                 pi, isReturn ? STR("[ret]") : STR("[in ]"),
+                                 pname.c_str(), ptype.c_str(), psz);
+                            ++pi;
+                        }
+                    } catch (...) {}
+                    ++hits;
+                    ++idx;
+                }
+            } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [PathX-S] --- end candidates ({} hits) ---\n"), hits);
+            // Full list for completeness
+            VLOG(STR("[MoriaCppMod] [PathX-S] --- full UFunction list ---\n"));
+            int total = 0;
+            try {
+                for (auto* fn : compCls->ForEachFunctionInChain())
+                {
+                    if (!fn) continue;
+                    std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                    int parmsSize = 0;
+                    try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [PathX-S] [{:03d}] {} ParmsSize={}\n"),
+                         total, fname.c_str(), parmsSize);
+                    ++total;
+                }
+            } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [PathX-S] === end ({} total UFunctions on MorNPCComponent) ===\n"),
+                 total);
+        }
+
+        // [rc.50 PROBE T 2026-06-14] Enumerate BP_NpcGoat_C name-keyword
+        // UFunctions. Per Probe S findings: CanSetCustomDisplayName on
+        // MorNPCComponent implies SetCustomDisplayName exists on the
+        // actor or a parent. Probe T finds it.
+        void runProbeT()
+        {
+            VLOG(STR("[MoriaCppMod] [PathX-T] === Probe T: BP_NpcGoat_C name candidates ===\n"));
+            UClass* goatCls = m_goatBPClass && isObjectAlive(m_goatBPClass) ? m_goatBPClass : nullptr;
+            if (!goatCls)
+            {
+                goatCls = UObjectGlobals::StaticFindObject<UClass*>(
+                    nullptr, nullptr, STR("/Game/Character/NpcGoat/BP_NpcGoat.BP_NpcGoat_C"));
+            }
+            if (!goatCls)
+            {
+                goatCls = goat_loadClassAssetBlocking(STR("/Game/Character/NpcGoat/BP_NpcGoat.BP_NpcGoat_C"));
+            }
+            if (!goatCls)
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-T] BP_NpcGoat_C UClass not findable — skip\n"));
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [PathX-T] cls={:p} {}\n"), (void*)goatCls, cn_safe(goatCls));
+            int total = 0, hits = 0;
+            try {
+                for (auto* fn : goatCls->ForEachFunctionInChain())
+                {
+                    if (!fn) continue;
+                    ++total;
+                    std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                    bool isCandidate =
+                        fname.find(STR("Name"))    != std::wstring::npos ||
+                        fname.find(STR("Rename"))  != std::wstring::npos ||
+                        fname.find(STR("Display")) != std::wstring::npos ||
+                        fname.find(STR("Custom"))  != std::wstring::npos ||
+                        fname.find(STR("Title"))   != std::wstring::npos ||
+                        fname.find(STR("Label"))   != std::wstring::npos;
+                    if (!isCandidate) continue;
+                    int parmsSize = 0;
+                    try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                    VLOG(STR("[MoriaCppMod] [PathX-T] *** [{}] {} ParmsSize={}\n"),
+                         hits, fname.c_str(), parmsSize);
+                    try {
+                        int pi = 0;
+                        for (auto* p : fn->ForEachProperty())
+                        {
+                            if (!p) continue;
+                            uint64_t pflags = 0;
+                            try { pflags = static_cast<uint64_t>(p->GetPropertyFlags()); } catch (...) {}
+                            bool isParm = (pflags & 0x0000000000000080ULL) != 0;
+                            if (!isParm) continue;
+                            bool isReturn = (pflags & 0x0000000000000400ULL) != 0;
+                            std::wstring pname; try { pname = p->GetName(); } catch (...) {}
+                            std::wstring ptype; try { ptype = p->GetClass().GetName(); } catch (...) {}
+                            int psz = -1; try { psz = p->GetSize(); } catch (...) {}
+                            VLOG(STR("[MoriaCppMod] [PathX-T] ***        parm[{}] {} '{}' type={} size={}\n"),
+                                 pi, isReturn ? STR("[ret]") : STR("[in ]"),
+                                 pname.c_str(), ptype.c_str(), psz);
+                            ++pi;
+                        }
+                    } catch (...) {}
+                    ++hits;
+                }
+            } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [PathX-T] === end ({} hits / {} total functions in chain) ===\n"),
+                 hits, total);
+        }
+
+        // [rc.53 PROBE U 2026-06-15] IMorSaveGameObject diagnostic. Per
+        // header-dump analysis (MorSaveGameObject.h + Moria.hpp lines
+        // 11600-11625), the canonical save path is the IMorSaveGameObject
+        // interface, NOT StoreRuntimeActor. Save filter = SaveGameObjectIgnore.
+        // Persistence key = SaveGameObjectGetId. Dormancy state = GetDormancy.
+        // We probe both the live goat AND a nearby crafted chest. Chest is
+        // the reference: it ALWAYS persists in vanilla, so whatever its
+        // interface returns is what the goat MUST also return.
+        void probeSaveIfaceOn(UObject* target, const wchar_t* label)
+        {
+            if (!target || !isObjectAlive(target))
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-U] {} target null/stale — skip\n"), label);
+                return;
+            }
+            UClass* cls = nullptr;
+            try { cls = target->GetClassPrivate(); } catch (...) {}
+            std::wstring clsName = cls ? cn_safe(cls) : std::wstring(STR("<no-class>"));
+            VLOG(STR("[MoriaCppMod] [PathX-U] {} target={:p} class='{}'\n"),
+                 label, (void*)target, clsName.c_str());
+            if (!cls)
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-U] {} no class — skip\n"), label);
+                return;
+            }
+
+            // Resolve the three UFunctions in the chain
+            UFunction* fnIgnore   = nullptr;
+            UFunction* fnGetId    = nullptr;
+            UFunction* fnGetDorm  = nullptr;
+            try {
+                for (auto* fn : cls->ForEachFunctionInChain())
+                {
+                    if (!fn) continue;
+                    std::wstring fname; try { fname = fn->GetName(); } catch (...) { continue; }
+                    if (fname == STR("SaveGameObjectIgnore"))      fnIgnore  = fn;
+                    else if (fname == STR("SaveGameObjectGetId"))  fnGetId   = fn;
+                    else if (fname == STR("SaveGameObjectGetDormancy")) fnGetDorm = fn;
+                }
+            } catch (...) {}
+
+            VLOG(STR("[MoriaCppMod] [PathX-U] {}   resolved: Ignore={:p} GetId={:p} GetDorm={:p}\n"),
+                 label, (void*)fnIgnore, (void*)fnGetId, (void*)fnGetDorm);
+
+            // Call SaveGameObjectIgnore — returns bool
+            if (fnIgnore)
+            {
+                int psz = 0; try { psz = fnIgnore->GetParmsSize(); } catch (...) {}
+                std::vector<uint8_t> buf(psz > 0 ? psz : 1, 0);
+                if (safeProcessEvent(target, fnIgnore, buf.data()) && psz >= 1)
+                {
+                    bool ignore = (buf[psz - 1] != 0);
+                    VLOG(STR("[MoriaCppMod] [PathX-U] {}   SaveGameObjectIgnore() = {} ({})\n"),
+                         label,
+                         ignore ? STR("TRUE") : STR("FALSE"),
+                         ignore ? STR("*** SAVE SYSTEM SKIPS THIS ACTOR ***") : STR("(saveable)"));
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [PathX-U] {}   SaveGameObjectIgnore() FAILED to invoke (psz={})\n"),
+                         label, psz);
+                }
+            }
+
+            // Call SaveGameObjectGetId — returns FMorSaveGameObjectId (opaque struct).
+            // Allocate a generous parms buffer; hex-dump the return region.
+            if (fnGetId)
+            {
+                int psz = 0; try { psz = fnGetId->GetParmsSize(); } catch (...) {}
+                std::vector<uint8_t> buf(psz > 0 ? psz : 64, 0);
+                if (safeProcessEvent(target, fnGetId, buf.data()))
+                {
+                    // Hex-dump full parms buffer (return value is in there)
+                    std::wstring hex;
+                    bool allZero = true;
+                    for (int i = 0; i < psz; ++i)
+                    {
+                        if (buf[i] != 0) allZero = false;
+                        wchar_t tmp[8]; std::swprintf(tmp, 8, L"%02X ", buf[i]);
+                        hex += tmp;
+                        if ((i + 1) % 16 == 0) hex += L"\n[MoriaCppMod] [PathX-U]                ";
+                    }
+                    VLOG(STR("[MoriaCppMod] [PathX-U] {}   SaveGameObjectGetId() psz={} {} bytes:\n[MoriaCppMod] [PathX-U]                {}\n"),
+                         label, psz,
+                         allZero ? STR("*** ALL ZERO — NO PERSISTENT ID ***") : STR("(non-zero)"),
+                         hex.c_str());
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [PathX-U] {}   SaveGameObjectGetId() FAILED to invoke (psz={})\n"),
+                         label, psz);
+                }
+            }
+
+            // Call SaveGameObjectGetDormancy — returns EMorSaveGameObjectDormancyState (byte enum)
+            if (fnGetDorm)
+            {
+                int psz = 0; try { psz = fnGetDorm->GetParmsSize(); } catch (...) {}
+                std::vector<uint8_t> buf(psz > 0 ? psz : 1, 0);
+                if (safeProcessEvent(target, fnGetDorm, buf.data()) && psz >= 1)
+                {
+                    uint8_t dorm = buf[psz - 1];
+                    VLOG(STR("[MoriaCppMod] [PathX-U] {}   SaveGameObjectGetDormancy() = {} (raw byte)\n"),
+                         label, (int)dorm);
+                }
+            }
+        }
+
+        void runProbeU()
+        {
+            VLOG(STR("[MoriaCppMod] [PathX-U] === Probe U: IMorSaveGameObject diagnostic ===\n"));
+
+            // Goat — find via FindAllOf on BP_NpcGoat_C
+            UClass* goatCls = m_goatBPClass && isObjectAlive(m_goatBPClass) ? m_goatBPClass : nullptr;
+            if (!goatCls)
+            {
+                goatCls = UObjectGlobals::StaticFindObject<UClass*>(
+                    nullptr, nullptr, STR("/Game/Character/NpcGoat/BP_NpcGoat.BP_NpcGoat_C"));
+            }
+            UObject* goatTarget = nullptr;
+            {
+                std::vector<UObject*> found;
+                if (seh_findAllOf(STR("BP_NpcGoat_C"), &found))
+                {
+                    for (auto* o : found)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        // skip class objects — we want instances
+                        if (o == reinterpret_cast<UObject*>(goatCls)) continue;
+                        // also skip CDO
+                        if (goatCls && o == goatCls->GetClassDefaultObject()) continue;
+                        goatTarget = o; break;
+                    }
+                }
+                VLOG(STR("[MoriaCppMod] [PathX-U] BP_NpcGoat_C find count={} → using={:p}\n"),
+                     (int)found.size(), (void*)goatTarget);
+            }
+            if (goatTarget) probeSaveIfaceOn(goatTarget, STR("[GOAT ]"));
+
+            // Chest — find via FindAllOf on BP_StorageChest_Construction_C
+            UClass* chestCls = UObjectGlobals::StaticFindObject<UClass*>(
+                nullptr, nullptr, STR("/Game/Construction/Storage/BP_StorageChest_Construction.BP_StorageChest_Construction_C"));
+            // Fallback paths if the canonical path didn't match
+            if (!chestCls)
+            {
+                chestCls = UObjectGlobals::StaticFindObject<UClass*>(
+                    nullptr, nullptr, STR("/Game/Buildables/Storage/BP_StorageChest_Construction.BP_StorageChest_Construction_C"));
+            }
+            UObject* chestTarget = nullptr;
+            {
+                std::vector<UObject*> found;
+                if (seh_findAllOf(STR("BP_StorageChest_Construction_C"), &found))
+                {
+                    for (auto* o : found)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        if (chestCls && o == reinterpret_cast<UObject*>(chestCls)) continue;
+                        if (chestCls && o == chestCls->GetClassDefaultObject()) continue;
+                        chestTarget = o; break;
+                    }
+                }
+                VLOG(STR("[MoriaCppMod] [PathX-U] BP_StorageChest_Construction_C find count={} → using={:p}\n"),
+                     (int)found.size(), (void*)chestTarget);
+            }
+            if (chestTarget) probeSaveIfaceOn(chestTarget, STR("[CHEST]"));
+
+            // If chest not found, try BP_Hearth_Base_C as a fallback known-persister
+            if (!chestTarget)
+            {
+                std::vector<UObject*> found;
+                if (seh_findAllOf(STR("BP_Hearth_Base_C"), &found))
+                {
+                    for (auto* o : found)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        chestTarget = o; break;
+                    }
+                }
+                VLOG(STR("[MoriaCppMod] [PathX-U] Fallback BP_Hearth_Base_C find count={} → using={:p}\n"),
+                     (int)found.size(), (void*)chestTarget);
+                if (chestTarget) probeSaveIfaceOn(chestTarget, STR("[HEARTH]"));
+            }
+
+            VLOG(STR("[MoriaCppMod] [PathX-U] === Probe U END ===\n"));
+        }
+
+        // [rc.54 PROBE V 2026-06-16] BP_NPCManager_C ValidNpc* dump.
+        // SaveGameObjectId lives on the MANAGER, not individual NPCs.
+        // Manager recreates per-NPC actors on restore from NpcInfo
+        // metadata, gated by ValidNpcClasses (off=0x0808). This probe
+        // iterates each gating array and prints every entry so we
+        // can confirm whether BP_NpcGoat_C is in the allowlist.
+        //
+        // Layout (UE4.27 standard):
+        //   TArray:         { void* Data; int32 Num; int32 Max; }  // 16 bytes
+        //   FSoftObjectPath: { FName AssetPathName; FString SubPathString; }  // 24 bytes
+        //   FSoftClassPath: derived from FSoftObjectPath              // 24 bytes
+        //   FString:        { TCHAR* Data; int32 Num; int32 Max; }   // 16 bytes
+        struct PVTArrayHdr {
+            void* Data;
+            int32_t Num;
+            int32_t Max;
+        };
+        struct PVStringHdr {
+            wchar_t* Data;
+            int32_t Num;
+            int32_t Max;
+        };
+
+        // SEH-safe FString → wchar_t* copy. Returns bytes copied (0 on AV).
+        // Can't return std::wstring inside __try (object unwinding rule).
+        static int pv_readFStringRaw(const void* fstrBytes, wchar_t* out, int outCap) noexcept
+        {
+            if (!fstrBytes || !out || outCap <= 0) return 0;
+            const PVStringHdr* h = reinterpret_cast<const PVStringHdr*>(fstrBytes);
+            __try {
+                if (!h->Data || h->Num <= 0) { out[0] = 0; return 0; }
+                int len = h->Num - 1; // FString Num includes trailing null
+                if (len < 0) { out[0] = 0; return 0; }
+                if (len > outCap - 1) len = outCap - 1;
+                for (int i = 0; i < len; ++i) out[i] = h->Data[i];
+                out[len] = 0;
+                return len;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                if (outCap > 0) out[0] = 0;
+                return -1;
+            }
+        }
+
+        std::wstring pv_readFString(const uint8_t* fstrBytes)
+        {
+            wchar_t buf[2048];
+            int r = pv_readFStringRaw(fstrBytes, buf, 2048);
+            if (r < 0) return L"<av>";
+            return std::wstring(buf);
+        }
+
+        // Dump one TArray<FSoftObjectPath>-shaped TArray. Returns whether
+        // we found a goat-shaped entry (AssetPathName or SubPath contains "Goat").
+        bool pv_dumpSoftPathArray(UObject* mgr, int32_t offset, const wchar_t* label)
+        {
+            if (!mgr) return false;
+            const PVTArrayHdr* arr = reinterpret_cast<const PVTArrayHdr*>(
+                reinterpret_cast<const uint8_t*>(mgr) + offset);
+            VLOG(STR("[MoriaCppMod] [PathX-V] {} TArray @ +0x{:04X}: Data={:p} Num={} Max={}\n"),
+                 label, offset, arr->Data, arr->Num, arr->Max);
+            if (!arr->Data || arr->Num <= 0 || arr->Num > 4096)
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-V] {}   (empty or bogus Num — skip iteration)\n"), label);
+                return false;
+            }
+            bool foundGoat = false;
+            constexpr int kStride = 24; // FSoftObjectPath / FSoftClassPath
+            for (int i = 0; i < arr->Num; ++i)
+            {
+                const uint8_t* entry = static_cast<const uint8_t*>(arr->Data) + i * kStride;
+                std::wstring assetName = seh_fnameToString(const_cast<uint8_t*>(entry));
+                std::wstring subPath   = pv_readFString(entry + 8);
+                if (assetName.find(STR("Goat")) != std::wstring::npos
+                 || subPath.find(STR("Goat")) != std::wstring::npos)
+                {
+                    foundGoat = true;
+                    VLOG(STR("[MoriaCppMod] [PathX-V] {}   [{}] AssetPathName='{}' SubPath='{}' *** GOAT MATCH ***\n"),
+                         label, i, assetName.c_str(), subPath.c_str());
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [PathX-V] {}   [{}] AssetPathName='{}' SubPath='{}'\n"),
+                         label, i, assetName.c_str(), subPath.c_str());
+                }
+            }
+            return foundGoat;
+        }
+
+        void runProbeV()
+        {
+            VLOG(STR("[MoriaCppMod] [PathX-V] === Probe V: BP_NPCManager_C ValidNpc* dump ===\n"));
+
+            // Step 1: find the manager (same pattern as runNpcMgrProbe)
+            UObject* mgr = nullptr;
+            UClass* utilsCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MoriaUtils"));
+            if (utilsCls && isObjectAlive(utilsCls))
+            {
+                UObject* utilsCDO = nullptr;
+                try { utilsCDO = utilsCls->GetClassDefaultObject(); } catch (...) {}
+                if (utilsCDO && isObjectAlive(utilsCDO))
+                {
+                    auto* getMgrFn = utilsCls->GetFunctionByNameInChain(STR("GetNpcManager"));
+                    if (getMgrFn)
+                    {
+                        std::vector<uint8_t> buf(getMgrFn->GetParmsSize(), 0);
+                        auto* pWC = findParam(getMgrFn, STR("WorldContextObject"));
+                        if (pWC && m_localPC)
+                            *reinterpret_cast<UObject**>(buf.data() + pWC->GetOffset_Internal()) = m_localPC;
+                        try { safeProcessEvent(utilsCDO, getMgrFn, buf.data()); } catch (...) {}
+                        auto* pRet = findParam(getMgrFn, STR("ReturnValue"));
+                        if (pRet)
+                            mgr = *reinterpret_cast<UObject**>(buf.data() + pRet->GetOffset_Internal());
+                    }
+                }
+            }
+            if (!mgr || !isObjectAlive(mgr))
+            {
+                std::vector<UObject*> candidates;
+                if (findAllOfSafe(STR("MorNPCManager"), candidates))
+                {
+                    for (UObject* o : candidates)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        std::wstring cn = safeClassName(o);
+                        if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                        mgr = o; break;
+                    }
+                }
+            }
+            if (!mgr || !isObjectAlive(mgr))
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-V] manager not findable — bail\n"));
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [PathX-V] manager={:p} class={}\n"),
+                 (void*)mgr, safeClassName(mgr).c_str());
+
+            // Step 2: TuningData reference (off 0x02b8, 8 bytes, UObject*)
+            UObject* tuning = *reinterpret_cast<UObject**>(reinterpret_cast<uint8_t*>(mgr) + 0x02b8);
+            if (tuning && isObjectAlive(tuning))
+            {
+                std::wstring tname; try { tname = tuning->GetName(); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [PathX-V] TuningData @ +0x02b8 = {:p} class='{}' name='{}'\n"),
+                     (void*)tuning, safeClassName(tuning).c_str(), tname.c_str());
+            }
+            else
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-V] TuningData @ +0x02b8 = null (manager has no tuning data ref)\n"));
+            }
+
+            // Step 3: dump the three gating arrays
+            bool goatInClasses  = pv_dumpSoftPathArray(mgr, 0x0808, STR("ValidNpcClasses "));
+            bool goatInRestores = pv_dumpSoftPathArray(mgr, 0x0818, STR("ValidNpcRestores"));
+            // ValidNpcRoles likely a different struct (FName/role enum, not class path) — try stride 16
+            {
+                const PVTArrayHdr* arr = reinterpret_cast<const PVTArrayHdr*>(
+                    reinterpret_cast<const uint8_t*>(mgr) + 0x0828);
+                VLOG(STR("[MoriaCppMod] [PathX-V] ValidNpcRoles    TArray @ +0x0828: Data={:p} Num={} Max={}\n"),
+                     arr->Data, arr->Num, arr->Max);
+                if (arr->Data && arr->Num > 0 && arr->Num <= 256)
+                {
+                    // Try stride 16 first (FName + something small)
+                    for (int i = 0; i < arr->Num && i < 32; ++i)
+                    {
+                        const uint8_t* entry = static_cast<const uint8_t*>(arr->Data) + i * 16;
+                        std::wstring nm = seh_fnameToString(const_cast<uint8_t*>(entry));
+                        VLOG(STR("[MoriaCppMod] [PathX-V] ValidNpcRoles     [{}] FName(@+0)='{}'\n"), i, nm.c_str());
+                    }
+                }
+            }
+
+            // Step 4: verdict
+            VLOG(STR("[MoriaCppMod] [PathX-V] === VERDICT: goat in ValidNpcClasses={} in ValidNpcRestores={} ===\n"),
+                 goatInClasses  ? STR("YES") : STR("NO (*** missing — actor will not restore ***)"),
+                 goatInRestores ? STR("YES") : STR("NO"));
+            VLOG(STR("[MoriaCppMod] [PathX-V] === Probe V END ===\n"));
+        }
+
+        // [rc.55 PROBE W 2026-06-16] Per-entry FMorNpcPersistentData dump.
+        // Reflection-driven walk through the inner struct.
+        // For each entry in BP_NPCManager_C.NpcInfo.Items[]:
+        //   1. Decode PersistentData fields via reflection
+        //   2. For RowHandle-shaped 16-byte struct fields, decode
+        //      (DataTable* + FName RowName) — the gating fields
+        //      UniqueNpc + StaticNpcData + CurrentRole live here.
+        //   3. For FGuid / FText / bool / int / float, decode value
+        //   4. For everything else, hex-preview first 16 bytes
+        //
+        // Hypothesis under test: goat[0]'s UniqueNpc or StaticNpcData
+        // is empty/unresolvable, while vanilla dwarves have valid
+        // row handles. That's the per-entry restore gate.
+        void runProbeW_dumpField(const uint8_t* base, int32_t off, FProperty* prop, int depth)
+        {
+            if (!prop) return;
+            std::wstring pn; try { pn = prop->GetName(); } catch (...) {}
+            std::wstring ptype; try { ptype = prop->GetClass().GetName(); } catch (...) {}
+            int32_t psize = -1; try { psize = prop->GetSize(); } catch (...) {}
+            const uint8_t* field = base + off;
+            const wchar_t* indent = depth >= 2 ? STR("                ") :
+                                   depth == 1 ? STR("        ")           :
+                                                STR("    ");
+
+            if (ptype == STR("BoolProperty"))
+            {
+                bool b = (*field != 0);
+                VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : Bool   = {}\n"),
+                     indent, off, pn.c_str(), b ? STR("true") : STR("false"));
+            }
+            else if (ptype == STR("IntProperty"))
+            {
+                int32_t v = *reinterpret_cast<const int32_t*>(field);
+                VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : Int    = {}\n"),
+                     indent, off, pn.c_str(), v);
+            }
+            else if (ptype == STR("FloatProperty"))
+            {
+                float f = *reinterpret_cast<const float*>(field);
+                VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : Float  = {:.3f}\n"),
+                     indent, off, pn.c_str(), f);
+            }
+            else if (ptype == STR("ObjectProperty") || ptype == STR("ClassProperty"))
+            {
+                UObject* o = *reinterpret_cast<UObject* const*>(field);
+                std::wstring oc = (o && isObjectAlive(o)) ? safeClassName(o) : STR("null");
+                std::wstring on; try { if (o && isObjectAlive(o)) on = o->GetName(); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : Obj    = {:p} class='{}' name='{}'\n"),
+                     indent, off, pn.c_str(), (void*)o, oc.c_str(), on.c_str());
+            }
+            else if (ptype == STR("NameProperty"))
+            {
+                std::wstring nm = seh_fnameToString(const_cast<uint8_t*>(field));
+                VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : FName  = '{}'\n"),
+                     indent, off, pn.c_str(), nm.c_str());
+            }
+            else if (ptype == STR("StrProperty"))
+            {
+                std::wstring s = pv_readFString(field);
+                VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : FStr   = '{}'\n"),
+                     indent, off, pn.c_str(), s.c_str());
+            }
+            else if (ptype == STR("TextProperty"))
+            {
+                wchar_t tbuf[256]; seh_ftextToStringToBuf(const_cast<uint8_t*>(field), tbuf, 256);
+                VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : FText  = '{}'\n"),
+                     indent, off, pn.c_str(), tbuf);
+            }
+            else if (ptype == STR("StructProperty"))
+            {
+                auto* sp = CastField<FStructProperty>(prop);
+                UStruct* inner = sp ? sp->GetStruct() : nullptr;
+                std::wstring sname; try { if (inner) sname = inner->GetName(); } catch (...) {}
+                // RowHandle: (UObject* DataTable @+0, FName RowName @+8) → 16 bytes
+                bool isRowHandle =
+                    (sname == STR("DataTableRowHandle") ||
+                     sname == STR("MorUniqueNpcRowHandle") ||
+                     sname == STR("MorNPCRoleRowHandle") ||
+                     sname == STR("MorNPCTraitRowHandle") ||
+                     sname == STR("MorNPCActivityRowHandle"));
+                if (isRowHandle && psize >= 16)
+                {
+                    UObject* dt = *reinterpret_cast<UObject* const*>(field);
+                    std::wstring dtName = (dt && isObjectAlive(dt)) ? std::wstring(dt->GetName()) : std::wstring(STR("null"));
+                    std::wstring rn = seh_fnameToString(const_cast<uint8_t*>(field + 8));
+                    bool empty = (!dt && rn.empty());
+                    VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : {} DT={} RowName='{}'{}\n"),
+                         indent, off, pn.c_str(), sname.c_str(),
+                         dtName.c_str(), rn.empty() ? STR("(none)") : rn.c_str(),
+                         empty ? STR("  *** EMPTY ***") : STR(""));
+                }
+                else if (sname == STR("Guid") && psize >= 16)
+                {
+                    const uint32_t* g = reinterpret_cast<const uint32_t*>(field);
+                    VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : FGuid  = {:08X}-{:08X}-{:08X}-{:08X}\n"),
+                         indent, off, pn.c_str(), g[0], g[1], g[2], g[3]);
+                }
+                else if (sname == STR("Vector") && psize >= 12)
+                {
+                    const float* v = reinterpret_cast<const float*>(field);
+                    VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : FVec   = ({:.1f},{:.1f},{:.1f})\n"),
+                         indent, off, pn.c_str(), v[0], v[1], v[2]);
+                }
+                else if (depth < 2 && inner)
+                {
+                    // Recurse one level into the struct
+                    VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : Struct '{}' size={}  (recurse)\n"),
+                         indent, off, pn.c_str(), sname.c_str(), psize);
+                    try {
+                        for (auto* sub : inner->ForEachPropertyInChain())
+                        {
+                            if (!sub) continue;
+                            int32_t soff = -1; try { soff = sub->GetOffset_Internal(); } catch (...) {}
+                            runProbeW_dumpField(field, soff, sub, depth + 1);
+                        }
+                    } catch (...) {}
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : Struct '{}' size={}\n"),
+                         indent, off, pn.c_str(), sname.c_str(), psize);
+                }
+            }
+            else if (ptype == STR("ArrayProperty"))
+            {
+                const PVTArrayHdr* arr = reinterpret_cast<const PVTArrayHdr*>(field);
+                VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : TArray Num={} Max={} Data={:p}\n"),
+                     indent, off, pn.c_str(), arr->Num, arr->Max, arr->Data);
+            }
+            else
+            {
+                // Fall back to hex preview
+                int dump = psize > 0 && psize < 24 ? psize : 16;
+                std::wstring hex;
+                for (int i = 0; i < dump; ++i)
+                {
+                    wchar_t tmp[8]; std::swprintf(tmp, 8, L"%02X ", field[i]);
+                    hex += tmp;
+                }
+                VLOG(STR("[MoriaCppMod] [PathX-W] {}+0x{:04X} {:32} : {} size={} hex={}\n"),
+                     indent, off, pn.c_str(), ptype.c_str(), psize, hex.c_str());
+            }
+        }
+
+        void runProbeW()
+        {
+            VLOG(STR("[MoriaCppMod] [PathX-W] === Probe W: per-entry FMorNpcPersistentData dump ===\n"));
+
+            // Step 1: find the manager (same pattern as Probe V)
+            UObject* mgr = nullptr;
+            UClass* utilsCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MoriaUtils"));
+            if (utilsCls && isObjectAlive(utilsCls))
+            {
+                UObject* utilsCDO = nullptr;
+                try { utilsCDO = utilsCls->GetClassDefaultObject(); } catch (...) {}
+                if (utilsCDO && isObjectAlive(utilsCDO))
+                {
+                    auto* getMgrFn = utilsCls->GetFunctionByNameInChain(STR("GetNpcManager"));
+                    if (getMgrFn)
+                    {
+                        std::vector<uint8_t> buf(getMgrFn->GetParmsSize(), 0);
+                        auto* pWC = findParam(getMgrFn, STR("WorldContextObject"));
+                        if (pWC && m_localPC)
+                            *reinterpret_cast<UObject**>(buf.data() + pWC->GetOffset_Internal()) = m_localPC;
+                        try { safeProcessEvent(utilsCDO, getMgrFn, buf.data()); } catch (...) {}
+                        auto* pRet = findParam(getMgrFn, STR("ReturnValue"));
+                        if (pRet)
+                            mgr = *reinterpret_cast<UObject**>(buf.data() + pRet->GetOffset_Internal());
+                    }
+                }
+            }
+            if (!mgr || !isObjectAlive(mgr))
+            {
+                std::vector<UObject*> candidates;
+                if (findAllOfSafe(STR("MorNPCManager"), candidates))
+                {
+                    for (UObject* o : candidates)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        std::wstring cn = safeClassName(o);
+                        if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                        mgr = o; break;
+                    }
+                }
+            }
+            if (!mgr || !isObjectAlive(mgr))
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-W] manager not findable — bail\n"));
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [PathX-W] manager={:p} class={}\n"),
+                 (void*)mgr, safeClassName(mgr).c_str());
+
+            // Step 2: reflection — find PersistentData offset within FMorNPCInfo + its struct
+            UClass* mgrCls = nullptr;
+            try { mgrCls = mgr->GetClassPrivate(); } catch (...) {}
+            if (!mgrCls)
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-W] manager class null — bail\n"));
+                return;
+            }
+            int32_t offPersistentData = -1;
+            UStruct* persistentDataStruct = nullptr;
+            int32_t itemStride = 0x0260;
+            try {
+                auto* niProp = mgrCls->GetPropertyByNameInChain(STR("NpcInfo"));
+                auto* niStructProp = CastField<FStructProperty>(niProp);
+                if (niStructProp)
+                {
+                    UStruct* niStruct = niStructProp->GetStruct();
+                    if (niStruct)
+                    {
+                        auto* itemsProp = niStruct->GetPropertyByNameInChain(STR("Items"));
+                        auto* itemsArrProp = CastField<FArrayProperty>(itemsProp);
+                        if (itemsArrProp)
+                        {
+                            auto* innerStructProp = CastField<FStructProperty>(itemsArrProp->GetInner());
+                            if (innerStructProp)
+                            {
+                                UStruct* fMorNpcInfo = innerStructProp->GetStruct();
+                                if (auto* ss = static_cast<UScriptStruct*>(fMorNpcInfo))
+                                    itemStride = static_cast<int32_t>(ss->GetStructureSize());
+                                if (fMorNpcInfo)
+                                {
+                                    auto* pdProp = fMorNpcInfo->GetPropertyByNameInChain(STR("PersistentData"));
+                                    auto* pdStructProp = CastField<FStructProperty>(pdProp);
+                                    if (pdStructProp)
+                                    {
+                                        offPersistentData = pdProp->GetOffset_Internal();
+                                        persistentDataStruct = pdStructProp->GetStruct();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (...) {}
+
+            VLOG(STR("[MoriaCppMod] [PathX-W] reflection: itemStride=0x{:04X}, PersistentData offset=0x{:04X}, struct={:p}\n"),
+                 itemStride, offPersistentData, (void*)persistentDataStruct);
+            if (offPersistentData < 0 || !persistentDataStruct)
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-W] could not resolve PersistentData via reflection — bail\n"));
+                return;
+            }
+
+            // Step 3: walk NpcInfo.Items, dump every entry
+            uint8_t* mgrBase = reinterpret_cast<uint8_t*>(mgr);
+            uint8_t* arrayHeader = mgrBase + 0x03a0 + 0x0108;
+            uint8_t* itemsData = *reinterpret_cast<uint8_t**>(arrayHeader);
+            int32_t itemsNum   = *reinterpret_cast<int32_t*>(arrayHeader + 8);
+            VLOG(STR("[MoriaCppMod] [PathX-W] NpcInfo.Items: Data={:p} Num={}\n"),
+                 (void*)itemsData, itemsNum);
+            if (!itemsData || itemsNum <= 0 || itemsNum > 256)
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-W] (empty or bogus Num — skip)\n"));
+                return;
+            }
+
+            for (int i = 0; i < itemsNum; ++i)
+            {
+                uint8_t* entry = itemsData + (int64_t)i * itemStride;
+                uint8_t* persistentData = entry + offPersistentData;
+                VLOG(STR("[MoriaCppMod] [PathX-W] ━━━ Entry [{}] item@{:p} PersistentData@{:p} ━━━\n"),
+                     i, (void*)entry, (void*)persistentData);
+                try {
+                    for (auto* p : persistentDataStruct->ForEachPropertyInChain())
+                    {
+                        if (!p) continue;
+                        int32_t off = -1;
+                        try { off = p->GetOffset_Internal(); } catch (...) {}
+                        if (off < 0) continue;
+                        runProbeW_dumpField(persistentData, off, p, 0);
+                    }
+                } catch (...) {
+                    VLOG(STR("[MoriaCppMod] [PathX-W]   (exception during entry [{}] walk)\n"), i);
+                }
+            }
+            VLOG(STR("[MoriaCppMod] [PathX-W] === Probe W END ===\n"));
+        }
+
+        // [rc.56 PROBE X 2026-06-16] NPCUnique row enumeration.
+        // Scans every loaded UDataTable, finds the one whose RowStruct
+        // is MorUniqueNPCDefinition. Iterates rows, decodes per-row:
+        //   - CharacterName (FText)
+        //   - CharacterClass (TSoftClassPtr — first 24 bytes are
+        //     FSoftObjectPath: FName AssetPathName + FString SubPath)
+        // Logs the row whose CharacterClass softpath contains "Goat"
+        // as the *** GOAT ROW *** — that row name is the exact string
+        // rc.57 writes into UniqueNpc.RowName at bell-spawn.
+        void runProbeX()
+        {
+            VLOG(STR("[MoriaCppMod] [PathX-X] === Probe X: NPCUnique row enumeration ===\n"));
+
+            // Step 1: find every UDataTable whose RowStruct is MorUniqueNPCDefinition
+            std::vector<UObject*> tables;
+            findAllOfSafe(STR("DataTable"), tables);
+            VLOG(STR("[MoriaCppMod] [PathX-X] found {} live DataTables\n"), (int)tables.size());
+
+            UObject* targetDT = nullptr;
+            std::wstring targetName;
+            for (auto* dt : tables)
+            {
+                if (!dt || !isObjectAlive(dt)) continue;
+                std::wstring dtName; try { dtName = dt->GetName(); } catch (...) { continue; }
+                // Skip CDOs / archetypes
+                if (dtName.size() >= 9 && dtName.substr(0,9) == STR("Default__")) continue;
+
+                int rsOff = -2;
+                resolveOffset(dt, L"RowStruct", rsOff);
+                if (rsOff < 0) continue;
+                auto* base = reinterpret_cast<uint8_t*>(dt);
+                if (!isReadableMemory(base + rsOff, 8)) continue;
+                UStruct* rs = *reinterpret_cast<UStruct**>(base + rsOff);
+                if (!rs || !isObjectAlive(rs)) continue;
+                std::wstring rsName; try { rsName = rs->GetName(); } catch (...) { continue; }
+                if (rsName == STR("MorUniqueNPCDefinition"))
+                {
+                    targetDT = dt;
+                    targetName = dtName;
+                    break;
+                }
+            }
+
+            if (!targetDT)
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-X] *** No DataTable with RowStruct=MorUniqueNPCDefinition found — table may not be loaded yet ***\n"));
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [PathX-X] *** Target DT='{}' (ptr={:p}) ***\n"),
+                 targetName.c_str(), (void*)targetDT);
+
+            // Step 2: bind via DataTableUtil + resolve field offsets
+            DataTableUtil dt;
+            dt.bindFromObject(targetDT, targetName.c_str());
+            if (!dt.isBound() || !dt.rowStruct)
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-X] bindFromObject failed or rowStruct null\n"));
+                return;
+            }
+
+            int offCharName  = dt.resolvePropertyOffset(STR("CharacterName"));
+            int offCharClass = dt.resolvePropertyOffset(STR("CharacterClass"));
+            int offAppearance= dt.resolvePropertyOffset(STR("AppearancePreset"));
+            VLOG(STR("[MoriaCppMod] [PathX-X] field offsets: CharacterName=0x{:04X} CharacterClass=0x{:04X} AppearancePreset=0x{:04X}\n"),
+                 offCharName, offCharClass, offAppearance);
+
+            if (offCharClass < 0)
+            {
+                VLOG(STR("[MoriaCppMod] [PathX-X] CharacterClass field not resolvable — bail\n"));
+                return;
+            }
+
+            // Step 3: iterate rows
+            std::vector<std::wstring> rowNames = dt.getRowNames();
+            VLOG(STR("[MoriaCppMod] [PathX-X] {} rows\n"), (int)rowNames.size());
+
+            int goatHits = 0;
+            for (auto& rn : rowNames)
+            {
+                uint8_t* row = dt.findRowData(rn.c_str());
+                if (!row) continue;
+
+                // CharacterName (FText, 24 bytes — read via existing helper)
+                wchar_t nameBuf[256] = L"";
+                if (offCharName >= 0)
+                    seh_ftextToStringToBuf(row + offCharName, nameBuf, 256);
+
+                // CharacterClass — TSoftClassPtr<AMorCharacter>
+                // Layout starts with FSoftObjectPath (24 bytes):
+                //   FName AssetPathName (8 bytes)
+                //   FString SubPathString (16 bytes)
+                std::wstring assetPath = seh_fnameToString(row + offCharClass);
+                std::wstring subPath   = pv_readFString(row + offCharClass + 8);
+
+                bool isGoatRow =
+                    (assetPath.find(STR("Goat")) != std::wstring::npos) ||
+                    (assetPath.find(STR("goat")) != std::wstring::npos) ||
+                    (subPath.find(STR("Goat"))   != std::wstring::npos);
+
+                std::wstring marker = isGoatRow ? STR("  *** GOAT ROW — write this RowName='") + rn + STR("' ***") : STR("");
+                VLOG(STR("[MoriaCppMod] [PathX-X] Row='{}' CharacterName='{}' CharacterClass='{}{}{}'{}\n"),
+                     rn.c_str(), nameBuf,
+                     assetPath.c_str(),
+                     subPath.empty() ? STR("") : STR(":"),
+                     subPath.c_str(),
+                     marker.c_str());
+
+                if (isGoatRow) ++goatHits;
+            }
+
+            VLOG(STR("[MoriaCppMod] [PathX-X] === VERDICT: {} goat row(s) found ===\n"), goatHits);
+            VLOG(STR("[MoriaCppMod] [PathX-X] === Probe X END ===\n"));
+        }
+
+        // [rc.57 PROBE Y 2026-06-23] Wider net. Three passes:
+        //   Pass 1: re-decode DT_NPCUniqueCharacters with FIXED
+        //           CharacterClass offset (+16 within TSoftClassPtr)
+        //   Pass 2: iterate ALL DataTables with RowStruct=MorUniqueNPCDefinition
+        //   Pass 3: brute-force scan EVERY DataTable's RowMap for any
+        //           FName containing "NpcGoat" — catches the goat row
+        //           in any table regardless of row struct
+        void probeY_decodeOneDT(UObject* dt, const wchar_t* dtName)
+        {
+            DataTableUtil util;
+            util.bindFromObject(dt, dtName);
+            if (!util.isBound() || !util.rowStruct) return;
+
+            int offCharName  = util.resolvePropertyOffset(STR("CharacterName"));
+            int offCharClass = util.resolvePropertyOffset(STR("CharacterClass"));
+
+            std::vector<std::wstring> rowNames = util.getRowNames();
+            VLOG(STR("[MoriaCppMod] [PathX-Y]   table '{}' has {} rows (CharacterName=+0x{:04X} CharacterClass=+0x{:04X})\n"),
+                 dtName, (int)rowNames.size(), offCharName, offCharClass);
+
+            int goatHits = 0;
+            for (auto& rn : rowNames)
+            {
+                uint8_t* row = util.findRowData(rn.c_str());
+                if (!row) continue;
+
+                wchar_t nameBuf[256] = L"";
+                if (offCharName >= 0)
+                    seh_ftextToStringToBuf(row + offCharName, nameBuf, 256);
+
+                // FIXED: TSoftClassPtr layout per UE4.27:
+                //   +0  WeakPtr (8)
+                //   +8  TagAtLastTest (4) + pad (4)
+                //   +16 ObjectID.AssetPathName (FName)    ← READ HERE
+                //   +24 ObjectID.SubPathString (FString)
+                std::wstring assetPath, subPath;
+                if (offCharClass >= 0)
+                {
+                    assetPath = seh_fnameToString(row + offCharClass + 16);
+                    subPath   = pv_readFString(row + offCharClass + 24);
+                }
+
+                bool isGoatRow =
+                    (assetPath.find(STR("Goat")) != std::wstring::npos) ||
+                    (assetPath.find(STR("goat")) != std::wstring::npos) ||
+                    (subPath.find(STR("Goat"))   != std::wstring::npos);
+
+                std::wstring marker = isGoatRow
+                    ? (STR("  *** GOAT ROW — write this RowName='") + rn + STR("' ***"))
+                    : STR("");
+                VLOG(STR("[MoriaCppMod] [PathX-Y]     Row='{}' CharacterName='{}' CharacterClass='{}{}{}'{}\n"),
+                     rn.c_str(), nameBuf,
+                     assetPath.c_str(),
+                     subPath.empty() ? STR("") : STR(":"),
+                     subPath.c_str(),
+                     marker.c_str());
+                if (isGoatRow) ++goatHits;
+            }
+            VLOG(STR("[MoriaCppMod] [PathX-Y]   table '{}' goat row count = {}\n"), dtName, goatHits);
+        }
+
+        void runProbeY()
+        {
+            VLOG(STR("[MoriaCppMod] [PathX-Y] === Probe Y: wider net for goat row ===\n"));
+
+            std::vector<UObject*> tables;
+            findAllOfSafe(STR("DataTable"), tables);
+            VLOG(STR("[MoriaCppMod] [PathX-Y] {} live DataTables\n"), (int)tables.size());
+
+            // Pass 1+2: find ALL tables with MorUniqueNPCDefinition row struct
+            VLOG(STR("[MoriaCppMod] [PathX-Y] --- Pass 1+2: all MorUniqueNPCDefinition tables (FIXED CharacterClass offset) ---\n"));
+            int npcUniqueTables = 0;
+            for (auto* dt : tables)
+            {
+                if (!dt || !isObjectAlive(dt)) continue;
+                std::wstring dtName; try { dtName = dt->GetName(); } catch (...) { continue; }
+                if (dtName.size() >= 9 && dtName.substr(0,9) == STR("Default__")) continue;
+
+                int rsOff = -2;
+                resolveOffset(dt, L"RowStruct", rsOff);
+                if (rsOff < 0) continue;
+                auto* base = reinterpret_cast<uint8_t*>(dt);
+                if (!isReadableMemory(base + rsOff, 8)) continue;
+                UStruct* rs = *reinterpret_cast<UStruct**>(base + rsOff);
+                if (!rs || !isObjectAlive(rs)) continue;
+                std::wstring rsName; try { rsName = rs->GetName(); } catch (...) { continue; }
+                if (rsName != STR("MorUniqueNPCDefinition")) continue;
+
+                ++npcUniqueTables;
+                VLOG(STR("[MoriaCppMod] [PathX-Y] table #{} '{}' (ptr={:p})\n"),
+                     npcUniqueTables, dtName.c_str(), (void*)dt);
+                probeY_decodeOneDT(dt, dtName.c_str());
+            }
+            VLOG(STR("[MoriaCppMod] [PathX-Y] --- Pass 1+2 end: {} MorUniqueNPCDefinition tables ---\n"), npcUniqueTables);
+
+            // Pass 3: brute-force scan EVERY DataTable's row names + row
+            // bytes for any FName containing "NpcGoat" or "BP_NpcGoat".
+            // Catches the goat row regardless of row struct type.
+            VLOG(STR("[MoriaCppMod] [PathX-Y] --- Pass 3: brute-force scan for 'NpcGoat' in any DataTable ---\n"));
+            int totalTablesScanned = 0;
+            int totalHits = 0;
+            for (auto* dt : tables)
+            {
+                if (!dt || !isObjectAlive(dt)) continue;
+                std::wstring dtName; try { dtName = dt->GetName(); } catch (...) { continue; }
+                if (dtName.size() >= 9 && dtName.substr(0,9) == STR("Default__")) continue;
+
+                DataTableUtil util;
+                util.bindFromObject(dt, dtName.c_str());
+                if (!util.isBound()) continue;
+                ++totalTablesScanned;
+
+                // Get row map header to walk row keys + row data pointers
+                DataTableUtil::RowMapHeader hdr{};
+                if (!util.getRowMapHeader(hdr)) continue;
+                if (hdr.Num <= 0 || hdr.Num > 100000) continue;
+
+                int rowSize = util.rowSize > 0 ? util.rowSize : 0;
+                int hitRows = 0;
+                for (int i = 0; i < hdr.Num; ++i)
+                {
+                    uint8_t* elem = hdr.Data + i * DataTableUtil::SET_ELEMENT_SIZE;
+                    if (!isReadableMemory(elem, DataTableUtil::SET_ELEMENT_SIZE)) continue;
+                    uint8_t* rowData = *reinterpret_cast<uint8_t**>(elem + DataTableUtil::FNAME_SIZE);
+                    if (!rowData || rowSize <= 0 || !isReadableMemory(rowData, rowSize)) continue;
+
+                    // Sweep every 8-byte aligned position in the row,
+                    // try interpreting as FName, check if it decodes
+                    // to something containing "NpcGoat" or "BP_NpcGoat".
+                    bool sawGoatRefInRow = false;
+                    for (int j = 0; j + 8 <= rowSize; j += 8)
+                    {
+                        std::wstring fname = seh_fnameToString(rowData + j);
+                        if (fname.empty()) continue;
+                        if (fname.find(STR("NpcGoat")) != std::wstring::npos
+                         || fname.find(STR("BP_NpcGoat")) != std::wstring::npos)
+                        {
+                            // Decode row name
+                            FName rowNameFn;
+                            std::memcpy(&rowNameFn, elem, DataTableUtil::FNAME_SIZE);
+                            std::wstring rowName;
+                            try { rowName = rowNameFn.ToString(); } catch (...) {}
+
+                            VLOG(STR("[MoriaCppMod] [PathX-Y]   *** HIT: table='{}' rowName='{}' off=+0x{:04X} FName='{}' ***\n"),
+                                 dtName.c_str(), rowName.c_str(), j, fname.c_str());
+                            sawGoatRefInRow = true;
+                            ++totalHits;
+                            break; // one hit per row is enough
+                        }
+                    }
+                }
+                if (hitRows > 0)
+                {
+                    VLOG(STR("[MoriaCppMod] [PathX-Y]   table='{}' had {} goat-referencing rows\n"),
+                         dtName.c_str(), hitRows);
+                }
+            }
+            VLOG(STR("[MoriaCppMod] [PathX-Y] --- Pass 3 end: scanned {} tables, {} total goat-referencing rows ---\n"),
+                 totalTablesScanned, totalHits);
+
+            VLOG(STR("[MoriaCppMod] [PathX-Y] === Probe Y END ===\n"));
+        }
+
+        // [rc.59 AUTO-RESTORE 2026-06-26] Scan NpcInfo for entries
+        // with Name=='Rûdh'. For each marker entry with no live
+        // BP_NpcGoat actor matching its NpcGuid, invoke spawnBellGoat()
+        // to recreate the actor. Existing GuidAdopt logic finds the
+        // marker and binds the new actor to it — same flow as a user-
+        // initiated bell-ring, just triggered automatically at world load.
+        void autoRestoreGoatsFromMarker()
+        {
+            VLOG(STR("[MoriaCppMod] [AutoRestore] === scan NpcInfo for Name='Rûdh' markers ===\n"));
+
+            UObject* mgr = nullptr;
+            std::vector<UObject*> mgrs;
+            if (findAllOfSafe(STR("MorNPCManager"), mgrs))
+            {
+                for (UObject* o : mgrs)
+                {
+                    if (!o || !isObjectAlive(o)) continue;
+                    std::wstring cn = safeClassName(o);
+                    if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                    mgr = o; break;
+                }
+            }
+            if (!mgr)
+            {
+                VLOG(STR("[MoriaCppMod] [AutoRestore] MorNPCManager not findable — bail\n"));
+                return;
+            }
+
+            uint8_t* mgrBase = reinterpret_cast<uint8_t*>(mgr);
+            uint8_t* arrayHeader = mgrBase + 0x03a0 + 0x0108;
+            if (!isReadableMemory(arrayHeader, 16))
+            {
+                VLOG(STR("[MoriaCppMod] [AutoRestore] NpcInfo header unreadable — bail\n"));
+                return;
+            }
+            uint8_t* itemsData = *reinterpret_cast<uint8_t**>(arrayHeader);
+            int32_t  itemsNum  = *reinterpret_cast<int32_t*>(arrayHeader + 8);
+            constexpr int kStride  = 0x0260;
+            constexpr int kGuidOff = 0x001C;
+            constexpr int kNameOff = 0x0030;
+            if (!itemsData || itemsNum <= 0 || itemsNum > 500
+                || !isReadableMemory(itemsData, itemsNum * kStride))
+            {
+                VLOG(STR("[MoriaCppMod] [AutoRestore] Items region unreadable — bail\n"));
+                return;
+            }
+
+            // Collect marker entries' GUIDs
+            std::vector<std::array<uint8_t,16>> markerGuids;
+            for (int i = 0; i < itemsNum; ++i)
+            {
+                uint8_t* entry = itemsData + i * kStride;
+                wchar_t nameBuf[256] = L"";
+                seh_ftextToStringToBuf(entry + kNameOff, nameBuf, 256);
+                std::wstring nm = nameBuf;
+                if (nm == m_goatName)
+                {
+                    std::array<uint8_t,16> g{};
+                    std::memcpy(g.data(), entry + kGuidOff, 16);
+                    markerGuids.push_back(g);
+                    uint32_t* gu = reinterpret_cast<uint32_t*>(entry + kGuidOff);
+                    VLOG(STR("[MoriaCppMod] [AutoRestore] marker entry [{}] GUID={:08X}-{:08X}-{:08X}-{:08X}\n"),
+                         i, gu[0], gu[1], gu[2], gu[3]);
+                }
+            }
+            if (markerGuids.empty())
+            {
+                VLOG(STR("[MoriaCppMod] [AutoRestore] no Name='{}' markers in {} entries — nothing to restore\n"),
+                     m_goatName.c_str(), itemsNum);
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [AutoRestore] found {} marker entries\n"), (int)markerGuids.size());
+
+            // Check live BP_NpcGoat NpcGuids
+            std::vector<std::array<uint8_t,16>> liveGuids;
+            {
+                std::vector<UObject*> found;
+                if (seh_findAllOf(STR("BP_NpcGoat_C"), &found))
+                {
+                    UClass* goatCls = m_goatBPClass;
+                    UClass* npcCompCls = UObjectGlobals::StaticFindObject<UClass*>(
+                        nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+                    for (auto* o : found)
+                    {
+                        if (!o || !isObjectAlive(o)) continue;
+                        if (goatCls && o == reinterpret_cast<UObject*>(goatCls)) continue;
+                        if (goatCls && o == goatCls->GetClassDefaultObject()) continue;
+                        if (!npcCompCls) break;
+                        auto* getCompFn = o->GetFunctionByNameInChain(STR("GetComponentByClass"));
+                        if (!getCompFn) continue;
+                        struct { UClass* InClass; UObject* Ret; } parms{};
+                        parms.InClass = npcCompCls;
+                        if (!safeProcessEvent(o, getCompFn, &parms)) continue;
+                        UObject* npcComp = parms.Ret;
+                        if (!npcComp || !isObjectAlive(npcComp)) continue;
+                        uint8_t* guidPtr = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+                        if (!guidPtr) continue;
+                        std::array<uint8_t,16> g{};
+                        std::memcpy(g.data(), guidPtr, 16);
+                        liveGuids.push_back(g);
+                    }
+                }
+            }
+            VLOG(STR("[MoriaCppMod] [AutoRestore] {} live BP_NpcGoat with NpcGuids\n"), (int)liveGuids.size());
+
+            // For each marker without a live actor, spawn one (at most one per call)
+            int spawned = 0;
+            for (auto& mg : markerGuids)
+            {
+                bool alreadyAlive = false;
+                for (auto& lg : liveGuids)
+                {
+                    if (std::memcmp(lg.data(), mg.data(), 16) == 0)
+                    {
+                        alreadyAlive = true; break;
+                    }
+                }
+                if (alreadyAlive)
+                {
+                    uint32_t* gu = reinterpret_cast<uint32_t*>(mg.data());
+                    VLOG(STR("[MoriaCppMod] [AutoRestore] marker GUID={:08X}-... already has live actor — skip\n"), gu[0]);
+                    continue;
+                }
+                uint32_t* gu = reinterpret_cast<uint32_t*>(mg.data());
+                VLOG(STR("[MoriaCppMod] [AutoRestore] *** spawning goat for orphan marker GUID={:08X}-{:08X}-{:08X}-{:08X} ***\n"),
+                     gu[0], gu[1], gu[2], gu[3]);
+                m_lastBellToggleMs = 0;  // reset bell cooldown so spawnBellGoat proceeds
+                spawnBellGoat();
+                ++spawned;
+                break;
+            }
+            VLOG(STR("[MoriaCppMod] [AutoRestore] === END — spawned {} ===\n"), spawned);
+        }
+
+        // [rc.60 TAME GOAT 2026-06-28] Strip dwarven-NPC components and
+        // stop the behavior tree so the goat behaves like wild fauna
+        // (passive, controllable via our MoveToActor calls) rather
+        // than a working dwarf settler. Called after spawn from
+        // spawnBellGoat once the actor is fully constructed.
+        void tameSpawnedGoat(UObject* goat)
+        {
+            if (!goat || !isObjectAlive(goat)) return;
+            VLOG(STR("[MoriaCppMod] [TameGoat] === taming spawned goat={:p} ===\n"), (void*)goat);
+
+            // === Step 1: Destroy dwarven inventory child actors ===
+            // DwarfMirror BP attaches these at construction. They have to go.
+            // Class names to strip:
+            const wchar_t* dwarfInvClasses[] = {
+                STR("BP_ContainerItem_Dwarf_BodyInventoryNPC_C"),
+                STR("BP_ContainerItem_Dwarf_Slot_Helmet_C"),
+                STR("BP_ContainerItem_Dwarf_Slot_Torso_C"),
+                STR("BP_ContainerItem_Dwarf_Slot_Boots_C"),
+                STR("BP_ContainerItem_Dwarf_Slot_Gloves_C"),
+                STR("BP_ContainerItem_Dwarf_Slot_MainHandNPC_C"),
+                STR("BP_ContainerItem_Dwarf_Slot_OffHandNPC_C"),
+            };
+            int destroyedCount = 0;
+            for (const wchar_t* clsName : dwarfInvClasses)
+            {
+                std::vector<UObject*> found;
+                if (!seh_findAllOf(clsName, &found)) continue;
+                for (UObject* item : found)
+                {
+                    if (!item || !isObjectAlive(item)) continue;
+                    // Only destroy items whose owner is our goat
+                    UObject* owner = nullptr;
+                    if (auto* getOwnerFn = item->GetFunctionByNameInChain(STR("GetOwner")))
+                    {
+                        struct { UObject* Ret; } op{};
+                        if (safeProcessEvent(item, getOwnerFn, &op)) owner = op.Ret;
+                    }
+                    if (owner != goat) continue;
+
+                    if (auto* destFn = item->GetFunctionByNameInChain(STR("K2_DestroyActor")))
+                    {
+                        safeProcessEvent(item, destFn, nullptr);
+                        ++destroyedCount;
+                        VLOG(STR("[MoriaCppMod] [TameGoat] destroyed dwarven inventory child '{}' @{:p}\n"),
+                             clsName, (void*)item);
+                    }
+                }
+            }
+            VLOG(STR("[MoriaCppMod] [TameGoat] destroyed {} dwarven inventory child actors\n"), destroyedCount);
+
+            // === Step 2: Stop behavior tree on the goat's AI controller ===
+            UObject* ctrl = nullptr;
+            if (auto* getCtrlFn = goat->GetFunctionByNameInChain(STR("GetController")))
+            {
+                struct { UObject* Ret; } cp{};
+                if (safeProcessEvent(goat, getCtrlFn, &cp)) ctrl = cp.Ret;
+            }
+            if (!ctrl || !isObjectAlive(ctrl))
+            {
+                VLOG(STR("[MoriaCppMod] [TameGoat] no AI controller found — skip BT stop\n"));
+            }
+            else
+            {
+                std::wstring ctrlCls = safeClassName(ctrl);
+                VLOG(STR("[MoriaCppMod] [TameGoat] AI controller class='{}'\n"), ctrlCls.c_str());
+
+                // Find BrainComponent (BehaviorTreeComponent is a subclass)
+                UClass* brainCls = UObjectGlobals::StaticFindObject<UClass*>(
+                    nullptr, nullptr, STR("/Script/AIModule.BrainComponent"));
+                UObject* brain = nullptr;
+                if (brainCls)
+                {
+                    if (auto* getCompFn = ctrl->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                    {
+                        struct { UClass* C; UObject* Ret; } bp{};
+                        bp.C = brainCls;
+                        if (safeProcessEvent(ctrl, getCompFn, &bp)) brain = bp.Ret;
+                    }
+                }
+                if (!brain || !isObjectAlive(brain))
+                {
+                    VLOG(STR("[MoriaCppMod] [TameGoat] no BrainComponent found on controller — BT not stopped\n"));
+                }
+                else
+                {
+                    std::wstring brainCl = safeClassName(brain);
+                    VLOG(STR("[MoriaCppMod] [TameGoat] BrainComponent class='{}'\n"), brainCl.c_str());
+
+                    // Call StopLogic(FString Reason)
+                    if (auto* stopFn = brain->GetFunctionByNameInChain(STR("StopLogic")))
+                    {
+                        int sz = stopFn->GetParmsSize();
+                        std::vector<uint8_t> sbuf(sz, 0);
+                        // Pack FString "tamed by porter-goat mod" — FString = (TCHAR* Data, int32 Num, int32 Max)
+                        const wchar_t* reason = STR("tamed by porter-goat mod");
+                        int32_t rlen = (int32_t)wcslen(reason) + 1;
+                        void* rbuf = FMemory::Malloc(rlen * sizeof(wchar_t), 8);
+                        if (rbuf)
+                        {
+                            wmemcpy(static_cast<wchar_t*>(rbuf), reason, rlen);
+                            auto* pReason = findParam(stopFn, STR("Reason"));
+                            if (pReason)
+                            {
+                                uint8_t* p = sbuf.data() + pReason->GetOffset_Internal();
+                                *reinterpret_cast<void**>(p + 0)  = rbuf;
+                                *reinterpret_cast<int32_t*>(p + 8)  = rlen;
+                                *reinterpret_cast<int32_t*>(p + 12) = rlen;
+                            }
+                            safeProcessEvent(brain, stopFn, sbuf.data());
+                            VLOG(STR("[MoriaCppMod] [TameGoat] StopLogic('{}') fired on BrainComponent\n"), reason);
+                            // Note: BP's StopLogic typically copies the FString, so we can free our buffer.
+                            // If it didn't, we'd leak — small leak, acceptable.
+                            FMemory::Free(rbuf);
+                        }
+                    }
+                    else
+                    {
+                        VLOG(STR("[MoriaCppMod] [TameGoat] StopLogic UFunction not findable on BrainComponent\n"));
+                    }
+                }
+            }
+
+            VLOG(STR("[MoriaCppMod] [TameGoat] === done ===\n"));
+        }
+
+        // [rc.50 WRITE GOAT NAME 2026-06-14] Speculative name-write at
+        // bell-spawn. Tries candidate UFunctions in priority order on
+        // the goat actor. Auto-detects parm type (FText / FString /
+        // FName) and packs accordingly. Logs success/failure for each.
+        bool writeGoatNameToEntry(UObject* goat, const std::wstring& name)
+        {
+            if (!goat || !isObjectAlive(goat)) return false;
+            UClass* cls = nullptr;
+            try { cls = goat->GetClassPrivate(); } catch (...) {}
+            if (!cls) return false;
+
+            // Candidate UFunction names in priority order
+            static const wchar_t* candidates[] = {
+                STR("SetCustomDisplayName"),
+                STR("SetCustomName"),
+                STR("SetDisplayName"),
+                STR("SetNpcName"),
+                STR("RenameNpc"),
+                STR("Rename"),
+                STR("SetName"),
+                nullptr
+            };
+
+            for (const wchar_t** c = candidates; *c; ++c)
+            {
+                UFunction* fn = nullptr;
+                try { fn = goat->GetFunctionByNameInChain(*c); } catch (...) { continue; }
+                if (!fn)
+                {
+                    VLOG(STR("[MoriaCppMod] [NameWrite] '{}' not found, trying next\n"), *c);
+                    continue;
+                }
+                int parmsSize = 0;
+                try { parmsSize = fn->GetParmsSize(); } catch (...) {}
+                VLOG(STR("[MoriaCppMod] [NameWrite] '{}' found (ParmsSize={}) — attempting call\n"),
+                     *c, parmsSize);
+
+                // Find first non-return param
+                FProperty* pFirst = nullptr;
+                try {
+                    for (auto* p : fn->ForEachProperty())
+                    {
+                        if (!p) continue;
+                        uint64_t pflags = 0;
+                        try { pflags = static_cast<uint64_t>(p->GetPropertyFlags()); } catch (...) {}
+                        bool isParm = (pflags & 0x0000000000000080ULL) != 0;
+                        bool isReturn = (pflags & 0x0000000000000400ULL) != 0;
+                        if (isParm && !isReturn) { pFirst = p; break; }
+                    }
+                } catch (...) {}
+                if (!pFirst)
+                {
+                    VLOG(STR("[MoriaCppMod] [NameWrite] '{}' has no input parm — trying next\n"), *c);
+                    continue;
+                }
+
+                std::wstring ptype; try { ptype = pFirst->GetClass().GetName(); } catch (...) {}
+                std::vector<uint8_t> parms(parmsSize, 0);
+                uint8_t* parmBytes = parms.data() + pFirst->GetOffset_Internal();
+                bool packed = false;
+
+                if (ptype == STR("StrProperty"))
+                {
+                    // FString = { wchar_t* Data; int32 Num; int32 Max; } = 16 bytes
+                    int32_t strLen = static_cast<int32_t>(name.size()) + 1;
+                    void* strBuf = FMemory::Malloc(strLen * sizeof(wchar_t), 8);
+                    if (strBuf)
+                    {
+                        wmemcpy(static_cast<wchar_t*>(strBuf), name.c_str(), strLen);
+                        *reinterpret_cast<void**>   (parmBytes + 0)  = strBuf;
+                        *reinterpret_cast<int32_t*> (parmBytes + 8)  = strLen;
+                        *reinterpret_cast<int32_t*> (parmBytes + 12) = strLen;
+                        packed = true;
+                    }
+                }
+                else if (ptype == STR("NameProperty"))
+                {
+                    // FName = { uint32 ComparisonIndex; uint32 Number; } = 8 bytes
+                    RC::Unreal::FName nameId(name.c_str(), RC::Unreal::FNAME_Add);
+                    std::memcpy(parmBytes, &nameId, sizeof(RC::Unreal::FName));
+                    packed = true;
+                }
+                else if (ptype == STR("TextProperty"))
+                {
+                    // FText is 24 bytes via UE4SS: TSharedPtr to FTextData + flags.
+                    // Construct via KismetTextLibrary.Conv_StringToText, then memcpy.
+                    UObject* ktl = UObjectGlobals::StaticFindObject<UObject*>(
+                        nullptr, nullptr, STR("/Script/Engine.Default__KismetTextLibrary"));
+                    if (!ktl)
+                    {
+                        VLOG(STR("[MoriaCppMod] [NameWrite] KismetTextLibrary CDO not found for FText path — trying next\n"));
+                        continue;
+                    }
+                    UFunction* convFn = nullptr;
+                    try { convFn = ktl->GetFunctionByNameInChain(STR("Conv_StringToText")); } catch (...) {}
+                    if (!convFn)
+                    {
+                        VLOG(STR("[MoriaCppMod] [NameWrite] Conv_StringToText not found — trying next\n"));
+                        continue;
+                    }
+                    int csz = convFn->GetParmsSize();
+                    std::vector<uint8_t> cparms(csz, 0);
+                    auto* pStr = findParam(convFn, STR("InString"));
+                    auto* pRet = findParam(convFn, STR("ReturnValue"));
+                    if (!pStr || !pRet)
+                    {
+                        VLOG(STR("[MoriaCppMod] [NameWrite] Conv_StringToText parms not resolvable — trying next\n"));
+                        continue;
+                    }
+                    int32_t strLen = static_cast<int32_t>(name.size()) + 1;
+                    void* strBuf = FMemory::Malloc(strLen * sizeof(wchar_t), 8);
+                    if (!strBuf)
+                    {
+                        VLOG(STR("[MoriaCppMod] [NameWrite] FString alloc failed — trying next\n"));
+                        continue;
+                    }
+                    wmemcpy(static_cast<wchar_t*>(strBuf), name.c_str(), strLen);
+                    uint8_t* sP = cparms.data() + pStr->GetOffset_Internal();
+                    *reinterpret_cast<void**>   (sP + 0)  = strBuf;
+                    *reinterpret_cast<int32_t*> (sP + 8)  = strLen;
+                    *reinterpret_cast<int32_t*> (sP + 12) = strLen;
+                    try { safeProcessEvent(ktl, convFn, cparms.data()); }
+                    catch (...) { continue; }
+                    // FText returned; memcpy from cparms[+pRet] into parmBytes
+                    int retSz = pRet->GetSize();
+                    std::memcpy(parmBytes, cparms.data() + pRet->GetOffset_Internal(), retSz);
+                    packed = true;
+                    VLOG(STR("[MoriaCppMod] [NameWrite] Constructed FText via Conv_StringToText (size={} bytes)\n"), retSz);
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [NameWrite] '{}' parm type '{}' unsupported — trying next\n"),
+                         *c, ptype.c_str());
+                    continue;
+                }
+
+                if (!packed) continue;
+
+                int32_t preNum = readNpcInfoItemsNum();
+                try { safeProcessEvent(goat, fn, parms.data()); }
+                catch (...)
+                {
+                    VLOG(STR("[MoriaCppMod] [NameWrite] PE threw on '{}' — trying next\n"), *c);
+                    continue;
+                }
+                int32_t postNum = readNpcInfoItemsNum();
+                VLOG(STR("[MoriaCppMod] [NameWrite] SUCCESS via '{}' (parm type={}); NpcInfo.Num: {} → {} (delta={})\n"),
+                     *c, ptype.c_str(), preNum, postNum, postNum - preNum);
+                return true;
+            }
+
+            VLOG(STR("[MoriaCppMod] [NameWrite] No candidate UFunction worked — name marker NOT set\n"));
+            return false;
+        }
+
+        // [rc.51 DIRECT NAME WRITE 2026-06-14] Probe T (rc.50) confirmed no
+        // name-write UFunction exists on BP_NpcGoat_C or MorNPCComponent.
+        // Pivoting to direct memory write of FText into the NpcInfo entry's
+        // Name field (abs offset +0x030 within FMorNPCInfo, FText is 24 bytes
+        // per Probe T parm size).
+        //
+        // Approach:
+        //   1. Find the NpcInfo entry matching the goat's NpcGuid
+        //   2. Construct FText('Rûdh') via Kismet's Conv_StringToText (proven
+        //      via writeGoatNameToEntry FText-path code)
+        //   3. memcpy 24 bytes into entry + 0x030
+        //
+        // Refcount safety: Conv_StringToText returns FText with TSharedRef
+        // internals (refcount=1). Our parm buffer is std::vector<uint8_t> —
+        // no FText destructor runs when vector destructs, so refcount stays
+        // intact. NpcInfo entry's Name now holds a legitimate ref.
+        bool writeGoatNameDirectToNpcInfoEntry(const uint8_t* targetGuid16, const std::wstring& name)
+        {
+            // Find MorNPCManager singleton
+            UObject* mgr = nullptr;
+            std::vector<UObject*> mgrs;
+            if (findAllOfSafe(STR("MorNPCManager"), mgrs))
+            {
+                for (UObject* o : mgrs)
+                {
+                    if (!o || !isObjectAlive(o)) continue;
+                    std::wstring cn = safeClassName(o);
+                    if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                    mgr = o; break;
+                }
+            }
+            if (!mgr)
+            {
+                VLOG(STR("[MoriaCppMod] [NameWriteDirect] MorNPCManager not findable — bail\n"));
+                return false;
+            }
+
+            uint8_t* niBase   = reinterpret_cast<uint8_t*>(mgr) + 0x03a0;
+            uint8_t* itemsHdr = niBase + 0x0108;
+            if (!isReadableMemory(itemsHdr, 16))
+            {
+                VLOG(STR("[MoriaCppMod] [NameWriteDirect] NpcInfo.Items header unreadable — bail\n"));
+                return false;
+            }
+            uint8_t* itemsData = *reinterpret_cast<uint8_t**>(itemsHdr);
+            int32_t  itemsNum  = *reinterpret_cast<int32_t*>(itemsHdr + 8);
+            constexpr int kStride  = 0x260;
+            constexpr int kGuidOff = 0x001c;
+            constexpr int kNameOff = 0x0030;
+            if (!itemsData || itemsNum <= 0 || itemsNum > 500
+                || !isReadableMemory(itemsData, itemsNum * kStride))
+            {
+                VLOG(STR("[MoriaCppMod] [NameWriteDirect] NpcInfo entries unreadable — bail\n"));
+                return false;
+            }
+
+            // Find entry matching target GUID
+            int matchIdx = -1;
+            for (int i = 0; i < itemsNum; ++i)
+            {
+                uint8_t* entry = itemsData + i * kStride;
+                if (std::memcmp(entry + kGuidOff, targetGuid16, 16) == 0)
+                {
+                    matchIdx = i; break;
+                }
+            }
+            if (matchIdx < 0)
+            {
+                uint32_t* tg = reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(targetGuid16));
+                VLOG(STR("[MoriaCppMod] [NameWriteDirect] GUID {:08X}-{:08X}-{:08X}-{:08X} not found in {} entries — bail\n"),
+                     tg[0], tg[1], tg[2], tg[3], itemsNum);
+                return false;
+            }
+
+            uint32_t* tg = reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(targetGuid16));
+            VLOG(STR("[MoriaCppMod] [NameWriteDirect] Found target entry at NpcInfo[{}] GUID={:08X}-{:08X}-{:08X}-{:08X}\n"),
+                 matchIdx, tg[0], tg[1], tg[2], tg[3]);
+
+            // Construct FText via Conv_StringToText
+            UObject* ktl = UObjectGlobals::StaticFindObject<UObject*>(
+                nullptr, nullptr, STR("/Script/Engine.Default__KismetTextLibrary"));
+            if (!ktl)
+            {
+                VLOG(STR("[MoriaCppMod] [NameWriteDirect] KismetTextLibrary CDO not found — bail\n"));
+                return false;
+            }
+            UFunction* convFn = nullptr;
+            try { convFn = ktl->GetFunctionByNameInChain(STR("Conv_StringToText")); } catch (...) {}
+            if (!convFn)
+            {
+                VLOG(STR("[MoriaCppMod] [NameWriteDirect] Conv_StringToText UFunction not found — bail\n"));
+                return false;
+            }
+            auto* pStr = findParam(convFn, STR("InString"));
+            auto* pRet = findParam(convFn, STR("ReturnValue"));
+            if (!pStr || !pRet)
+            {
+                VLOG(STR("[MoriaCppMod] [NameWriteDirect] Conv_StringToText parms not resolvable — bail\n"));
+                return false;
+            }
+            int csz = convFn->GetParmsSize();
+            std::vector<uint8_t> cparms(csz, 0);
+
+            // Pack FString InString
+            int32_t strLen = static_cast<int32_t>(name.size()) + 1;
+            void* strBuf = FMemory::Malloc(strLen * sizeof(wchar_t), 8);
+            if (!strBuf)
+            {
+                VLOG(STR("[MoriaCppMod] [NameWriteDirect] FString alloc failed — bail\n"));
+                return false;
+            }
+            wmemcpy(static_cast<wchar_t*>(strBuf), name.c_str(), strLen);
+            uint8_t* sP = cparms.data() + pStr->GetOffset_Internal();
+            *reinterpret_cast<void**>   (sP + 0)  = strBuf;
+            *reinterpret_cast<int32_t*> (sP + 8)  = strLen;
+            *reinterpret_cast<int32_t*> (sP + 12) = strLen;
+
+            try { safeProcessEvent(ktl, convFn, cparms.data()); }
+            catch (...)
+            {
+                VLOG(STR("[MoriaCppMod] [NameWriteDirect] Conv_StringToText PE threw — bail\n"));
+                return false;
+            }
+
+            // Read returned FText size (should be 24 per Probe T)
+            int textSz = pRet->GetSize();
+            if (textSz <= 0 || textSz > 64)
+            {
+                VLOG(STR("[MoriaCppMod] [NameWriteDirect] FText return size {} unexpected — bail\n"), textSz);
+                return false;
+            }
+
+            // memcpy FText (textSz bytes) from cparms[+pRet] to entry + 0x030
+            uint8_t* entry = itemsData + matchIdx * kStride;
+            uint8_t* src = cparms.data() + pRet->GetOffset_Internal();
+            uint8_t* dst = entry + kNameOff;
+
+            // Log src/dst bytes BEFORE write for diagnostics
+            VLOG(STR("[MoriaCppMod] [NameWriteDirect] Pre-write entry Name FText bytes (24): {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}...\n"),
+                 dst[0], dst[1], dst[2], dst[3], dst[4], dst[5], dst[6], dst[7]);
+            VLOG(STR("[MoriaCppMod] [NameWriteDirect] Constructed FText bytes (24): {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}...\n"),
+                 src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7]);
+
+            std::memcpy(dst, src, textSz);
+
+            // Verify by reading back
+            wchar_t verifyBuf[256];
+            seh_ftextToStringToBuf(dst, verifyBuf, 256);
+            std::wstring verifyStr = verifyBuf;
+            VLOG(STR("[MoriaCppMod] [NameWriteDirect] Wrote FText to entry[{}]+0x{:04X}; readback Name='{}'\n"),
+                 matchIdx, (unsigned)kNameOff, verifyStr.c_str());
+
+            return verifyStr == name;
+        }
+
+        // [rc.58 UNIQUENPC ROW WRITE 2026-06-24] Find the NpcInfo entry
+        // matching targetGuid16 and write FName('Goat') into its
+        // PersistentData.UniqueNpc.RowName field. This is the per-entry
+        // restore key — without it the manager's reload code has no
+        // DT_NPCUniqueCharacters row to look up, and the actor isn't
+        // recreated. Paired with DC's pak edit that adds the 'Goat' row
+        // to DT_NPCUniqueCharacters.
+        //
+        // Layout (from Probe W):
+        //   entry stride                              = 0x260
+        //   PersistentData base within entry          = +0x10
+        //   UniqueNpc (FMorUniqueNpcRowHandle, 16B)   = +0x01A0 within PersistentData
+        //   UniqueNpc.RowName (FName, 8B)             = +8 within UniqueNpc
+        //   Absolute: entry + 0x10 + 0x01A0 + 8       = entry + 0x01B8
+        bool writeUniqueNpcRowNameToEntry(const uint8_t* targetGuid16, const wchar_t* rowName)
+        {
+            if (!targetGuid16 || !rowName || !rowName[0]) return false;
+
+            UObject* mgr = nullptr;
+            std::vector<UObject*> mgrs;
+            if (findAllOfSafe(STR("MorNPCManager"), mgrs))
+            {
+                for (UObject* o : mgrs)
+                {
+                    if (!o || !isObjectAlive(o)) continue;
+                    std::wstring cn = safeClassName(o);
+                    if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                    mgr = o; break;
+                }
+            }
+            if (!mgr)
+            {
+                VLOG(STR("[MoriaCppMod] [UniqueNpcWrite] MorNPCManager not findable — bail\n"));
+                return false;
+            }
+
+            uint8_t* niBase   = reinterpret_cast<uint8_t*>(mgr) + 0x03a0;
+            uint8_t* itemsHdr = niBase + 0x0108;
+            if (!isReadableMemory(itemsHdr, 16))
+            {
+                VLOG(STR("[MoriaCppMod] [UniqueNpcWrite] NpcInfo.Items header unreadable — bail\n"));
+                return false;
+            }
+            uint8_t* itemsData = *reinterpret_cast<uint8_t**>(itemsHdr);
+            int32_t  itemsNum  = *reinterpret_cast<int32_t*>(itemsHdr + 8);
+            constexpr int kStride           = 0x260;
+            constexpr int kGuidOff          = 0x001c;
+            constexpr int kUniqueRowNameOff = 0x01b8;
+            if (!itemsData || itemsNum <= 0 || itemsNum > 500
+                || !isReadableMemory(itemsData, itemsNum * kStride))
+            {
+                VLOG(STR("[MoriaCppMod] [UniqueNpcWrite] NpcInfo entries unreadable — bail\n"));
+                return false;
+            }
+
+            int matchIdx = -1;
+            for (int i = 0; i < itemsNum; ++i)
+            {
+                uint8_t* entry = itemsData + i * kStride;
+                if (std::memcmp(entry + kGuidOff, targetGuid16, 16) == 0)
+                {
+                    matchIdx = i; break;
+                }
+            }
+            if (matchIdx < 0)
+            {
+                uint32_t* tg = reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(targetGuid16));
+                VLOG(STR("[MoriaCppMod] [UniqueNpcWrite] GUID {:08X}-{:08X}-{:08X}-{:08X} not found in {} entries — bail\n"),
+                     tg[0], tg[1], tg[2], tg[3], itemsNum);
+                return false;
+            }
+
+            uint8_t* entry = itemsData + matchIdx * kStride;
+            uint8_t* dst   = entry + kUniqueRowNameOff;
+
+            // Read pre-write bytes
+            VLOG(STR("[MoriaCppMod] [UniqueNpcWrite] Pre-write UniqueNpc.RowName bytes (8): {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}\n"),
+                 dst[0], dst[1], dst[2], dst[3], dst[4], dst[5], dst[6], dst[7]);
+            std::wstring preName = seh_fnameToString(dst);
+            VLOG(STR("[MoriaCppMod] [UniqueNpcWrite] Pre-write UniqueNpc.RowName decoded = '{}'\n"),
+                 preName.c_str());
+
+            // Construct FName via global pool add
+            RC::Unreal::FName rowFName(rowName, RC::Unreal::FNAME_Add);
+            std::memcpy(dst, &rowFName, 8);
+
+            // Verify by reading back
+            std::wstring postName = seh_fnameToString(dst);
+            VLOG(STR("[MoriaCppMod] [UniqueNpcWrite] Wrote FName('{}') to entry[{}]+0x{:04X}; readback RowName='{}'\n"),
+                 rowName, matchIdx, (unsigned)kUniqueRowNameOff, postName.c_str());
+
+            return postName == std::wstring(rowName);
+        }
+
+        // [rc.48 STORE RUNTIME ACTOR 2026-06-14] Call
+        // WorldState.StoreRuntimeActor(goat, &handle, bStoreStability=true)
+        // via PE. This is the missing piece that registers the goat actor
+        // with WorldState's save graph — without it the actor is destroyed
+        // on world unload (as Probe P consistently confirmed).
+        //
+        // Per Q.2 enumeration, ParmsSize=42:
+        //   parms[0..7]   = Actor* (8 bytes)
+        //   parms[8..39]  = FRuntimeActorHandle InOut (32 bytes, zero-init)
+        //   parms[40]     = bool bStoreStability (1 byte, true)
+        //   parms[41]     = bool ReturnValue (1 byte, engine fills)
+        //
+        // Logs handle bytes for struct-layout decode.
+        bool storeGoatInWorldState(UObject* goat)
+        {
+            if (!goat || !isObjectAlive(goat))
+            {
+                VLOG(STR("[MoriaCppMod] [WorldStore] goat null/dead — skip\n"));
+                return false;
+            }
+            UObject* ws = nullptr;
+            std::vector<UObject*> wsCands;
+            if (findAllOfSafe(STR("MorSaveSystemWorldState"), wsCands))
+            {
+                for (UObject* o : wsCands)
+                {
+                    if (!o || !isObjectAlive(o)) continue;
+                    std::wstring cn = safeClassName(o);
+                    if (cn.size() >= 9 && cn.substr(0,9) == STR("Default__")) continue;
+                    ws = o; break;
+                }
+            }
+            if (!ws)
+            {
+                VLOG(STR("[MoriaCppMod] [WorldStore] WorldState singleton not findable\n"));
+                return false;
+            }
+            UFunction* storeFn = nullptr;
+            try { storeFn = ws->GetFunctionByNameInChain(STR("StoreRuntimeActor")); } catch (...) {}
+            if (!storeFn)
+            {
+                VLOG(STR("[MoriaCppMod] [WorldStore] StoreRuntimeActor UFunction not found\n"));
+                return false;
+            }
+            int parmsSize = 0;
+            try { parmsSize = storeFn->GetParmsSize(); } catch (...) {}
+            if (parmsSize != 42)
+            {
+                VLOG(STR("[MoriaCppMod] [WorldStore] WARN: ParmsSize={} (expected 42 per Q.2 enumeration)\n"),
+                     parmsSize);
+            }
+            std::vector<uint8_t> parms(parmsSize > 0 ? parmsSize : 42, 0);
+
+            // Resolve parm offsets by name to avoid hard-coded layout assumptions
+            auto* pActor   = findParam(storeFn, STR("Actor"));
+            auto* pHandle  = findParam(storeFn, STR("InOutRuntimeActorHandle"));
+            auto* pStab    = findParam(storeFn, STR("bStoreStability"));
+            auto* pRet     = findParam(storeFn, STR("ReturnValue"));
+            if (!pActor || !pHandle || !pStab || !pRet)
+            {
+                VLOG(STR("[MoriaCppMod] [WorldStore] Missing parm reflection: Actor={} Handle={} Stab={} Ret={}\n"),
+                     (void*)pActor, (void*)pHandle, (void*)pStab, (void*)pRet);
+                return false;
+            }
+            *reinterpret_cast<UObject**>(parms.data() + pActor->GetOffset_Internal()) = goat;
+            // [rc.52 STABILITY FLIP 2026-06-14] DC Tier 1 hypothesis: maybe
+            // bStoreStability has inverted semantics — true=transient,
+            // false=stable. We tried true in rc.48-rc.51 (returned SUCCESS
+            // but actor didn't persist). Trying false now. If items
+            // persist after reload → DC was right, ship rc.52. If not,
+            // escalate back to DC for source reading.
+            *reinterpret_cast<bool*>(parms.data() + pStab->GetOffset_Internal()) = false;
+            // Handle region stays zero-initialized (engine fills it on success).
+
+            VLOG(STR("[MoriaCppMod] [WorldStore] firing StoreRuntimeActor on ws={:p} goat={:p} (parmsSize={}, bStoreStability=FALSE per rc.52 DC hypothesis test)\n"),
+                 (void*)ws, (void*)goat, parmsSize);
+            try { safeProcessEvent(ws, storeFn, parms.data()); }
+            catch (...)
+            {
+                VLOG(STR("[MoriaCppMod] [WorldStore] PE threw — failed\n"));
+                return false;
+            }
+
+            bool success = *reinterpret_cast<bool*>(parms.data() + pRet->GetOffset_Internal());
+
+            // Dump the 32-byte handle for struct-layout decode
+            uint8_t* h = parms.data() + pHandle->GetOffset_Internal();
+            VLOG(STR("[MoriaCppMod] [WorldStore] StoreRuntimeActor returned {} — handle bytes:\n"),
+                 success ? STR("SUCCESS") : STR("FAILURE"));
+            VLOG(STR("[MoriaCppMod] [WorldStore]   +0x00: {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}  {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}\n"),
+                 h[0],  h[1],  h[2],  h[3],  h[4],  h[5],  h[6],  h[7],
+                 h[8],  h[9],  h[10], h[11], h[12], h[13], h[14], h[15]);
+            VLOG(STR("[MoriaCppMod] [WorldStore]   +0x10: {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}  {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}\n"),
+                 h[16], h[17], h[18], h[19], h[20], h[21], h[22], h[23],
+                 h[24], h[25], h[26], h[27], h[28], h[29], h[30], h[31]);
+            // Try interpreting first 16 bytes as FGuid
+            uint32_t* g32 = reinterpret_cast<uint32_t*>(h);
+            VLOG(STR("[MoriaCppMod] [WorldStore]   (first 16B as FGuid: {:08X}-{:08X}-{:08X}-{:08X})\n"),
+                 g32[0], g32[1], g32[2], g32[3]);
+
+            return success;
+        }
+
+        // [rc.48 SET ROLE FUZZY STANDALONE 2026-06-14] Per DC's Q2 answer:
+        // SetRoleFuzzy("Porter") is safe to call in isolation (single
+        // property mutation, no internal Register fire). We call this on
+        // every bell-spawn (fresh + adopted) so the NpcInfo entry's
+        // CurrentRole.RowName becomes "Porter", which is our unique
+        // goat-marker for the next session's adoption filter.
+        bool setGoatRoleFuzzy_Porter_Standalone(UObject* goat)
+        {
+            if (!goat || !isObjectAlive(goat)) return false;
+            UClass* npcCompCls = UObjectGlobals::StaticFindObject<UClass*>(
+                nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+            if (!npcCompCls) return false;
+            auto* getCompFn = goat->GetFunctionByNameInChain(STR("GetComponentByClass"));
+            if (!getCompFn) return false;
+            int sz = getCompFn->GetParmsSize();
+            std::vector<uint8_t> buf(sz, 0);
+            writeGoatParm<UClass*>(getCompFn, buf.data(), STR("ComponentClass"), npcCompCls);
+            if (!safeProcessEvent(goat, getCompFn, buf.data())) return false;
+            UObject* npcComp = readGoatParm<UObject*>(getCompFn, buf.data(), STR("ReturnValue"), nullptr);
+            if (!npcComp || !isObjectAlive(npcComp)) return false;
+
+            auto* setRoleFn = npcComp->GetFunctionByNameInChain(STR("SetRoleFuzzy"));
+            if (!setRoleFn) return false;
+            auto* pRole = findParam(setRoleFn, STR("RoleString"));
+            if (!pRole) return false;
+            const wchar_t* roleStr = STR("Porter");
+            int32_t strLen = static_cast<int32_t>(wcslen(roleStr)) + 1;
+            void* strBuf = FMemory::Malloc(strLen * sizeof(wchar_t), 8);
+            if (!strBuf) return false;
+            wmemcpy(static_cast<wchar_t*>(strBuf), roleStr, strLen);
+            int sz2 = setRoleFn->GetParmsSize();
+            std::vector<uint8_t> buf2(sz2, 0);
+            uint8_t* fstr = buf2.data() + pRole->GetOffset_Internal();
+            *reinterpret_cast<void**>   (fstr + 0)  = strBuf;
+            *reinterpret_cast<int32_t*> (fstr + 8)  = strLen;
+            *reinterpret_cast<int32_t*> (fstr + 12) = strLen;
+
+            // Log pre/post NpcInfo.Num to detect any side-effect entries
+            int32_t preNum = readNpcInfoItemsNum();
+            try { safeProcessEvent(npcComp, setRoleFn, buf2.data()); }
+            catch (...) { return false; }
+            int32_t postNum = readNpcInfoItemsNum();
+            VLOG(STR("[MoriaCppMod] [RoleMark] SetRoleFuzzy('Porter') on npcComp={:p}; NpcInfo.Num: {} → {} (delta={})\n"),
+                 (void*)npcComp, preNum, postNum, postNum - preNum);
+            return true;
+        }
+
+        // [rc.48 TICK PENDING STORES 2026-06-14] Process queued
+        // StoreRuntimeActor calls. Called from tickFollowGoats. Each
+        // entry has a readyMs deadline (set to GetTickCount64()+100 at
+        // queue time, giving ~6 frames at 60fps for ConstructionScript
+        // and BeginPlay to fully complete). Once deadline elapsed, fire
+        // storeGoatInWorldState and remove from queue.
+        void tickPendingStores()
+        {
+            if (m_pendingStores.empty()) return;
+            ULONGLONG now = GetTickCount64();
+            for (auto it = m_pendingStores.begin(); it != m_pendingStores.end(); )
+            {
+                if (now < it->readyMs) { ++it; continue; }
+                UObject* g = it->goat.Get();
+                if (g && isObjectAlive(g))
+                {
+                    VLOG(STR("[MoriaCppMod] [WorldStore] pending store fired for goat={:p}\n"), (void*)g);
+                    storeGoatInWorldState(g);
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [WorldStore] pending store skipped — goat died before deadline\n"));
+                }
+                it = m_pendingStores.erase(it);
+            }
         }
 
         // One-shot read of the controller's FSM current-state name for
@@ -8635,10 +16839,15 @@
                     onGoatStay();    // sets stayMode=true + StopMovement + role=Wanderer + toast "staying"
             }
             else if (rowLabel.find(STR("Saddlebag")) != std::wstring::npos ||
-                     rowLabel.find(STR("saddlebag")) != std::wstring::npos)
+                     rowLabel.find(STR("saddlebag")) != std::wstring::npos ||
+                     rowLabel.find(STR("Equip"))     != std::wstring::npos ||
+                     rowLabel.find(STR("equip"))     != std::wstring::npos)
             {
                 // [rc.70 2026-05-21] Saddlebag access — diagnostic + best-effort.
-                VLOG(STR("[MoriaCppMod] [GoatMenu] SADDLEBAGS clicked — invoking openGoatSaddlebag\n"));
+                // [rc.105 2026-07-10] After the vanilla E-release rescue fires,
+                // the goat menu's rescue-slot row is replaced by 'Equip' — route
+                // that label to the saddlebags too so the storage stays reachable.
+                VLOG(STR("[MoriaCppMod] [GoatMenu] SADDLEBAGS/EQUIP clicked — invoking openGoatSaddlebag\n"));
                 openGoatSaddlebagInventory();
             }
             else
@@ -8741,6 +16950,13 @@
         void adoptExistingGoat(UObject* goat)
         {
             if (!goat) return;
+            // [rc.129] a restored goat may come back HIDDEN (dismissed state can
+            // ride the save) while the fresh track record says "following" —
+            // an invisible companion. Always unhide on adoption.
+            if (auto* hideFn = goat->GetFunctionByNameInChain(STR("SetActorHiddenInGame")))
+            { struct { bool b{false}; } p{}; try { safeProcessEvent(goat, hideFn, &p); } catch (...) {} }
+            if (auto* collFn = goat->GetFunctionByNameInChain(STR("SetActorEnableCollision")))
+            { struct { bool b{true}; } p{}; try { safeProcessEvent(goat, collFn, &p); } catch (...) {} }
             FollowGoatRecord rec{};
             rec.pawn             = RC::Unreal::FWeakObjectPtr(goat);
             rec.controller       = RC::Unreal::FWeakObjectPtr();
@@ -8956,6 +17172,11 @@
 
         void tickFollowGoats()
         {
+            // [rc.48] Drain deferred StoreRuntimeActor calls. Must run
+            // before the empty-herd early-return so we fire even if
+            // herd somehow empties between bell-ring and store deadline.
+            tickPendingStores();
+
             // Run pending deferred toast BEFORE the empty-herd early-return —
             // the toast must fire even if the player has despawned the goat
             // between rename and the deferred tick.
@@ -9410,7 +17631,29 @@
                 // task has a target. EQS_Npc_PorterLeashPlayer doesn't pick
                 // the player by default, so we set this directly. Re-set
                 // every second in case the EQS clears it.
-                setGoatLeashActor(ctrl, pawn);
+                //
+                // [rc.39 STAY FIX 2026-06-10] Gate by !stayMode. Re-arming
+                // LeashActor every tick was defeating Stay — the BT's
+                // FollowPlayer task would re-issue MoveTo on its next tick
+                // after our per-tick StopMovement landed. Pre-rc.46 the
+                // manual MoveToActor was disabled for bell goats so the
+                // leash refresh didn't matter (BT wasn't running porter
+                // follow). Now that manual MoveToActor is back, the leash
+                // refresh ALSO has to be gated. See DC report 2026-06-09.
+                // [DIAG 2026-07-03] Confirm the tick reaches the leash-assert
+                // and what stayMode is. Throttled inside setGoatLeashActor; here
+                // we log the reach + stayMode once per 5s window.
+                {
+                    static ULONGLONG s_lastTickLeashDiag = 0;
+                    ULONGLONG tnow = GetTickCount64();
+                    if (tnow - s_lastTickLeashDiag > 5000) {
+                        s_lastTickLeashDiag = tnow;
+                        VLOG(STR("[MoriaCppMod] [Leash] tick reached assert: goat={:p} ctrl={:p} stayMode={} bellSpawned={}\n"),
+                             (void*)goat, (void*)ctrl, g.stayMode, g.bellSpawned);
+                    }
+                }
+                if (!g.stayMode)
+                    setGoatLeashActor(ctrl, pawn);
 
                 // v1.1.0 FIXUP: one-shot re-enable of SetIsInteractive(true)
                 // on existing goats. Goats spawned by an earlier build had
@@ -9469,36 +17712,136 @@
                 if ((g.ticksSinceSpawn % 300) == 0)
                     logGoatFSMState(ctrl, STR("tick"));
 
-                // [v1.1.0 GENERIC MODE 2026-05-09] Manual MoveToActor follow
-                // loop. Originally suspended when porter-role goats were
-                // expected to follow via Bst_NPCGoatWorkPorter_C reading the
-                // LeashActor blackboard. Re-enabled in rc.46 for bell-spawned
-                // goats which DON'T have porter role assigned (we deliberately
-                // skip assignPorterRole to avoid the dwarf-style management UI).
-                // The manual tick drives follow regardless of BT state.
-                // [rc.52] Stay mode: skip MoveToActor entirely so the goat
-                // remains at its current position. Cleared when player picks
-                // "Follow" from the menu.
-                if (g.bellSpawned && !g.stayMode)
+                // [rc.71 RESTORE DRIVE 2026-07-03] The rc.61 "Goat AI alone"
+                // experiment is now DISPROVEN by runtime logging: the [Leash]
+                // diagnostic confirms we set LeashActor=player on
+                // BP_NpcGoat_AIController_C every second (PE_ok=true), yet
+                // Tobi's v1.10.0 Bst_NPCGoatWorkPorter never consumes that key
+                // — the goat does not move. So restore the manual drive that
+                // worked pre-rc.61 (rc.46-rc.60): on follow issue
+                // AAIController::MoveToActor(player, radius=250) at 1 Hz; on
+                // stay issue StopMovement. This drives the goat directly and
+                // is independent of whatever Tobi's behavior tree does.
+                // [rc.138 MOTION DIAG] Sample goat position at 1 Hz; log
+                // distance-to-player + speed every ~3s, MaxWalkSpeed once.
+                // User report: goat "teleports to the character or moves very
+                // fast" — need numbers to tell teleport (huge instant delta)
+                // from fast-run (large continuous speed).
                 {
-                    auto* mtaFn = ctrl->GetFunctionByNameInChain(STR("MoveToActor"));
-                    if (mtaFn)
+                    float gLoc[3] = {0,0,0}, pLoc[3] = {0,0,0};
+                    bool haveG = false, haveP = false;
+                    if (auto* getLoc = goat->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
                     {
-                        int sz = mtaFn->GetParmsSize();
-                        std::vector<uint8_t> buf(sz, 0);
-                        writeGoatParm<UObject*>(mtaFn, buf.data(), STR("Goal"),               pawn);
-                        writeGoatParm<float>   (mtaFn, buf.data(), STR("AcceptanceRadius"),   250.0f);
-                        writeGoatParm<bool>    (mtaFn, buf.data(), STR("bStopOnOverlap"),     true);
-                        writeGoatParm<bool>    (mtaFn, buf.data(), STR("bUsePathfinding"),    true);
-                        writeGoatParm<bool>    (mtaFn, buf.data(), STR("bCanStrafe"),         false);
-                        writeGoatParm<bool>    (mtaFn, buf.data(), STR("bAllowPartialPath"),  true);
-                        safeProcessEvent(ctrl, mtaFn, buf.data());
+                        std::vector<uint8_t> gbuf(getLoc->GetParmsSize(), 0);
+                        if (safeProcessEvent(goat, getLoc, gbuf.data()))
+                            if (auto* pRet = findParam(getLoc, STR("ReturnValue")))
+                            {
+                                float* fv = reinterpret_cast<float*>(gbuf.data() + pRet->GetOffset_Internal());
+                                gLoc[0]=fv[0]; gLoc[1]=fv[1]; gLoc[2]=fv[2]; haveG = true;
+                            }
+                    }
+                    if (pawn)
+                        if (auto* getLoc = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
+                        {
+                            std::vector<uint8_t> gbuf(getLoc->GetParmsSize(), 0);
+                            if (safeProcessEvent(pawn, getLoc, gbuf.data()))
+                                if (auto* pRet = findParam(getLoc, STR("ReturnValue")))
+                                {
+                                    float* fv = reinterpret_cast<float*>(gbuf.data() + pRet->GetOffset_Internal());
+                                    pLoc[0]=fv[0]; pLoc[1]=fv[1]; pLoc[2]=fv[2]; haveP = true;
+                                }
+                        }
+                    if (haveG)
+                    {
+                        ULONGLONG dnow = GetTickCount64();
+                        if (g.lastDiagMs != 0)
+                        {
+                            float dt = (dnow - g.lastDiagMs) / 1000.0f;
+                            if (dt > 0.25f)
+                            {
+                                float dx = gLoc[0]-g.lastDiagPos[0], dy = gLoc[1]-g.lastDiagPos[1], dz = gLoc[2]-g.lastDiagPos[2];
+                                float moved = std::sqrt(dx*dx + dy*dy + dz*dz);
+                                float speed = moved / dt;
+                                float dist = -1.0f;
+                                if (haveP)
+                                {
+                                    float ex = gLoc[0]-pLoc[0], ey = gLoc[1]-pLoc[1], ez = gLoc[2]-pLoc[2];
+                                    dist = std::sqrt(ex*ex + ey*ey + ez*ez);
+                                }
+                                static ULONGLONG s_lastMotionLog = 0;
+                                if (speed > 1200.0f || (dnow - s_lastMotionLog) > 3000)
+                                {
+                                    s_lastMotionLog = dnow;
+                                    VLOG(STR("[MoriaCppMod] [GoatDiag] distToPlayer={:.0f} speed={:.0f}/s (moved {:.0f} in {:.2f}s) stay={}\n"),
+                                         dist, speed, moved, dt, g.stayMode);
+                                }
+                            }
+                        }
+                        g.lastDiagPos[0]=gLoc[0]; g.lastDiagPos[1]=gLoc[1]; g.lastDiagPos[2]=gLoc[2];
+                        g.lastDiagMs = dnow;
+                    }
+                    if (!g.maxSpeedLogged)
+                    {
+                        g.maxSpeedLogged = true;
+                        UClass* mvCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                            STR("/Script/Engine.CharacterMovementComponent"));
+                        if (mvCls)
+                            if (auto* gc = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                            {
+                                std::vector<uint8_t> b(gc->GetParmsSize(), 0);
+                                writeGoatParm<UClass*>(gc, b.data(), STR("ComponentClass"), mvCls);
+                                if (safeProcessEvent(goat, gc, b.data()))
+                                {
+                                    UObject* mv = readGoatParm<UObject*>(gc, b.data(), STR("ReturnValue"), nullptr);
+                                    if (mv && isObjectAlive(mv))
+                                        if (auto* spd = mv->GetValuePtrByPropertyNameInChain<float>(STR("MaxWalkSpeed")))
+                                            VLOG(STR("[MoriaCppMod] [GoatDiag] MaxWalkSpeed={:.0f}\n"), *spd);
+                                }
+                            }
+                    }
+                }
+
+                // [rc.139] Manual MoveToActor drive RE-ENABLED. The rc.138
+                // experiment settled it: with our drive off, [GoatDiag]
+                // showed speed=0 in EVERY sample — the goat NEVER walks on
+                // its own even on Tobi v1.12.0 (rc.61 finding still holds).
+                // The only movement was instant 1400-2800-unit jumps (even
+                // in Stay mode): the game's native escort-follow CATCH-UP
+                // TELEPORT, which engages because the goat is a registered
+                // NPC in the post-rescue "following" state. So: our walk
+                // drive is required for real following; the native teleport
+                // remains as an uncontrollable far-distance backstop (also
+                // the reason Stay can't hold beyond ~2000 units — fixing
+                // that means changing the goat's native follow state, TBD).
+                static constexpr bool kManualMoveDrive = true;
+                if (kManualMoveDrive && !g.stayMode)
+                {
+                    if (auto* moveFn = ctrl->GetFunctionByNameInChain(STR("MoveToActor")))
+                    {
+                        int msz = moveFn->GetParmsSize();
+                        std::vector<uint8_t> mbuf(msz, 0);
+                        if (auto* pGoal = findParam(moveFn, STR("Goal")))
+                            *reinterpret_cast<UObject**>(mbuf.data() + pGoal->GetOffset_Internal()) = pawn;
+                        if (auto* pRad = findParam(moveFn, STR("AcceptanceRadius")))
+                            *reinterpret_cast<float*>(mbuf.data() + pRad->GetOffset_Internal()) = 250.0f;
+                        if (auto* pPath = findParam(moveFn, STR("bUsePathfinding")))
+                            *reinterpret_cast<bool*>(mbuf.data() + pPath->GetOffset_Internal()) = true;
+                        try { safeProcessEvent(ctrl, moveFn, mbuf.data()); } catch (...) {}
                         if (g.moveToActorLogsRemaining > 0)
                         {
-                            --g.moveToActorLogsRemaining;
-                            VLOG(STR("[MoriaCppMod] [BellSpawn] MoveToActor->player issued (ctrl={:p}, accept=250)\n"),
-                                 (void*)ctrl);
+                            g.moveToActorLogsRemaining--;
+                            VLOG(STR("[MoriaCppMod] [GoatDrive] MoveToActor(player,r=250) issued on ctrl={:p} goat={:p}\n"),
+                                 (void*)ctrl, (void*)goat);
                         }
+                    }
+                }
+                else
+                {
+                    // Stay: actively halt each second so the goat's own idle/
+                    // wander AI can't drift it away from where the player left it.
+                    if (auto* stopFn = ctrl->GetFunctionByNameInChain(STR("StopMovement")))
+                    {
+                        try { safeProcessEvent(ctrl, stopFn, nullptr); } catch (...) {}
                     }
                 }
             }

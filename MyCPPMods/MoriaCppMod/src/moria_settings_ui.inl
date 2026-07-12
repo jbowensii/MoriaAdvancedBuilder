@@ -908,6 +908,12 @@
                 { STR("Remove All"),         16, -1, false, "RemoveAll" },
                 // Reposition HUD mode toggle (default F10).
                 { STR("Reposition HUD"),     24, -1, false, "RepositionHud" },
+                // [rc.139] Master Advanced Builder enable/disable (default
+                // Num+; starts OFF each session). Repurposed slot 17.
+                { STR("Toggle Advanced Builder"), 17, -1, false, "ToggleAdvancedBuilder" },
+                // [rc.139] On-demand CantReach NPC teleport pass (default
+                // Num-; replaced the automatic background scan).
+                { STR("Unstuck NPCs"),       25, -1, false, "UnstuckNpcs" },
             };
             if (UObject* hd = spawnSectionHeading(STR("Mod Key Bindings")))
                 addToScrollBox(scrollBox, hd);

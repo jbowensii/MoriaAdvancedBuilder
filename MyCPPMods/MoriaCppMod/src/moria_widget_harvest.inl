@@ -480,6 +480,58 @@
             catch (...) {}
         }
 
+        // [rc.101 2026-07-10] Harvest a LIVE widget instance (already on
+        // screen) — unlike harvestOneWidget, no Create/teardown, so the dump
+        // captures the ACTUAL runtime state: which panels are visible, what
+        // the grids bound to, live text, brushes. Written for the goat
+        // StorageMode investigation ("extreme UI detail so we can recreate
+        // it"): JSON to Mods/MoriaCppMod/widget-harvest/<label>.json.
+        inline void harvestLiveWidgetToFile(UObject* liveWidget, const wchar_t* label)
+        {
+            if (!liveWidget || !isObjectAlive(liveWidget)) return;
+            std::wstring wlabel = label;
+            std::string utf8Label = jsonEscape(wlabel);
+
+            auto* wtSlot = liveWidget->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree"));
+            UObject* widgetTree = wtSlot ? *wtSlot : nullptr;
+            UObject* root = nullptr;
+            if (widgetTree)
+            {
+                auto* rootSlot = widgetTree->GetValuePtrByPropertyNameInChain<UObject*>(STR("RootWidget"));
+                root = rootSlot ? *rootSlot : nullptr;
+            }
+
+            std::string outDir = modPath("Mods/MoriaCppMod/widget-harvest/");
+            CreateDirectoryW(utf8PathToWide(outDir).c_str(), nullptr);
+            std::string fname = outDir + utf8Label + ".json";
+            std::ofstream f = openOutputFile(fname, std::ios::trunc);
+            if (!f.is_open())
+            {
+                VLOG(STR("[WidgetHarvest] [LIVE] failed to open output for {}\n"), wlabel.c_str());
+                return;
+            }
+
+            f << "{\n";
+            f << "  \"label\":\"" << utf8Label << "\",\n";
+            f << "  \"widgetClass\":\"" << safeGetClassName(liveWidget) << "\",\n";
+            f << "  \"instance\":\"" << jsonEscape(safeObjectName(liveWidget)) << "\",\n";
+            f << "  \"live\":true,\n";
+            if (root)
+            {
+                f << "  \"root\":\n";
+                emitWidgetJson(root, 1, f);
+                f << "\n";
+            }
+            else
+            {
+                f << "  \"root\": null,\n";
+                f << "  \"note\": \"no WidgetTree.RootWidget on live instance\"\n";
+            }
+            f << "}\n";
+            f.close();
+            VLOG(STR("[WidgetHarvest] [LIVE] wrote widget-harvest/{}.json\n"), wlabel.c_str());
+        }
+
         // Harvest the 12 widget classes relevant to the Join World UI plan.
         // Run from the main menu where these classes are most likely loaded.
         inline void harvestJoinWorldWidgets()

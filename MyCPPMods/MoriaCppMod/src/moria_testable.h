@@ -123,7 +123,7 @@ namespace MoriaMods
     };
 
 
-    static constexpr int BIND_COUNT = 25;
+    static constexpr int BIND_COUNT = 26;
     static constexpr int OVERLAY_BUILD_SLOTS = 8;
 
 
@@ -257,7 +257,10 @@ namespace MoriaMods
             s_table["bind.undo_last"] = L"Undo Last";
             s_table["bind.remove_all"] = L"Remove All";
             s_table["bind.configuration"] = L"Configuration";
-            s_table["bind.ab_open"] = L"Advanced Builder Open";
+            // [rc.139] slot 17 repurposed: open → master toggle
+            s_table["bind.ab_open"] = L"Toggle Advanced Builder";
+            s_table["bind.unstuck_npcs"] = L"Unstuck NPCs";
+            s_table["bind.section_general"] = L"General";
             s_table["bind.trash_item"] = L"Trash Item";
             s_table["bind.replenish_item"] = L"Replenish Item";
             s_table["bind.remove_attrs"] = L"Remove Attributes";
@@ -636,6 +639,7 @@ namespace MoriaMods
             case L'`': return 0xC0;
             case L';': return 0xBA;
             case L'=': return 0xBB;
+            case L'+': return 0xBB;  // accept "+" as an alias for the =/+ key
             case L',': return 0xBC;
             case L'-': return 0xBD;
             case L'.': return 0xBE;
@@ -782,14 +786,18 @@ namespace MoriaMods
             "RemoveTarget",
             "UndoLast",
             "RemoveAll",
-            "AdvancedBuilderOpen",
+            // slot 17 repurposed: "Advanced Builder Open" (never dispatched)
+            // → master Advanced Builder toggle. Old "AdvancedBuilderOpen"
+            // ini lines are simply ignored on load (unknown key).
+            "ToggleAdvancedBuilder",
             "SaveGame",
             "TrashItem",
             "ReplenishItem",
             "RemoveAttributes",
             "PitchRotate",
             "RollRotate",
-            "RepositionHud"
+            "RepositionHud",
+            "UnstuckNpcs"
         };
         if (idx < 0 || idx >= BIND_COUNT) return nullptr;
         return keys[idx];

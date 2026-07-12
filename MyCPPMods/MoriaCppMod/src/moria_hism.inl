@@ -226,7 +226,13 @@
             if (!m_worldLayout) return false;
 
             auto* pawn = getPawn();
-            if (!pawn) return false;
+            if (!pawn || !isObjectAlive(pawn)) return false;
+            // [rc.118 2026-07-11] CRASH FIX (dump F6EA9CEA): during world
+            // RELOAD transitions isObjectAlive can pass on reused memory, and
+            // GetFunctionByNameInChain then walks a freed UClass (TFieldIterator
+            // AV). safeClassName is SEH-wrapped — an empty result means the
+            // object is garbage; bail instead of iterating.
+            if (safeClassName(pawn).empty()) return false;
 
             auto* getLocFn = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation"));
             if (!getLocFn) return false;
@@ -234,6 +240,7 @@
             if (!safeProcessEvent(pawn, getLocFn, &locP)) return false;
 
             if (!isObjectAlive(m_worldLayout)) { m_worldLayout = nullptr; return false; }
+            if (safeClassName(m_worldLayout).empty()) { m_worldLayout = nullptr; return false; }  // [rc.118] SEH probe
             auto* getBubbleFn = m_worldLayout->GetFunctionByNameInChain(STR("GetBubbleAt"));
             if (!getBubbleFn) getBubbleFn = m_worldLayout->GetFunctionByNameInChain(STR("TryGetBubbleAt"));
             if (!getBubbleFn) return false;

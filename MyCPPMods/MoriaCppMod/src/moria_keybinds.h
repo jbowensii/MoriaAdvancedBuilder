@@ -28,11 +28,15 @@ namespace MoriaMods
     // Slot ranges:
     //   0-7   : Quick Build slots F1..F8 (legacy / pre-MC base)
     //   8-16  : Mod Controller (MC) slots; MC_BIND_BASE = 8
-    //   17    : Advanced Builder open
+    //   17    : Toggle Advanced Builder (was "Advanced Builder open" — that
+    //           bind never had a dispatcher; repurposed as the master
+    //           enable/disable for the whole Advanced Builder subsystem)
     //   18    : Save Game (was Reserved/Diagnostics)
     //   19-21 : Inventory keybinds (Trash / Replenish / RemoveAttrs)
     //   22-23 : Pitch / Roll rotate
     //   24    : Reposition HUD toggle
+    //   25    : Unstuck NPCs (on-demand CantReach teleport scan — replaced
+    //           the automatic day-cycle/character-load scanning loop)
 
     static constexpr int MC_BIND_BASE = 8;
     static constexpr int BIND_ROTATION  = 8;
@@ -40,7 +44,7 @@ namespace MoriaMods
     // BIND_STABILITY (10) removed — unused
     static constexpr int BIND_TARGET    = 12;
     static constexpr int BIND_CONFIG    = 13;
-    static constexpr int BIND_AB_OPEN   = 17;
+    static constexpr int BIND_AB_TOGGLE = 17;
     // slot 18 repurposed from "Reserved/Diagnostics" to Save Game
     // (defaults to F12, freed up after the legacy F12 menu dispatcher was
     // disabled in this version). Live keybind: triggers triggerSaveGame().
@@ -54,6 +58,11 @@ namespace MoriaMods
     // forces the inspect window + 4-circle rotation display visible so
     // the user can drag them. ESC or another F10 press exits the mode.
     static constexpr int BIND_REPOSITION_HUD = 24;
+    // On-demand NPC unstuck (teleports CantReach* NPCs once per press).
+    // Default "-" (main-keyboard VK_OEM_MINUS, per user directive). The
+    // dispatcher skips the press when a modifier is held so Shift+'-'
+    // ('_') typed elsewhere doesn't fire it.
+    static constexpr int BIND_UNSTUCK_NPCS   = 25;
 
     struct KeyBind
     {
@@ -81,7 +90,9 @@ namespace MoriaMods
             {L"Remove Single", L"Mod Controller", Input::Key::NUM_ONE},
             {L"Undo Last", L"Mod Controller", Input::Key::NUM_TWO},
             {L"Remove All", L"Mod Controller", Input::Key::NUM_THREE},
-            {L"Advanced Builder Open", L"Advanced Builder", Input::Key::ADD},
+            // [v8.2.0] default "=" = main-keyboard = key (VK_OEM_PLUS),
+            // per user directive — NOT the numpad key.
+            {L"Toggle Advanced Builder", L"Advanced Builder", VK_OEM_PLUS},
             {L"Save Game", L"General", Input::Key::F12},
             {L"Trash Item", L"Game Options", VK_DELETE},
             {L"Replenish Item", L"Game Options", VK_INSERT},
@@ -89,6 +100,9 @@ namespace MoriaMods
             {L"Pitch Rotate", L"Game Options", Input::Key::OEM_PERIOD},
             {L"Roll Rotate", L"Game Options", Input::Key::OEM_COMMA},
             {L"Reposition HUD", L"Mod Controller", Input::Key::F10},
+            // [v8.2.0] default "-" = main-keyboard -/_ key (VK_OEM_MINUS),
+            // per user directive — NOT the numpad key.
+            {L"Unstuck NPCs", L"General", VK_OEM_MINUS},
     };
 
     inline std::atomic<int> s_capturingBind{-1};

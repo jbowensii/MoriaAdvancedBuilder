@@ -127,7 +127,13 @@
         // into post-event activities), runs once, clears m_scanDueMs.
         ULONGLONG m_scanDueMs{0};
 
-        bool m_npcRecoveryEnabled{true};        // rc.3: hardcoded ON for testing; rc.4 adds Settings toggle
+        // [rc.139] true only while runUnstuckNpcsNow() (the "Unstuck NPCs"
+        // keybind handler) is executing: lets the shared teleport pipeline
+        // bypass the [NpcRecovery] Enabled gate + the 30 s per-NPC throttle
+        // for explicit user-initiated passes.
+        bool m_unstuckManualPass{false};
+
+        bool m_npcRecoveryEnabled{false};       // [rc.26 2026-05-27] Default OFF — investigating all-NPCs-missing regression. Re-enable via INI [NpcRecovery] Enabled=true after the regression is isolated.
         ULONGLONG m_npcStuckThresholdMs{5000};   // rc.6: 5 s default (was 10 s) — faster response on the user's blocked-bed scenario
         static constexpr ULONGLONG NPC_TELEPORT_THROTTLE_MS = 30000;  // 30s between teleports per NPC
         static constexpr float NPC_PROGRESS_THRESHOLD_CM = 100.0f;     // 1m of movement = "making progress"
@@ -371,7 +377,11 @@
         // (bed/furnace/etc.). Empty string → no hint, defaults to bed.
         void onNpcBlockedActivityEvent(UObject* npcComp, const std::wstring& activityNameHint = std::wstring())
         {
-            if (!m_npcRecoveryEnabled) return;
+            // [rc.139] m_unstuckManualPass = the user pressed the "Unstuck
+            // NPCs" keybind — always allowed, regardless of the legacy
+            // [NpcRecovery] Enabled ini flag (which only governed the now-
+            // retired automatic scanning).
+            if (!m_npcRecoveryEnabled && !m_unstuckManualPass) return;
             if (!npcComp || !isObjectAlive(npcComp)) return;
             // Authority gate — same as the polling tick. Server only.
             if (!m_isDedicatedServer && (!m_localPC || !isObjectAlive(m_localPC))) return;
@@ -403,7 +413,10 @@
             }
 
             // Throttle: don't re-teleport same NPC within 30 s.
-            if (entry.lastTeleportTickMs != 0 &&
+            // [rc.139] Manual keybind presses bypass the throttle — the user
+            // explicitly asked for a pass right now.
+            if (!m_unstuckManualPass &&
+                entry.lastTeleportTickMs != 0 &&
                 now - entry.lastTeleportTickMs < NPC_TELEPORT_THROTTLE_MS)
                 return;
 
@@ -1136,6 +1149,58 @@
                 VLOG(STR("[NpcRecovery] scan fired: {} CantReach NPC(s) found, {} teleported\n"),
                      scanned, triggered);
             }
+        }
+
+        // [rc.139] On-demand "Unstuck NPCs" pass — bound to
+        // BIND_UNSTUCK_NPCS (default Num-). This replaced the automatic
+        // day-cycle / character-load scanning loop (mod users reported
+        // stutter from the background work). One press = refresh the
+        // controller cache once, walk NpcInfo once, teleport every
+        // CantReach* NPC via the same pipeline the automatic scan used.
+        void runUnstuckNpcsNow()
+        {
+            if (!m_characterLoaded && !m_isDedicatedServer)
+            {
+                showInfoMessage(L"Unstuck NPCs: load a world first");
+                return;
+            }
+
+            // Cache refresh moved here from the retired 5 s background
+            // refresh — the FindAllOf cost is now paid only on keypress.
+            npcRefreshControllerCache();
+
+            UObject* nm = getOrFindNpcManager();
+            if (!nm)
+            {
+                VLOG(STR("[NpcRecovery] [Unstuck] NPC manager not available\n"));
+                showInfoMessage(L"Unstuck NPCs: no NPC manager yet");
+                return;
+            }
+
+            int triggered = 0;
+            int scanned   = 0;
+            m_unstuckManualPass = true;
+            scanNpcInfoForCantReach(nm, [&](const uint8_t* guidBytes, uint8_t* item, const std::wstring& activityName) {
+                ++scanned;
+                UObject* ctrl = findControllerByGuid(guidBytes);
+                if (!ctrl) return;
+                auto* pawnPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("Pawn"));
+                UObject* pawn = (pawnPtr && *pawnPtr) ? *pawnPtr : nullptr;
+                if (!pawn || !isObjectAlive(pawn)) return;
+                auto* npcCompPtr = pawn->GetValuePtrByPropertyNameInChain<UObject*>(STR("NPC"));
+                UObject* npcComp = (npcCompPtr && *npcCompPtr) ? *npcCompPtr : nullptr;
+                if (!npcComp) return;
+                m_lastEventTeleportFired = false;
+                onNpcBlockedActivityEvent(npcComp, activityName);
+                if (m_lastEventTeleportFired) ++triggered;
+            });
+            m_unstuckManualPass = false;
+
+            VLOG(STR("[NpcRecovery] [Unstuck] manual pass: {} blocked NPC(s) found, {} teleported\n"),
+                 scanned, triggered);
+            wchar_t msg[96];
+            swprintf_s(msg, L"Unstuck NPCs: %d blocked, %d teleported", scanned, triggered);
+            showInfoMessage(msg);
         }
 
         // rc.16: find the AMorBed assigned to the given NPC pawn.
