@@ -4601,6 +4601,38 @@
         // with the brain stopped, our MoveToActor / StopMovement are the
         // only movement sources again. RestartLogic exists if we ever want
         // the native brain back.
+        // [v8.2.x MENU SIMPLIFICATION 2026-07-12] Per user decision: Stay
+        // cannot survive the native escort catch-up teleport (server-side
+        // C++), so the Follow/Stay row is removed — follow is permanent,
+        // bell dismiss/recall covers "leave the goat". Tobi builds the
+        // Follow/Stay row on the goat's TALK interaction slot; clearing
+        // bTalkInteractionEnabled on the MorNPCComponent removes the row.
+        // The Manage slot (Saddlebags/Equip) is untouched.
+        void removeGoatFollowStayRow(UObject* goat)
+        {
+            if (!goat || !isObjectAlive(goat)) return;
+            UClass* npcCompCls = UObjectGlobals::StaticFindObject<UClass*>(
+                nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+            if (!npcCompCls) return;
+            auto* getCompFn = goat->GetFunctionByNameInChain(STR("GetComponentByClass"));
+            if (!getCompFn) return;
+            std::vector<uint8_t> gbuf(getCompFn->GetParmsSize(), 0);
+            writeGoatParm<UClass*>(getCompFn, gbuf.data(), STR("ComponentClass"), npcCompCls);
+            if (!safeProcessEvent(goat, getCompFn, gbuf.data())) return;
+            UObject* npcComp = readGoatParm<UObject*>(getCompFn, gbuf.data(), STR("ReturnValue"), nullptr);
+            if (!npcComp || !isObjectAlive(npcComp)) return;
+            if (auto* flag = npcComp->GetValuePtrByPropertyNameInChain<bool>(STR("bTalkInteractionEnabled")))
+            {
+                *flag = false;
+                VLOG(STR("[MoriaCppMod] [GoatMenu] Follow/Stay row REMOVED (bTalkInteractionEnabled=false on npcComp={:p})\n"),
+                     (void*)npcComp);
+            }
+            else
+            {
+                VLOG(STR("[MoriaCppMod] [GoatMenu] bTalkInteractionEnabled property not found — row not removed\n"));
+            }
+        }
+
         // [v8.2.x GAIT FIX 2026-07-12] The 13:56 GoatDiag data showed the
         // follow drive WORKING but the goat moving at 33-80 u/s against a
         // MaxWalkSpeed of 600 — it is stuck in the FGK Walking GAIT.
@@ -17838,6 +17870,9 @@
                     // native porter path primed should Tobi ever wire
                     // Bst_NPCGoatWorkPorter to consume LeashActor.
                     setRoleFuzzyOnGoat(goat, STR("Porter"));
+                    // [v8.2.x] Menu = Saddlebags only (user decision: Stay
+                    // is unfixable vs native catch-up; bell covers dismiss).
+                    removeGoatFollowStayRow(goat);
                     // Force Walking (mirrors the rc.137 onGoatFollow block) so
                     // a stale DisableMovement can never strand a fresh goat.
                     UClass* mvCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
