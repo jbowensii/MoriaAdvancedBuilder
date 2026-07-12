@@ -17831,6 +17831,13 @@
                     g.lastBrainStopMs = now;
                     stopGoatBrainLogic(goat, STR("MoriaCppMod spawn"));
                     setGoatGaitRunning(goat);  // [v8.2.x] Walking gait crawls at ~60 u/s
+                    // [v8.2.x] Default state = FOLLOW in every respect: set
+                    // the Porter role too (user: follow should set the AI
+                    // porter model and be the default). Fixes the leftover
+                    // 'Wanderer' role label after reloads; also keeps the
+                    // native porter path primed should Tobi ever wire
+                    // Bst_NPCGoatWorkPorter to consume LeashActor.
+                    setRoleFuzzyOnGoat(goat, STR("Porter"));
                     // Force Walking (mirrors the rc.137 onGoatFollow block) so
                     // a stale DisableMovement can never strand a fresh goat.
                     UClass* mvCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
