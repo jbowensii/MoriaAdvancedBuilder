@@ -787,8 +787,13 @@ namespace MoriaMods
                 // double-firing). Generic modifier filtering breaks F-keys when overlays
                 // like Discord/Steam transiently hold SHIFT.
                 register_keydown_event(fkeys[i], [this, i]() {
+                    // [v8.2.x] Honor the ASSIGNED binding, not the raw F-key:
+                    // if the user rebound Quick Build i off its default F-key,
+                    // this event must go dead — the polling dispatcher owns
+                    // the new key. (Previously a rebind left BOTH keys live.)
+                    if (s_bindings[i].key != (uint8_t)(0x70 + i)) return;
                     // [rc.139] Advanced Builder master switch — quick build
-                    // is inert until the user enables the subsystem (Num+).
+                    // is inert until the user enables the subsystem.
                     if (!m_advBuilderActive) return;
                     if (m_ftVisible) {
                         VLOG(STR("[QuickBuild] F{} BP-USE dropped: m_ftVisible\n"), i+1);
@@ -2502,7 +2507,7 @@ namespace MoriaMods
             });
 
             m_replayActive = true;
-            VLOG(STR("[MoriaCppMod] {}: F1-F8=build | F9=rotate | Num0=bubble info | Reveal map in pause menu | Mod keybinds in Settings → keymap tab\n"),
+            VLOG(STR("[MoriaCppMod] {}: F1-F8=build | F9=rotate | '='=toggle Advanced Builder | '-'=unstuck NPCs | Reveal map in pause menu | Mod keybinds in Settings → keymap tab\n"),
                  ModVersion);
 
 
@@ -3126,6 +3131,7 @@ namespace MoriaMods
             // porter-goat-feature-goals.md — summon makes the goat appear
             // at the player; the goat's existing porter BT
             // (Bst_NPCGoatWorkPorter) handles follow once it's nearby.
+#if 0 // [v8.2.x] ALL hardcoded NUM/N dev keys disabled per user directive — no polling, remove entirely later
             {
                 static bool s_lastSummonKey = false;
                 bool nowDown = (GetAsyncKeyState(VK_ADD) & 0x8000) != 0;
@@ -3136,9 +3142,11 @@ namespace MoriaMods
                 }
                 s_lastSummonKey = nowDown;
             }
+#endif
             // [rc.86 TEST 2026-07-06] NUM* (multiply) → open goat storage via
             // the native MorNpcOnManageLocalInteraction handler. Reliable test
             // trigger independent of the E-menu state.
+#if 0 // [v8.2.x] disabled per user directive
             {
                 static bool s_lastGoatStoreKey = false;
                 bool nowDown = (GetAsyncKeyState(VK_MULTIPLY) & 0x8000) != 0;
@@ -3149,6 +3157,7 @@ namespace MoriaMods
                 }
                 s_lastGoatStoreKey = nowDown;
             }
+#endif
             // [v7.1.0-rc.51 BELL/SADDLEBAGS GRANT DEBUG 2026-05-12]
             //   NUM7 → grant Bell-of-the-Goat (BP_PorterGoatBell_C)
             //   NUM8 → grant Saddlebags (BP_PorterGoatSaddlebags_C)
@@ -3160,6 +3169,7 @@ namespace MoriaMods
             // the 8x8 hidden storage anchor. Production acquisition is
             // via Shire merchant recipe-bundle purchase; these debug
             // keybinds skip the campaign progression for fast iteration.
+#if 0 // [v8.2.x] NUM7 bell grant disabled per user directive (bell must be crafted/acquired in-game)
             {
                 static bool s_lastBellGrantKey = false;
                 bool nowDown = (GetAsyncKeyState(VK_NUMPAD7) & 0x8000) != 0;
@@ -3169,6 +3179,8 @@ namespace MoriaMods
                 }
                 s_lastBellGrantKey = nowDown;
             }
+#endif
+#if 0 // [v8.2.x] NUM9 StorageCap+census disabled per user directive
             // [rc.120] NUM9 → arm/re-arm the 30s StorageCap capture window.
             {
                 static bool s_lastStorageCapKey = false;
@@ -3208,6 +3220,8 @@ namespace MoriaMods
                 }
                 s_lastStorageCapKey = nowDown;
             }
+#endif
+#if 0 // [v8.2.x] NUM8 B5 probe disabled per user directive
             {
                 static bool s_lastSaddlebagsGrantKey = false;
                 bool nowDown = (GetAsyncKeyState(VK_NUMPAD8) & 0x8000) != 0;
@@ -3219,6 +3233,7 @@ namespace MoriaMods
                 }
                 s_lastSaddlebagsGrantKey = nowDown;
             }
+#endif
             // [rc.36 DEBUG SADDLEBAG TRIGGER 2026-06-06] NUM4 fires
             // openGoatSaddlebagInventory directly on the nearest goat,
             // bypassing the missing menu entry. v1.8.0 SAFE pak's menu
@@ -3226,6 +3241,7 @@ namespace MoriaMods
             // RegisterWithNPCManager finally producing delta=+1 (first
             // ever in 35+ iterations), this lets us test if the engine
             // UI now binds correctly to the registered goat.
+#if 0 // [v8.2.x] NUM4 disabled per user directive
             {
                 static bool s_lastSaddleTrigKey = false;
                 bool nowDown = (GetAsyncKeyState(VK_NUMPAD4) & 0x8000) != 0;
@@ -3238,6 +3254,7 @@ namespace MoriaMods
                 }
                 s_lastSaddleTrigKey = nowDown;
             }
+#endif
             // [rc.25 MANAGE CAPTURE 2026-05-26] NUM0 arms a 5-second PE-pre
             // capture window. While active, every UFunction call on contexts
             // matching dwarf/NPC/PC/UIManager-related classes logs to
@@ -3246,6 +3263,7 @@ namespace MoriaMods
             // [rc.29 2026-05-27] ManageCapture moved from NUM0 → NUM9.
             // NUM0 is bound to BubbleInfo (~line 2917). NUM9 was freed by
             // rc.40a (test keybind removed per user spec).
+#if 0 // [v8.2.x] NUM9 ManageCapture disabled per user directive (was also double-bound with StorageCap)
             {
                 static bool s_lastMngCapKey = false;
                 bool nowDown = (GetAsyncKeyState(VK_NUMPAD9) & 0x8000) != 0;
@@ -3257,6 +3275,7 @@ namespace MoriaMods
                 }
                 s_lastMngCapKey = nowDown;
             }
+#endif
             // [rc.40a 2026-05-12] NUM9 test keybind removed per user spec.
             // Bell toggle is right-click-only now. Discovery happens via the
             // [BellHook] PE-pre logging on any UFunction called with the
@@ -3266,6 +3285,7 @@ namespace MoriaMods
             // When OFF (default), back to the narrow Interact/Rescue
             // filter with one-shot dedup. Use this to capture full
             // dwarf-rescue chain in a fresh game.
+#if 0 // [v8.2.x] NUM. diag toggle disabled per user directive
             {
                 static bool s_lastDiagKey = false;
                 bool nowDown = (GetAsyncKeyState(VK_DECIMAL) & 0x8000) != 0;
@@ -3279,11 +3299,13 @@ namespace MoriaMods
                 }
                 s_lastDiagKey = nowDown;
             }
+#endif
             // Num/ (Divide) — probe: dump BP_StoryManager.OnNpcRescued
             // multicast subscriber list. Per desktop's BP-graph decode,
             // each rescued NPC self-subscribes in BeginPlay; the goat
             // doesn't, so the multicast bypasses it. Dumping the list
             // before/after a real dwarf rescue confirms or refutes.
+#if 0 // [v8.2.x] NUM/ probe disabled per user directive
             {
                 static bool s_lastProbeKey = false;
                 bool nowDown = (GetAsyncKeyState(VK_DIVIDE) & 0x8000) != 0;
@@ -3296,6 +3318,7 @@ namespace MoriaMods
                 }
                 s_lastProbeKey = nowDown;
             }
+#endif
             // Goat follow tick (no-op when herd is empty; throttled to 1 Hz/goat internally).
             // [rc.101] RE-ENABLED — user: stay/follow must work (rc.95 strip broke it;
             // Tobi has no native follow drive, ours is the only one).
@@ -3313,6 +3336,7 @@ namespace MoriaMods
             // the same physical key sends VK_INSERT (which Replenish owns). We always
             // check VK_NUMPAD0 and also fall back to a fresh key-state via GetKeyState
             // to survive focus-related async state drops.
+#if 0 // [v8.2.x] NUM0 bubble-info capture disabled per user directive
             {
                 static bool s_lastBubbleInfoKey = false;
                 bool nowDown = (GetAsyncKeyState(VK_NUMPAD0) & 0x8000) != 0;
@@ -3326,6 +3350,8 @@ namespace MoriaMods
                 }
                 s_lastBubbleInfoKey = nowDown;
             }
+#endif
+#if 0 // [v8.2.x] N widget-harvest key disabled per user directive
             // N - debug widget harvest (dev-only). Constructs the 12 Join World
             // widget classes off-viewport, walks each WidgetTree, dumps to JSON
             // under Mods/MoriaCppMod/widget-harvest/. Plain N (no modifier).
@@ -3341,6 +3367,7 @@ namespace MoriaMods
                 }
                 s_lastHarvestKey = nowDown;
             }
+#endif
             // Pitch rotation (. / SHIFT+.) - BIND_PITCH_ROTATE defaults to '.'
             // gated to ghost-visible (resolveGATA returns non-null).
             {

@@ -1601,6 +1601,10 @@
         // ──────────────────────────────────────────────────────────────────
         void pollProbeManualTrigger()
         {
+            // [v8.2.x] NUM* manual trigger DISABLED per user directive (all
+            // hardcoded NUM dev keys off; slated for removal). Probes can
+            // still be enabled via [GoatSaveProbes] Enabled=true in the INI.
+            return;
             static bool s_numStarEdge = false;
             bool down = (GetAsyncKeyState(VK_MULTIPLY) & 0x8000) != 0;
             if (down && !s_numStarEdge) {
