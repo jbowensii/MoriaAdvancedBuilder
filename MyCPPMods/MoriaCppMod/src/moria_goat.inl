@@ -5209,7 +5209,8 @@
 
         std::string saddlebagHandlePath(UObject* goat)
         {
-            std::string p = goatSidecarPath(goat);
+            (void)goat;  // (sidecar removed; B2 dead code, self-contained path)
+            std::string p = modPath("Mods/MoriaCppMod/goat-saddlebag.txt");
             return p.substr(0, p.size() - 4) + ".handle";  // .txt -> .handle
         }
 
@@ -6043,201 +6044,9 @@
         }
 
         ULONGLONG m_sbWidgetOpenMs{0};       // [rc.130] widget-open time (Esc/Tab grace)
-        bool m_sidecarRestoreFailed{false};  // [rc.122] clobber-guard flag
-        std::string goatSidecarPath(UObject* goat)
-        {
-            std::string guid = "default";
-            do {
-                if (!goat || !isObjectAlive(goat)) break;
-                UClass* npcCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
-                    STR("/Script/Moria.MorNPCComponent"));
-                if (!npcCls) break;
-                auto* getComp = goat->GetFunctionByNameInChain(STR("GetComponentByClass"));
-                if (!getComp) break;
-                std::vector<uint8_t> gb(getComp->GetParmsSize(), 0);
-                writeGoatParm<UClass*>(getComp, gb.data(), STR("ComponentClass"), npcCls);
-                if (!safeProcessEvent(goat, getComp, gb.data())) break;
-                UObject* npcComp = readGoatParm<UObject*>(getComp, gb.data(), STR("ReturnValue"), nullptr);
-                if (!npcComp || !isObjectAlive(npcComp)) break;
-                uint8_t* g = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
-                if (!g) break;
-                const uint32_t* u = reinterpret_cast<const uint32_t*>(g);
-                char buf[40];
-                snprintf(buf, sizeof(buf), "%08X%08X%08X%08X", u[0], u[1], u[2], u[3]);
-                guid = buf;
-            } while (false);
-            return modPath("Mods/MoriaCppMod/goat-saddlebag-" + guid + ".txt");
-        }
-
-        // [rc.135] TEMPORARILY DISABLED per user (interference isolation while
-        // testing B7 slot+move). Flip back to true to re-enable the sidecar.
-        static constexpr bool kSidecarEnabled = false;
-
-        // Snapshot current saddlebag contents -> sidecar. Called on widget
-        // close and on bell-park. Skips container items themselves.
-        void snapshotGoatSaddlebag()
-        {
-            if (!kSidecarEnabled) { VLOG(STR("[MoriaCppMod] [Sidecar] snapshot SKIPPED (rc.135 temp-disabled)\n")); return; }
-            UObject* goat = nullptr;
-            for (auto& g : m_followGoats)
-            {
-                UObject* p = g.pawn.Get();
-                if (p && isObjectAlive(p)) { goat = p; break; }
-            }
-            if (!goat) return;
-
-            // Find the goat inventory component that actually has containers.
-            UObject* goatInv = nullptr;
-            UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
-                STR("/Script/Moria.MorInventoryComponent"));
-            if (!invCls) return;
-            if (auto* gf = goat->GetFunctionByNameInChain(STR("K2_GetComponentsByClass")))
-            {
-                std::vector<uint8_t> b(gf->GetParmsSize(), 0);
-                if (auto* pCls = findParam(gf, STR("ComponentClass")))
-                    *reinterpret_cast<UClass**>(b.data() + pCls->GetOffset_Internal()) = invCls;
-                try { safeProcessEvent(goat, gf, b.data()); } catch (...) {}
-                if (auto* pRet = findParam(gf, STR("ReturnValue")))
-                {
-                    uint8_t* arr = b.data() + pRet->GetOffset_Internal();
-                    UObject** data = *reinterpret_cast<UObject***>(arr);
-                    int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
-                    for (int32_t i = 0; data && i < num && i < 16; i++)
-                    {
-                        UObject* c = data[i];
-                        if (!c || !isObjectAlive(c)) continue;
-                        auto* hc = c->GetFunctionByNameInChain(STR("HasContainers"));
-                        if (!hc) continue;
-                        std::vector<uint8_t> hb(hc->GetParmsSize(), 0);
-                        try { safeProcessEvent(c, hc, hb.data()); } catch (...) {}
-                        if (auto* pr = findParam(hc, STR("ReturnValue")))
-                            if (*reinterpret_cast<bool*>(hb.data() + pr->GetOffset_Internal()))
-                            { goatInv = c; break; }
-                    }
-                }
-            }
-            if (!goatInv) return;
-
-            FProperty* itemsProp = goatInv->GetPropertyByNameInChain(STR("Items"));
-            if (!itemsProp) return;
-            uint8_t* listBase = reinterpret_cast<uint8_t*>(goatInv)
-                              + itemsProp->GetOffset_Internal() + iiaListOff();
-            if (!isReadableMemory(listBase, 16)) return;
-            uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
-            int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
-            if (!arrData || arrNum < 0 || arrNum > 10000) return;
-
-            const int stride = iiSize(), itemOff = iiItemOff();
-            const int countOff = 0x18, csOff = 0x2C;
-
-            // [rc.122 CLOBBER GUARD] After a FAILED restore the bag is empty but
-            // the sidecar still holds the real contents — a close would snapshot
-            // 0 stacks over them (data loss; happened with the wood scraps).
-            // Count first; skip the write if bag-empty + last restore failed.
-            int stacksNow = 0;
-            for (int32_t i = 0; i < arrNum; i++)
-            {
-                uint8_t* entry = arrData + i * stride;
-                if (!isReadableMemory(entry, stride)) continue;
-                if (*reinterpret_cast<int32_t*>(entry + csOff) > 0) continue;
-                UClass* ic = *reinterpret_cast<UClass**>(entry + itemOff);
-                if (!ic || !isObjectAlive(ic)) continue;
-                if (*reinterpret_cast<int32_t*>(entry + countOff) > 0) stacksNow++;
-            }
-            if (stacksNow == 0 && m_sidecarRestoreFailed)
-            {
-                VLOG(STR("[MoriaCppMod] [Sidecar rc.122] snapshot SKIPPED (bag empty + last restore failed — preserving sidecar)\n"));
-                return;
-            }
-            m_sidecarRestoreFailed = false;
-
-            std::string path = goatSidecarPath(goat);
-            std::ofstream f = openOutputFile(path, std::ios::trunc);
-            if (!f.is_open())
-            {
-                VLOG(STR("[MoriaCppMod] [Sidecar rc.119] snapshot FAILED to open file\n"));
-                return;
-            }
-            int written = 0;
-            for (int32_t i = 0; i < arrNum; i++)
-            {
-                uint8_t* entry = arrData + i * stride;
-                if (!isReadableMemory(entry, stride)) continue;
-                int32_t cs = *reinterpret_cast<int32_t*>(entry + csOff);
-                if (cs > 0) continue;  // the container item itself — recreated at fit
-                UClass* ic = *reinterpret_cast<UClass**>(entry + itemOff);
-                if (!ic || !isObjectAlive(ic)) continue;
-                int32_t cnt = *reinterpret_cast<int32_t*>(entry + countOff);
-                if (cnt <= 0) continue;
-                std::string cpath = safeGetPathName(ic);
-                if (cpath.empty()) continue;
-                // [rc.124] safeGetPathName returns FULL-name format
-                // ("BlueprintGeneratedClass /Game/...") — strip the class
-                // prefix; StaticFindObject wants the bare object path.
-                size_t sp = cpath.find_last_of(' ');
-                if (sp != std::string::npos) cpath = cpath.substr(sp + 1);
-                f << cpath << "|" << cnt << "\n";
-                written++;
-            }
-            f.close();
-            VLOG(STR("[MoriaCppMod] [Sidecar rc.119] snapshot: {} stack(s) -> {}\n"),
-                 written, std::wstring(path.begin(), path.end()).c_str());
-        }
-
-        // Refill a freshly fitted (empty) saddlebag from the sidecar.
-        void restoreGoatSaddlebagFromSidecar(UObject* goat, UObject* goatInv)
-        {
-            if (!kSidecarEnabled) { VLOG(STR("[MoriaCppMod] [Sidecar] restore SKIPPED (rc.135 temp-disabled)\n")); return; }
-            if (!goat || !goatInv) return;
-            std::string path = goatSidecarPath(goat);
-            std::ifstream f(utf8PathToWide(path));
-            if (!f.is_open())
-            {
-                VLOG(STR("[MoriaCppMod] [Sidecar rc.119] no sidecar file — nothing to restore\n"));
-                return;
-            }
-            auto* af = goatInv->GetFunctionByNameInChain(STR("AddItem"));
-            if (!af)
-            {
-                VLOG(STR("[MoriaCppMod] [Sidecar rc.119] AddItem missing — restore aborted\n"));
-                return;
-            }
-            auto* pItem  = findParam(af, STR("Item")); if (!pItem) pItem = findParam(af, STR("Class"));
-            auto* pCount = findParam(af, STR("Count"));
-            int restored = 0, failed = 0;
-            std::string line;
-            while (std::getline(f, line))
-            {
-                // [rc.122] strip CR/whitespace — text-mode writes produce \r\n and
-                // getline leaves the \r glued to the class path → lookup failed
-                // ("restore: 0 re-added, 1 failed" was exactly this).
-                while (!line.empty() && (line.back() == '\r' || line.back() == '\n' ||
-                                         line.back() == ' '  || line.back() == '\t'))
-                    line.pop_back();
-                size_t bar = line.find('|');
-                if (bar == std::string::npos) continue;
-                std::string cpath = line.substr(0, bar);
-                int cnt = atoi(line.c_str() + bar + 1);
-                // [rc.124] strip full-name class prefix if present (older files
-                // wrote "BlueprintGeneratedClass /Game/..." — recovers them too)
-                size_t sp = cpath.find_last_of(' ');
-                if (sp != std::string::npos) cpath = cpath.substr(sp + 1);
-                if (cpath.empty() || cnt <= 0) continue;
-                std::wstring wpath = utf8ToWide(cpath);
-                UClass* cc = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, wpath.c_str());
-                if (!cc) cc = goat_loadClassAssetBlocking(wpath.c_str());
-                if (!cc || !isObjectAlive(cc)) { failed++; continue; }
-                std::vector<uint8_t> ab(af->GetParmsSize(), 0);
-                if (pItem)  *reinterpret_cast<UClass**>(ab.data() + pItem->GetOffset_Internal()) = cc;
-                if (pCount) *reinterpret_cast<int32_t*>(ab.data() + pCount->GetOffset_Internal()) = cnt;
-                try { safeProcessEvent(goatInv, af, ab.data()); restored++; } catch (...) { failed++; }
-            }
-            VLOG(STR("[MoriaCppMod] [Sidecar rc.119] restore: {} stack(s) re-added, {} failed\n"),
-                 restored, failed);
-            m_sidecarRestoreFailed = (failed > 0);  // [rc.122] arms the clobber guard
-            if (restored > 0)
-                showOnScreen(L"Saddlebag contents restored", 2.0f, 0.4f, 0.9f, 0.4f);
-        }
+        // Sidecar (file-based contents backup) fully REMOVED 2026-07-12 per
+        // user - persistence is native (pack in player inventory + NPC
+        // registry). History: memory goat-final-architecture / tobi log.
 
         // [rc.109 2026-07-11] Cache for the one-shot delayed container re-drive
         // (protects the saddlebag grid against later NPC-path rebuilds).
@@ -7043,7 +6852,7 @@
 
                         // [rc.119] freshly fitted (empty) bag → refill from the
                         // per-goat sidecar written at last close/park.
-                        restoreGoatSaddlebagFromSidecar(goat, goatInv);
+                        // (sidecar removed 2026-07-12)
                         // [rc.105 2026-07-10] DO NOT consume the crafted saddlebag
                         // yet. Goat persistence isn't wired, so every fresh summon
                         // has an empty inventory — consuming would burn one crafted
@@ -8597,7 +8406,7 @@
             if (!m_goatSaddlebagWidget) return;
             // [rc.119] snapshot contents on every close — the sidecar is the
             // contents' persistence (identity persists via NpcInfo rc.112).
-            snapshotGoatSaddlebag();
+            // (sidecar removed 2026-07-12)
             if (isObjectAlive(m_goatSaddlebagWidget))
             {
                 if (auto* fn = m_goatSaddlebagWidget->GetFunctionByNameInChain(STR("RemoveFromParent")))
@@ -10042,7 +9851,7 @@
                     VLOG(STR("[MoriaCppMod] [BellToggle] [rc.129] DISMISS — hide goat (actor + cargo kept alive)\n"));
                     liveRec->bellDismissed = true;
                     onGoatStay();
-                    snapshotGoatSaddlebag();      // [rc.119] natural save point
+                    // (sidecar removed 2026-07-12)
                     storeGoatInWorldState(live);  // [rc.127 B6] enroll in level records
                     if (auto* hideFn = live->GetFunctionByNameInChain(STR("SetActorHiddenInGame")))
                     { struct { bool b{true}; } p{}; try { safeProcessEvent(live, hideFn, &p); } catch (...) {} }
@@ -17641,6 +17450,20 @@
                         g.lastCtrlAttemptLogMs = now;
                         VLOG(STR("[MoriaCppMod] [Goat] controller still null after {} attempts (UPROPERTY ptr={:p}, deref={:p})\n"),
                              g.ctrlAttempts, (void*)ctrlPtr, (void*)c);
+                        // Self-heal: a NATIVELY-RESTORED goat can come back
+                        // UNPOSSESSED (no AIController) — without one the
+                        // follow drive never runs and the goat can't walk at
+                        // all. Our own spawn path calls SpawnDefaultController;
+                        // do the same here once resolution has clearly failed.
+                        if (g.ctrlAttempts >= 3)
+                        {
+                            if (auto* sdc = goat->GetFunctionByNameInChain(STR("SpawnDefaultController")))
+                            {
+                                try { safeProcessEvent(goat, sdc, nullptr); } catch (...) {}
+                                VLOG(STR("[MoriaCppMod] [Goat] SpawnDefaultController fired on unpossessed goat {:p}\n"),
+                                     (void*)goat);
+                            }
+                        }
                     }
                 }
                 if (!ctrl || !isObjectAlive(ctrl)) continue;

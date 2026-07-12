@@ -969,7 +969,7 @@ namespace MoriaMods
                 if (wcscmp(fnStr, STR("SaveSystemAutoSave")) == 0 && s_instance->m_characterLoaded)
                 {
                     VLOG(STR("[MoriaCppMod] [Sidecar rc.122] SaveSystemAutoSave detected — snapshotting saddlebag\n"));
-                    try { s_instance->snapshotGoatSaddlebag(); } catch (...) {}
+                    // (sidecar removed 2026-07-12)
                     // [rc.127 B6 2026-07-11] Register the GOAT ACTOR in the
                     // level records at save-moment. Records serialize FULL actor
                     // state (how dwarf/chest/dropped-item contents persist
