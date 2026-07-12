@@ -4601,6 +4601,23 @@
         // with the brain stopped, our MoveToActor / StopMovement are the
         // only movement sources again. RestartLogic exists if we ever want
         // the native brain back.
+        // [v8.2.x GAIT FIX 2026-07-12] The 13:56 GoatDiag data showed the
+        // follow drive WORKING but the goat moving at 33-80 u/s against a
+        // MaxWalkSpeed of 600 — it is stuck in the FGK Walking GAIT.
+        // AFGKBaseCharacter::SetGait(EFGKGait) is BlueprintCallable
+        // (Walking=0, Running=1, Sprinting=2); set Running so the goat can
+        // actually keep up with the player.
+        void setGoatGaitRunning(UObject* goat)
+        {
+            if (!goat || !isObjectAlive(goat)) return;
+            auto* fn = goat->GetFunctionByNameInChain(STR("SetGait"));
+            if (!fn) { VLOG(STR("[MoriaCppMod] [GoatGait] SetGait UFunction missing\n")); return; }
+            std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+            b[0] = 1;  // EFGKGait::Running
+            try { safeProcessEvent(goat, fn, b.data()); } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [GoatGait] SetGait(Running) fired on goat={:p}\n"), (void*)goat);
+        }
+
         // onlyIfActive=true (the periodic path): query IsActive() first and
         // touch nothing unless the game actually re-activated the FSM —
         // per user directive, no blind re-asserts every 10s.
@@ -4695,6 +4712,8 @@
                 // [v8.2.x] Silence the registered-NPC brain so its wander/
                 // idle behavior can't override our MoveToActor drive.
                 if (goat && isObjectAlive(goat)) stopGoatBrainLogic(goat, STR("MoriaCppMod Follow"));
+                // [v8.2.x] Running gait — Walking gait crawls at ~60 u/s.
+                if (goat && isObjectAlive(goat)) setGoatGaitRunning(goat);
                 // [rc.137] FORCE walking movement — a rc.130 dismiss may have
                 // DisableMovement'd this goat and the recall's re-enable can
                 // land on a different goat after dedupe swaps (user: "follow
@@ -15396,6 +15415,22 @@
             }
             VLOG(STR("[MoriaCppMod] [AutoRestore] {} live BP_NpcGoat with NpcGuids\n"), (int)liveGuids.size());
 
+            // [v8.2.x SINGLE-GOAT GATE 2026-07-12] If ANY live goat exists,
+            // do not spawn for orphan markers. The companion is single-
+            // instance (MAX_FOLLOW_GOATS=1): the 13:56 log showed a native-
+            // restored goat + an orphan-marker spawn → herd=2 → dedupe
+            // destroyed one (nameplate churn, blank name). Stale extra
+            // markers (e.g. the mojibake-era entry) must not resurrect
+            // duplicates every load — the live goat gets adopted by
+            // tickAdoptNativeGoat and that is the goat.
+            if (!liveGuids.empty())
+            {
+                VLOG(STR("[MoriaCppMod] [AutoRestore] {} live goat(s) present — orphan-marker spawns SKIPPED (single-goat gate)\n"),
+                     (int)liveGuids.size());
+                VLOG(STR("[MoriaCppMod] [AutoRestore] === END — spawned 0 ===\n"));
+                return;
+            }
+
             // For each marker without a live actor, spawn one (at most one per call)
             int spawned = 0;
             for (auto& mg : markerGuids)
@@ -17795,6 +17830,7 @@
                     g.brainStopped = true;
                     g.lastBrainStopMs = now;
                     stopGoatBrainLogic(goat, STR("MoriaCppMod spawn"));
+                    setGoatGaitRunning(goat);  // [v8.2.x] Walking gait crawls at ~60 u/s
                     // Force Walking (mirrors the rc.137 onGoatFollow block) so
                     // a stale DisableMovement can never strand a fresh goat.
                     UClass* mvCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
