@@ -976,22 +976,9 @@ namespace MoriaMods
                     // without SaveGame flags) → goat + inventory + cargo ride
                     // the save wholesale. AutoRestore adopts the record-respawned
                     // goat on load (no duplicate; dedupe guards).
-                    try {
-                        for (auto& g : s_instance->m_followGoats)
-                        {
-                            UObject* p = g.pawn.Get();
-                            if (p && isObjectAlive(p))
-                            {
-                                VLOG(STR("[MoriaCppMod] [B6 rc.127] save-moment — StoreRuntimeActor(goat)\n"));
-                                s_instance->storeGoatInWorldState(p);
-                                // [rc.136] stash retired — the pack now LIVES in the
-                                // player inventory permanently (final architecture);
-                                // nothing to move at save time.
-                                // s_instance->b7SaveMomentStash(p);
-                                break;
-                            }
-                        }
-                    } catch (...) {}
+                    // EPHEMERAL GOAT (2026-07-12): save-moment StoreRuntimeActor
+                    // retired — the goat persists nothing; the pack lives in the
+                    // player inventory (native character save).
                 }
 
                 // [rc.117 BAGWATCH 2026-07-11] Container-lifecycle tap. User
@@ -4861,13 +4848,9 @@ namespace MoriaMods
             if (m_characterLoaded && !m_autoRestoreFired && msSinceChar >= 5000)
             {
                 m_autoRestoreFired = true;
-                // [rc.112] RE-ENABLED — persistence phase 1: scan NpcInfo for our
-                // goat marker on world load and restore/adopt.
+                // EPHEMERAL GOAT (2026-07-12): destroys legacy natively-
+                // restored goats; the companion only ever comes from the bell.
                 autoRestoreGoatsFromMarker();
-                // [rc.126] duplicate-goat cleanup (park-not-destroy + orphan
-                // spawns multiplied goats — census showed 3; zero-GUID goats
-                // corrupt identity + sidecar keys). Keeps the identified one.
-                dedupeGoats();
             }
 
 
