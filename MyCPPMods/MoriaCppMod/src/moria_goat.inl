@@ -8347,19 +8347,29 @@
                 setInputModeGame();
                 return;
             }
-            // [v8.2.x CURSOR SELF-HEAL] One-shot input-mode re-assert 1s
-            // after open. Fresh-install report: screen visible but mouse
-            // never captured (player look still active) — something reset
-            // input to Game after our open-time setInputModeUI. Re-assert
-            // once; verbose log shows whether the first set was lost.
+            // [v8.2.x CURSOR ENFORCEMENT] Re-assert UI input mode at 10 Hz
+            // while OUR widget is open. Log evidence (2026-07-12 13:17):
+            // our open-time set + a 1s one-shot BOTH logged "UI Only,
+            // cursor ON" yet the player kept character control — the game's
+            // UI manager pops input back to GameOnly because OUR screen is
+            // not registered with it (each suppression collapse of the
+            // native singleton re-triggers the pop). The revert is
+            // event-based, not per-frame (a single set stuck for weeks on
+            // the old world), so a periodic re-assert wins the war.
+            // PE budget: 10 Hz only while the storage screen is open.
             {
-                static ULONGLONG s_lastInputAssertFor = 0;
-                if (m_sbWidgetOpenMs != 0 && s_lastInputAssertFor != m_sbWidgetOpenMs &&
-                    GetTickCount64() - m_sbWidgetOpenMs >= 1000)
+                static ULONGLONG s_lastInputAssertMs = 0;
+                static int s_inputAssertLogCounter = 0;
+                ULONGLONG inow = GetTickCount64();
+                // Never re-assert while LMB is down — SetInputMode_UIOnlyEx
+                // refocuses the widget, which would cancel an active drag.
+                bool lmbHeld = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+                if (!lmbHeld && inow - s_lastInputAssertMs >= 100)
                 {
-                    s_lastInputAssertFor = m_sbWidgetOpenMs;
+                    s_lastInputAssertMs = inow;
                     setInputModeUI(m_goatSaddlebagWidget);
-                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [v8.2.x] input-mode UI re-asserted (+1s self-heal)\n"));
+                    if ((s_inputAssertLogCounter++ % 50) == 0)
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] [v8.2.x] input-mode UI enforcement active (10 Hz while open)\n"));
                 }
             }
             // [rc.107 2026-07-10] The screen's own logic re-asserts the
