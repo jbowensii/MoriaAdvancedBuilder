@@ -121,6 +121,7 @@
             float lastDiagPos[3]{0,0,0};                  // [rc.138] follow-motion diagnostic: last sampled goat location
             ULONGLONG lastDiagMs{0};                      // [rc.138] timestamp of last motion sample
             bool maxSpeedLogged{false};                   // [rc.138] one-shot MaxWalkSpeed log
+            bool brainStopped{false};                     // [v8.2.x] one-shot StopLogic on the registered-NPC brain (~1s post-spawn, after possession)
         };
         std::vector<FollowGoatRecord> m_followGoats;
 
@@ -4556,6 +4557,55 @@
             return true;
         }
 
+        // [v8.2.x FOLLOW FIX] Stop the goat AIController's brain (behavior
+        // tree / FSM logic). Root cause of "stay/follow inert, goat always
+        // At Ease + wandering": since rc.112 the goat is a REGISTERED NPC,
+        // so its native NPC brain runs the settlement idle/wander behavior
+        // — which issues its own move requests every tick, overriding our
+        // 1 Hz MoveToActor drive (pre-registration the goat was passive
+        // fauna, which is why the drive used to work). StopLogic is a
+        // BlueprintCallable UFUNCTION on UBrainComponent (UHT-verified);
+        // with the brain stopped, our MoveToActor / StopMovement are the
+        // only movement sources again. RestartLogic exists if we ever want
+        // the native brain back.
+        bool stopGoatBrainLogic(UObject* goat, const wchar_t* reason)
+        {
+            if (!goat || !isObjectAlive(goat)) return false;
+            auto* ctrlPtr = goat->GetValuePtrByPropertyNameInChain<UObject*>(STR("Controller"));
+            UObject* ctrl = (ctrlPtr && *ctrlPtr) ? *ctrlPtr : nullptr;
+            if (!ctrl || !isObjectAlive(ctrl)) return false;
+            auto* brainPtr = ctrl->GetValuePtrByPropertyNameInChain<UObject*>(STR("BrainComponent"));
+            UObject* brain = (brainPtr && *brainPtr) ? *brainPtr : nullptr;
+            if (!brain || !isObjectAlive(brain))
+            {
+                VLOG(STR("[MoriaCppMod] [GoatBrain] no BrainComponent on ctrl={:p} — nothing to stop\n"), (void*)ctrl);
+                return false;
+            }
+            auto* stopFn = brain->GetFunctionByNameInChain(STR("StopLogic"));
+            if (!stopFn) { VLOG(STR("[MoriaCppMod] [GoatBrain] StopLogic UFunction missing\n")); return false; }
+            auto* pReason = findParam(stopFn, STR("Reason"));
+            int sz = stopFn->GetParmsSize();
+            std::vector<uint8_t> buf(sz, 0);
+            if (pReason)
+            {
+                int32_t strLen = static_cast<int32_t>(wcslen(reason)) + 1;
+                void* strBuf = FMemory::Malloc(strLen * sizeof(wchar_t), 8);
+                if (strBuf)
+                {
+                    wmemcpy(static_cast<wchar_t*>(strBuf), reason, strLen);
+                    uint8_t* fstr = buf.data() + pReason->GetOffset_Internal();
+                    *reinterpret_cast<void**>   (fstr + 0)  = strBuf;
+                    *reinterpret_cast<int32_t*> (fstr + 8)  = strLen;
+                    *reinterpret_cast<int32_t*> (fstr + 12) = strLen;
+                }
+            }
+            bool ok = false;
+            try { ok = safeProcessEvent(brain, stopFn, buf.data()); } catch (...) {}
+            VLOG(STR("[MoriaCppMod] [GoatBrain] StopLogic('{}') on brain={:p} cls={} ok={}\n"),
+                 reason, (void*)brain, safeClassName(brain).c_str(), ok);
+            return ok;
+        }
+
         void onGoatFollow()
         {
             // [rc.64 ROLE TOGGLE 2026-06-28] Per approved plan: FOLLOW
@@ -4568,6 +4618,9 @@
             {
                 UObject* goat = rec.pawn.Get();
                 if (goat && isObjectAlive(goat)) setRoleFuzzyOnGoat(goat, STR("Porter"));
+                // [v8.2.x] Silence the registered-NPC brain so its wander/
+                // idle behavior can't override our MoveToActor drive.
+                if (goat && isObjectAlive(goat)) stopGoatBrainLogic(goat, STR("MoriaCppMod Follow"));
                 // [rc.137] FORCE walking movement — a rc.130 dismiss may have
                 // DisableMovement'd this goat and the recall's re-enable can
                 // land on a different goat after dedupe swaps (user: "follow
@@ -4615,6 +4668,11 @@
                 UObject* goat = rec.pawn.Get();
                 if (!goat || !isObjectAlive(goat)) continue;
                 setRoleFuzzyOnGoat(goat, STR("Wanderer"));
+                // [v8.2.x] Stop the registered-NPC brain BEFORE StopMovement:
+                // the 'Wanderer' role + active brain literally ran the wander
+                // behavior, drifting the goat away from its Stay spot every
+                // few seconds (and re-issuing moves after each StopMovement).
+                stopGoatBrainLogic(goat, STR("MoriaCppMod Stay"));
                 if (auto* getCtrlFn = goat->GetFunctionByNameInChain(STR("K2_GetController")))
                 {
                     std::vector<uint8_t> b(getCtrlFn->GetParmsSize(), 0);
@@ -8288,6 +8346,21 @@
                 m_goatSaddlebagWidget = nullptr;
                 setInputModeGame();
                 return;
+            }
+            // [v8.2.x CURSOR SELF-HEAL] One-shot input-mode re-assert 1s
+            // after open. Fresh-install report: screen visible but mouse
+            // never captured (player look still active) — something reset
+            // input to Game after our open-time setInputModeUI. Re-assert
+            // once; verbose log shows whether the first set was lost.
+            {
+                static ULONGLONG s_lastInputAssertFor = 0;
+                if (m_sbWidgetOpenMs != 0 && s_lastInputAssertFor != m_sbWidgetOpenMs &&
+                    GetTickCount64() - m_sbWidgetOpenMs >= 1000)
+                {
+                    s_lastInputAssertFor = m_sbWidgetOpenMs;
+                    setInputModeUI(m_goatSaddlebagWidget);
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] [v8.2.x] input-mode UI re-asserted (+1s self-heal)\n"));
+                }
             }
             // [rc.107 2026-07-10] The screen's own logic re-asserts the
             // "non-storage" view every frame (rc.106 proof: our SetVisibility
@@ -17625,6 +17698,16 @@
                 // Throttle MoveToActor to 1 Hz per goat (well under PE budget).
                 if ((now - g.lastMoveTickMs) < 1000) continue;
                 g.lastMoveTickMs = now;
+
+                // [v8.2.x] One-shot brain stop ~1-2s after spawn/adopt (after
+                // possession, so the BrainComponent exists). Without this the
+                // registered-NPC brain wanders the goat from the moment it
+                // spawns, before the user ever touches Follow/Stay.
+                if (!g.brainStopped && g.ticksSinceSpawn > 60)
+                {
+                    g.brainStopped = true;
+                    stopGoatBrainLogic(goat, STR("MoriaCppMod spawn"));
+                }
 
                 // v1.1.0: per-second, write LeashActor blackboard key on
                 // the AIController so Bst_NPCGoatWorkPorter_C's FollowPlayer

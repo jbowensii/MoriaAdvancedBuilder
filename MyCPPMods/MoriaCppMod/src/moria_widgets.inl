@@ -1633,7 +1633,12 @@
             // Prepass during quickbuild and AVs.
             if (!m_rotDisplayWidget || !isObjectAlive(m_rotDisplayWidget)) return;
 
-            bool shouldShow = m_repositionHudMode || isPlacementActive() || isBuildTabShowing();
+            // [v8.2.x] Gated on the Advanced Builder master switch — the
+            // 4-circle rotation display was auto-showing for fresh installs
+            // whenever the VANILLA build menu opened (isBuildTabShowing),
+            // even with the builder subsystem off.
+            bool shouldShow = m_advBuilderActive &&
+                              (m_repositionHudMode || isPlacementActive() || isBuildTabShowing());
             uint8_t visEnum = shouldShow ? 0 : 1;
             if (auto* fn = m_rotDisplayWidget->GetFunctionByNameInChain(STR("SetVisibility")))
             { uint8_t p[8]{}; p[0] = visEnum; safeProcessEvent(m_rotDisplayWidget, fn, p); }
