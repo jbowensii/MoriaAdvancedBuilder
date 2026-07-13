@@ -1,4 +1,4 @@
-// MoriaCppMod - Return to Moria UE4SS C++ mod. v8.5.0 "Porter Goat"
+// MoriaCppMod - Return to Moria UE4SS C++ mod. v8.5.1 "Porter Goat"
 // Top-level mod class lives here; subsystem implementations are #included via .inl files.
 
 #include "moria_common.h"
@@ -653,14 +653,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("8.5.0");
+            ModVersion = STR("8.5.1");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v8.5.0 \"Porter Goat\" (goat companion complete: LMB bell summon/dismiss, follow, saddlebags with native persistence; Advanced Builder toggle [=]; Unstuck NPCs [-])\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v8.5.1 \"Porter Goat\" (goat companion complete: LMB bell summon/dismiss, follow, saddlebags with native persistence; Advanced Builder toggle [=]; Unstuck NPCs [-])\n"));
         }
 
         ~MoriaCppMod() override
@@ -700,7 +700,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v8.5.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v8.5.1 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
@@ -965,24 +965,9 @@ namespace MoriaMods
                 }
 
                 // [rc.122 SAVE-MOMENT SNAPSHOT 2026-07-11] StorageCap found the
-                // save trigger: MorCheatManager::SaveSystemAutoSave fires once
-                // per save (manual + auto). Snapshot the goat saddlebag at that
-                // exact moment — same "serialize at save time" semantics the
-                // game uses for chest contents.
-                if (wcscmp(fnStr, STR("SaveSystemAutoSave")) == 0 && s_instance->m_characterLoaded)
-                {
-                    VLOG(STR("[MoriaCppMod] [Sidecar rc.122] SaveSystemAutoSave detected — snapshotting saddlebag\n"));
-                    // (sidecar removed 2026-07-12)
-                    // [rc.127 B6 2026-07-11] Register the GOAT ACTOR in the
-                    // level records at save-moment. Records serialize FULL actor
-                    // state (how dwarf/chest/dropped-item contents persist
-                    // without SaveGame flags) → goat + inventory + cargo ride
-                    // the save wholesale. AutoRestore adopts the record-respawned
-                    // goat on load (no duplicate; dedupe guards).
-                    // EPHEMERAL GOAT (2026-07-12): save-moment StoreRuntimeActor
-                    // retired — the goat persists nothing; the pack lives in the
-                    // player inventory (native character save).
-                }
+                // (Save-moment goat handling fully retired — the ephemeral
+                // goat persists nothing; the pack lives in the player
+                // inventory and rides the native character save.)
 
                 // [rc.117 BAGWATCH 2026-07-11] Container-lifecycle tap. User
                 // creates bags/chests in-game; we log how the GAME creates,

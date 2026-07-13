@@ -146,7 +146,6 @@
             bool interactiveRefired{false};               // v1.1.0 fixup: re-enable interaction on existing goats
             bool bellSpawned{false};                      // [rc.46] bell-summoned (skip porter role, run MoveToActor tick)
             bool stayMode{false};                         // [rc.52] goat-menu Stay button: skip MoveToActor
-            bool bellDismissed{false};                    // [rc.138] bell state: true = hidden/away (bell rings RECALL); false = present (bell rings DISMISS)
             float lastDiagPos[3]{0,0,0};                  // [rc.138] follow-motion diagnostic: last sampled goat location
             ULONGLONG lastDiagMs{0};                      // [rc.138] timestamp of last motion sample
             bool maxSpeedLogged{false};                   // [rc.138] one-shot MaxWalkSpeed log
@@ -6850,15 +6849,9 @@
                             else VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.116] NO saddlebag actor found after fit — container may be item-entry only (no actor); Channel-C not applicable, need alternate contents persistence\n"));
                         }
 
-                        // [rc.119] freshly fitted (empty) bag → refill from the
-                        // per-goat sidecar written at last close/park.
-                        // (sidecar removed 2026-07-12)
-                        // [rc.105 2026-07-10] DO NOT consume the crafted saddlebag
-                        // yet. Goat persistence isn't wired, so every fresh summon
-                        // has an empty inventory — consuming would burn one crafted
-                        // bag per summon (user lost one this way). The crafted item
-                        // still gates the feature (playerHas check above). Re-enable
-                        // consumption when goat GUID + container persistence lands.
+                        // DO NOT consume the crafted saddlebag — the pack item
+                        // stays in the PLAYER inventory permanently; that IS
+                        // the persistence (final architecture).
                         VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.105] crafted saddlebag NOT consumed (persistence pending)\n"));
                         showOnScreen(L"Saddlebags fitted to the goat", 2.0f, 0.4f, 0.9f, 0.4f);
                         }  // [rc.133] end AddItem fallback (B7 move failed)
@@ -8404,9 +8397,6 @@
         void closeGoatSaddlebagInventory()
         {
             if (!m_goatSaddlebagWidget) return;
-            // [rc.119] snapshot contents on every close — the sidecar is the
-            // contents' persistence (identity persists via NpcInfo rc.112).
-            // (sidecar removed 2026-07-12)
             if (isObjectAlive(m_goatSaddlebagWidget))
             {
                 if (auto* fn = m_goatSaddlebagWidget->GetFunctionByNameInChain(STR("RemoveFromParent")))
@@ -9692,60 +9682,10 @@
             return false;
         }
 
-        // [Native-goat adoption 2026-07-03] Tobi's Goat-v1.10.0 summons the
-        // porter goat through its own GA_Bell ability, so the actor never
-        // flows through our bell-spawn path and m_followGoats stays empty.
-        // That leaves BOTH the menu press/open handlers (which early-return on
-        // an empty herd) AND the Follow/Stay handlers with nothing to act on,
-        // so the goat never follows. Adopt the live BP_NpcGoat_C into
-        // m_followGoats with all one-shot mutation flags PRE-SET so
-        // tickFollowGoats SKIPS the wild-fauna controller/component surgery and
-        // runs only the per-second LeashActor assert (line ~14602) that drives
-        // Tobi's Bst_NPCGoatWorkPorter follow. Strictly filtered to the porter
-        // NPC class — never the wild BP_Fauna_Goat_C.
-        void adoptNativeGoat(UObject* goat)
-        {
-            if (!goat || !isObjectAlive(goat)) return;
-            if (isGoatTracked(goat)) return;
-            if (m_followGoats.size() >= MAX_FOLLOW_GOATS) return;
-            std::wstring cls;
-            try { cls = goat->GetClassPrivate()->GetName(); } catch (...) { return; }
-            if (cls != STR("BP_NpcGoat_C") && cls != STR("BP_PorterGoat_C")) return;
-            FollowGoatRecord rec{};
-            rec.pawn               = RC::Unreal::FWeakObjectPtr(goat);
-            rec.bellSpawned        = false;  // porter-role goat: leash-follow, not manual MoveToActor
-            rec.stayMode           = false;  // default to following on adoption
-            rec.componentsLogged   = true;   // skip the one-shot component-deactivation block
-            rec.porterRoleAssigned = true;   // Tobi's BP already assigns the Porter role
-            rec.controllerReplaced = true;   // never swap Tobi's AIController
-            rec.interactiveRefired = true;   // leave Tobi's interaction prompts untouched
-            rec.postRegDumpDone    = true;
-            // Sync bell state with the ACTOR's hidden state: a goat saved
-            // while bell-dismissed restores hidden — if we defaulted to
-            // "present", the first ring would DISMISS an invisible goat
-            // (visual no-op, "bell doesn't work"). Hidden → first ring
-            // must RECALL.
-            if (auto* hiddenPtr = goat->GetValuePtrByPropertyNameInChain<uint8_t>(STR("bHidden")))
-            {
-                rec.bellDismissed = (*hiddenPtr & 0x01) != 0;
-                if (rec.bellDismissed)
-                    VLOG(STR("[MoriaCppMod] [NativeGoat] adopted goat is HIDDEN — bell state set to dismissed (first ring recalls)\n"));
-            }
-            m_followGoats.push_back(rec);
-            VLOG(STR("[MoriaCppMod] [NativeGoat] adopted Tobi-summoned {} {:p} (herd={})\n"),
-                 cls.c_str(), (void*)goat, (int)m_followGoats.size());
-            showOnScreen(L"Porter Goat linked", 1.5f, 0.7f, 0.9f, 0.7f);
-        }
-
-        // Throttled world-scan (2s) that adopts a native porter goat once
-        // Tobi's bell has summoned it. Self-limiting: stops once the herd is
-        // full (MAX_FOLLOW_GOATS). Cheap — a couple of FindAllOf calls at 0.5 Hz,
-        // and it goes quiet the moment a goat is linked.
+        // DEAD (ephemeral design): world-goat adoption is retired — the only
+        // companion is the one the bell spawned (tracked at spawn). Kept as
+        // an inert stub because the tick is still wired in dllmain.
         ULONGLONG m_lastNativeGoatScanMs{0};
-        // EPHEMERAL GOAT (2026-07-12): adoption of world goats is retired —
-        // the only companion goat is the one our bell spawned (tracked at
-        // spawn). Legacy registered goats that the game natively restores
-        // from old saves are destroyed by the load-time stray sweep.
         void tickAdoptNativeGoat()
         {
         }
