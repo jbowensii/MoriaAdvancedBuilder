@@ -580,6 +580,9 @@ namespace MoriaMods
         int m_hoveredSlot{-1};
         bool m_lastClickLMB{false};
         FBoolProperty* m_bpShowMouseCursor{nullptr};
+        // Bell currently equipped in the main hand (tracked via the
+        // ItemEquipped/ItemUnequipped events carrying the bell's item ID).
+        bool m_bellInHand{false};
 
         UClass* m_lastPickedUpItemClass{nullptr};
         std::wstring m_lastPickedUpItemName;
@@ -1318,6 +1321,18 @@ namespace MoriaMods
                         int32_t maybeID = *reinterpret_cast<const int32_t*>(parmBytes + 0);
                         if (maybeID == s_cachedBellID)
                         {
+                            // Track "bell in hand" from the equip events so a
+                            // gameplay LMB can ring it (the melee-swing path
+                            // never passes the item ID — unhookable directly).
+                            if (s_instance)
+                            {
+                                if (wcscmp(fnStr, STR("ItemEquipped")) == 0 ||
+                                    wcscmp(fnStr, STR("OnItemEquipped")) == 0)
+                                    s_instance->m_bellInHand = true;
+                                else if (wcscmp(fnStr, STR("ItemUnequipped")) == 0 ||
+                                         wcscmp(fnStr, STR("OnItemUnEquipped")) == 0)
+                                    s_instance->m_bellInHand = false;
+                            }
                             static std::set<std::wstring> s_seenBellDispatchFns;
                             if (s_seenBellDispatchFns.size() < 100
                                 && s_seenBellDispatchFns.insert(fnStr).second)
@@ -3336,6 +3351,33 @@ namespace MoriaMods
                 s_lastProbeKey = nowDown;
             }
 #endif
+            // Bell-in-hand LMB ring: while the bell is the equipped item and
+            // we're in pure gameplay (no cursor, no mod UI), a left-click
+            // rings it. The melee swing still plays — swinging the bell IS
+            // ringing it. toggleGoatFromBell's 2s cooldown absorbs spam.
+            {
+                static bool s_lastBellLMB = false;
+                bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+                if (m_bellInHand && m_characterLoaded && lmb && !s_lastBellLMB
+                    && !m_ftVisible && !m_ftRenameVisible && !m_trashDlgVisible
+                    && !m_repositionHudMode && !m_goatSaddlebagWidget
+                    && !isSettingsScreenOpen())
+                {
+                    auto* pc = findPlayerController();
+                    if (pc && !m_bpShowMouseCursor)
+                        m_bpShowMouseCursor = resolveBoolProperty(pc, L"bShowMouseCursor");
+                    bool cursorVisible = (pc && m_bpShowMouseCursor)
+                                         ? m_bpShowMouseCursor->GetPropertyValueInContainer(pc)
+                                         : false;
+                    if (!cursorVisible)
+                    {
+                        VLOG(STR("[MoriaCppMod] [BellHook] LMB with bell in hand — firing toggleGoatFromBell\n"));
+                        toggleGoatFromBell();
+                    }
+                }
+                s_lastBellLMB = lmb;
+            }
+
             // Goat follow tick (no-op when herd is empty; throttled to 1 Hz/goat internally).
             // [rc.101] RE-ENABLED — user: stay/follow must work (rc.95 strip broke it;
             // Tobi has no native follow drive, ours is the only one).
@@ -4568,6 +4610,7 @@ namespace MoriaMods
                     m_newBuildingBar = nullptr;
                     m_newBuildingBarSpawnAttempted = false;
                     m_repositionHudMode = false;
+                    m_bellInHand = false;
 
                     clearStabilityHighlights();
                 }

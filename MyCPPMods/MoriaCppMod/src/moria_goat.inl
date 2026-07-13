@@ -17327,6 +17327,33 @@
                     setGoatGaitRunning(goat);
                     setRoleFuzzyOnGoat(goat, STR("Porter"));
                     removeGoatFollowStayRow(goat);
+                    // "NpcId Invalid" log-spam mitigation: the UNREGISTERED
+                    // goat's MorNPCComponent polls the NPC manager each tick
+                    // (IsNpcInteracting / GetNpcSchedule) with an id the
+                    // manager doesn't know. Stop its tick — the E-menu rows
+                    // are event-driven and keep working. Revert if not.
+                    {
+                        UClass* npcCls2 = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
+                            STR("/Script/Moria.MorNPCComponent"));
+                        if (npcCls2)
+                            if (auto* gc2 = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                            {
+                                std::vector<uint8_t> b2(gc2->GetParmsSize(), 0);
+                                writeGoatParm<UClass*>(gc2, b2.data(), STR("ComponentClass"), npcCls2);
+                                if (safeProcessEvent(goat, gc2, b2.data()))
+                                {
+                                    UObject* nc = readGoatParm<UObject*>(gc2, b2.data(), STR("ReturnValue"), nullptr);
+                                    if (nc && isObjectAlive(nc))
+                                        if (auto* tf = nc->GetFunctionByNameInChain(STR("SetComponentTickEnabled")))
+                                        {
+                                            std::vector<uint8_t> tb2(tf->GetParmsSize(), 0);
+                                            tb2[0] = 0;
+                                            try { safeProcessEvent(nc, tf, tb2.data()); } catch (...) {}
+                                            VLOG(STR("[MoriaCppMod] [GoatBrain] MorNPCComponent tick disabled (NpcId-Invalid spam mitigation)\n"));
+                                        }
+                                }
+                            }
+                    }
                     // Movement mode can be stuck on MOVE_None from a prior
                     // bell dismiss (DisableMovement) — force Walking.
                     UClass* mvCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr,
