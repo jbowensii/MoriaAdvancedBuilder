@@ -1,4 +1,4 @@
-// MoriaCppMod - Return to Moria UE4SS C++ mod. v8.2.0 "Pre-Goat Release"
+// MoriaCppMod - Return to Moria UE4SS C++ mod. v8.2.1 "Ephemeral Goat"
 // Top-level mod class lives here; subsystem implementations are #included via .inl files.
 
 #include "moria_common.h"
@@ -650,7 +650,7 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("8.2.0");
+            ModVersion = STR("8.2.1");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
@@ -697,7 +697,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v8.2.0 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v8.2.1 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
