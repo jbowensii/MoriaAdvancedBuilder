@@ -4845,13 +4845,9 @@ namespace MoriaMods
             // Free Range's unfinished goat persistence wiring without
             // touching any DataTable (avoids the ValidNpcRestores
             // populate trap that breaks bell-ring registration).
-            if (m_characterLoaded && !m_autoRestoreFired && msSinceChar >= 5000)
-            {
-                m_autoRestoreFired = true;
-                // EPHEMERAL GOAT (2026-07-12): destroys legacy natively-
-                // restored goats; the companion only ever comes from the bell.
-                autoRestoreGoatsFromMarker();
-            }
+            // EPHEMERAL GOAT: no load-time goat handling at all. (A legacy
+            // stray-sweep briefly lived here for the dev test worlds; removed
+            // 2026-07-13 per user — those worlds are backed up.)
 
 
             if (m_replay.active)

@@ -14898,40 +14898,11 @@
             VLOG(STR("[MoriaCppMod] [PathX-Y] === Probe Y END ===\n"));
         }
 
-        // [rc.59 AUTO-RESTORE 2026-06-26] Scan NpcInfo for entries
-        // with Name=='Rûdh'. For each marker entry with no live
-        // BP_NpcGoat actor matching its NpcGuid, invoke spawnBellGoat()
-        // to recreate the actor. Existing GuidAdopt logic finds the
-        // marker and binds the new actor to it — same flow as a user-
-        // initiated bell-ring, just triggered automatically at world load.
-        // EPHEMERAL GOAT (2026-07-12): the old marker-based AutoRestore is
-        // replaced by a load-time STRAY SWEEP. Legacy worlds still carry
-        // NpcInfo 'Rudh' markers, so the game natively restores a REGISTERED
-        // goat each load (unpossessed, at its far-away saved spot, with the
-        // settlement brain). We never adopt it - destroy it. The companion
-        // goat only ever comes from the bell (fresh, unregistered, tracked).
+        // EPHEMERAL GOAT: no load-time goat handling. (The AutoRestore /
+        // stray-sweep that lived here served only the dev test worlds with
+        // leftover NpcInfo markers; removed 2026-07-13 per user.)
         void autoRestoreGoatsFromMarker()
         {
-            std::vector<UObject*> hits;
-            if (!seh_findAnyGoatActor(&hits)) return;
-            int destroyed = 0;
-            for (UObject* g : hits)
-            {
-                if (!g || !isObjectAlive(g)) continue;
-                std::wstring cls;
-                try { cls = g->GetClassPrivate()->GetName(); } catch (...) { continue; }
-                if (cls != STR("BP_NpcGoat_C") && cls != STR("BP_PorterGoat_C")) continue;
-                std::wstring nm;
-                try { nm = g->GetName(); } catch (...) {}
-                if (nm.rfind(STR("Default__"), 0) == 0) continue;
-                if (isGoatTracked(g)) continue;  // never touch OUR spawned goat
-                if (auto* dFn = g->GetFunctionByNameInChain(STR("K2_DestroyActor")))
-                { try { safeProcessEvent(g, dFn, nullptr); } catch (...) {} }
-                ++destroyed;
-                VLOG(STR("[MoriaCppMod] [StraySweep] destroyed legacy restored goat {:p} (ephemeral design)\n"), (void*)g);
-            }
-            if (destroyed == 0)
-                VLOG(STR("[MoriaCppMod] [StraySweep] no stray goats at load\n"));
         }
 
         // [rc.60 TAME GOAT 2026-06-28] Strip dwarven-NPC components and
