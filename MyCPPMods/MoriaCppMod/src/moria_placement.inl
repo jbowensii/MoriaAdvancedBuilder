@@ -852,6 +852,27 @@ void onGhostDisappeared()
     VLOG(STR("[MoriaCppMod] [Placement] onGhostDisappeared: greying out snap slot\n"));
 }
 
+// Read a build-item widget's own bLock via the property chain — per-class-
+// correct offset regardless of which UI_WBP_Build_Item_* subclass it is.
+uint8_t* widgetBLockPtr(UObject* w)
+{
+    if (!w || !isObjectAlive(w)) return nullptr;
+    uint8_t* p = w->GetValuePtrByPropertyNameInChain<uint8_t>(STR("bLock"));
+    if (!p || !isReadableMemory(p, BLOCK_DATA_SIZE)) return nullptr;
+    return p;
+}
+
+// True when the widget's bLock carries a populated Variants array. Pooled/
+// recycled menu tiles can pass a name match while holding an empty block,
+// and blockSelectedEvent with an empty block selects nothing (no ghost).
+bool widgetBLockHasVariants(UObject* w)
+{
+    uint8_t* p = widgetBLockPtr(w);
+    if (!p) return false;
+    int32_t num = *reinterpret_cast<int32_t*>(p + rbVariantsNumOff());
+    return num > 0 && num < 1000;
+}
+
 SelectResult selectRecipeOnBuildTab(UObject* buildTab, int slot)
 {
     const std::wstring& targetName = m_recipeSlots[slot].displayName;
@@ -891,8 +912,17 @@ SelectResult selectRecipeOnBuildTab(UObject* buildTab, int slot)
                 std::wstring widgetTex = extractIconTextureName(w);
                 if (widgetTex != slotTexture) continue;
             }
-            matchedWidget = w;
-            break;
+            // Menu tiles are pooled/recycled: a name-matching instance can
+            // carry an EMPTY bLock (Variants=0), and blockSelectedEvent with
+            // an empty block selects nothing — the "toast shows but no ghost
+            // spawns" failure. Remember the first name-match as a fallback,
+            // but keep scanning for one whose block actually has variants.
+            if (!matchedWidget) matchedWidget = w;
+            if (widgetBLockHasVariants(w))
+            {
+                matchedWidget = w;
+                break;
+            }
         }
     }
 
@@ -923,33 +953,33 @@ SelectResult selectRecipeOnBuildTab(UObject* buildTab, int slot)
         probeRecipeBlockStruct(matchedWidget);
     }
 
-    if (s_off_bLock >= 0)
+    // Fresh bLock is only trusted when its Variants array is populated.
+    // A recycled tile can hold an EMPTY block; blockSelectedEvent with an
+    // empty block selects nothing — the game shows no ghost while our
+    // toast claims success (2026-07-13 root cause of "F-key does nothing
+    // after assign"). The property is read via the class chain so the
+    // offset is always correct for the widget's actual class.
+    if (uint8_t* blk = widgetBLockPtr(matchedWidget))
     {
-        // Defense: s_off_bLock is process-global and cached on first
-        // resolve. If a future patch reorders URecipeBlockWidget the
-        // resolver could land on a stale offset. isReadableMemory
-        // catches the resulting bad-pointer read before memcpy faults.
-        uint8_t* widgetBase = reinterpret_cast<uint8_t*>(matchedWidget);
-        if (isReadableMemory(widgetBase + s_off_bLock, BLOCK_DATA_SIZE))
+        if (widgetBLockHasVariants(matchedWidget))
         {
-            std::memcpy(params.data() + s_bse.bLock, widgetBase + s_off_bLock, BLOCK_DATA_SIZE);
+            std::memcpy(params.data() + s_bse.bLock, blk, BLOCK_DATA_SIZE);
             gotFreshBLock = true;
-            QBLOG(STR("[MoriaCppMod] [QuickBuild]   using FRESH bLock from widget (@0x{:X})\n"), s_off_bLock);
         }
         else
         {
-            QBLOG(STR("[MoriaCppMod] [QuickBuild]   bLock@0x{:X} unreadable, falling back to saved\n"), s_off_bLock);
+            VLOG(STR("[MoriaCppMod] [QuickBuild] fresh bLock on matched tile has Variants=0 — using saved capture\n"));
         }
     }
 
     if (!gotFreshBLock && m_recipeSlots[slot].hasBLockData)
     {
         std::memcpy(params.data() + s_bse.bLock, m_recipeSlots[slot].bLockData, BLOCK_DATA_SIZE);
-        QBLOG(STR("[MoriaCppMod] [QuickBuild]   using SAVED bLock (may be stale)\n"));
+        VLOG(STR("[MoriaCppMod] [QuickBuild] using SAVED capture bLock for '{}'\n"), targetName);
     }
     else if (!gotFreshBLock)
     {
-        QBLOG(STR("[MoriaCppMod] [QuickBuild]   WARNING: no bLock data at all, using zeros\n"));
+        VLOG(STR("[MoriaCppMod] [QuickBuild] WARNING: no bLock data at all for '{}' — selection will likely no-op\n"), targetName);
     }
 
     *reinterpret_cast<UObject**>(params.data() + s_bse.selfRef) = matchedWidget;
@@ -1234,17 +1264,12 @@ SelectResult selectRecipeByTargetName(UObject* buildTab)
     std::vector<uint8_t> params(s_bse.parmsSize, 0);
 
     bool gotFreshBLock = false;
-    if (s_off_bLock >= 0)
+    if (uint8_t* blk = widgetBLockPtr(matchedWidget))
     {
-        // Same defense as the F-key path at startOrSwitchBuild:
-        // isReadableMemory catches a stale s_off_bLock cache that
-        // would otherwise AV the memcpy.
-        uint8_t* widgetBase = reinterpret_cast<uint8_t*>(matchedWidget);
-        if (isReadableMemory(widgetBase + s_off_bLock, BLOCK_DATA_SIZE))
-        {
-            std::memcpy(params.data() + s_bse.bLock, widgetBase + s_off_bLock, BLOCK_DATA_SIZE);
-            gotFreshBLock = true;
-        }
+        std::memcpy(params.data() + s_bse.bLock, blk, BLOCK_DATA_SIZE);
+        gotFreshBLock = true;
+        if (!widgetBLockHasVariants(matchedWidget))
+            VLOG(STR("[MoriaCppMod] [TargetBuild] WARNING: matched tile's bLock has Variants=0 — selection may no-op\n"));
     }
 
     QBLOG(STR("[MoriaCppMod] [TargetBuild] Calling blockSelectedEvent: freshBLock={} selfRef={:p}\n"), gotFreshBLock, static_cast<void*>(matchedWidget));
