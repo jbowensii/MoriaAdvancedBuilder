@@ -330,10 +330,10 @@
 
                 int stride = iiSize();
                 int itemOff = iiItemOff();
-                int countOff = 0x18;
-                int slotOff  = 0x1C;
+                int countOff = iiCountOff();
+                int slotOff  = iiSlotOff();
                 int idOff    = iiIDOff();
-                int containerStartSlotOff = 0x2C;
+                int containerStartSlotOff = iiContainerStartOff();
 
                 VLOG(STR("[MoriaCppMod] [InvAudit] ===== Inventory: {} items =====\n"), arrNum);
 
@@ -682,7 +682,7 @@
 
             int stride   = iiSize();
             int idOff    = iiIDOff();
-            int countOff = 0x18;
+            int countOff = iiCountOff();
             uint8_t* targetEntry = nullptr;
             int32_t  targetCount = 0;
             for (int32_t i = 0; i < arrNum; i++)

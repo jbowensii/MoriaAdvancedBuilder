@@ -204,11 +204,19 @@ TEST_F(KeyHelperTest, IniKeyToBindIndex_AllKeys)
     EXPECT_EQ(iniKeyToBindIndex("RemoveTarget"), 14);
     EXPECT_EQ(iniKeyToBindIndex("UndoLast"), 15);
     EXPECT_EQ(iniKeyToBindIndex("RemoveAll"), 16);
-    EXPECT_EQ(iniKeyToBindIndex("AdvancedBuilderOpen"), 17);
-    EXPECT_EQ(iniKeyToBindIndex("Reserved1"), 18);
+    EXPECT_EQ(iniKeyToBindIndex("ToggleAdvancedBuilder"), 17);
+    EXPECT_EQ(iniKeyToBindIndex("SaveGame"), 18);
     EXPECT_EQ(iniKeyToBindIndex("TrashItem"), 19);
     EXPECT_EQ(iniKeyToBindIndex("ReplenishItem"), 20);
     EXPECT_EQ(iniKeyToBindIndex("RemoveAttributes"), 21);
+    EXPECT_EQ(iniKeyToBindIndex("PitchRotate"), 22);
+    EXPECT_EQ(iniKeyToBindIndex("RollRotate"), 23);
+    EXPECT_EQ(iniKeyToBindIndex("RepositionHud"), 24);
+    EXPECT_EQ(iniKeyToBindIndex("UnstuckNpcs"), 25);
+    // Renamed/retired ini keys must no longer resolve (old ini lines are
+    // intentionally ignored on load).
+    EXPECT_EQ(iniKeyToBindIndex("AdvancedBuilderOpen"), -1);
+    EXPECT_EQ(iniKeyToBindIndex("Reserved1"), -1);
 }
 
 TEST_F(KeyHelperTest, IniKeyToBindIndex_CaseInsensitive)
@@ -270,7 +278,7 @@ TEST_F(KeyHelperTest, FKeysExtended)
 
 TEST(ParseKeybindLine, AllValidBindIndices)
 {
-    // Verify all 22 bind indices (0 through BIND_COUNT-1) are accepted
+    // Verify all bind indices (0 through BIND_COUNT-1) are accepted
     for (int i = 0; i < MoriaMods::BIND_COUNT; i++)
     {
         auto result = parseKeybindLine(std::to_string(i) + "|112");

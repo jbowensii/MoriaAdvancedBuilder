@@ -3629,7 +3629,7 @@ namespace MoriaMods
                             int sectionHeight = static_cast<int>(80.0f * s2p);
 
                             float scrollOff = 0.0f;
-                            if (m_ftScrollBox)
+                            if (m_ftScrollBox && isObjectAlive(m_ftScrollBox))
                             {
                                 auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
@@ -3667,7 +3667,7 @@ namespace MoriaMods
                                             {
 
                                                 s_bindings[b].enabled = !s_bindings[b].enabled;
-                                                if (m_ftCheckImages[b])
+                                                if (m_ftCheckImages[b] && isObjectAlive(m_ftCheckImages[b]))
                                                 {
                                                     auto* visFn = m_ftCheckImages[b]->GetFunctionByNameInChain(STR("SetVisibility"));
                                                     if (visFn) { uint8_t vp[8]{}; vp[0] = s_bindings[b].enabled ? 0 : 2; safeProcessEvent(m_ftCheckImages[b], visFn, vp); }
@@ -3719,7 +3719,7 @@ namespace MoriaMods
 
 
                             float scrollOff = 0.0f;
-                            if (m_ftScrollBox)
+                            if (m_ftScrollBox && isObjectAlive(m_ftScrollBox))
                             {
                                 auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
@@ -3866,7 +3866,7 @@ namespace MoriaMods
                                  curX, curY, iconX0, iconX1, entryStart, s_config.removalCount.load());
 
                             float scrollOff = 0.0f;
-                            if (m_ftScrollBox)
+                            if (m_ftScrollBox && isObjectAlive(m_ftScrollBox))
                             {
                                 auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
@@ -3903,7 +3903,7 @@ namespace MoriaMods
                             int rowH = static_cast<int>(128.0f * s2p);
 
                             float scrollOff = 0.0f;
-                            if (m_ftScrollBox)
+                            if (m_ftScrollBox && isObjectAlive(m_ftScrollBox))
                             {
                                 auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
@@ -3928,7 +3928,7 @@ namespace MoriaMods
                                     if (idx >= 0 && idx < static_cast<int>(m_ftGameModEntries.size()) && idx < MAX_GAME_MODS)
                                     {
                                         m_ftGameModEntries[idx].enabled = !m_ftGameModEntries[idx].enabled;
-                                        if (m_ftGameModCheckImages[idx])
+                                        if (m_ftGameModCheckImages[idx] && isObjectAlive(m_ftGameModCheckImages[idx]))
                                         {
                                             auto* visFn = m_ftGameModCheckImages[idx]->GetFunctionByNameInChain(STR("SetVisibility"));
                                             if (visFn) { uint8_t vp[8]{}; vp[0] = m_ftGameModEntries[idx].enabled ? 0 : 2; safeProcessEvent(m_ftGameModCheckImages[idx], visFn, vp); }
@@ -3952,7 +3952,7 @@ namespace MoriaMods
                         {
                             // Read current scroll offset (scrollbox moves tab content upward)
                             float scrollOff = 0.0f;
-                            if (m_ftScrollBox)
+                            if (m_ftScrollBox && isObjectAlive(m_ftScrollBox))
                             {
                                 auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
@@ -4043,7 +4043,7 @@ namespace MoriaMods
                         {
                             // Read scroll offset (same pattern as tab 4)
                             float scrollOff = 0.0f;
-                            if (m_ftScrollBox)
+                            if (m_ftScrollBox && isObjectAlive(m_ftScrollBox))
                             {
                                 auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
                                 if (getScrollFn)
@@ -4596,6 +4596,12 @@ namespace MoriaMods
                     m_newBuildingBarSpawnAttempted = false;
                     m_repositionHudMode = false;
                     m_bellInHand = false;
+
+                    // Settings-screen widget UClasses were captured off LIVE
+                    // widget instances — stale after world transitions; a
+                    // one-shot re-cache runs when the screen next opens.
+                    m_settingsKeySelectorCls = nullptr;
+                    m_settingsSectionHeadingCls = nullptr;
 
                     clearStabilityHighlights();
                 }

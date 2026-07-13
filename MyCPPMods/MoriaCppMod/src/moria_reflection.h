@@ -68,6 +68,8 @@ namespace MoriaMods
     inline int s_off_iiID = -2;
     inline int s_off_iiDur = -2;
     inline int s_off_iiSize = -2;
+    inline int s_off_iiSlot = -2;
+    inline int s_off_iiContainerStart = -2;
 
 
     inline int s_off_iiaList = -2;
@@ -129,6 +131,8 @@ namespace MoriaMods
     inline int iiIDOff()    { return (s_off_iiID >= 0)    ? s_off_iiID   : 0x20; }
     inline int iiDurOff()   { return (s_off_iiDur >= 0)   ? s_off_iiDur  : 0x24; }
     inline int iiSize()     { return (s_off_iiSize >= 0)  ? s_off_iiSize : 0x30; }
+    inline int iiSlotOff()           { return (s_off_iiSlot >= 0)           ? s_off_iiSlot           : 0x1C; }
+    inline int iiContainerStartOff() { return (s_off_iiContainerStart >= 0) ? s_off_iiContainerStart : 0x2C; }
 
 
     inline int iiaListOff() { return (s_off_iiaList >= 0) ? s_off_iiaList : 0x110; }
@@ -413,6 +417,8 @@ namespace MoriaMods
         s_off_iiID = -1;
         s_off_iiDur = -1;
         s_off_iiSize = -1;
+        s_off_iiSlot = -1;
+        s_off_iiContainerStart = -1;
         s_off_iiaList = -1;
 
 
@@ -452,6 +458,8 @@ namespace MoriaMods
                 resolveStructFieldOffset(iiStruct, L"Count", s_off_iiCount);
                 resolveStructFieldOffset(iiStruct, L"ID", s_off_iiID);
                 resolveStructFieldOffset(iiStruct, L"Durability", s_off_iiDur);
+                resolveStructFieldOffset(iiStruct, L"Slot", s_off_iiSlot);
+                resolveStructFieldOffset(iiStruct, L"ContainerStartSlot", s_off_iiContainerStart);
                 VLOG(STR("[MoriaCppMod] [Validate] FItemInstance: size=0x{:02X} Item@0x{:02X} Count@0x{:02X} ID@0x{:02X} Dur@0x{:02X}\n"),
                      s_off_iiSize, s_off_iiItem >= 0 ? s_off_iiItem : 0x10, s_off_iiCount >= 0 ? s_off_iiCount : 0x18, s_off_iiID >= 0 ? s_off_iiID : 0x20, s_off_iiDur >= 0 ? s_off_iiDur : 0x24);
                 break;

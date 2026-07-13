@@ -401,7 +401,7 @@ TEST(ParseKeybindLine, ValidBind)
 
 TEST(ParseKeybindLine, LastValidBind)
 {
-    auto result = parseKeybindLine("16|13"); // BIND_COUNT-1, VK_RETURN
+    auto result = parseKeybindLine("16|13"); // mid-range index, VK_RETURN
     auto* kb = std::get_if<ParsedKeybind>(&result);
     ASSERT_NE(kb, nullptr);
     EXPECT_EQ(kb->bindIndex, 16);
@@ -448,7 +448,7 @@ TEST(ParseKeybindLine, ModifierInvalid)
 
 TEST(ParseKeybindLine, OutOfRange)
 {
-    // Index 99 >= BIND_COUNT (17) → rejected
+    // Index 99 >= BIND_COUNT → rejected
     auto result = parseKeybindLine("99|112");
     EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
 }
@@ -583,6 +583,9 @@ TEST_F(NameToVKTest, Symbols)
     EXPECT_EQ(nameToVK(L"."), 0xBE);
     EXPECT_EQ(nameToVK(L"/"), 0xBF);
     EXPECT_EQ(nameToVK(L"="), 0xBB);
+    // "+" is an accepted alias for the =/+ key (v8.2.x: Toggle Advanced
+    // Builder default was documented as "+"); keyName still renders "=".
+    EXPECT_EQ(nameToVK(L"+"), 0xBB);
 }
 
 TEST_F(NameToVKTest, SpecialKeys)

@@ -5776,7 +5776,7 @@
                 if (!isReadableMemory(entry, stride)) continue;
                 if (*reinterpret_cast<UClass**>(entry + itemOff) != saddleCls) continue;
                 int32_t id = *reinterpret_cast<int32_t*>(entry + idOff);
-                int32_t cs = *reinterpret_cast<int32_t*>(entry + 0x2C);
+                int32_t cs = *reinterpret_cast<int32_t*>(entry + iiContainerStartOff());
                 if (cs > 0) return id;     // the loaded/containered pack wins
                 if (!anyId) anyId = id;
             }
@@ -7367,8 +7367,8 @@
                                     if (!isReadableMemory(entry, stride)) continue;
                                     UClass* ic = *reinterpret_cast<UClass**>(entry + itemOff);
                                     int32_t id  = *reinterpret_cast<int32_t*>(entry + idOff);
-                                    int32_t slot= *reinterpret_cast<int32_t*>(entry + 0x1C);
-                                    int32_t cs  = *reinterpret_cast<int32_t*>(entry + 0x2C);
+                                    int32_t slot= *reinterpret_cast<int32_t*>(entry + iiSlotOff());
+                                    int32_t cs  = *reinterpret_cast<int32_t*>(entry + iiContainerStartOff());
                                     std::wstring nm = ic ? ic->GetName() : STR("(null)");
                                     VLOG(STR("[MoriaCppMod] [GoatSaddle] [DISCOVERY]   [{}] id={} slot={} containerStart={} class={}\n"),
                                          i, id, slot, cs, nm.c_str());

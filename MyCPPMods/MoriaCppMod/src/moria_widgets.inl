@@ -834,7 +834,7 @@
 
         void hideTargetInfo()
         {
-            if (!m_targetInfoWidget) return;
+            if (!m_targetInfoWidget || !isObjectAlive(m_targetInfoWidget)) { m_targetInfoWidget = nullptr; return; }
             auto* fn = m_targetInfoWidget->GetFunctionByNameInChain(STR("SetVisibility"));
             if (fn) { uint8_t p[8]{}; p[0] = 1; safeProcessEvent(m_targetInfoWidget, fn, p); }
             m_tiShowTick = 0;
@@ -848,6 +848,9 @@
                                const std::wstring& recipe,
                                const std::wstring& rowName)
         {
+            // Stale self-heal: widget (and its label children) die on world
+            // reload; reset the whole cluster and recreate.
+            if (m_targetInfoWidget && !isObjectAlive(m_targetInfoWidget)) destroyTargetInfoWidget();
             if (!m_targetInfoWidget) createTargetInfoWidget();
             if (!m_targetInfoWidget) return;
 
