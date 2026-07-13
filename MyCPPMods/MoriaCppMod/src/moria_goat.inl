@@ -101,7 +101,6 @@
         // 12b: attach to goat + hide mesh.
         // 12c: replace rc.11 saddlebags no-op with OpenChest dispatch.
         // 12d: suppress chest's E-prompt.
-        // 12e: persistence via sidecar.
         UClass*    m_phantomChestClass{nullptr};
         RC::Unreal::FWeakObjectPtr m_phantomChest;
         bool       m_enablePhantomChest{false};  // INI: [GoatExperimental] PhantomChest = true
@@ -1006,124 +1005,6 @@
         // FText, FString, FName property — that reveals which field points
         // to the goat right now.
         bool m_interactionWidgetDumped{false};
-        void dumpInteractionWidgetSchema(UObject* widgetInstance)
-        {
-            if (m_interactionWidgetDumped) return;
-            m_interactionWidgetDumped = true;
-            if (!widgetInstance) return;
-
-            UClass* cls = nullptr;
-            try { cls = widgetInstance->GetClassPrivate(); } catch (...) {}
-            if (!cls)
-            {
-                VLOG(STR("[MoriaCppMod] [InteractDump] widget has no class\n"));
-                return;
-            }
-            std::wstring clsName;
-            try { clsName = cls->GetName(); } catch (...) {}
-            VLOG(STR("[MoriaCppMod] [InteractDump] === {} dump start (instance={:p}) ===\n"),
-                 clsName.c_str(), (void*)widgetInstance);
-
-            // Walk every property on class+supers; print name + type. ALSO
-            // print live value for object/text/string/name/bool fields by
-            // resolving the offset and reading the instance.
-            int propCount = 0;
-            for (auto* strct = static_cast<UStruct*>(cls); strct; strct = strct->GetSuperStruct())
-            {
-                std::wstring strctName;
-                try { strctName = strct->GetName(); } catch (...) {}
-                for (auto* prop : strct->ForEachProperty())
-                {
-                    if (propCount >= 400) break;
-                    std::wstring pn, pcn;
-                    try { pn = prop->GetName(); } catch (...) {}
-                    try { pcn = prop->GetClass().GetName(); } catch (...) {}
-
-                    // Read live value when type is one of the common ones.
-                    std::wstring valueStr;
-                    try
-                    {
-                        int32_t off = prop->GetOffset_Internal();
-                        uint8_t* base = reinterpret_cast<uint8_t*>(widgetInstance);
-                        uint8_t* slot = base + off;
-                        if (pcn == STR("ObjectProperty")
-                            || pcn == STR("WeakObjectProperty")
-                            || pcn == STR("ClassProperty")
-                            || pcn == STR("InterfaceProperty"))
-                        {
-                            UObject* val = *reinterpret_cast<UObject**>(slot);
-                            if (val)
-                            {
-                                std::wstring vName, vCls;
-                                try { vName = val->GetName(); } catch (...) {}
-                                try { vCls = val->GetClassPrivate()->GetName(); } catch (...) {}
-                                valueStr = STR(" value=") + vName + STR(" (") + vCls + STR(")");
-                            }
-                            else valueStr = STR(" value=null");
-                        }
-                        else if (pcn == STR("StrProperty"))
-                        {
-                            FString* fs = reinterpret_cast<FString*>(slot);
-                            std::wstring s;
-                            try { s = fs->GetCharArray().GetData() ? fs->GetCharArray().GetData() : STR(""); } catch (...) {}
-                            valueStr = STR(" value=\"") + s + STR("\"");
-                        }
-                        else if (pcn == STR("NameProperty"))
-                        {
-                            FName* fn = reinterpret_cast<FName*>(slot);
-                            std::wstring s;
-                            try { s = fn->ToString(); } catch (...) {}
-                            valueStr = STR(" value=") + s;
-                        }
-                        else if (pcn == STR("TextProperty"))
-                        {
-                            FText* ft = reinterpret_cast<FText*>(slot);
-                            std::wstring s;
-                            try { s = ft->ToString(); } catch (...) {}
-                            valueStr = STR(" value=\"") + s + STR("\"");
-                        }
-                        else if (pcn == STR("BoolProperty"))
-                        {
-                            valueStr = (*slot != 0) ? STR(" value=true") : STR(" value=false");
-                        }
-                    }
-                    catch (...) {}
-
-                    VLOG(STR("[MoriaCppMod] [InteractDump] PROP {} (from {}).{} : {} off=0x{:X}{}\n"),
-                         clsName.c_str(), strctName.c_str(), pn.c_str(), pcn.c_str(),
-                         (unsigned)prop->GetOffset_Internal(), valueStr.c_str());
-                    ++propCount;
-                }
-                if (propCount >= 400) break;
-            }
-
-            // Walk every UFunction on class+supers.
-            int fnCount = 0;
-            for (auto* fn : cls->ForEachFunctionInChain())
-            {
-                if (fnCount >= 300) break;
-                std::wstring fnName;
-                try { fnName = fn->GetName(); } catch (...) {}
-                int parmCount = 0;
-                std::wstring paramSig;
-                for (auto* prop : fn->ForEachProperty())
-                {
-                    if (parmCount >= 6) break;
-                    std::wstring pn, pcn;
-                    try { pn = prop->GetName(); } catch (...) {}
-                    try { pcn = prop->GetClass().GetName(); } catch (...) {}
-                    if (!paramSig.empty()) paramSig += STR(", ");
-                    paramSig += pcn + STR(" ") + pn;
-                    ++parmCount;
-                }
-                VLOG(STR("[MoriaCppMod] [InteractDump] UFUNC {}({})\n"),
-                     fnName.c_str(), paramSig.c_str());
-                ++fnCount;
-            }
-
-            VLOG(STR("[MoriaCppMod] [InteractDump] === {} dump done ({} props, {} ufuncs) ===\n"),
-                 clsName.c_str(), propCount, fnCount);
-        }
 
         // Preload the static-mesh version of the dwarven mountaineer pack at
         // character-load time. We repurpose the goat's existing Hat
@@ -2455,27 +2336,6 @@
             return true;
         }
 
-        void grantBellToPlayer()
-        {
-            // [rc.16.1 2026-05-25] Tobi's Secrets of Khazad-dum ships the bell
-            // as EQ_GoatBell_C (pickaxe-class tool) at the same path family.
-            // Legacy BP_PorterGoatBell_C (from PorterGoatBell_v1.1.1 pak) is
-            // no longer present in v1.6.0 installs. Try Tobi's class first;
-            // fall back to legacy for users on older pak versions.
-            static constexpr const wchar_t* BELL_PATHS[] = {
-                STR("/Game/Mods/PorterGoat/Items/EQ_GoatBell.EQ_GoatBell_C"),
-                STR("/Game/Mods/PorterGoat/Items/BP_PorterGoatBell.BP_PorterGoatBell_C"),
-            };
-            for (auto* p : BELL_PATHS)
-            {
-                if (grantPorterItemToPlayer(p, STR("Bell")))
-                {
-                    showOnScreen(L"Bell of the Goat granted!", 3.0f, 0.4f, 0.9f, 0.4f);
-                    return;
-                }
-            }
-            showOnScreen(L"Bell grant failed — see log", 2.5f, 0.9f, 0.4f, 0.4f);
-        }
 
         void grantSaddlebagsToPlayer()
         {
@@ -2560,15 +2420,6 @@
             m_lastGoatMenuMs = now;
             VLOG(STR("[MoriaCppMod] [GoatMenu] E near goat ptr={:p} — vanilla menu pivot rc.65, custom UMG suppressed\n"),
                  (void*)nearestGoat);
-            // [rc.65 RE-DISABLED 2026-05-21] Custom UMG menu confirmed UGLY +
-            // non-functional in user test (no click dispatch, no scroll, no
-            // native E prompt on approach). Pivoting back to vanilla menu via
-            // repurposed Rescue+Details slots — rc.59 proved those two ALWAYS
-            // show. Desktop Claude is re-enabling those Register flags and
-            // changing labels to "Saddlebags" + "Follow / Stay". Custom UMG
-            // showGoatMenu() call disabled here; revive only if vanilla menu
-            // approach is later abandoned again.
-            // showGoatMenu();
         }
 
         // Build "{name} — {state}" using current stayMode of the first record.
@@ -3076,7 +2927,7 @@
 
         // [rc.123 B2] Open the storage UI bound to the bag ACTOR's own
         // inventory container. Returns false if the actor has no container
-        // (caller falls back to the legacy AddItem fit + sidecar).
+        // (caller falls back to the legacy AddItem fit path).
         bool openViaBagActor(UObject* goat, UObject* bagActor)
         {
             if (!bagActor || !isObjectAlive(bagActor)) return false;
@@ -3987,12 +3838,9 @@
                         showOnScreen(L"Goat has no inventory component", 2.5f, 0.9f, 0.4f, 0.4f);
                         return;
                     }
-                    // [rc.128 2026-07-12] cleanupStraySaddlebagActors DISABLED —
-                    // it was destroying LEGIT dropped packs: the game drops
-                    // equippables as raw BP_SaddleBags_Goat_C actors, exactly
-                    // what the cleanup deleted (it ate the user's crafted pack
-                    // right after the B5 drop). rc.123's litter is long gone.
-                    // cleanupStraySaddlebagActors(goat);
+                    // NOTE: never sweep/destroy stray BP_SaddleBags_Goat_C
+                    // actors here — the game drops equippables as raw actors,
+                    // and a cleanup sweep once destroyed the player's crafted pack.
 
                     // [rc.126 B5] carrier-first find kept (wrapper carriers only).
                     if (UObject* carrier = findSaddlebagCarrier())
@@ -4777,184 +4625,6 @@
         }
 
 
-        // Dormant rc.4-rc.7 implementations preserved as commented source
-        // for when Tobi's saddlebag slot lands. They reference local vars
-        // from openGoatSaddlebagInventory's frame — wrapped in #if 0 so
-        // they compile out cleanly. See git history rc.4/rc.6/rc.7 for the
-        // live versions.
-#if 0
-        // [rc.6 2026-05-22] One-shot: dump every property on the goat's
-            // first inventory entry (the slot wrapper). Tells us the actual
-            // tag string Tobi uses so we can match it against the widget's
-            // expected tag. Gated by m_goatSaddleWrapperDumped so it only
-            // fires once per session. Walks Items[0] memory + reflects each
-            // UPROPERTY against the FItemInstance struct.
-            if (!m_goatSaddleWrapperDumped)
-            {
-                m_goatSaddleWrapperDumped = true;
-                FProperty* itemsProp = goatInv->GetPropertyByNameInChain(STR("Items"));
-                if (itemsProp)
-                {
-                    uint8_t* listBase = reinterpret_cast<uint8_t*>(goatInv)
-                                      + itemsProp->GetOffset_Internal() + iiaListOff();
-                    if (isReadableMemory(listBase, 16))
-                    {
-                        uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
-                        int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
-                        if (arrData && arrNum > 0)
-                        {
-                            int stride  = iiSize();
-                            int itemOff = iiItemOff();
-                            uint8_t* entry = arrData + 0 * stride;
-                            UClass* itemCls = (isReadableMemory(entry + itemOff, sizeof(UClass*)))
-                                ? *reinterpret_cast<UClass**>(entry + itemOff) : nullptr;
-                            if (itemCls && isObjectAlive(itemCls))
-                            {
-                                std::wstring clsName;
-                                try { clsName = itemCls->GetName(); } catch (...) {}
-                                VLOG(STR("[MoriaCppMod] [GoatSaddleDump] === wrapper CDO property dump for class '{}' ===\n"),
-                                     clsName.c_str());
-                                UObject* cdo = nullptr;
-                                try { cdo = itemCls->GetClassDefaultObject(); } catch (...) {}
-                                if (cdo && isObjectAlive(cdo))
-                                {
-                                    int propCount = 0;
-                                    try {
-                                        for (auto* p : itemCls->ForEachPropertyInChain())
-                                        {
-                                            if (!p) continue;
-                                            std::wstring pn;
-                                            try { pn = p->GetName(); } catch (...) { continue; }
-                                            int32 off = -1;
-                                            try { off = p->GetOffset_Internal(); } catch (...) {}
-                                            // Try to read as common types and log first non-zero
-                                            // representation. Best-effort: many properties will
-                                            // log as raw 8 bytes which is fine for diagnostic.
-                                            uint8_t* cdoBase = reinterpret_cast<uint8_t*>(cdo);
-                                            if (off < 0 || !isReadableMemory(cdoBase + off, 8))
-                                            {
-                                                VLOG(STR("[MoriaCppMod] [GoatSaddleDump]   {} off=0x{:04x} (unreadable)\n"),
-                                                     pn.c_str(), (unsigned)off);
-                                                ++propCount;
-                                                continue;
-                                            }
-                                            // Heuristic: try FName first if name contains "Tag" or "Row"
-                                            bool isTagish = (pn.find(STR("Tag")) != std::wstring::npos)
-                                                         || (pn.find(STR("Row")) != std::wstring::npos)
-                                                         || (pn.find(STR("Name")) != std::wstring::npos);
-                                            if (isTagish)
-                                            {
-                                                std::wstring tagStr = seh_fnameToString(cdoBase + off);
-                                                VLOG(STR("[MoriaCppMod] [GoatSaddleDump]   {} off=0x{:04x} (FName?)='{}'\n"),
-                                                     pn.c_str(), (unsigned)off,
-                                                     tagStr.empty() ? STR("?") : tagStr.c_str());
-                                            }
-                                            else
-                                            {
-                                                uint64_t raw = *reinterpret_cast<uint64_t*>(cdoBase + off);
-                                                VLOG(STR("[MoriaCppMod] [GoatSaddleDump]   {} off=0x{:04x} raw=0x{:016x}\n"),
-                                                     pn.c_str(), (unsigned)off, raw);
-                                            }
-                                            ++propCount;
-                                            if (propCount > 80) break;  // safety cap
-                                        }
-                                    } catch (...) {}
-                                    VLOG(STR("[MoriaCppMod] [GoatSaddleDump] === end ({} props) ===\n"), propCount);
-                                }
-                                else
-                                {
-                                    VLOG(STR("[MoriaCppMod] [GoatSaddleDump] wrapper CDO null/dead — skipped\n"));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 1. Resolve saddlebag class (cached from rc.3b onward).
-            UClass* saddleCls = ensureSaddlebagItemClass();
-            if (!saddleCls)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] saddlebag class unresolved — bail\n"));
-                showOnScreen(L"Saddlebag class not loaded", 2.5f, 0.9f, 0.4f, 0.4f);
-                return;
-            }
-
-            // 2. Find the player's MorInventoryComponent.
-            UObject* playerInv = findPlayerInventoryComponent(m_localPawn);
-            if (!playerInv || !isObjectAlive(playerInv))
-            {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] player InvComp not found\n"));
-                showOnScreen(L"Player inventory not accessible", 2.5f, 0.9f, 0.4f, 0.4f);
-                return;
-            }
-
-            // 3. Walk player's Items array looking for the saddlebag.
-            FProperty* itemsProp = playerInv->GetPropertyByNameInChain(STR("Items"));
-            if (!itemsProp)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] no Items property on player InvComp\n"));
-                return;
-            }
-            uint8_t* listBase = reinterpret_cast<uint8_t*>(playerInv)
-                              + itemsProp->GetOffset_Internal() + iiaListOff();
-            if (!isReadableMemory(listBase, 16))
-            {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] player Items list base unreadable\n"));
-                return;
-            }
-            uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
-            int32_t  arrNum  = *reinterpret_cast<int32_t*>(listBase + 8);
-            VLOG(STR("[MoriaCppMod] [GoatSaddle] player InvComp.Items: Num={} (looking for class={:p})\n"),
-                 arrNum, (void*)saddleCls);
-
-            if (!arrData || arrNum <= 0)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] player inventory empty — no saddlebag to use\n"));
-                showOnScreen(L"Craft saddlebags first (need them in inventory)", 3.0f, 0.95f, 0.7f, 0.4f);
-                return;
-            }
-
-            int stride  = iiSize();
-            int itemOff = iiItemOff();
-            int idOff   = iiIDOff();
-            int32_t saddleID = 0;
-            for (int i = 0; i < arrNum && i < 200; ++i)
-            {
-                uint8_t* entry = arrData + i * stride;
-                if (!isReadableMemory(entry, stride)) continue;
-                UClass* itemCls = *reinterpret_cast<UClass**>(entry + itemOff);
-                if (!itemCls || !isObjectAlive(itemCls)) continue;
-                if (itemCls != saddleCls) continue;
-                int32_t itemID = *reinterpret_cast<int32_t*>(entry + idOff);
-                if (itemID != 0) { saddleID = itemID; break; }
-            }
-
-            if (saddleID == 0)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] no BP_SaddleBags_Goat_C in player inventory — craft prompt\n"));
-                showOnScreen(L"No saddlebags found — craft them first", 3.0f, 0.95f, 0.7f, 0.4f);
-                return;
-            }
-            VLOG(STR("[MoriaCppMod] [GoatSaddle] found player saddlebag handle ID={}\n"), saddleID);
-
-            // 4. ServerUse(ItemHandle) on the PLAYER's InvComp.
-            // FItemHandle layout: int32 ID (+0), int32 Payload (+4),
-            // FWeakObjectPtr (+8), pad to 20 bytes.
-            auto* useFn = playerInv->GetFunctionByNameInChain(STR("ServerUse"));
-            if (!useFn)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse missing on player InvComp\n"));
-                showOnScreen(L"ServerUse not available", 2.5f, 0.9f, 0.4f, 0.4f);
-                return;
-            }
-            std::vector<uint8_t> buf(useFn->GetParmsSize(), 0);
-            *reinterpret_cast<int32_t*>(buf.data() + 0) = saddleID;
-            // Payload/WeakObjectPtr/padding stay zero — engine resolves by ID.
-            try { safeProcessEvent(playerInv, useFn, buf.data()); } catch (...) {}
-            VLOG(STR("[MoriaCppMod] [GoatSaddle] ServerUse(ItemHandle.ID={}) fired on PLAYER InvComp={:p} — saddlebag UI should open\n"),
-                 saddleID, (void*)playerInv);
-#endif  // dormant rc.4-rc.7 saddlebag UI attempts
 
         // [rc.5 2026-05-22] Tick-driven close for the goat saddlebag widget.
         // Polled from gameThreadTick whenever m_goatSaddlebagWidget is
@@ -5249,13 +4919,8 @@
                  (void*)owner, ownerCls, ours);
             if (!ours) return;
 
-            // ROOT CAUSE FIX (2026-05-14): the original Path A hook that set
-            // m_pendingInteractMenu is #if 0'd out, leaving the field NULL.
-            // openGoatSubmenu reads m_pendingInteractMenu to capture the
-            // proximity menu pointer so closeGoatSubmenu can hide it. Without
-            // this, "cached proximity menu=0x0" every time → no hide → flicker
-            // + the original menu (with "E Details") stays visible behind ours.
-            // Now we populate it here in OnShow PE-post for goat menus only.
+            // Capture the proximity menu pointer here (OnShow PE-post,
+            // goat menus only) so later hide/collapse logic has a target.
             m_pendingInteractMenu = FWeakObjectPtr(menu);
             VLOG(STR("[MoriaCppMod] [GoatInject] captured proximity menu={:p} into m_pendingInteractMenu\n"),
                  (void*)menu);
@@ -5364,68 +5029,6 @@
                  hits, dumpNow ? STR("YES") : STR("no"));
         }
 
-        // PE-pre callback: vanilla UI_WBP_InteractionMenu_C is being
-        // pointed at a new Interactable (NPC entering proximity range).
-        // We read the function's first param (the new Interactable, an
-        // FScriptInterface or ObjectProperty, both have the UObject* at
-        // offset 0). Walk to its owner Actor, check m_followGoats, flag a
-        // tick-deferred discovery walk.
-        void onInteractMenuSetInteractablePre(UObject* menu, UFunction* func, void* parms)
-        {
-            VLOG(STR("[MoriaCppMod] [GoatInject] hook entered menu={:p} func={:p} parms={:p} herdSz={}\n"),
-                 (void*)menu, (void*)func, parms, (int)m_followGoats.size());
-            if (!menu || !isObjectAlive(menu)) return;
-            if (m_followGoats.empty()) return;
-
-            // Param 0 = NewInteractable (FScriptInterface or UObject*).
-            // Both layouts put the UObject* at offset 0.
-            UObject* npcComp = nullptr;
-            if (parms)
-            {
-                npcComp = *reinterpret_cast<UObject**>(parms);
-            }
-            VLOG(STR("[MoriaCppMod] [GoatInject] param-read npcComp={:p}\n"), (void*)npcComp);
-
-            if (!npcComp || !isObjectAlive(npcComp))
-            {
-                // Unhover / null interactable — drop pending state and
-                // rip ALL injected rows out so vanilla's pool doesn't see
-                // strangers when it repopulates for a different NPC.
-                clearGoatInjectedRows();
-                m_pendingInteractMenu = FWeakObjectPtr();
-                m_goatInjectPending = false;
-                m_goatInjectLogged = false;
-                VLOG(STR("[MoriaCppMod] [GoatInject] null npcComp — cleared pending + removed all injected rows\n"));
-                return;
-            }
-
-            UObject* owner = nullptr;
-            try { owner = npcComp->GetOuterPrivate(); } catch (...) {}
-            std::wstring npcClsName, ownerClsName;
-            try { npcClsName = npcComp->GetClassPrivate()->GetName(); } catch (...) {}
-            if (owner) { try { ownerClsName = owner->GetClassPrivate()->GetName(); } catch (...) {} }
-            VLOG(STR("[MoriaCppMod] [GoatInject] npcCls='{}' owner={:p} ownerCls='{}'\n"),
-                 npcClsName, (void*)owner, ownerClsName);
-            if (!owner || !isObjectAlive(owner)) return;
-
-            bool ours = false;
-            for (auto& g : m_followGoats)
-            {
-                UObject* mine = g.pawn.Get();
-                if (mine && mine == owner) { ours = true; break; }
-            }
-            if (!ours)
-            {
-                VLOG(STR("[MoriaCppMod] [GoatInject] owner not in m_followGoats — skip\n"));
-                return;
-            }
-
-            VLOG(STR("[MoriaCppMod] [GoatInject] menu={:p} npcComp={:p} owner={:p} — flagging pending\n"),
-                 (void*)menu, (void*)npcComp, (void*)owner);
-            m_pendingInteractMenu = FWeakObjectPtr(menu);
-            m_goatInjectPending = true;
-            m_goatInjectLogged = false;
-        }
 
 
         // Strip every injected row from its parent so vanilla's pool sees a
@@ -6336,10 +5939,9 @@
             if (patched > 0) m_goatArchetypePatched = true;
         }
 
-        //
-        // Spawn path mirrors spawnFollowGoat (proven, used by NUM- earlier)
-        // minus the Porter role assignment + with bellSpawned=true so the
-        // tick loop drives MoveToActor follow.
+        // Bell-rung goat spawn: BeginDeferred + FinishSpawning, tracked in
+        // m_followGoats with bellSpawned=true so the tick loop drives the
+        // MoveToActor follow.
         void spawnBellGoat()
         {
             VLOG(STR("[MoriaCppMod] [BellSpawn] entry — checking bindings\n"));
@@ -6598,13 +6200,6 @@
                 // file, that way each character will have a goat with a
                 // saddlebag and that contents will go with the character
                 // between worlds."
-                //
-                // Removed: B5 DLL item-grant to player. The saddlebag is no
-                // longer an item in player inventory.
-                //
-                // Saddlebag UI temporarily routed to a placeholder until the
-                // sidecar persistence layer is approved + built (see
-                // openCharacterSaddlebagPlaceholder).
                 FollowGoatRecord rec{};
                 rec.pawn               = RC::Unreal::FWeakObjectPtr(goat);
                 rec.controller         = RC::Unreal::FWeakObjectPtr();
@@ -7416,28 +7011,6 @@
         // detect when the multicast fires for any subscriber, then
         // checks if the bound object is one of our tracked goats.
         static constexpr const wchar_t* kGoatRecruitMarkerFn = STR("MoriaModGoatRecruitMarker");
-        std::vector<RC::Unreal::FWeakObjectPtr> m_recruitedGoatsPending;
-        bool isGoatPendingRecruit(UObject* goat)
-        {
-            for (auto& wp : m_recruitedGoatsPending)
-                if (wp.Get() == goat) return true;
-            return false;
-        }
-        void trackGoatPendingRecruit(UObject* goat)
-        {
-            if (isGoatPendingRecruit(goat)) return;
-            m_recruitedGoatsPending.push_back(RC::Unreal::FWeakObjectPtr(goat));
-        }
-        void untrackGoatPendingRecruit(UObject* goat)
-        {
-            m_recruitedGoatsPending.erase(
-                std::remove_if(m_recruitedGoatsPending.begin(), m_recruitedGoatsPending.end(),
-                    [goat](RC::Unreal::FWeakObjectPtr& wp) {
-                        UObject* p = wp.Get();
-                        return !p || p == goat;
-                    }),
-                m_recruitedGoatsPending.end());
-        }
 
         // Helper: shallow-copy a single named UPROPERTY from src to dst when
         // both objects share a class. Used for cloning proximity-menu row
@@ -7521,173 +7094,7 @@
             return true;
         }
 
-        // Full setup. Idempotent. Returns true if all steps succeeded.
-        bool setupGoatRecruit(UObject* goat)
-        {
-            if (!goat || !isObjectAlive(goat)) return false;
 
-            // 1. Get MorWandererComponent on the goat.
-            UClass* wandCls = UObjectGlobals::StaticFindObject<UClass*>(
-                nullptr, nullptr, STR("/Script/Moria.MorWandererComponent"));
-            if (!wandCls)
-            {
-                VLOG(STR("[MoriaCppMod] [Recruit] MorWandererComponent class not loaded\n"));
-                return false;
-            }
-            auto* getCompFn = goat->GetFunctionByNameInChain(STR("GetComponentByClass"));
-            if (!getCompFn) return false;
-            int sz = getCompFn->GetParmsSize();
-            std::vector<uint8_t> buf(sz, 0);
-            writeGoatParm<UClass*>(getCompFn, buf.data(), STR("ComponentClass"), wandCls);
-            if (!safeProcessEvent(goat, getCompFn, buf.data())) return false;
-            UObject* wandComp = readGoatParm<UObject*>(getCompFn, buf.data(), STR("ReturnValue"), nullptr);
-            if (!wandComp || !isObjectAlive(wandComp))
-            {
-                VLOG(STR("[MoriaCppMod] [Recruit] goat has no MorWandererComponent\n"));
-                return false;
-            }
-            VLOG(STR("[MoriaCppMod] [Recruit] goat={:p} wanderer={:p}\n"), (void*)goat, (void*)wandComp);
-
-            // 2. Enable Recruit interaction. Reflective bool writes survive
-            // FGK component layout shifts on DLC; the UFunction setter below
-            // covers any side-effects the property writes alone skip.
-            setBoolProp(wandComp, STR("bRecruitInteractionRegister"), true);
-            setBoolProp(wandComp, STR("bRecruitInteractionEnabled"), true);
-            VLOG(STR("[MoriaCppMod] [Recruit] flipped bRecruitInteractionRegister + bRecruitInteractionEnabled = true\n"));
-            if (auto* setEnFn = wandComp->GetFunctionByNameInChain(STR("SetRecruitInteractionEnabled")))
-            {
-                struct { bool Val{true}; } sip{};
-                safeProcessEvent(wandComp, setEnFn, &sip);
-                VLOG(STR("[MoriaCppMod] [Recruit] SetRecruitInteractionEnabled(true) fired\n"));
-            }
-
-            // 3. Append FScriptDelegate to component's OnWandererRecruited
-            // multicast. Reflectively resolved so FGK layout shifts on DLC
-            // don't silently corrupt neighboring bytes.
-            uint8_t* recruitListSlot = wandComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("OnWandererRecruited"));
-            if (recruitListSlot)
-                appendMulticastEntry(recruitListSlot, goat, kGoatRecruitMarkerFn, STR("OnRecruited"));
-            else
-                VLOG(STR("[MoriaCppMod] [Recruit] OnWandererRecruited property not found via reflection\n"));
-
-            // 4. Subscribe goat to settlement-mgr's OnNpcRescued (existing
-            // path — kept because the rescue-state probe correlation in
-            // earlier sessions proved subscriber-presence is the gate
-            // for the (E) Rescue prompt to surface).
-            UObject* worldCtx = m_localPC && isObjectAlive(m_localPC) ? m_localPC :
-                                (m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr);
-            if (worldCtx)
-            {
-                auto* mgrCls = UObjectGlobals::StaticFindObject<UClass*>(
-                    nullptr, nullptr, STR("/Game/Tech/Managers/BP_MorSettlementManager.BP_MorSettlementManager_C"));
-                if (!mgrCls) mgrCls = UObjectGlobals::StaticFindObject<UClass*>(
-                    nullptr, nullptr, STR("/Script/Moria.MorSettlementManager"));
-                auto* getMgrFn = UObjectGlobals::StaticFindObject<UFunction*>(
-                    nullptr, nullptr, STR("/Script/FGK.FGKUtils:GetManager"));
-                auto* fgkUtilsCDO = UObjectGlobals::StaticFindObject<UObject*>(
-                    nullptr, nullptr, STR("/Script/FGK.Default__FGKUtils"));
-                if (mgrCls && getMgrFn && fgkUtilsCDO)
-                {
-                    int gsz = getMgrFn->GetParmsSize();
-                    std::vector<uint8_t> gbuf(gsz, 0);
-                    writeGoatParm<UObject*>(getMgrFn, gbuf.data(), STR("WorldContextObject"), worldCtx);
-                    writeGoatParm<UClass*> (getMgrFn, gbuf.data(), STR("ManagerClass"),       mgrCls);
-                    if (safeProcessEvent(fgkUtilsCDO, getMgrFn, gbuf.data()))
-                    {
-                        UObject* settleMgr = readGoatParm<UObject*>(getMgrFn, gbuf.data(), STR("ReturnValue"), nullptr);
-                        if (settleMgr && isObjectAlive(settleMgr))
-                        {
-                            FProperty* delegateProp = nullptr;
-                            for (auto* strct = static_cast<UStruct*>(settleMgr->GetClassPrivate());
-                                 strct && !delegateProp; strct = strct->GetSuperStruct())
-                            {
-                                for (auto* prop : strct->ForEachProperty())
-                                {
-                                    std::wstring pn;
-                                    try { pn = prop->GetName(); } catch (...) {}
-                                    if (pn == STR("OnNpcRescued")) { delegateProp = prop; break; }
-                                }
-                            }
-                            if (delegateProp)
-                            {
-                                uint8_t* slot = reinterpret_cast<uint8_t*>(settleMgr) + delegateProp->GetOffset_Internal();
-                                appendMulticastEntry(slot, goat, STR("OnNpcRescued_Event_2"), STR("OnNpcRescued"));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 5. Track the goat for the PE-pre detector (handler path).
-            trackGoatPendingRecruit(goat);
-            VLOG(STR("[MoriaCppMod] [Recruit] tracked goat={:p} (pending recruit detection)\n"), (void*)goat);
-
-            return true;
-        }
-
-        // Handler — called when we detect the recruit fired on this goat
-        // (via PE-pre dispatching our marker-fn name). Replicates the
-        // dwarf wanderer post-recruit chain that the goat's BP graph
-        // can't do.
-        void onGoatRecruited(UObject* goat)
-        {
-            if (!goat || !isObjectAlive(goat)) return;
-            VLOG(STR("[MoriaCppMod] [Recruit] *** post-recruit handler firing on goat={:p} ***\n"),
-                 (void*)goat);
-            untrackGoatPendingRecruit(goat);
-
-            // Get MorNPCComponent and call RegisterWithNPCManager so the
-            // goat enters the persistent NPC roster (correct NpcGuid path).
-            UClass* npcCompCls = UObjectGlobals::StaticFindObject<UClass*>(
-                nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
-            if (npcCompCls)
-            {
-                auto* getCompFn = goat->GetFunctionByNameInChain(STR("GetComponentByClass"));
-                if (getCompFn)
-                {
-                    int sz = getCompFn->GetParmsSize();
-                    std::vector<uint8_t> buf(sz, 0);
-                    writeGoatParm<UClass*>(getCompFn, buf.data(), STR("ComponentClass"), npcCompCls);
-                    if (safeProcessEvent(goat, getCompFn, buf.data()))
-                    {
-                        UObject* npcComp = readGoatParm<UObject*>(getCompFn, buf.data(), STR("ReturnValue"), nullptr);
-                        if (npcComp && isObjectAlive(npcComp))
-                        {
-                            if (auto* regFn = npcComp->GetFunctionByNameInChain(STR("RegisterWithNPCManager")))
-                            {
-                                safeProcessEvent(npcComp, regFn, nullptr);
-                                VLOG(STR("[MoriaCppMod] [Recruit] RegisterWithNPCManager fired\n"));
-                            }
-                            // [v1.2.8 RESCUE-CRASH FIX 2026-05-10] Drop
-                            // RegisterToInteractableManager. It added the
-                            // goat to the player's CurrentInteracts list,
-                            // and after we destroyed the actor the dead
-                            // pointer crashed MorInteractComponent::
-                            // GetNearestInteractableOfType (next Rope
-                            // state CanActivate walk). Goat is already
-                            // an interactable from spawn-time; no
-                            // re-registration needed.
-                            //
-                            // [v1.2.8 FIX 2 2026-05-10] SendBackToSettlement
-                            // (no args) needs a pre-assigned settlement
-                            // target our goat doesn't have. Use the
-                            // parameterized RPC: MorPlayerController::
-                            // ServerSendNpcToSettlement(NpcGuid, waypointId=0)
-                            // which explicitly assigns + relocates.
-                            // Reuses our existing assignGoatToSettlement
-                            // helper.
-                            assignGoatToSettlement(npcComp, /*waypointId=*/0);
-                        }
-                    }
-                }
-            }
-            // [v1.2.8 RESCUE-CRASH FIX 2026-05-10] Removed manual
-            // K2_DestroyActor — it left stale pointers in the player's
-            // MorInteractComponent.CurrentInteracts list and crashed the
-            // next tick. SendBackToSettlement above does the proper
-            // teardown. If SendBackToSettlement didn't despawn the goat,
-            // the goat stays alive but is registered and persists.
-        }
 
         // [v1.2.3 OLD — kept for legacy NUM- compatibility]
         //
@@ -8720,45 +8127,7 @@
             return newCtrl;
         }
 
-        // PE pre-hook: ServerInteract fires when player presses E on any
-        // interactable. Param 0 (ObjectInteractable) is the target.  If the
-        // target is one of our spawned goats, run our custom action.
-        // Currently a placeholder — logs + toast. Will eventually call the
-        // open-inventory UFunction once we identify it.
-        void onGoatInteractPre(UObject* /*context*/, UFunction* func, void* parms)
-        {
-            if (!parms || !func) return;
-            auto* pTarget = findParam(func, STR("ObjectInteractable"));
-            if (!pTarget) return;
-            UObject* target = *reinterpret_cast<UObject**>(
-                static_cast<uint8_t*>(parms) + pTarget->GetOffset_Internal());
-            if (!target || !isObjectAlive(target)) return;
 
-            // Is this one of our spawned goats?
-            for (auto& g : m_followGoats)
-            {
-                UObject* mine = g.pawn.Get();
-                if (mine && mine == target)
-                {
-                    VLOG(STR("[MoriaCppMod] [Goat] E-press detected on companion goat (ServerInteract hook fired) target={:p}\n"),
-                         (void*)target);
-                    showOnScreen(L"Goat: open inventory (TODO)", 2.0f, 0.4f, 0.9f, 0.4f);
-                    return;
-                }
-            }
-        }
-
-        // PE pre-hook: ServerRescueNpc fires when the rescue interaction is
-        // dispatched. We can't easily map the NpcGuid back to our spawned
-        // goat (our goats don't have a persistent guid), so this is a
-        // catch-all — if the player has a follower goat AND someone is
-        // calling rescue, assume it's our goat and run the placeholder.
-        void onGoatRescuePre(UObject* /*context*/, UFunction* /*func*/, void* /*parms*/)
-        {
-            if (m_followGoats.empty()) return;  // no goats, not us
-            VLOG(STR("[MoriaCppMod] [Goat] ServerRescueNpc fired (with follower goat present — likely E on goat)\n"));
-            showOnScreen(L"Goat: rescue intercepted (TODO open inventory)", 2.0f, 0.4f, 0.9f, 0.4f);
-        }
 
         // One-shot dump of a live MorNPCComponent: walks every property on the
         // class+supers and prints type + live value for ObjectProperty,
@@ -9153,109 +8522,6 @@
         // or MorInventoryComponent) and the open-UI UFunction we need to
         // call when the player taps E on the goat.
         bool m_goatComponentsDumped{false};
-        void dumpGoatComponents(UObject* goatActor)
-        {
-            if (m_goatComponentsDumped) return;
-            m_goatComponentsDumped = true;
-            if (!goatActor) return;
-
-            VLOG(STR("[MoriaCppMod] [GoatCompDump] === components on goat={:p} cls={} ===\n"),
-                 (void*)goatActor, safeClassName(goatActor).c_str());
-
-            // K2_GetComponentsByClass(UActorComponent::StaticClass()) returns
-            // every ActorComponent. We use UClass*=ActorComponent to grab
-            // them all, then filter UFunction listing per component.
-            auto* getCompsFn = goatActor->GetFunctionByNameInChain(STR("GetComponents"));
-            if (!getCompsFn)
-                getCompsFn = goatActor->GetFunctionByNameInChain(STR("K2_GetComponentsByClass"));
-            // Fallback: walk InstanceComponents UPROPERTY directly.
-            UObject** instCompsArrPtr = goatActor->GetValuePtrByPropertyNameInChain<UObject*>(
-                STR("InstanceComponents"));
-            (void)instCompsArrPtr;  // we'll iterate via property reflection
-
-            // Iterate the BlueprintCreatedComponents and InstanceComponents
-            // arrays via reflection.
-            const wchar_t* arrPropNames[] = {
-                STR("BlueprintCreatedComponents"),
-                STR("InstanceComponents"),
-                STR("OwnedComponents"),
-            };
-            int totalComps = 0;
-            for (auto* arrName : arrPropNames)
-            {
-                UClass* aCls = nullptr;
-                try { aCls = goatActor->GetClassPrivate(); } catch (...) {}
-                if (!aCls) continue;
-                FProperty* arrProp = nullptr;
-                for (auto* strct = static_cast<UStruct*>(aCls); strct && !arrProp;
-                     strct = strct->GetSuperStruct())
-                {
-                    for (auto* p : strct->ForEachProperty())
-                    {
-                        std::wstring pn;
-                        try { pn = p->GetName(); } catch (...) {}
-                        if (pn == arrName) { arrProp = p; break; }
-                    }
-                }
-                if (!arrProp) continue;
-                // TArray<UObject*> layout: { UObject** Data; int32 Num; int32 Max; }
-                uint8_t* slot = reinterpret_cast<uint8_t*>(goatActor) + arrProp->GetOffset_Internal();
-                UObject** data = *reinterpret_cast<UObject***>(slot + 0);
-                int32_t num    = *reinterpret_cast<int32_t*>(slot + 8);
-                if (!data || num <= 0) continue;
-                VLOG(STR("[MoriaCppMod] [GoatCompDump]   {} count={}\n"), arrName, num);
-                for (int32_t i = 0; i < num && i < 64; ++i)
-                {
-                    UObject* c = data[i];
-                    if (!c || !isObjectAlive(c)) continue;
-                    std::wstring cName, cCls;
-                    try { cName = c->GetName(); } catch (...) {}
-                    try { cCls = c->GetClassPrivate()->GetName(); } catch (...) {}
-                    VLOG(STR("[MoriaCppMod] [GoatCompDump]     [{}] {} : {}\n"),
-                         i, cName.c_str(), cCls.c_str());
-                    ++totalComps;
-
-                    // For components whose class name suggests storage,
-                    // inventory, container — list interesting UFunctions.
-                    std::wstring lcCls = cCls;
-                    for (auto& ch : lcCls) ch = (wchar_t)::towlower(ch);
-                    if (lcCls.find(L"inventor")  == std::wstring::npos
-                        && lcCls.find(L"storage")  == std::wstring::npos
-                        && lcCls.find(L"container")== std::wstring::npos
-                        && lcCls.find(L"equip")    == std::wstring::npos
-                        && lcCls.find(L"loot")     == std::wstring::npos
-                        && lcCls.find(L"pack")     == std::wstring::npos
-                        && lcCls.find(L"interact") == std::wstring::npos)
-                    { continue; }
-
-                    UClass* ccls = nullptr;
-                    try { ccls = c->GetClassPrivate(); } catch (...) {}
-                    if (!ccls) continue;
-                    int fnCount = 0;
-                    for (auto* fn : ccls->ForEachFunctionInChain())
-                    {
-                        if (fnCount >= 60) break;
-                        std::wstring fnName;
-                        try { fnName = fn->GetName(); } catch (...) {}
-                        std::wstring lfn = fnName;
-                        for (auto& ch : lfn) ch = (wchar_t)::towlower(ch);
-                        if (lfn.find(L"open") == std::wstring::npos
-                            && lfn.find(L"close") == std::wstring::npos
-                            && lfn.find(L"show") == std::wstring::npos
-                            && lfn.find(L"request") == std::wstring::npos
-                            && lfn.find(L"transfer") == std::wstring::npos
-                            && lfn.find(L"loot") == std::wstring::npos
-                            && lfn.find(L"access") == std::wstring::npos
-                            && lfn.find(L"interact") == std::wstring::npos)
-                        { ++fnCount; continue; }
-                        VLOG(STR("[MoriaCppMod] [GoatCompDump]       UFUNC {}.{}\n"),
-                             cCls.c_str(), fnName.c_str());
-                        ++fnCount;
-                    }
-                }
-            }
-            VLOG(STR("[MoriaCppMod] [GoatCompDump] === total components walked: {} ===\n"), totalComps);
-        }
 
         // [rc.66 HELPER 2026-05-21] Walk a UI_WBP_Interaction_C row widget's
         // children to find the TextBlock named 'InteractionText' and return
@@ -9595,23 +8861,6 @@
                             // AND apply the user-selected MI_Goat skin to every slot.
                             if (compClsName.find(L"SkeletalMesh") != std::wstring::npos)
                             {
-                                // [v1.1.0 GENERIC MODE 2026-05-09] Mesh
-                                // visibility-force + skin override
-                                // suspended — let v1.1.0 defaults stand.
-#if 0 // GENERIC_MODE_2026_05_09
-                                if (auto* svFn = comp->GetFunctionByNameInChain(STR("SetVisibility")))
-                                {
-                                    struct { bool bNewVisibility{true}; bool bPropagate{true}; } svp{};
-                                    safeProcessEvent(comp, svFn, &svp);
-                                }
-                                if (auto* shFn = comp->GetFunctionByNameInChain(STR("SetHiddenInGame")))
-                                {
-                                    struct { bool bNewHidden{false}; bool bPropagate{true}; } shp{};
-                                    safeProcessEvent(comp, shFn, &shp);
-                                }
-                                VLOG(STR("[MoriaCppMod] [Goat] forced SkeletalMesh visible\n"));
-                                applyGoatSkin(comp);
-#endif // GENERIC_MODE
                             }
                         }
                         if (compHits >= 200) break;
@@ -9681,16 +8930,6 @@
                             // sockets, not separate UPROPERTYs.
                             if (std::wstring_view(p.logName) == std::wstring_view(L"Mesh"))
                             {
-                                // [v1.1.0 GENERIC MODE 2026-05-09] Skin
-                                // override + force-visibility suspended.
-#if 0 // GENERIC_MODE_2026_05_09
-                                applyGoatSkin(found);
-                                if (auto* svFn = found->GetFunctionByNameInChain(STR("SetVisibility")))
-                                {
-                                    struct { bool bNewVisibility{true}; bool bPropagate{true}; } svp{};
-                                    safeProcessEvent(found, svFn, &svp);
-                                }
-#endif // GENERIC_MODE
 
                                 // Walk AttachChildren — TArray<USceneComponent*> on USceneComponent
                                 auto** ac = found->GetValuePtrByPropertyNameInChain<void*>(STR("AttachChildren"));
@@ -9771,18 +9010,6 @@
                 if (!g.fleeSuppressed)
                 {
                     g.fleeSuppressed = true;
-                    // [v1.1.0 GENERIC MODE 2026-05-09] All FGK deactivations
-                    // suspended. v1.1.0 pak makes the goat a registered
-                    // PorterGoat NPC; we should let vanilla AI run. If
-                    // perception/targeting/parkour/patrol are wrong for a
-                    // settlement-grade NPC, the issue is in the v1.1.0
-                    // editor side, not our runtime overrides.
-#if 0 // GENERIC_MODE_2026_05_09
-                    deactivateGoatAIComponent(ctrl, STR("/Script/FGK.FGKAIPerceptionComponent"), L"FGKAIPerceptionComponent");
-                    deactivateGoatAIComponent(ctrl, STR("/Script/FGK.FGKAITargetingComponent"),  L"FGKAITargetingComponent");
-                    deactivateGoatAIComponent(goat, STR("/Script/FGK.FGKParkourComponent"),      L"FGKParkourComponent");
-                    deactivateGoatAIComponent(ctrl, STR("/Script/FGK.FGKAIPatrolComponent"),     L"FGKAIPatrolComponent");
-#endif // GENERIC_MODE
                 }
 
                 // Now assign the Porter role + equip the pack. With FGK dead,
@@ -9919,12 +9146,6 @@
                 if (!g.postRegDumpDone && g.ticksSinceSpawn >= 300)
                 {
                     g.postRegDumpDone = true;
-                    // [Phase 3] silenced — post-reg dump (70 lines/spawn).
-                    // VLOG(STR("[MoriaCppMod] [Goat] === POST-REG component dump (pawn={:p} ctrl={:p}) ===\n"),
-                    //      (void*)goat, (void*)ctrl);
-                    // dumpGoatComponents(goat);
-                    // VLOG(STR("[MoriaCppMod] [Goat] === POST-REG controller component dump ===\n"));
-                    // dumpGoatComponents(ctrl);
                     // Also log the controller's class name to detect if
                     // registration swapped to a Porter-specific AIController.
                     std::wstring ctrlCls;
@@ -10064,19 +9285,6 @@
                                         VLOG(STR("[MoriaCppMod] [Goat] FIXUP: SetIsInteractive(true) re-fired on existing goat={:p}\n"), (void*)goat);
                                     }
 
-                                    // [v1.1.1 REVERT 2026-05-09] Per desktop
-                                    // brief — with BP_NpcGoat_C in the
-                                    // ValidNpcClasses whitelist, registration
-                                    // may push the goat through the full
-                                    // settlement-member state and surface
-                                    // Details/Talk naturally. Test WITHOUT
-                                    // disabling these bools first.
-#if 0 // POST_v1_1_1_TEST
-                                    uint8_t* base = reinterpret_cast<uint8_t*>(npcComp);
-                                    *(base + 0x511) = 0; // bRescueInteractionEnabled = false
-                                    *(base + 0x6C9) = 0; // bRecruitInteractionEnabled = false
-                                    VLOG(STR("[MoriaCppMod] [Goat] FIXUP: Rescue + Recruit interactions disabled (Details/Talk should now show)\n"));
-#endif
                                 }
                             }
                         }

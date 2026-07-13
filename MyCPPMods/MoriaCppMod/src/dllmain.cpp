@@ -971,16 +971,6 @@ namespace MoriaMods
                     s_instance->onNavTabPressedPre(context, func, parms);
                 }
 
-                // Goat E-press hooks — narrow targets known so far.
-                // [rc.95 BELL-ONLY] disabled — let Tobi's native goat interaction run
-                // if (wcscmp(fnStr, STR("ServerInteract")) == 0 && parms)
-                // {
-                //     s_instance->onGoatInteractPre(context, func, parms);
-                // }
-                // if (wcscmp(fnStr, STR("ServerRescueNpc")) == 0 && parms)
-                // {
-                //     s_instance->onGoatRescuePre(context, func, parms);
-                // }
                 // Narrow keyword diagnostic — kept tight because the per-PE
                 // call cost adds up (this fires on every UFunction
                 // dispatch, thousands per second). Only the substrings we
@@ -1315,20 +1305,6 @@ namespace MoriaMods
                         std::wstring ctxCls = context ? safeClassName(context) : L"<null>";
                         VLOG(STR("[MoriaCppMod] [GoatPEDiag] PE-pre: '{}' on class={}\n"),
                              fnStr, ctxCls.c_str());
-                    }
-                    // First time we see UI_WBP_Interaction_C fire one of
-                    // these, dump its full property+UFunction schema so
-                    // we can find the visible-label FText and the target
-                    // UObject* to override "Rescue" -> "Open".
-                    if (context)
-                    {
-                        std::wstring ctxCls = safeClassName(context);
-                        if (ctxCls == STR("UI_WBP_Interaction_C"))
-                        {
-                            // [Phase 3] silenced — InteractDump (271 lines/session) was
-                            // the discovery probe; we know the schema now.
-                            // s_instance->dumpInteractionWidgetSchema(context);
-                        }
                     }
                 }
                 // BP_RequestSpawn full-args diagnostic (every call, not
@@ -3554,18 +3530,9 @@ namespace MoriaMods
                                      (void*)loadoutObj);
                             }
                         }
-                        // rc.41: arm a RECURRING post-load NPC sweep.
-                        // First fire at +30 s, then every 30 s up to
-                        // +5 min after character-load. Live log
-                        // showed an NPC transitioning NoBed →
-                        // CantReachBed at +70 s — the original
-                        // one-shot at +30 s missed it.
-                        // [rc.139] automatic post-load sweeps + character-load
-                        // scan RETIRED — NPC unstuck is on-demand only now
-                        // (BIND_UNSTUCK_NPCS keybind → runUnstuckNpcsNow()).
-                        // m_npcPostLoadSweepNextMs = m_charLoadTime + 30000;
-                        // m_npcPostLoadSweepEndMs  = m_charLoadTime + 300000;
-                        // openNpcScanWindow(m_charLoadTime, STR("character-load"));
+                        // Automatic post-load NPC sweeps are retired — NPC
+                        // unstuck is on-demand only (BIND_UNSTUCK_NPCS
+                        // keybind fires runUnstuckNpcsNow()).
                         VLOG(STR("[MoriaCppMod] Character loaded - PC={:p} Pawn={:p}, waiting 15s before replay\n"),
                              (void*)m_localPC, (void*)m_localPawn);
 

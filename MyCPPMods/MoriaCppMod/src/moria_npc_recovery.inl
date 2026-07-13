@@ -1506,8 +1506,6 @@
             // [Phase 3] silenced — NpcProbe (150 lines/session) was the
             // discovery probe; NPC layout is known.
             (void)label; (void)clsName;
-            // VLOG(STR("[NpcProbe] {} obj={:p} class={}\n"), label, (void*)obj, clsName.c_str());
-            // int propCount = 0;
             // try { for (auto* prop : cls->ForEachPropertyInChain()) ... } catch (...) {}
         }
 

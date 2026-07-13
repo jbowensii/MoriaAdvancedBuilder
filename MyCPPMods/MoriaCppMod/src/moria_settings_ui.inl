@@ -3647,7 +3647,7 @@
                     }
                 // Each row uses WBP_SettingsKeySelector_C (matches keymap
                 // visual layout) with the right-side keyText overridden
-                // to show the F12 status word + color, like the F12 menu.
+                // to show a status word + color.
                 struct GSpec {
                     const wchar_t* label;
                     GameOptKind kind;
@@ -4156,7 +4156,7 @@
 
         // Inject Cheats content into the legal tab's widget tree.
         // Pattern mirrors injectModGameOptions but adds buttons that
-        // dispatch to our existing F12 menu cheat actions.
+        // dispatch to the mod's cheat actions.
         enum class CheatKind { None, Unlock, ReadAll, ClearBuffs, TogglePeace,
                                 ToggleNoCollision, RenameChar, SaveGame };
         struct CheatButton { FWeakObjectPtr widget; CheatKind kind; };

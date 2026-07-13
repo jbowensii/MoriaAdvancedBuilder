@@ -46,8 +46,8 @@ namespace MoriaMods
     static constexpr int BIND_CONFIG    = 13;
     static constexpr int BIND_AB_TOGGLE = 17;
     // slot 18 repurposed from "Reserved/Diagnostics" to Save Game
-    // (defaults to F12, freed up after the legacy F12 menu dispatcher was
-    // disabled in this version). Live keybind: triggers triggerSaveGame().
+    // (default F12 — free since the legacy config menu was removed; all
+    // configuration lives in the native Settings screen now). Triggers triggerSaveGame().
     static constexpr int BIND_SAVE_GAME = 18;
     static constexpr int BIND_TRASH_ITEM     = 19;
     static constexpr int BIND_REPLENISH_ITEM = 20;
