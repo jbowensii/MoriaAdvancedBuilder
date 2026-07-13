@@ -1,4 +1,4 @@
-// MoriaCppMod - Return to Moria UE4SS C++ mod. v8.2.1 "Ephemeral Goat"
+// MoriaCppMod - Return to Moria UE4SS C++ mod. v8.5.0 "Porter Goat"
 // Top-level mod class lives here; subsystem implementations are #included via .inl files.
 
 #include "moria_common.h"
@@ -653,14 +653,14 @@ namespace MoriaMods
 
         MoriaCppMod()
         {
-            ModVersion = STR("8.2.1");
+            ModVersion = STR("8.5.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v8.2.0 \"Pre-Goat Release\" (Advanced Builder now a master toggle [=], starts OFF; NPC unstuck on-demand [-]; automatic NPC scanning removed; goat companion work in progress)\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v8.5.0 \"Porter Goat\" (goat companion complete: LMB bell summon/dismiss, follow, saddlebags with native persistence; Advanced Builder toggle [=]; Unstuck NPCs [-])\n"));
         }
 
         ~MoriaCppMod() override
@@ -700,7 +700,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v8.2.1 (workDir={})\n"),
+            VLOG(STR("[MoriaCppMod] Loaded v8.5.0 (workDir={})\n"),
                  utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
