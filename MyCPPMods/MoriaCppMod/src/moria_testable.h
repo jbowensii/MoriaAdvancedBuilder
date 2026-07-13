@@ -357,9 +357,9 @@ namespace MoriaMods
             s_table["ui.label_all"] = L"All";
 
             s_table["msg.no_item_selected"] = L"No item selected \u2014 move an item in inventory first";
-            s_table["msg.replenish_disabled"] = L"Replenish Item is disabled (enable in F12 settings)";
-            s_table["msg.remove_attrs_disabled"] = L"Remove Attributes is disabled (enable in F12 settings)";
-            s_table["msg.trash_disabled"] = L"Trash Item is disabled (enable in F12 settings)";
+            s_table["msg.replenish_disabled"] = L"Replenish Item is disabled (enable in Settings)";
+            s_table["msg.remove_attrs_disabled"] = L"Remove Attributes is disabled (enable in Settings)";
+            s_table["msg.trash_disabled"] = L"Trash Item is disabled (enable in Settings)";
             s_table["msg.no_definition_packs"] = L"No definition packs found";
             s_table["msg.game_mods_restart_notice"] = L"Changes take effect on next game launch";
             s_table["msg.settings_closed"] = L"Settings panel closed";

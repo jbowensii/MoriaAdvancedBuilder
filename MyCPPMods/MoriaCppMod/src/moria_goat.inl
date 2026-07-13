@@ -10038,8 +10038,21 @@
             // a fresh class lookup if the cached pointer is dead. Use
             // safeClassName (SEH-wrapped) instead of bare GetName — C++
             // try/catch does NOT catch SEH access violations.
-            bool clsAlive = (m_goatBPClass && isObjectAlive(m_goatBPClass)
-                             && !safeObjectName(m_goatBPClass).empty());  // [rc.121] SEH probe — isObjectAlive lies on reused memory
+            // [rc.121] SEH probe — isObjectAlive lies on reused memory.
+            // [v8.5.2] name must MATCH an expected goat class, not merely be
+            // non-empty: when GC purges the class between character load and
+            // the first ring, the reused slot can decode to a garbage-but-
+            // non-empty name, which fooled the old check and made every
+            // BeginDeferred fail until restart.
+            bool clsAlive = false;
+            if (m_goatBPClass && isObjectAlive(m_goatBPClass))
+            {
+                std::wstring probeName = safeObjectName(m_goatBPClass);
+                for (auto* candidate : GOAT_CLASS_NAMES)
+                {
+                    if (probeName == std::wstring_view(candidate)) { clsAlive = true; break; }
+                }
+            }
             if (!clsAlive)
             {
                 VLOG(STR("[MoriaCppMod] [BellSpawn] cached class STALE/null — re-resolving via GOAT_CLASS_PATHS\n"));
