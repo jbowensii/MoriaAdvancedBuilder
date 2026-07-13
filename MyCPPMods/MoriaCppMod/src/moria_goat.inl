@@ -9760,13 +9760,28 @@
             return nullptr;
         }
 
+        // Destroyed actors LINGER until garbage collection (isObjectAlive
+        // still passes) — log-proven 2026-07-13: after a bell dismiss, four
+        // consecutive rings all "found" the same corpse and re-dismissed it
+        // instead of summoning. IsActorBeingDestroyed is the reliable filter.
+        bool isGoatActorUsable(UObject* g)
+        {
+            if (!g || !isObjectAlive(g)) return false;
+            if (auto* fn = g->GetFunctionByNameInChain(STR("IsActorBeingDestroyed")))
+            {
+                std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+                if (safeProcessEvent(g, fn, b.data()) && b[0] != 0) return false;
+            }
+            return true;
+        }
+
         UObject* findAnyGoatInWorld()
         {
             std::vector<UObject*> hit;
             if (seh_findAnyGoatActor(&hit))
             {
                 for (UObject* g : hit)
-                    if (g && isObjectAlive(g)) return g;
+                    if (isGoatActorUsable(g)) return g;
             }
             return nullptr;
         }
@@ -9834,7 +9849,7 @@
             for (auto& g : m_followGoats)
             {
                 UObject* p = g.pawn.Get();
-                if (p && isObjectAlive(p)) { live = p; break; }
+                if (isGoatActorUsable(p)) { live = p; break; }
             }
             if (!live) live = findAnyGoatInWorld();  // untracked stray counts too
 

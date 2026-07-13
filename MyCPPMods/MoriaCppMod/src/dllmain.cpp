@@ -2928,12 +2928,42 @@ namespace MoriaMods
                              m_repositionHudMode ? STR("ON") : STR("OFF"));
                         if (m_repositionHudMode)
                         {
-                            // Force inspect window visible so it can be dragged.
+                            // F10 also RESTORES the Advanced Builder UI (user
+                            // directive 2026-07-13): activate the subsystem
+                            // and make its bar exist/visible so everything is
+                            // on screen for repositioning.
+                            if (!m_advBuilderActive)
+                            {
+                                m_advBuilderActive = true;
+                                VLOG(STR("[MoriaCppMod] [ReposHUD] Advanced Builder auto-ACTIVATED\n"));
+                            }
+                            if (!m_newBuildingBarSpawnAttempted)
+                            {
+                                m_newBuildingBarSpawnAttempted = true;
+                                createNewBuildingBar();
+                            }
+                            else if (m_newBuildingBar && isObjectAlive(m_newBuildingBar))
+                            {
+                                if (auto* visFn = m_newBuildingBar->GetFunctionByNameInChain(STR("SetVisibility")))
+                                { uint8_t p[8]{}; p[0] = 0; safeProcessEvent(m_newBuildingBar, visFn, p); }
+                            }
+                            updateBuildersBar();
+                            showInfoMessage(L"Reposition mode: drag the inspect window and rotation circles. F10/Esc exits.");
+                            // Stale-widget self-heal: the pre-spawned widgets
+                            // die on world reload; null so we recreate.
+                            if (m_targetInfoWidget && !isObjectAlive(m_targetInfoWidget)) m_targetInfoWidget = nullptr;
                             if (!m_targetInfoWidget) createTargetInfoWidget();
                             if (m_targetInfoWidget && isObjectAlive(m_targetInfoWidget))
                             {
                                 showTargetInfoUMG(L"Reposition", L"Drag me", L"", L"", false, L"", L"");
                                 m_tiAutoHideAtMs = 0;  // disable auto-hide while in mode
+                            }
+                            if (m_rotDisplayWidget && !isObjectAlive(m_rotDisplayWidget))
+                            { m_rotDisplayWidget = nullptr; m_rotDisplaySpawnAttempted = false; }
+                            if (!m_rotDisplaySpawnAttempted)
+                            {
+                                m_rotDisplaySpawnAttempted = true;
+                                createRotationDisplay();
                             }
                             // Switch to UI input mode so the mouse cursor
                             // appears and clicks reach the widgets.
@@ -4527,6 +4557,17 @@ namespace MoriaMods
                     m_errorBoxWidget = nullptr;
                     m_ebMessageLabel = nullptr;
                     m_ebShowTick = 0;
+
+                    // Widgets die with the world — clear + re-arm the once-
+                    // per-load spawners, or the rotation display and NBB stay
+                    // stale for the rest of the session after any reload
+                    // (2026-07-13: F10/circles "did nothing" root cause).
+                    m_rotDisplayWidget = nullptr;
+                    m_rotDisplaySpawnAttempted = false;
+                    m_rotDispDragActive = false;
+                    m_newBuildingBar = nullptr;
+                    m_newBuildingBarSpawnAttempted = false;
+                    m_repositionHudMode = false;
 
                     clearStabilityHighlights();
                 }
