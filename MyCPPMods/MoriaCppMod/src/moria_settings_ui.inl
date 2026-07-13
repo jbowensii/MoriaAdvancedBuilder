@@ -2177,8 +2177,7 @@
                 // become silent no-ops.
                 UObject* btn = spawnGameOptButton(outer, s.label, s.kind, /*fromPauseMenu=*/true);
                 if (!btn) continue;
-                if (auto* smPtr = btn->GetValuePtrByPropertyNameInChain<bool>(STR("SmallText")))
-                    *smPtr = true; // match SETTINGS/FREE CAM size
+                setBoolProp(btn, STR("SmallText"), true); // match SETTINGS/FREE CAM size
                 modButtons.push_back(btn);
                 ++added;
             }

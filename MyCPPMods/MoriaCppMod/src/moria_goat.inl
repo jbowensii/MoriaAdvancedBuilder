@@ -2129,7 +2129,7 @@
                     {
                         std::vector<uint8_t> buf(getMgrFn->GetParmsSize(), 0);
                         auto* pWC = findParam(getMgrFn, STR("WorldContextObject"));
-                        if (pWC && m_localPC)
+                        if (pWC && m_localPC && isObjectAlive(m_localPC))
                             *reinterpret_cast<UObject**>(buf.data() + pWC->GetOffset_Internal()) = m_localPC;
                         try { safeProcessEvent(utilsCDO, getMgrFn, buf.data()); } catch (...) {}
                         auto* pRet = findParam(getMgrFn, STR("ReturnValue"));
@@ -2200,7 +2200,7 @@
                         VLOG(STR("[MoriaCppMod] [NpcMgrProbe] calling MoriaUtils::GetNpcManager\n"));
                         std::vector<uint8_t> buf(getMgrFn->GetParmsSize(), 0);
                         auto* pWC = findParam(getMgrFn, STR("WorldContextObject"));
-                        if (pWC && m_localPC)
+                        if (pWC && m_localPC && isObjectAlive(m_localPC))
                             *reinterpret_cast<UObject**>(buf.data() + pWC->GetOffset_Internal()) = m_localPC;
                         try { safeProcessEvent(utilsCDO, getMgrFn, buf.data()); } catch (...) {}
                         auto* pRet = findParam(getMgrFn, STR("ReturnValue"));
@@ -2620,11 +2620,12 @@
             // defaults to false everywhere → no prompts surface.
             // Skip rescue dialog flow entirely; flip flags directly via
             // reflection (no raw offsets — UE4SS GetValuePtrByPropertyNameInChain).
+            // setBoolProp = FBoolProperty path (mask-correct even if the
+            // game ever packs these into bitfields; today they are plain
+            // per-byte bools per the CXX dump).
             auto setBoolByName = [npcComp](const wchar_t* name, bool value, const wchar_t* tag) {
-                bool* p = npcComp->GetValuePtrByPropertyNameInChain<bool>(name);
-                if (p)
+                if (setBoolProp(npcComp, name, value))
                 {
-                    *p = value;
                     VLOG(STR("[MoriaCppMod] [Goat] post-rescue flag {} = {} (tag={})\n"),
                          name, value ? STR("true") : STR("false"), tag);
                 }
@@ -3050,9 +3051,9 @@
             // [v1.2.9 BASELINE 2026-05-10] Live values of the key bools
             // desktop asked about — pre-rescue state.
             auto readWandBool = [wandComp](const wchar_t* name) -> std::wstring {
-                bool* p = wandComp->GetValuePtrByPropertyNameInChain<bool>(name);
-                if (!p) return STR("(not found)");
-                return *p ? STR("true") : STR("false");
+                auto* bp = resolveBoolProperty(wandComp, name);
+                if (!bp) return STR("(not found)");
+                return bp->GetPropertyValueInContainer(wandComp) ? STR("true") : STR("false");
             };
             VLOG(STR("[MoriaCppMod] [Probe]   LIVE bRecruitInteractionEnabled = {}\n"),
                  readWandBool(STR("bRecruitInteractionEnabled")).c_str());
@@ -4603,9 +4604,8 @@
             if (!safeProcessEvent(goat, getCompFn, gbuf.data())) return;
             UObject* npcComp = readGoatParm<UObject*>(getCompFn, gbuf.data(), STR("ReturnValue"), nullptr);
             if (!npcComp || !isObjectAlive(npcComp)) return;
-            if (auto* flag = npcComp->GetValuePtrByPropertyNameInChain<bool>(STR("bTalkInteractionEnabled")))
+            if (setBoolProp(npcComp, STR("bTalkInteractionEnabled"), false))
             {
-                *flag = false;
                 VLOG(STR("[MoriaCppMod] [GoatMenu] Follow/Stay row REMOVED (bTalkInteractionEnabled=false on npcComp={:p})\n"),
                      (void*)npcComp);
             }
@@ -5147,8 +5147,7 @@
                     *p = val;
             };
             auto writeBool = [&](const wchar_t* propName, bool val) {
-                if (auto* p = w->GetValuePtrByPropertyNameInChain<bool>(propName))
-                    *p = val;
+                setBoolProp(w, propName, val);
             };
 
             // LEFT pane = player's saddlebag (the bag)
@@ -6067,6 +6066,19 @@
                 VLOG(STR("[MoriaCppMod] [GoatSaddle] [{}] Storage_Container child NOT FOUND\n"), tag);
                 return;
             }
+            // Never write stale pointers into a live engine object's
+            // properties (goatInv/playerInv come from caches that can
+            // outlive their objects on re-drive paths).
+            if (goatInv && !isObjectAlive(goatInv))
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [{}] goatInv cache STALE — drive skipped\n"), tag);
+                return;
+            }
+            if (playerInv && !isObjectAlive(playerInv))
+            {
+                VLOG(STR("[MoriaCppMod] [GoatSaddle] [{}] playerInv cache STALE — drive skipped\n"), tag);
+                return;
+            }
             if (auto* p = cont->GetValuePtrByPropertyNameInChain<uint8_t>(STR("storageHandle")))
                 std::memcpy(p, bagHandle, 20);
             if (auto* p = cont->GetValuePtrByPropertyNameInChain<UObject*>(STR("storageInventoryComponent")))
@@ -6131,7 +6143,7 @@
                 if (auto* p = w->GetValuePtrByPropertyNameInChain<UObject*>(propName)) *p = val;
             };
             auto writeBool = [&](const wchar_t* propName, bool val) {
-                if (auto* p = w->GetValuePtrByPropertyNameInChain<bool>(propName)) *p = val;
+                setBoolProp(w, propName, val);
             };
 
             // [rc.103 CHEST MODE 2026-07-10] LEFT pane = the passed container
@@ -6358,7 +6370,7 @@
                         if (!w || !isObjectAlive(w)) continue;
                         if (w == m_test3SaddlebagWidget) continue;
                         bool inViewport = false;
-                        if (auto* ivFn = w->GetFunctionByNameInChain(STR("IsInViewport")))
+                        if (auto* ivFn = cachedFnInChain(w, STR("IsInViewport")))
                         {
                             std::vector<uint8_t> b(ivFn->GetParmsSize(), 0);
                             try { safeProcessEvent(w, ivFn, b.data()); } catch (...) {}
@@ -6371,7 +6383,7 @@
                             // game's SINGLETON screen from the viewport broke every
                             // later chest open (Show() can't re-add it). Collapse is
                             // reversible: the native Show restores visibility.
-                            if (auto* svFn = w->GetFunctionByNameInChain(STR("SetVisibility")))
+                            if (auto* svFn = cachedFnInChain(w, STR("SetVisibility")))
                             {
                                 std::vector<uint8_t> vb(svFn->GetParmsSize(), 0);
                                 vb[0] = 1;  // Collapsed
@@ -7896,10 +7908,8 @@
             writeStruct(STR("epicPackTag"), epicPackTag, 8);
             writeStruct(STR("InventoryContainerEpicPackTag"), epicPackTag, 8);
 
-            auto* boolPtr = w->GetValuePtrByPropertyNameInChain<bool>(STR("isStorageView"));
-            if (boolPtr)
+            if (setBoolProp(w, STR("isStorageView"), true))
             {
-                *boolPtr = true;
                 VLOG(STR("[MoriaCppMod] [GoatSaddle] [Test 3] wrote isStorageView=true\n"));
             }
 
@@ -8272,7 +8282,7 @@
                     auto setVis = [&](const wchar_t* childName, uint8_t v) {
                         UObject* c = jw_findChildInTree(m_goatSaddlebagWidget, childName);
                         if (!c || !isObjectAlive(c)) return;
-                        if (auto* f = c->GetFunctionByNameInChain(STR("SetVisibility")))
+                        if (auto* f = cachedFnInChain(c, STR("SetVisibility")))
                         {
                             std::vector<uint8_t> vb(f->GetParmsSize(), 0);
                             vb[0] = v;
@@ -8299,7 +8309,7 @@
                             if (!ww || !isObjectAlive(ww) || depth > 14 || found > 4) return;
                             if (safeClassName(ww) == STR("WBP_UI_Inventory_NPC_C"))
                             {
-                                if (auto* f = ww->GetFunctionByNameInChain(STR("SetVisibility")))
+                                if (auto* f = cachedFnInChain(ww, STR("SetVisibility")))
                                 {
                                     std::vector<uint8_t> vb(f->GetParmsSize(), 0);
                                     vb[0] = 1;  // Collapsed
@@ -8308,14 +8318,14 @@
                                 found++;
                                 return;
                             }
-                            if (auto* gcc = ww->GetFunctionByNameInChain(STR("GetChildrenCount")))
+                            if (auto* gcc = cachedFnInChain(ww, STR("GetChildrenCount")))
                             {
                                 std::vector<uint8_t> b(gcc->GetParmsSize(), 0);
                                 try { safeProcessEvent(ww, gcc, b.data()); } catch (...) {}
                                 int32_t n = 0;
                                 if (auto* pr = findParam(gcc, STR("ReturnValue")))
                                     n = *reinterpret_cast<int32_t*>(b.data() + pr->GetOffset_Internal());
-                                if (auto* gca = ww->GetFunctionByNameInChain(STR("GetChildAt")))
+                                if (auto* gca = cachedFnInChain(ww, STR("GetChildAt")))
                                 {
                                     for (int32_t i = 0; i < n && i < 32; i++)
                                     {
@@ -11725,13 +11735,9 @@
                             if (npcComp && isObjectAlive(npcComp))
                             {
                                 auto setFlag = [npcComp](const wchar_t* name, bool val) {
-                                    bool* p = npcComp->GetValuePtrByPropertyNameInChain<bool>(name);
-                                    if (p)
-                                    {
-                                        *p = val;
+                                    if (setBoolProp(npcComp, name, val))
                                         VLOG(STR("[MoriaCppMod] [Spawn] set {}={}\n"),
                                              name, val ? STR("true") : STR("false"));
-                                    }
                                 };
                                 setFlag(STR("bRescueInteractionEnabled"), false);
                                 setFlag(STR("bRecruitInteractionEnabled"), false);
@@ -12414,11 +12420,8 @@
             // 2. Enable Recruit interaction. Reflective bool writes survive
             // FGK component layout shifts on DLC; the UFunction setter below
             // covers any side-effects the property writes alone skip.
-            uint8_t* base = reinterpret_cast<uint8_t*>(wandComp);
-            if (auto* p = wandComp->GetValuePtrByPropertyNameInChain<bool>(STR("bRecruitInteractionRegister")))
-                *p = true;
-            if (auto* p = wandComp->GetValuePtrByPropertyNameInChain<bool>(STR("bRecruitInteractionEnabled")))
-                *p = true;
+            setBoolProp(wandComp, STR("bRecruitInteractionRegister"), true);
+            setBoolProp(wandComp, STR("bRecruitInteractionEnabled"), true);
             VLOG(STR("[MoriaCppMod] [Recruit] flipped bRecruitInteractionRegister + bRecruitInteractionEnabled = true\n"));
             if (auto* setEnFn = wandComp->GetFunctionByNameInChain(STR("SetRecruitInteractionEnabled")))
             {
@@ -12785,9 +12788,9 @@
 
                 // Read each flag desktop asked about.
                 auto readBool = [npcComp](const wchar_t* name) -> std::wstring {
-                    bool* p = npcComp->GetValuePtrByPropertyNameInChain<bool>(name);
-                    if (!p) return STR("(not found)");
-                    return *p ? STR("true") : STR("false");
+                    auto* bp = resolveBoolProperty(npcComp, name);
+                    if (!bp) return STR("(not found)");
+                    return bp->GetPropertyValueInContainer(npcComp) ? STR("true") : STR("false");
                 };
                 VLOG(STR("[MoriaCppMod] [Probe]     bIsRescued                 = {}\n"),
                      readBool(STR("bIsRescued")).c_str());
@@ -14241,7 +14244,7 @@
                     {
                         std::vector<uint8_t> buf(getMgrFn->GetParmsSize(), 0);
                         auto* pWC = findParam(getMgrFn, STR("WorldContextObject"));
-                        if (pWC && m_localPC)
+                        if (pWC && m_localPC && isObjectAlive(m_localPC))
                             *reinterpret_cast<UObject**>(buf.data() + pWC->GetOffset_Internal()) = m_localPC;
                         try { safeProcessEvent(utilsCDO, getMgrFn, buf.data()); } catch (...) {}
                         auto* pRet = findParam(getMgrFn, STR("ReturnValue"));
@@ -14475,7 +14478,7 @@
                     {
                         std::vector<uint8_t> buf(getMgrFn->GetParmsSize(), 0);
                         auto* pWC = findParam(getMgrFn, STR("WorldContextObject"));
-                        if (pWC && m_localPC)
+                        if (pWC && m_localPC && isObjectAlive(m_localPC))
                             *reinterpret_cast<UObject**>(buf.data() + pWC->GetOffset_Internal()) = m_localPC;
                         try { safeProcessEvent(utilsCDO, getMgrFn, buf.data()); } catch (...) {}
                         auto* pRet = findParam(getMgrFn, STR("ReturnValue"));

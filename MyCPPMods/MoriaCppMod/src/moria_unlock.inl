@@ -280,26 +280,45 @@
                 if (!rsPtr || !*rsPtr) continue;
                 UStruct* rowStruct = *rsPtr;
 
-                // Must inherit from FMorRecipeDefinition (i.e., has DefaultRequiredMaterials array at 0x40)
-                bool hasDRM = false;
-                for (UStruct* w = rowStruct; w && !hasDRM; w = w->GetSuperStruct())
+                // Must inherit from FMorRecipeDefinition (i.e., has a
+                // DefaultRequiredMaterials array). Resolve its offset plus the
+                // element stride and Count offset from the array's inner struct
+                // (FMorRequiredRecipeMaterial) so DLC layout shifts don't break us.
+                int drmOff = -1, elemStride = -1, elemCountOff = -1;
+                for (UStruct* w = rowStruct; w && drmOff < 0; w = w->GetSuperStruct())
                 {
                     for (auto* p : w->ForEachProperty())
                     {
                         if (p->GetName() == std::wstring_view(L"DefaultRequiredMaterials"))
-                        { hasDRM = true; break; }
+                        {
+                            drmOff = p->GetOffset_Internal();
+                            auto* arrProp = static_cast<FArrayProperty*>(p);
+                            if (FProperty* inner = arrProp->GetInner())
+                            {
+                                auto* innerStructProp = static_cast<FStructProperty*>(inner);
+                                if (UScriptStruct* elemStruct = innerStructProp->GetStruct())
+                                {
+                                    elemStride = elemStruct->GetPropertiesSize();
+                                    int cache = -2;
+                                    elemCountOff = resolveStructFieldOffset(elemStruct, L"Count", cache);
+                                }
+                            }
+                            break;
+                        }
                     }
                 }
-                if (!hasDRM) continue;
+                if (drmOff < 0) continue;
+                if (elemStride  <= 0) elemStride  = 0x28;  // FMorRequiredRecipeMaterial
+                if (elemCountOff < 0) elemCountOff = 0x20;
 
-                // Detect if this is a construction recipe table (has bAllowRefunds)
-                bool isConstructionRecipe = false;
-                for (UStruct* w = rowStruct; w && !isConstructionRecipe; w = w->GetSuperStruct())
+                // Construction recipe tables additionally carry bAllowRefunds.
+                int refundsOff = -1;
+                for (UStruct* w = rowStruct; w && refundsOff < 0; w = w->GetSuperStruct())
                 {
                     for (auto* p : w->ForEachProperty())
                     {
                         if (p->GetName() == std::wstring_view(L"bAllowRefunds"))
-                        { isConstructionRecipe = true; break; }
+                        { refundsOff = p->GetOffset_Internal(); break; }
                     }
                 }
 
@@ -315,8 +334,7 @@
                     uint8_t* rowData = util.findRowData(rn.c_str());
                     if (!rowData) continue;
 
-                    // DefaultRequiredMaterials is at offset 0x40 in FMorRecipeDefinition (base)
-                    uint8_t* arrBase = rowData + 0x40;
+                    uint8_t* arrBase = rowData + drmOff;
                     if (!isReadableMemory(arrBase, 16)) continue;
 
                     uint8_t* arrData = *reinterpret_cast<uint8_t**>(arrBase);
@@ -324,13 +342,11 @@
                     if (!arrData || arrNum <= 0 || arrNum > 100) { /* still continue to bAllowRefunds */ }
                     else
                     {
-                        // Each element is FMorRequiredRecipeMaterial (0x28 bytes), Count at +0x20 (int32)
-                        constexpr int kStride = 0x28;
                         for (int32_t i = 0; i < arrNum; ++i)
                         {
-                            uint8_t* elem = arrData + i * kStride;
-                            if (!isReadableMemory(elem, kStride)) continue;
-                            int32_t* countAddr = reinterpret_cast<int32_t*>(elem + 0x20);
+                            uint8_t* elem = arrData + i * elemStride;
+                            if (!isReadableMemory(elem, elemStride)) continue;
+                            int32_t* countAddr = reinterpret_cast<int32_t*>(elem + elemCountOff);
 
                             wchar_t kbuf[96];
                             swprintf(kbuf, 96, L"%p|DRM[%d].Count", (void*)rowData, i);
@@ -344,10 +360,10 @@
                         }
                     }
 
-                    // bAllowRefunds at offset 0xF2 (bool, 1 byte) — construction recipes only
-                    if (isConstructionRecipe)
+                    // bAllowRefunds (plain bool, 1 byte) — construction recipes only
+                    if (refundsOff >= 0)
                     {
-                        uint8_t* flagAddr = rowData + 0xF2;
+                        uint8_t* flagAddr = rowData + refundsOff;
                         if (isReadableMemory(flagAddr, 1))
                         {
                             wchar_t kbuf[96];
@@ -785,13 +801,32 @@
             return false;
         }
 
-        // Read a FName from an FMor*RowHandle at the given offset (handle base).
-        // Handle layout: 0x00 vtable (8B), 0x08 FName RowName. Returns empty FName on failure.
-        FName unlock_readHandleName(uint8_t* handleBase)
+        // Find a struct-typed property on a row struct (walking the super
+        // chain); returns {offset, inner UScriptStruct*} or {-1, nullptr}.
+        std::pair<int, UScriptStruct*> unlock_findStructProp(UStruct* rowStruct, const wchar_t* name)
         {
-            if (!isReadableMemory(handleBase, 0x10)) return FName();
+            for (UStruct* w = rowStruct; w; w = w->GetSuperStruct())
+            {
+                for (auto* p : w->ForEachProperty())
+                {
+                    if (p->GetName() == std::wstring_view(name))
+                    {
+                        auto* structProp = static_cast<FStructProperty*>(p);
+                        return { p->GetOffset_Internal(), structProp->GetStruct() };
+                    }
+                }
+            }
+            return { -1, nullptr };
+        }
+
+        // Read a FName from an FMor*RowHandle at the given offset (handle base).
+        // Handle layout: 0x00 vtable (8B), then FName RowName (nameOff, 0x08 in
+        // FFGKDataTableRowHandle). Returns empty FName on failure.
+        FName unlock_readHandleName(uint8_t* handleBase, int nameOff = 0x08)
+        {
+            if (!isReadableMemory(handleBase, nameOff + (int)sizeof(FName))) return FName();
             FName out;
-            std::memcpy(&out, handleBase + 0x08, sizeof(FName));
+            std::memcpy(&out, handleBase + nameOff, sizeof(FName));
             return out;
         }
 
@@ -831,6 +866,40 @@
                 return;
             }
 
+            // Resolve the handle-array offsets and handle layout reflectively
+            // (UHT baseline: Items@0x128, Constructions@0x138, Runes@0x148;
+            // handle 0x10 bytes with RowName@0x08). Literals stay as fallbacks.
+            int itemsOff = entTable.resolvePropertyOffset(L"Items");
+            int consOff  = entTable.resolvePropertyOffset(L"Constructions");
+            int runesOff = entTable.resolvePropertyOffset(L"Runes");
+            if (itemsOff < 0) itemsOff = 0x0128;
+            if (consOff  < 0) consOff  = 0x0138;
+            if (runesOff < 0) runesOff = 0x0148;
+            int handleStride = 0x10, handleNameOff = 0x08;
+            bool handleResolved = false;
+            for (UStruct* w = entTable.rowStruct; w && !handleResolved; w = w->GetSuperStruct())
+            {
+                for (auto* p : w->ForEachProperty())
+                {
+                    if (p->GetName() != std::wstring_view(L"Items")) continue;
+                    auto* arrProp = static_cast<FArrayProperty*>(p);
+                    if (FProperty* inner = arrProp->GetInner())
+                    {
+                        auto* innerStructProp = static_cast<FStructProperty*>(inner);
+                        if (UScriptStruct* handleStruct = innerStructProp->GetStruct())
+                        {
+                            if (handleStruct->GetPropertiesSize() > 0)
+                                handleStride = handleStruct->GetPropertiesSize();
+                            int cache = -2;
+                            int off = resolveStructFieldOffset(handleStruct, L"RowName", cache);
+                            if (off >= 0) handleNameOff = off;
+                        }
+                    }
+                    handleResolved = true;
+                    break;
+                }
+            }
+
             auto entRowNames = entTable.getRowNames();
             int blockedTotal = 0;
             for (const auto& entRowName : entRowNames)
@@ -846,11 +915,6 @@
                 uint8_t* rowData = entTable.findRowData(entRowName.c_str());
                 if (!rowData) continue;
 
-                // FMorEntitlementDefinition layout (from Moria.hpp:2568):
-                //   0x0128: TArray<FMorAnyItemRowHandle>       Items
-                //   0x0138: TArray<FMorConstructionRowHandle>  Constructions
-                //   0x0148: TArray<FMorRuneRowHandle>          Runes
-                // Each handle is 0x10 bytes (FFGKDataTableRowHandle — vtable@0 + FName@8).
                 struct TArrayHeader { uint8_t* Data; int32_t Num; int32_t Max; };
 
                 auto collectHandles = [&](int offset, std::set<std::wstring>& blockSet) {
@@ -860,7 +924,7 @@
                     if (!hdr.Data || hdr.Num < 0 || hdr.Num > 1000) return;
                     for (int32_t i = 0; i < hdr.Num; ++i)
                     {
-                        FName n = unlock_readHandleName(hdr.Data + i * 0x10);
+                        FName n = unlock_readHandleName(hdr.Data + i * handleStride, handleNameOff);
                         try {
                             std::wstring s = n.ToString();
                             if (!s.empty()) { blockSet.insert(s); blockedTotal++; }
@@ -868,23 +932,24 @@
                     }
                 };
 
-                collectHandles(0x0128, blockedItems);
-                collectHandles(0x0138, blockedConstructions);
-                collectHandles(0x0148, blockedRunes);
+                collectHandles(itemsOff, blockedItems);
+                collectHandles(consOff,  blockedConstructions);
+                collectHandles(runesOff, blockedRunes);
             }
 
             VLOG(STR("[Unlock] DLC filter: {} handles blocked (items={} constructions={} runes={})\n"),
                  blockedTotal, (int)blockedItems.size(), (int)blockedConstructions.size(), (int)blockedRunes.size());
         }
 
-        // Read the ResultItemHandle / ResultConstructionHandle FName at offset 0xD8
-        // inside a FMor{Item,Construction}RecipeDefinition row. The handle itself is at
-        // rowData + 0xD8, and its FName sits at +0x08 within that handle (0xD8 + 0x08 = 0xE0).
-        FName unlock_readRecipeResultName(uint8_t* rowData)
+        // Read the ResultItemHandle / ResultConstructionHandle FName inside a
+        // FMor{Item,Construction}RecipeDefinition row. handleOff is the handle's
+        // offset within the row (UHT baseline 0xD8); nameOff is RowName's offset
+        // within the handle (0x08).
+        FName unlock_readRecipeResultName(uint8_t* rowData, int handleOff, int nameOff)
         {
-            if (!isReadableMemory(rowData + 0xD8, 0x10)) return FName();
+            if (!isReadableMemory(rowData + handleOff, nameOff + (int)sizeof(FName))) return FName();
             FName out;
-            std::memcpy(&out, rowData + 0xD8 + 0x08, sizeof(FName));
+            std::memcpy(&out, rowData + handleOff + nameOff, sizeof(FName));
             return out;
         }
 
@@ -901,6 +966,26 @@
                 return;
             }
 
+            // Resolve per-table offsets reflectively; UHT-baseline literals as
+            // fallbacks (EnabledState@0x10 on FFGKTableRowBase; result handle
+            // @0xD8 with RowName@0x08 inside it).
+            int enabledOff = dt.resolvePropertyOffset(L"EnabledState");
+            if (enabledOff < 0) enabledOff = 0x10;
+            int resHandleOff = -1, resNameOff = 0x08;
+            if (checkResultHandle)
+            {
+                auto [hOff, handleStruct] = unlock_findStructProp(dt.rowStruct, L"ResultItemHandle");
+                if (hOff < 0)
+                    std::tie(hOff, handleStruct) = unlock_findStructProp(dt.rowStruct, L"ResultConstructionHandle");
+                resHandleOff = (hOff >= 0) ? hOff : 0xD8;
+                if (handleStruct)
+                {
+                    int cache = -2;
+                    int nOff = resolveStructFieldOffset(handleStruct, L"RowName", cache);
+                    if (nOff >= 0) resNameOff = nOff;
+                }
+            }
+
             auto rowNames = dt.getRowNames();
             int before = (int)outQueue.size();
             for (const auto& rowName : rowNames)
@@ -912,13 +997,13 @@
                 uint8_t* rowData = dt.findRowData(rowName.c_str());
                 if (!rowData) continue;
                 if (!isReadableMemory(rowData, 0x20)) continue;
-                uint8_t enabledState = *reinterpret_cast<uint8_t*>(rowData + 0x10);
+                uint8_t enabledState = *reinterpret_cast<uint8_t*>(rowData + enabledOff);
                 if (enabledState != 0) continue;  // Disabled == 1
 
                 // Filter 3: DLC-gated (check the result handle's RowName against block set)
                 if (checkResultHandle)
                 {
-                    FName resultName = unlock_readRecipeResultName(rowData);
+                    FName resultName = unlock_readRecipeResultName(rowData, resHandleOff, resNameOff);
                     try {
                         std::wstring resultStr = resultName.ToString();
                         if (!resultStr.empty() && blockedByDLC.count(resultStr) > 0) continue;

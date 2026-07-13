@@ -382,12 +382,16 @@
                         {
                             if (UObject* cdo = cClass->GetClassDefaultObject())
                             {
-                                FProperty* sp = cdo->GetPropertyByNameInChain(STR("Storage"));
-                                if (sp)
+                                // Storage is a UInventoryLimit* data asset; read
+                                // its reflected MaxSlots instead of a raw offset.
+                                if (auto** limitPtr = cdo->GetValuePtrByPropertyNameInChain<UObject*>(STR("Storage")))
                                 {
-                                    uint8_t* sPtr = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(cdo) + sp->GetOffset_Internal());
-                                    if (sPtr && isReadableMemory(sPtr, 0x44))
-                                        cMax = *reinterpret_cast<int32_t*>(sPtr + 0x38);
+                                    UObject* limit = *limitPtr;
+                                    if (limit && isObjectAlive(limit))
+                                    {
+                                        if (auto* ms = limit->GetValuePtrByPropertyNameInChain<int32_t>(STR("MaxSlots")))
+                                            cMax = *ms;
+                                    }
                                 }
                             }
                         }

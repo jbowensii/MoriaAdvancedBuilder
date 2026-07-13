@@ -448,3 +448,28 @@ UObject* findWidgetByClass(const wchar_t* className, bool requireVisible = false
     QBLOG(STR("[MoriaCppMod] [QB] findWidgetByClass('{}') -> NOT FOUND\n"), className);
     return nullptr;
 }
+
+// Per-UClass UFunction cache for hot-path lookups (tickGoatSaddlebagWidget
+// runs several widget-tree walks at 4 Hz; the resolved UFunction* is stable
+// per UClass). Hits are validated with isObjectAlive so a GC'd BP class
+// re-resolves instead of dereferencing garbage; also cleared on world unload.
+std::unordered_map<void*, std::unordered_map<std::wstring, UFunction*>> m_fnCache;
+UFunction* cachedFnInChain(UObject* obj, const wchar_t* name)
+{
+    if (!obj) return nullptr;
+    UClass* cls = nullptr;
+    try { cls = obj->GetClassPrivate(); } catch (...) { return nullptr; }
+    if (!cls) return nullptr;
+    auto& byName = m_fnCache[(void*)cls];
+    auto it = byName.find(name);
+    if (it != byName.end())
+    {
+        UFunction* fn = it->second;
+        if (fn && isObjectAlive(fn)) return fn;
+        byName.erase(it);
+    }
+    UFunction* fn = nullptr;
+    try { fn = obj->GetFunctionByNameInChain(name); } catch (...) {}
+    if (fn) byName.emplace(name, fn);
+    return fn;
+}

@@ -1985,21 +1985,33 @@ namespace MoriaMods
                     }
 
                     // Try to read FMorConnectionHistoryItem from parms (BP delegates
-                    // pass it as the only argument). Layout offsets relative to parm
-                    // base: WorldName@0x00, InviteString@0x18, OptionalPassword@0x38.
-                    // If the function's first param is named differently we still
-                    // read those offsets blindly - it's safe since we're reading
-                    // FString members which are always 16 bytes.
-                    auto* p = func->GetChildProperties();
+                    // pass it as the only argument). Field offsets are resolved from
+                    // the param's UScriptStruct; UHT-baseline literals (WorldName@0x00,
+                    // InviteString@0x18, OptionalPassword@0x38) stay as fallbacks.
                     int32_t baseOff = -1;
                     bool isHistoryItem = false;
-                    if (auto* firstProp = func->GetPropertyByNameInChain(STR("Connection History Item Data")))
-                    { baseOff = firstProp->GetOffset_Internal(); isHistoryItem = true; }
-                    else if (auto* alt = func->GetPropertyByNameInChain(STR("ConnectionHistoryItemData")))
-                    { baseOff = alt->GetOffset_Internal(); isHistoryItem = true; }
-                    else if (auto* alt2 = func->GetPropertyByNameInChain(STR("ConnectionHistoryData")))
-                    { baseOff = alt2->GetOffset_Internal(); isHistoryItem = true; }
-                    (void)p;
+                    FProperty* histProp = func->GetPropertyByNameInChain(STR("Connection History Item Data"));
+                    if (!histProp) histProp = func->GetPropertyByNameInChain(STR("ConnectionHistoryItemData"));
+                    if (!histProp) histProp = func->GetPropertyByNameInChain(STR("ConnectionHistoryData"));
+                    if (histProp) { baseOff = histProp->GetOffset_Internal(); isHistoryItem = true; }
+
+                    int worldNameOff = 0x00, inviteOff = 0x18, pwdOff = 0x38;
+                    if (histProp)
+                    {
+                        auto* structProp = static_cast<FStructProperty*>(histProp);
+                        if (UScriptStruct* histStruct = structProp->GetStruct())
+                        {
+                            int cache = -2;
+                            int off = resolveStructFieldOffset(histStruct, L"WorldName", cache);
+                            if (off >= 0) worldNameOff = off;
+                            cache = -2;
+                            off = resolveStructFieldOffset(histStruct, L"InviteString", cache);
+                            if (off >= 0) inviteOff = off;
+                            cache = -2;
+                            off = resolveStructFieldOffset(histStruct, L"OptionalPassword", cache);
+                            if (off >= 0) pwdOff = off;
+                        }
+                    }
 
                     auto fStringToUtf8Str = [](FString* fs) -> std::string {
                         if (!fs) return "";
@@ -2015,9 +2027,9 @@ namespace MoriaMods
                     if (isHistoryItem && baseOff >= 0)
                     {
                         uint8_t* hist = static_cast<uint8_t*>(parms) + baseOff;
-                        FString* worldName  = reinterpret_cast<FString*>(hist + 0x00);
-                        FString* inviteStr  = reinterpret_cast<FString*>(hist + 0x18);
-                        FString* optPwd     = reinterpret_cast<FString*>(hist + 0x38);
+                        FString* worldName  = reinterpret_cast<FString*>(hist + worldNameOff);
+                        FString* inviteStr  = reinterpret_cast<FString*>(hist + inviteOff);
+                        FString* optPwd     = reinterpret_cast<FString*>(hist + pwdOff);
                         std::string nameStr = fStringToUtf8Str(worldName);
                         std::string hostStr = fStringToUtf8Str(inviteStr);
                         std::string passStr = fStringToUtf8Str(optPwd);
@@ -4602,6 +4614,7 @@ namespace MoriaMods
                     // one-shot re-cache runs when the screen next opens.
                     m_settingsKeySelectorCls = nullptr;
                     m_settingsSectionHeadingCls = nullptr;
+                    m_fnCache.clear();
 
                     clearStabilityHighlights();
                 }

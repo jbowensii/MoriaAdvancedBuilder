@@ -622,8 +622,7 @@
             {
                 auto* texPtr = btn->GetValuePtrByPropertyNameInChain<UObject*>(STR("IconTexture"));
                 if (texPtr) *texPtr = iconTex;
-                auto* isIconPtr = btn->GetValuePtrByPropertyNameInChain<bool>(STR("isIcon"));
-                if (isIconPtr) *isIconPtr = true;
+                setBoolProp(btn, STR("isIcon"), true);
                 if (auto* fn = btn->GetFunctionByNameInChain(STR("UpdateImageLabel")))
                 {
                     auto* p = findParam(fn, STR("Texture"));
