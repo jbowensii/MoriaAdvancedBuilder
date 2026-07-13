@@ -56,33 +56,10 @@ namespace MoriaMods
         ULONGLONG m_lastBellToggleMs{0};
         // [rc.52] Goat companion settings (persisted via MoriaCppMod.ini [GoatCompanion]).
         std::wstring m_goatName{ L"Rûdh" };  // default "Rûdh"
-        // Goat-menu state — UMG widget pre-created at character-load, visibility toggled.
-        UObject* m_goatMenuWidget{nullptr};
-        bool     m_goatMenuVisible{false};
         // [rc.22] Test 3 saddlebag widget — spawned on saddlebag click, dismissed by ESC.
         UObject* m_test3SaddlebagWidget{nullptr};
-        // [rc.25] Manage-capture diagnostic window. When NUM0 is pressed,
-        // m_mngCapEndMs = now + 5000ms. While active, PE-pre logs any UFunction
-        // whose context class matches dwarf/NPC/PlayerController/UIManager/etc.
-        // Lets us diff vanilla dwarf-Manage vs goat-Saddlebags UFunction chains.
-        ULONGLONG m_mngCapEndMs{0};
         ULONGLONG m_lastGoatMenuMs{0};  // E-press dedupe cooldown
-        bool     m_goatModalPending{false};  // [Phase 4] set in PE-pre, consumed on tick
 
-        // [Phase 6 / Path α] Submenu state — fresh UI_WBP_InteractionMenu_C
-        // spawned on Details-press, populated with 7 cloned rows. We own its
-        // cursor/input completely (vanilla cursor doesn't navigate our rows
-        // — known from Path A probes — so we poll input + drive SetIsSelected
-        // ourselves).
-        UObject*  m_goatSubMenu{nullptr};
-        bool      m_goatSubMenuVisible{false};
-        bool      m_goatSubMenuPending{false};
-        UObject*  m_goatSubMenuRows[6]{};   // [0]=Follow [1]=Stay [2]=Saddlebags [3]=Feed [4]=Rename [5]=Dismiss (Wander dropped)
-        UObject*  m_proximityMenuAtOpen{nullptr};  // cached at submenu-open time, for reliable hide-target
-        int       m_goatSubMenuCursorIdx{0};
-        UObject*  m_goatSubMenuTemplateRow{nullptr};  // cached vanilla Details row for clone source
-        bool      m_renamingGoat{false};  // [Phase 6] when true, confirmRenameDialog routes typed name to m_goatName
-        bool      m_keepUIModeAfterSubmenuClose{false};  // handlers that open their own popups set this so closeGoatSubmenu skips setInputModeGame
         ULONGLONG m_lastStreamCheck{0};
         ULONGLONG m_lastRescanTime{0};
         ULONGLONG m_lastBubbleCheck{0};
@@ -975,71 +952,6 @@ namespace MoriaMods
                     }
                 }
 
-                // [rc.25 MANAGE CAPTURE 2026-05-26] When user arms NUM0,
-                // log every UFunction call on dwarf/NPC/PC/UIManager-related
-                // contexts for 5 seconds. Lets us diff the vanilla dwarf
-                // Manage flow against goat Saddlebags. Cheap early-out: bail
-                // if window inactive.
-                if (s_instance->m_mngCapEndMs != 0)
-                {
-                    ULONGLONG mcNow = GetTickCount64();
-                    if (mcNow < s_instance->m_mngCapEndMs)
-                    {
-                        // [rc.28 2026-05-27] Pre-filter the noisy per-frame
-                        // functions (animation, BT updates, socket queries,
-                        // reticle CenterCheck, etc.) before the class-name
-                        // check. These swamp the meaningful events otherwise.
-                        bool noise =
-                            wcscmp(fnStr, STR("OnUpdate")) == 0 ||
-                            wcscmp(fnStr, STR("ReceiveTick")) == 0 ||
-                            wcscmp(fnStr, STR("Tick")) == 0 ||
-                            wcscmp(fnStr, STR("CenterCheck")) == 0 ||
-                            wcscmp(fnStr, STR("OnCurrentTargetChanged")) == 0 ||
-                            wcscmp(fnStr, STR("OnIconStateUpdated")) == 0 ||
-                            wcscmp(fnStr, STR("BlueprintUpdateAnimation")) == 0 ||
-                            wcscmp(fnStr, STR("BlueprintPostEvaluateAnimation")) == 0 ||
-                            wcscmp(fnStr, STR("GetSocketLocation")) == 0 ||
-                            wcscmp(fnStr, STR("DoesSocketExist")) == 0 ||
-                            wcscmp(fnStr, STR("K2_GetPawn")) == 0 ||
-                            wcscmp(fnStr, STR("K2_GetActorLocation")) == 0 ||
-                            wcscmp(fnStr, STR("K2_GetActorRotation")) == 0 ||
-                            wcscmp(fnStr, STR("GetActorForwardVector")) == 0 ||
-                            wcscmp(fnStr, STR("GetViewportSize")) == 0 ||
-                            wcscmp(fnStr, STR("MoveToActor")) == 0 ||
-                            wcsstr(fnStr, STR("EvaluateGraphExposedInputs_")) == fnStr ||
-                            wcsstr(fnStr, STR("ExecuteUbergraph_")) == fnStr ||
-                            wcsstr(fnStr, STR("AnimGraphNode_")) != nullptr;
-                        if (!noise)
-                        {
-                            std::wstring ctxCls = context ? safeClassName(context) : STR("(null)");
-                            bool match =
-                                ctxCls.find(STR("Dwarf"))            != std::wstring::npos ||
-                                ctxCls.find(STR("Npc"))              != std::wstring::npos ||
-                                ctxCls.find(STR("NPC"))              != std::wstring::npos ||
-                                ctxCls.find(STR("PlayerController")) != std::wstring::npos ||
-                                ctxCls.find(STR("UIManager"))        != std::wstring::npos ||
-                                ctxCls.find(STR("UIScreen"))         != std::wstring::npos ||
-                                ctxCls.find(STR("FGKUI"))            != std::wstring::npos ||
-                                ctxCls.find(STR("Inventory_Screen")) != std::wstring::npos ||
-                                ctxCls.find(STR("Interaction"))      != std::wstring::npos ||
-                                ctxCls.find(STR("Goat"))             != std::wstring::npos ||
-                                ctxCls.find(STR("Porter"))           != std::wstring::npos ||
-                                ctxCls.find(STR("Manage"))           != std::wstring::npos ||
-                                ctxCls.find(STR("Settlement"))       != std::wstring::npos ||
-                                ctxCls.find(STR("FrontEndButton"))   != std::wstring::npos;
-                            if (match)
-                            {
-                                VLOG(STR("[ManageCapture] fn='{}' ctx='{}' ctxPtr={:p}\n"),
-                                     fnStr, ctxCls.c_str(), (void*)context);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        s_instance->m_mngCapEndMs = 0;
-                        VLOG(STR("[ManageCapture] === window closed (10s elapsed) ===\n"));
-                    }
-                }
 
                 // v1.4.1-probe: Probe E — save-shaped UFunction arg capture.
                 // PersistorWatch — log-only detection of BeginPlay / SaveGameObject*
@@ -1450,67 +1362,7 @@ namespace MoriaMods
                         s_instance->onInteractionPressPre(context);
                     }
                 }
-                // [rc.54 PATH A] OnSetInteractable on the menu — fires when
-                // proximity widget opens for a new NPC. We hook PE-pre to
-                // detect our goat early; deferred injection happens in
-                // tickGoatMenuInject() so vanilla's row population finishes
-                // first.
-                // [Phase 6 / Path α] Scroll-wheel / arrow-key nav for our
-                // submenu. Vanilla's input system fires OnSelectionNext/
-                // OnSelectionPrevious on the menu — AND ALSO OnMoveNext/
-                // OnMovePrevious on the currently-focused row. Hook both so
-                // wheel events reach us regardless of which level vanilla
-                // dispatches at.
-                // Diagnostic: log any "Selection" / "Move" / "Scroll" /
-                // "Navigate" UFunc that fires on our submenu or its rows
-                // while submenu is visible. Dedup per-fnStr per session.
-                if (s_instance->m_goatSubMenuVisible && context)
-                {
-                    bool isOurs = (context == s_instance->m_goatSubMenu);
-                    if (!isOurs) {
-                        for (int i = 0; i < 7; ++i)
-                            if (s_instance->m_goatSubMenuRows[i] == context) { isOurs = true; break; }
-                    }
-                    if (isOurs &&
-                        (wcsstr(fnStr, STR("Select")) ||
-                         wcsstr(fnStr, STR("Move")) ||
-                         wcsstr(fnStr, STR("Scroll")) ||
-                         wcsstr(fnStr, STR("Navigate")) ||
-                         wcsstr(fnStr, STR("Mouse"))))
-                    {
-                        static std::set<std::wstring> s_seen;
-                        if (s_seen.size() < 60 && s_seen.insert(fnStr).second)
-                            VLOG(STR("[MoriaCppMod] [GoatSubmenuDiag] '{}' on ctx={:p} (is-menu={})\n"),
-                                 fnStr, (void*)context, context == s_instance->m_goatSubMenu);
-                    }
-                }
 
-                if (s_instance->m_goatSubMenuVisible
-                    && context == s_instance->m_goatSubMenu
-                    && (wcscmp(fnStr, STR("OnSelectionNext")) == 0
-                        || wcscmp(fnStr, STR("OnSelectionPrevious")) == 0))
-                {
-                    int dir = (wcscmp(fnStr, STR("OnSelectionNext")) == 0) ? +1 : -1;
-                    s_instance->onGoatSubmenuScroll(dir);
-                }
-                // Restored 2026-05-14 — dropping this handler broke scroll
-                // entirely. OnSelectionNext on the menu only fires on first
-                // open; subsequent opens rely on OnMoveNext on row contexts.
-                // 2-3x advance per tick was the user complaint; the 100ms
-                // throttle inside onGoatSubmenuScroll dedupes that, so we can
-                // safely listen to both signals again.
-                if (s_instance->m_goatSubMenuVisible
-                    && context
-                    && (wcscmp(fnStr, STR("OnMoveNext")) == 0
-                        || wcscmp(fnStr, STR("OnMovePrevious")) == 0))
-                {
-                    std::wstring ctxCls = safeClassName(context);
-                    if (ctxCls == STR("UI_WBP_Interaction_C"))
-                    {
-                        int dir = (wcscmp(fnStr, STR("OnMoveNext")) == 0) ? +1 : -1;
-                        s_instance->onGoatSubmenuScroll(dir);
-                    }
-                }
 
                 // Legacy v0.4 hook - keep in case some path still calls it.
                 if (wcscmp(fnStr, STR("Initialize NavBar")) == 0 ||
@@ -2449,17 +2301,6 @@ namespace MoriaMods
                     // tick doesn't run during main menu. LoadMap fires
                     // reliably on every world transition so it's the right
                     // place to invalidate stale probe state.
-                    m_probeNFired = false;
-                    m_probePFired = false;
-                    m_probeQFired = false;  // [rc.47]
-                    m_probeRFired = false;  // [rc.48]
-                    m_probeSFired = false;  // [rc.49]
-                    m_probeTFired = false;  // [rc.50]
-                    m_probeUFired = false;  // [rc.53]
-                    m_probeVFired = false;  // [rc.54]
-                    m_probeWFired = false;  // [rc.55]
-                    m_probeXFired = false;  // [rc.56]
-                    m_probeYFired = false;  // [rc.57]
                     m_autoRestoreFired = false;  // [rc.59]
 
                     if (!m_definitionsApplied)
@@ -2806,12 +2647,7 @@ namespace MoriaMods
             // [rc.95 BELL-ONLY 2026-07-10] goat menu ticks disabled to observe
             // Tobi's native workflow. [rc.107] saddlebag widget tick RE-ENABLED:
             // Esc/Tab close + 4Hz storage view-state re-assert for our chest UI.
-            // s_instance->tickGoatModalDeferred();
-            // s_instance->tickGoatSubmenu();
             s_instance->tickGoatSaddlebagWidget();
-            // s_instance->tickGoatMenuInject();  // no-op (gated internally)
-            s_instance->tickPathXDelayedProbe();   // [rc.24] +1s NpcInfo.Items.Num snapshot after RegisterWithNPCManager
-            // s_instance->tickGoatMenuProbe();  // disabled — no Path A probe needed
 
             // Reposition HUD keybind dispatcher (default F10). First press
             // shows the inspect window + rotation display draggable; second
@@ -3052,12 +2888,6 @@ namespace MoriaMods
             tickFollowGoats();
             // [rc.101] deferred live StorageMode UI deep-dump (no-op unless scheduled)
             tickPendingStorageHarvest();
-            // [rc.132] B5 probe deferred scans (no-op unless armed via NUM8)
-            tickB5ProbeScan();
-            // [rc.133] B7 post-save pack return (no-op unless a stash is pending)
-            tickB7MoveBack();
-            // Goat menu click dispatch (no-op unless menu visible).
-            tickGoatMenu();
             // Pitch rotation (. / SHIFT+.) - BIND_PITCH_ROTATE defaults to '.'
             // gated to ghost-visible (resolveGATA returns non-null).
             {
@@ -3384,20 +3214,13 @@ namespace MoriaMods
             tickRotationDisplay();         // rotation display 4-cell pyramid
             tickRenameFocus();             // re-assert focus on rename input
             tickNpcRecoveryProbe();        // PHASE 1 DIAG: NPC stuck-pathing probe (s_verbose only, one-shot)
-            tickNpcRecovery();             // rc.46 EXPERIMENT: polling early-out via `if (true) return` — kept for code preservation, body inert
             // [rc.139] AUTOMATIC NPC scan RETIRED per user directive (mod
             // users reported stutter from the background scanning). The
             // CantReach teleport pass is now on-demand only: the "Unstuck
             // NPCs" keybind (BIND_UNSTUCK_NPCS, default Num-) fires
             // runUnstuckNpcsNow(). This also stops the 5s controller-cache
             // FindAllOf refresh and the per-tick time-period read.
-            // tickDayCycleNpcScan();      // rc.47: day-cycle-triggered direct-read scan (Path 2 — zero PE in hot loop)
             tickGoatSaveProbes();          // v1.4.1-probe: Phase 2 goat-save research probes (gated by [GoatSaveProbes] Enabled=true)
-            // [rc.112] adoption RE-ENABLED — a manager-restored goat (native respawn
-            // via NPCGoat DT row on world load) must be adopted into m_followGoats
-            // so follow/menu/saddlebag work on it.
-            tickAdoptNativeGoat();
-            // pollGoatMenuKey();             // rc.62: VK_E edge-detect → tryOpenGoatMenu (BP menu suppression made onInteractionPressPre path inert)
 
             // Quick Build chord-aware dispatch.
             //   USE (s_bindings[i].key, no modifiers): fires quickBuildSlot
@@ -3492,17 +3315,6 @@ namespace MoriaMods
                     m_snapEnabled = true;
                     m_savedMaxSnapDistance = -1.0f;
                     m_buildMenuPrimed = false;
-                    m_probeNFired = false;  // [rc.42] re-fire Probe N on next character-load
-                    m_probePFired = false;  // [rc.44] re-fire Probe P on next character-load
-                    m_probeQFired = false;  // [rc.47] re-fire Probe Q on next character-load
-                    m_probeRFired = false;  // [rc.48] re-fire Probe R on next character-load
-                    m_probeSFired = false;  // [rc.49] re-fire Probe S on next character-load
-                    m_probeTFired = false;  // [rc.50] re-fire Probe T on next character-load
-                    m_probeUFired = false;  // [rc.53] re-fire Probe U on next character-load
-                    m_probeVFired = false;  // [rc.54] re-fire Probe V on next character-load
-                    m_probeWFired = false;  // [rc.55] re-fire Probe W on next character-load
-                    m_probeXFired = false;  // [rc.56] re-fire Probe X on next character-load
-                    m_probeYFired = false;  // [rc.57] re-fire Probe Y on next character-load
                     m_autoRestoreFired = false;  // [rc.59] re-fire AutoRestore on next character-load
                     m_localPC = nullptr;
                     m_localPawn = nullptr;
@@ -3840,137 +3652,16 @@ namespace MoriaMods
                 auditInventory();
             }
 
-            // [rc.41 PROBE N 2026-06-10] One-shot NpcInfo dump at ~3s
-            // post-character-load. Tells us whether goat-shaped entries
-            // survived save/reload, which determines whether GUID adoption
-            // in spawnBellGoat will find existing entries to bind to.
-            if (m_characterLoaded && !m_probeNFired && msSinceChar >= 3000)
-            {
-                m_probeNFired = true;
-                // [rc.115 2026-07-11] legacy diagnostic DISABLED (probe T crashed FName::ToString on stale ptr; W crashed earlier; all questions answered)
-                // runProbeN();
-            }
 
-            // [rc.44 PROBE P 2026-06-10] One-shot world scan at ~5s
-            // post-character-load. Determines whether goat actors, body
-            // containers, or item actors persisted in memory after reload.
-            // Decides rc.45 architecture (sidecar vs reconnect).
-            if (m_characterLoaded && !m_probePFired && msSinceChar >= 5000)
-            {
-                m_probePFired = true;
-                // [rc.115 2026-07-11] legacy diagnostic DISABLED (probe T crashed FName::ToString on stale ptr; W crashed earlier; all questions answered)
-                // runProbeP();
-            }
 
-            // [rc.47 PROBE Q 2026-06-12] One-shot manager + worldstate
-            // UFunction sweep + dwarf PersistentData hex dump at ~7s
-            // post-character-load. Per DC brief — hunts for restore path.
-            if (m_characterLoaded && !m_probeQFired && msSinceChar >= 7000)
-            {
-                m_probeQFired = true;
-                // [rc.115 2026-07-11] legacy diagnostic DISABLED (probe T crashed FName::ToString on stale ptr; W crashed earlier; all questions answered)
-                // runProbeQ();
-            }
 
-            // [rc.48 PROBE R 2026-06-14] One-shot WorldState property
-            // walk at ~9s post-character-load. Hunts for the registered-
-            // runtime-actor list/map that StoreRuntimeActor writes to
-            // internally. Critical for understanding the engine's save
-            // graph and validating our rc.48 StoreRuntimeActor calls.
-            if (m_characterLoaded && !m_probeRFired && msSinceChar >= 9000)
-            {
-                m_probeRFired = true;
-                // [rc.115 2026-07-11] legacy diagnostic DISABLED (probe T crashed FName::ToString on stale ptr; W crashed earlier; all questions answered)
-                // runProbeR();
-            }
 
-            // [rc.49 PROBE S 2026-06-14] One-shot MorNPCComponent
-            // UFunction enumeration at ~11s post-character-load.
-            // Hunts for name-write UFunctions (SetName/Rename/etc)
-            // so we can pivot from the proven-fragile Role marker
-            // to the more robust Name marker per user's original
-            // direction.
-            if (m_characterLoaded && !m_probeSFired && msSinceChar >= 11000)
-            {
-                m_probeSFired = true;
-                // [rc.115 2026-07-11] legacy diagnostic DISABLED (probe T crashed FName::ToString on stale ptr; W crashed earlier; all questions answered)
-                // runProbeS();
-            }
 
-            // [rc.50 PROBE T 2026-06-14] One-shot BP_NpcGoat_C
-            // (actor class) name-keyword UFunction enumeration at
-            // ~13s post-character-load. Probe S found only getters
-            // + CanSetCustomDisplayName check on MorNPCComponent.
-            // The setter must live on the actor itself.
-            if (m_characterLoaded && !m_probeTFired && msSinceChar >= 13000)
-            {
-                m_probeTFired = true;
-                // [rc.115 2026-07-11] legacy diagnostic DISABLED (probe T crashed FName::ToString on stale ptr; W crashed earlier; all questions answered)
-                // runProbeT();
-            }
 
-            // [rc.53 PROBE U 2026-06-15] IMorSaveGameObject diagnostic
-            // at ~15s post-character-load. Probes goat + chest for
-            // SaveGameObjectIgnore/GetId/GetDormancy side-by-side.
-            // Chests always persist → their interface state is the
-            // reference the goat must match for save to include it.
-            if (m_characterLoaded && !m_probeUFired && msSinceChar >= 15000)
-            {
-                m_probeUFired = true;
-                // [rc.115 2026-07-11] legacy diagnostic DISABLED (probe T crashed FName::ToString on stale ptr; W crashed earlier; all questions answered)
-                // runProbeU();
-            }
 
-            // [rc.54 PROBE V 2026-06-16] BP_NPCManager_C dump of
-            // ValidNpcClasses / ValidNpcRestores / ValidNpcRoles.
-            // Decides whether actor-recreation gate is open for
-            // BP_NpcGoat_C. Fires at ~17s post-character-load.
-            if (m_characterLoaded && !m_probeVFired && msSinceChar >= 17000)
-            {
-                m_probeVFired = true;
-                // [rc.115 2026-07-11] legacy diagnostic DISABLED (probe T crashed FName::ToString on stale ptr; W crashed earlier; all questions answered)
-                // runProbeV();
-            }
 
-            // [rc.55 PROBE W 2026-06-16] Full FMorNpcPersistentData
-            // field dump for every NpcInfo entry. Reflection-driven
-            // walk of the inner struct; logs every property name +
-            // offset + decoded value. Diff goat vs vanilla dwarves
-            // pinpoints the per-entry gating field.
-            if (m_characterLoaded && !m_probeWFired && msSinceChar >= 20000)
-            {
-                m_probeWFired = true;
-                // [rc.102 2026-07-10] DISABLED — runProbeW crashed the game
-                // (FName::ToString AV 0x9ce0 via runProbeW_dumpField on a stale
-                // NpcInfo pointer). Its question (per-entry persistence gating
-                // field) was answered weeks ago; pure legacy diagnostic.
-                // runProbeW();
-            }
 
-            // [rc.56 PROBE X 2026-06-16] NPCUnique DataTable row
-            // enumeration. Finds the DataTable whose RowStruct is
-            // MorUniqueNPCDefinition, iterates rows, logs each
-            // (Name, CharacterClass softpath). The row matching
-            // BP_NpcGoat is the row name we must write into bell-
-            // spawned NpcInfo entry's UniqueNpc.RowName.
-            if (m_characterLoaded && !m_probeXFired && msSinceChar >= 22000)
-            {
-                m_probeXFired = true;
-                // [rc.115 2026-07-11] legacy diagnostic DISABLED (probe T crashed FName::ToString on stale ptr; W crashed earlier; all questions answered)
-                // runProbeX();
-            }
 
-            // [rc.57 PROBE Y 2026-06-23] Wider net for goat row.
-            // Re-runs Probe X with fixed CharacterClass offset (+16
-            // in TSoftClassPtr), iterates ALL MorUniqueNPCDefinition
-            // tables (not just first), brute-force scans every loaded
-            // DataTable for goat-shaped rows.
-            if (m_characterLoaded && !m_probeYFired && msSinceChar >= 24000)
-            {
-                m_probeYFired = true;
-                // [rc.115 2026-07-11] legacy diagnostic DISABLED (probe T crashed FName::ToString on stale ptr; W crashed earlier; all questions answered)
-                // runProbeY();
-            }
 
             // [rc.59 AUTO-RESTORE 2026-06-26] At +5s post-character-load,
             // scan NpcInfo for Name='Rûdh' markers (persisted across

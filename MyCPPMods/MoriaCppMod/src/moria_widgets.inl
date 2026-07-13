@@ -3442,29 +3442,6 @@
                 return;
             }
 
-            // [Phase 6 GoatRename intercept] If we opened the rename modal
-            // from the goat submenu, route the confirmed name to m_goatName
-            // instead of the character-rename pipeline.
-            if (m_renamingGoat)
-            {
-                m_renamingGoat = false;
-                std::wstring oldName = m_goatName;
-                m_goatName = newName;
-                saveConfig();  // writes [GoatCompanion] Name= to MoriaCppMod.ini
-                std::wstring toast = oldName + STR(" \x2192 ") + newName;
-                showOnScreen(toast, 5.0f, 0.95f, 0.85f, 0.5f);
-                VLOG(STR("[MoriaCppMod] [GoatMenu] RENAMED '{}' -> '{}' (via modal)\n"),
-                     oldName, newName);
-                hideRenameDialog();
-                // 2026-05-14 — hideRenameDialog's pause-menu detection set
-                // input mode to UI Only if any UI_WBP_EscapeMenu2_C widget was
-                // alive in the viewport (even if the game wasn't paused). For
-                // a goat rename the game IS NOT paused — force Game mode so
-                // the player can move again.
-                setInputModeGame();
-                VLOG(STR("[MoriaCppMod] [GoatMenu] post-rename: forced Game mode (override pause-menu detect)\n"));
-                return;
-            }
 
             {
                 std::scoped_lock lock(m_charNameMutex);
