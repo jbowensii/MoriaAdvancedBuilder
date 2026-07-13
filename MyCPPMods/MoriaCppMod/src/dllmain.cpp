@@ -184,9 +184,9 @@ namespace MoriaMods
             {
                 auto& sr = m_savedRemovals[i];
                 VLOG(STR("[MoriaCppMod] [Saved-Diag] [{}] mesh='{}' pos=({},{},{}) bubble='{}'\n"),
-                     i, std::wstring(sr.meshName.begin(), sr.meshName.end()),
+                     i, utf8ToWide(sr.meshName),
                      sr.posX, sr.posY, sr.posZ,
-                     std::wstring(sr.bubbleId.begin(), sr.bubbleId.end()));
+                     utf8ToWide(sr.bubbleId));
             }
         }
 
@@ -230,10 +230,10 @@ namespace MoriaMods
                         entry.isTypeRule = true;
                         entry.meshName = tr->meshName;
                         entry.friendlyName = extractFriendlyName(entry.meshName);
-                        entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
+                        entry.fullPathW = utf8ToWide(entry.meshName);
                         // JSON-tagged display for type rules
                         std::string json = formatTypeRuleJson(entry.meshName);
-                        entry.coordsW = std::wstring(json.begin(), json.end());
+                        entry.coordsW = utf8ToWide(json);
                     }
                     else if (auto* pos = std::get_if<ParsedRemovalPosition>(&parsed))
                     {
@@ -244,7 +244,7 @@ namespace MoriaMods
                         entry.bubbleId = pos->bubbleId;
                         entry.bubbleName = pos->bubbleName;
                         entry.friendlyName = extractFriendlyName(entry.meshName);
-                        entry.fullPathW = std::wstring(entry.meshName.begin(), entry.meshName.end());
+                        entry.fullPathW = utf8ToWide(entry.meshName);
                         // JSON-tagged display: compact one-line object showing bubble id + name + world + local coords
                         char buf[512];
                         std::snprintf(buf, sizeof(buf),
@@ -254,7 +254,7 @@ namespace MoriaMods
                             entry.posX, entry.posY, entry.posZ,
                             entry.localX, entry.localY, entry.localZ);
                         std::string s(buf);
-                        entry.coordsW = std::wstring(s.begin(), s.end());
+                        entry.coordsW = utf8ToWide(s);
                     }
                     else
                     {
@@ -366,7 +366,6 @@ namespace MoriaMods
         bool m_isTargetBuild{false};
         bool m_buildMenuWasOpen{false};
         bool m_deferHideAndRefresh{false};
-        int m_deferRemovalRebuild{0};  // 0=none, 2=hide, 1=rebuild
 
         bool m_showHotbar{true};
         bool m_gameHudVisible{true};
@@ -402,8 +401,9 @@ namespace MoriaMods
         UObject* m_nbbSlotMarker[8]{};  // numbered marker UImage above each slot
         UObject* m_nbbSlotButton[8]{};  // UButton wrapper (Phase 2 - for clicks)
         UObject* m_nbbSlotKeyBg[8]{};   // grey rect under the F# label
-        // Per-session texture cache. Resolved once in nbbDiscoverAssets;
-        // pointers are stable for the lifetime of the session.
+        // Texture cache resolved in nbbDiscoverAssets; cleared on world
+        // unload (asset pointers may not survive a transition), then
+        // re-resolved on the next bar build.
         bool      m_nbbAssetsCached{false};
         UObject*  m_nbbCachedSlotEmpty{nullptr};
         UObject*  m_nbbCachedSlotFocus{nullptr};
@@ -417,60 +417,22 @@ namespace MoriaMods
 
 
 
-        UObject* m_fontTestWidget{nullptr};
-        bool m_ftVisible{false};
-        UObject* m_ftTabImages[6]{};
-        UObject* m_ftTabLabels[6]{};
-        UObject* m_ftTabActiveTexture{nullptr};
-        UObject* m_ftTabInactiveTexture{nullptr};
-        int m_ftSelectedTab{0};
-        UObject* m_ftScrollBox{nullptr};
-        UObject* m_ftTabContent[6]{};
-
-        // Cheats tab - widget refs for action buttons and toggle state
-        UObject* m_ftCheatsUnlockBtnImg{nullptr};
-        UObject* m_ftCheatsReadBtnImg{nullptr};
-
         // Peace Mode - zero MaxSpawnLimit on AMorAISpawnManager to suppress new spawns.
         bool m_peaceModeEnabled{false};
         bool m_pendingPeaceMode{false};                // loaded from INI, applied on char load
         float m_savedMaxSpawnLimit{-1.0f};             // -1 = not yet captured
-        UObject* m_ftPeaceCheckImg{nullptr};           // check icon (visible when enabled)
-        UObject* m_ftPeaceBtnLabel{nullptr};           // button text ("PEACE"/"FIGHT")
-        UObject* m_ftPeaceCheckBoxOl{nullptr};         // checkbox hit-test ref
-        UObject* m_ftPeaceBtnImg{nullptr};             // button hit-test ref
 
-        // Cheats tab buff toggles - parallel arrays to cheatEntries().
+        // Buff toggles (Settings cheats section) - parallel to cheatEntries().
         std::vector<bool>      m_buffStates;             // active/inactive state per entry
-        std::vector<UObject*>  m_ftBuffCheckImgs;        // checkbox mark widget per entry
-        std::vector<UObject*>  m_ftBuffBtnLabels;        // ON/OFF label per entry (nullptr for headers)
-        std::vector<int>       m_buffRowTopYs;           // row top-Y offset within the content VBox (px, at 1x scale)
-        std::vector<int>       m_buffRowHeights;         // row height (px, at 1x scale)
-        int m_cheatsContentTotalHeight{0};               // total rendered height of the cheat entries area
 
-        // Tweaks tab - parallel arrays to tweakEntries(). Each entry cycles through a set
-        // of integer values; applyFieldTweak modifies all DataTable rows whose RowStruct has the field.
+        // Tweaks (Settings section) - parallel to tweakEntries(). Each entry cycles
+        // through a set of integer values; applyFieldTweak modifies all DataTable
+        // rows whose RowStruct has the field.
         std::vector<int>       m_tweakCurrentIdx;        // current index in cycleValues (0 = DEFAULT)
-        std::vector<UObject*>  m_ftTweakBtnLabels;       // button text widget per entry
-        std::vector<int>       m_tweakRowTopYs;          // row top-Y per entry (px, at 1x scale)
-        std::vector<int>       m_tweakRowHeights;        // row height per entry (px, at 1x scale)
         // Key: (rowData pointer + fieldName), Value: original value before any tweak.
         // Used to restore DEFAULT and to compute multipliers from the original baseline.
         std::unordered_map<std::wstring, double> m_tweakOriginals;
-        UObject* m_ftKeyBoxLabels[BIND_COUNT]{};
-        UObject* m_ftCheckImages[BIND_COUNT]{};
-        UObject* m_ftModBoxLabel{nullptr};
 
-        UObject* m_ftControllerCheckImg{nullptr};
-        UObject* m_ftControllerProfileLabel{nullptr};
-        UObject* m_ftNoCollisionCheckImg{nullptr};
-        UObject* m_ftNoCollisionLabel{nullptr};
-        UObject* m_ftNoCollisionKeyLabel{nullptr};
-        UObject* m_ftTrashCheckImg{nullptr};
-        UObject* m_ftReplenishCheckImg{nullptr};
-        UObject* m_ftRemoveAttrsCheckImg{nullptr};
-        UObject* m_ftPitchCheckImg{nullptr};
-        UObject* m_ftRollCheckImg{nullptr};
         UObject* m_ftRenameWidget{nullptr};
         UObject* m_ftRenameInput{nullptr};
         UObject* m_ftRenameConfirmLabel{nullptr};
@@ -527,12 +489,7 @@ namespace MoriaMods
         bool m_trashDlgVisible{false};
         ULONGLONG m_trashDlgOpenTick{0};
 
-        UObject* m_ftRemovalVBox{nullptr};
-        UObject* m_ftRemovalHeader{nullptr};
-        int m_ftLastRemovalCount{-1};
-
         static constexpr int MAX_GAME_MODS = 16;
-        UObject* m_ftGameModCheckImages[MAX_GAME_MODS]{};
         std::vector<GameModEntry> m_ftGameModEntries;
 
 
@@ -771,9 +728,6 @@ namespace MoriaMods
             s_bindings[BIND_UNSTUCK_NPCS].label = Loc::get("bind.unstuck_npcs");
             s_bindings[BIND_UNSTUCK_NPCS].section = Loc::get("bind.section_general");
 
-            CONFIG_TAB_NAMES[0] = Loc::get("tab.optional_mods").c_str();
-            CONFIG_TAB_NAMES[1] = Loc::get("tab.key_mapping").c_str();
-            CONFIG_TAB_NAMES[2] = Loc::get("tab.hide_environment").c_str();
 
             m_saveFilePath = modPath("Mods/MoriaCppMod/removed_instances.txt");
             loadSaveFile();
@@ -798,10 +752,6 @@ namespace MoriaMods
                     // [rc.139] Advanced Builder master switch — quick build
                     // is inert until the user enables the subsystem.
                     if (!m_advBuilderActive) return;
-                    if (m_ftVisible) {
-                        VLOG(STR("[QuickBuild] F{} BP-USE dropped: m_ftVisible\n"), i+1);
-                        return;
-                    }
                     if (isSettingsScreenOpen()) {
                         VLOG(STR("[QuickBuild] F{} BP-USE dropped: settings screen open\n"), i+1);
                         return;
@@ -1476,29 +1426,6 @@ namespace MoriaMods
                 {
                     s_instance->onBPRequestSpawnPre(context, func, parms);
                 }
-                // [v7.1.0-rc.51 SUSPENDED 2026-05-10] recruit-fire detector
-                // commented out — paired with NUM- chain. Without the
-                // setupGoatRecruit append (also suspended), there's nothing
-                // tracked so this would never match anyway, but keep it
-                // grouped under the same #if 0 for one-iteration test then
-                // delete.
-#if 0 // NUM_MINUS_RECRUIT_SUSPENDED_2026_05_10
-                // [v1.2.8 RECRUIT FIRE DETECTOR] When our marker UFunction
-                // name dispatches via PE, that means a multicast we
-                // subscribed (OnWandererRecruited or OnNpcRescued) fired
-                // for a tracked goat. Trigger the post-recruit handler.
-                // Cheap fnStr cmp first; only resolve context if matched.
-                if (wcscmp(fnStr, STR("MoriaModGoatRecruitMarker")) == 0
-                    || wcscmp(fnStr, STR("OnNpcRescued_Event_2")) == 0)
-                {
-                    if (context && s_instance->isGoatPendingRecruit(context))
-                    {
-                        VLOG(STR("[MoriaCppMod] [Recruit] detected '{}' fire on tracked goat={:p} — running post-recruit handler\n"),
-                             fnStr, (void*)context);
-                        s_instance->onGoatRecruited(context);
-                    }
-                }
-#endif
                 // ServerSetInteractableCustomName: capture the chest the
                 // player just renamed; if the new name is "goat" (case
                 // insensitive) it becomes our persistent backing storage.
@@ -1585,22 +1512,6 @@ namespace MoriaMods
                     }
                 }
 
-                // [Phase 4 — Path A hooks disabled]
-                // OnSetInteractable + NavProbe + MenuProbe hooks were for
-                // the row-injection discovery work. Path A is dead;
-                // disabled to cut PE-pre overhead and log noise.
-                #if 0
-                if (!s_instance->m_followGoats.empty()
-                    && wcscmp(fnStr, STR("OnSetInteractable")) == 0
-                    && context)
-                {
-                    std::wstring ctxCls = safeClassName(context);
-                    if (ctxCls == STR("UI_WBP_InteractionMenu_C"))
-                    {
-                        s_instance->onInteractMenuSetInteractablePre(context, func, parms);
-                    }
-                }
-                #endif
                 // Legacy v0.4 hook - keep in case some path still calls it.
                 if (wcscmp(fnStr, STR("Initialize NavBar")) == 0 ||
                     wcscmp(fnStr, STR("InitializeNavBar")) == 0)
@@ -2052,9 +1963,9 @@ namespace MoriaMods
                         entry.lastJoined = "";
                         s_instance->addOrUpdateSessionHistory(entry);
                         VLOG(STR("[SessionHistory] saved (history-item) name='{}' host='{}' port='{}'\n"),
-                             std::wstring(entry.name.begin(), entry.name.end()).c_str(),
-                             std::wstring(entry.domain.begin(), entry.domain.end()).c_str(),
-                             std::wstring(entry.port.begin(), entry.port.end()).c_str());
+                             utf8ToWide(entry.name).c_str(),
+                             utf8ToWide(entry.domain).c_str(),
+                             utf8ToWide(entry.port).c_str());
                     }
                 }
 
@@ -2650,7 +2561,6 @@ namespace MoriaMods
             if (s_pendingKeyLabelRefresh.exchange(false))
             {
                 refreshKeyLabels();
-                if (m_ftVisible) updateFontTestKeyLabels();
             }
 
 
@@ -2772,24 +2682,6 @@ namespace MoriaMods
                 clearStabilityHighlights();
 
 
-            // F12 (BIND_CONFIG) dispatcher disabled — the legacy config menu
-            // is replaced by Settings → Gameplay injection, and F12 is now
-            // the default Save Game keybind (dispatched below).
-            // toggleFontTestPanel() retained for ad-hoc testing; no live
-            // keypress reaches it.
-            #if 0
-            {
-                static bool s_lastCfgKey = false;
-                uint8_t cfgVk = s_bindings[MC_BIND_BASE + 5].key;
-                if (cfgVk != 0)
-                {
-                    bool nowDown = (GetAsyncKeyState(cfgVk) & 0x8000) != 0;
-                    if (nowDown && !s_lastCfgKey)
-                        toggleFontTestPanel();
-                    s_lastCfgKey = nowDown;
-                }
-            }
-            #endif
 
             // Save Game keybind dispatcher (BIND_SAVE_GAME). Edge-triggered;
             // suppressed while Settings UI or rename popup is open so a stray
@@ -2798,7 +2690,7 @@ namespace MoriaMods
                 static bool s_lastSaveKey = false;
                 uint8_t svVk = s_bindings[BIND_SAVE_GAME].key;
                 if (svVk != 0 && s_bindings[BIND_SAVE_GAME].enabled
-                    && m_characterLoaded && !m_ftVisible && !m_ftRenameVisible
+                    && m_characterLoaded && !m_ftRenameVisible
                     && !isSettingsScreenOpen())
                 {
                     bool nowDown = (GetAsyncKeyState(svVk) & 0x8000) != 0;
@@ -2828,7 +2720,7 @@ namespace MoriaMods
                     ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) ||
                     ((GetAsyncKeyState(VK_MENU)    & 0x8000) != 0);
                 if (unVk != 0 && s_bindings[BIND_UNSTUCK_NPCS].enabled
-                    && m_characterLoaded && !m_ftVisible && !m_ftRenameVisible
+                    && m_characterLoaded && !m_ftRenameVisible
                     && !isSettingsScreenOpen() && !unMod)
                 {
                     bool nowDown = (GetAsyncKeyState(unVk) & 0x8000) != 0;
@@ -2859,7 +2751,7 @@ namespace MoriaMods
                     ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) ||
                     ((GetAsyncKeyState(VK_MENU)    & 0x8000) != 0);
                 if (abVk != 0 && s_bindings[BIND_AB_TOGGLE].enabled
-                    && m_characterLoaded && !m_ftVisible && !m_ftRenameVisible
+                    && m_characterLoaded && !m_ftRenameVisible
                     && !isSettingsScreenOpen() && !abMod)
                 {
                     bool nowDown = (GetAsyncKeyState(abVk) & 0x8000) != 0;
@@ -2928,7 +2820,7 @@ namespace MoriaMods
                 static bool s_lastReposKey = false;
                 static bool s_lastReposEsc = false;
                 uint8_t reposVk = s_bindings[BIND_REPOSITION_HUD].key;
-                bool gateOK = m_characterLoaded && !m_ftVisible && !m_ftRenameVisible
+                bool gateOK = m_characterLoaded && !m_ftRenameVisible
                               && !isSettingsScreenOpen();
                 if (reposVk != 0 && s_bindings[BIND_REPOSITION_HUD].enabled && gateOK)
                 {
@@ -3044,7 +2936,7 @@ namespace MoriaMods
             // Suppressed while Settings UI is open so rebind keystrokes don't
             // double as gameplay actions.
             // [rc.139] Also gated on the Advanced Builder master switch.
-            if (m_advBuilderActive && m_characterLoaded && !m_ftVisible
+            if (m_advBuilderActive && m_characterLoaded
                 && !isSettingsScreenOpen())
             {
                 static bool s_lastMcKey[MC_SLOTS]{};
@@ -3091,7 +2983,7 @@ namespace MoriaMods
                 if (vk != 0)
                 {
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                    if (nowDown && !s_lastReplenishKey && !m_ftVisible)
+                    if (nowDown && !s_lastReplenishKey)
                     {
                         if (m_replenishItemEnabled) replenishLastItem();
                         else showInfoMessage(Loc::get("msg.replenish_disabled"));
@@ -3105,7 +2997,7 @@ namespace MoriaMods
                 if (vk != 0)
                 {
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                    if (nowDown && !s_lastRemoveAttrsKey && !m_ftVisible && !modDown)
+                    if (nowDown && !s_lastRemoveAttrsKey && !modDown)
                     {
                         if (m_removeAttrsEnabled) removeItemAttributes();
                         else showInfoMessage(Loc::get("msg.remove_attrs_disabled"));
@@ -3119,7 +3011,7 @@ namespace MoriaMods
                 if (vk != 0)
                 {
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                    if (nowDown && !s_lastTrashKey && !m_ftVisible && !m_trashDlgVisible && !modDown)
+                    if (nowDown && !s_lastTrashKey && !m_trashDlgVisible && !modDown)
                     {
                         if (m_trashItemEnabled) showTrashDialog();
                         else showInfoMessage(Loc::get("msg.trash_disabled"));
@@ -3127,227 +3019,6 @@ namespace MoriaMods
                     s_lastTrashKey = nowDown;
                 }
             }
-            // v7.1.x: NUM* polled handler retired — reveal-map moved to
-            // the pause-menu (ESC) button stack alongside UNLOCK
-            // RECIPES / READ ALL LORE / CLEAR ALL BUFFS. NUM* is now
-            // free again. See moria_settings_ui.inl for the new entry
-            // (GameOptKind::RevealMap).
-            // [rc.16 2026-05-25] NUM- → grant Bell-of-the-Goat to player
-            // inventory. Same call as NUM7 (which remains for backward
-            // compat). User requested the binding on NUM- since it was
-            // free after the rc.51 OnNpcRescued recruit-chain test was
-            // suspended and rendered redundant by Tobi's v1.2.10 dispatcher
-            // patch. Bell asset path:
-            //   /Game/Mods/PorterGoat/Items/BP_PorterGoatBell.BP_PorterGoatBell_C
-            // grantBellToPlayer() lives in moria_goat.inl.
-            // [rc.139] NUM- dev grant RETIRED — Num- is now the default for
-            // the user-facing "Unstuck NPCs" bind (BIND_UNSTUCK_NPCS).
-            // NUM7 still grants the bell for goat testing.
-            // {
-            //     static bool s_lastBellMinusKey = false;
-            //     bool nowDown = (GetAsyncKeyState(VK_SUBTRACT) & 0x8000) != 0;
-            //     if (nowDown && !s_lastBellMinusKey && !m_ftVisible && !modDown)
-            //     {
-            //         VLOG(STR("[MoriaCppMod] [Bell] NUM- press — grant Bell-of-the-Goat\n"));
-            //         s_instance->grantBellToPlayer();
-            //     }
-            //     s_lastBellMinusKey = nowDown;
-            // }
-            // [v7.1.0-rc.51 SUMMON 2026-05-10] NUM+ → teleport the live
-            // goat (BP_NpcGoat_C) to the player's location. Hook target
-            // discovered via rc.34 reflection: MorCharacter::ServerTeleportTo
-            // (FVector DestLocation, FRotator DestRotation). Goals 1+3 of
-            // porter-goat-feature-goals.md — summon makes the goat appear
-            // at the player; the goat's existing porter BT
-            // (Bst_NPCGoatWorkPorter) handles follow once it's nearby.
-#if 0 // [v8.2.x] ALL hardcoded NUM/N dev keys disabled per user directive — no polling, remove entirely later
-            {
-                static bool s_lastSummonKey = false;
-                bool nowDown = (GetAsyncKeyState(VK_ADD) & 0x8000) != 0;
-                if (nowDown && !s_lastSummonKey && !m_ftVisible && !modDown)
-                {
-                    // [rc.95 BELL-ONLY] disabled — observe Tobi's native summon/follow
-                    // s_instance->summonGoatToPlayer();
-                }
-                s_lastSummonKey = nowDown;
-            }
-#endif
-            // [rc.86 TEST 2026-07-06] NUM* (multiply) → open goat storage via
-            // the native MorNpcOnManageLocalInteraction handler. Reliable test
-            // trigger independent of the E-menu state.
-#if 0 // [v8.2.x] disabled per user directive
-            {
-                static bool s_lastGoatStoreKey = false;
-                bool nowDown = (GetAsyncKeyState(VK_MULTIPLY) & 0x8000) != 0;
-                if (nowDown && !s_lastGoatStoreKey && !m_ftVisible && !modDown)
-                {
-                    // [rc.95 BELL-ONLY] disabled — use Tobi's native Manage/craft flow
-                    // s_instance->openGoatSaddlebagInventory();
-                }
-                s_lastGoatStoreKey = nowDown;
-            }
-#endif
-            // [v7.1.0-rc.51 BELL/SADDLEBAGS GRANT DEBUG 2026-05-12]
-            //   NUM7 → grant Bell-of-the-Goat (BP_PorterGoatBell_C)
-            //   NUM8 → grant Saddlebags (BP_PorterGoatSaddlebags_C)
-            // Moved off NUM2/NUM3 — those are bound to Remove Single / Undo
-            // Remove / Remove All in Settings → Gameplay tab.
-            //
-            // Both paths from PorterGoatBell_v1.1.1 pak. Bell triggers
-            // summon (rc.40 will hook right-click on it). Saddlebags is
-            // the 8x8 hidden storage anchor. Production acquisition is
-            // via Shire merchant recipe-bundle purchase; these debug
-            // keybinds skip the campaign progression for fast iteration.
-#if 0 // [v8.2.x] NUM7 bell grant disabled per user directive (bell must be crafted/acquired in-game)
-            {
-                static bool s_lastBellGrantKey = false;
-                bool nowDown = (GetAsyncKeyState(VK_NUMPAD7) & 0x8000) != 0;
-                if (nowDown && !s_lastBellGrantKey && !m_ftVisible && !modDown)
-                {
-                    s_instance->grantBellToPlayer();
-                }
-                s_lastBellGrantKey = nowDown;
-            }
-#endif
-#if 0 // [v8.2.x] NUM9 StorageCap+census disabled per user directive
-            // [rc.120] NUM9 → arm/re-arm the 30s StorageCap capture window.
-            {
-                static bool s_lastStorageCapKey = false;
-                bool nowDown = (GetAsyncKeyState(VK_NUMPAD9) & 0x8000) != 0;
-                if (nowDown && !s_lastStorageCapKey && !m_ftVisible && !modDown)
-                {
-                    m_storageCapUntilMs = GetTickCount64() + 30000;
-                    m_storageCapSeen.clear();
-                    m_storageCapLines = 0;
-                    VLOG(STR("[MoriaCppMod] [StorageCap rc.120] === window ARMED for 30s — craft/place/open/save now ===\n"));
-                    // [rc.125 WORLD CENSUS 2026-07-11] Count live container-ish
-                    // actors — evidence for the dwarf-NPC container-actor model
-                    // (invisible AMorContainerItem instances backing NPC 4×3s).
-                    for (const wchar_t* cls : {
-                        STR("MorDroppedItem"), STR("BP_DropItem_C"),
-                        STR("MorContainerItem"),
-                        STR("BP_ContainerItem_Dwarf_BodyInventoryNPC_C"),
-                        STR("BP_ContainerItem_Dwarf_BodyInventory_C"),
-                        STR("BP_ContainerItem_Goat_Slot_EpicPack_C"),
-                        STR("BP_SaddleBags_Goat_C"),
-                        STR("BP_StorageChest_Construction_C"),
-                        STR("BP_NpcDwarf_C"), STR("BP_NpcGoat_C") })
-                    {
-                        std::vector<UObject*> hits;
-                        findAllOfSafe(cls, hits);
-                        int live = 0;
-                        for (auto* h : hits)
-                        {
-                            if (!h || !isObjectAlive(h)) continue;
-                            std::wstring nm = safeObjectName(h);
-                            if (nm.empty() || nm.rfind(STR("Default__"), 0) == 0) continue;
-                            live++;
-                        }
-                        VLOG(STR("[MoriaCppMod] [Census rc.125] {} live={}\n"), cls, live);
-                    }
-                    showOnScreen(L"StorageCap ARMED 30s + census logged", 3.0f, 0.4f, 0.9f, 0.9f);
-                }
-                s_lastStorageCapKey = nowDown;
-            }
-#endif
-#if 0 // [v8.2.x] NUM8 B5 probe disabled per user directive
-            {
-                static bool s_lastSaddlebagsGrantKey = false;
-                bool nowDown = (GetAsyncKeyState(VK_NUMPAD8) & 0x8000) != 0;
-                if (nowDown && !s_lastSaddlebagsGrantKey && !m_ftVisible && !modDown)
-                {
-                    // [rc.132] NUM8 repurposed: B5 probe — drop crafted pack via
-                    // ServerDropItem + deferred wrapper/raw scans.
-                    s_instance->probeB5DropCraftedPack();
-                }
-                s_lastSaddlebagsGrantKey = nowDown;
-            }
-#endif
-            // [rc.36 DEBUG SADDLEBAG TRIGGER 2026-06-06] NUM4 fires
-            // openGoatSaddlebagInventory directly on the nearest goat,
-            // bypassing the missing menu entry. v1.8.0 SAFE pak's menu
-            // cleanup over-fired and removed Saddlebags+Rename rows. With
-            // RegisterWithNPCManager finally producing delta=+1 (first
-            // ever in 35+ iterations), this lets us test if the engine
-            // UI now binds correctly to the registered goat.
-#if 0 // [v8.2.x] NUM4 disabled per user directive
-            {
-                static bool s_lastSaddleTrigKey = false;
-                bool nowDown = (GetAsyncKeyState(VK_NUMPAD4) & 0x8000) != 0;
-                if (nowDown && !s_lastSaddleTrigKey && !m_ftVisible && !modDown)
-                {
-                    // [rc.95 BELL-ONLY] disabled — use Tobi's native Manage/craft flow
-                    // VLOG(STR("[MoriaCppMod] [SaddleTrigger] NUM4 press — bypassing menu, firing openGoatSaddlebag directly\n"));
-                    // s_instance->openGoatSaddlebagInventory();
-                    // showOnScreen(L"NUM4: openGoatSaddlebag fired (menu bypass)", 2.0f, 0.4f, 0.9f, 0.4f);
-                }
-                s_lastSaddleTrigKey = nowDown;
-            }
-#endif
-            // [rc.25 MANAGE CAPTURE 2026-05-26] NUM0 arms a 5-second PE-pre
-            // capture window. While active, every UFunction call on contexts
-            // matching dwarf/NPC/PC/UIManager-related classes logs to
-            // [ManageCapture]. Goal: diff vanilla dwarf-Manage flow against
-            // goat-Saddlebags flow to find the missing entry-point function.
-            // [rc.29 2026-05-27] ManageCapture moved from NUM0 → NUM9.
-            // NUM0 is bound to BubbleInfo (~line 2917). NUM9 was freed by
-            // rc.40a (test keybind removed per user spec).
-#if 0 // [v8.2.x] NUM9 ManageCapture disabled per user directive (was also double-bound with StorageCap)
-            {
-                static bool s_lastMngCapKey = false;
-                bool nowDown = (GetAsyncKeyState(VK_NUMPAD9) & 0x8000) != 0;
-                if (nowDown && !s_lastMngCapKey && !m_ftVisible && !modDown)
-                {
-                    m_mngCapEndMs = GetTickCount64() + 10000;
-                    VLOG(STR("[MoriaCppMod] [ManageCapture] === window armed (10s) — interact with NPC NOW ===\n"));
-                    showOnScreen(L"ManageCapture armed 10s (NUM9) — interact NPC now", 3.0f, 0.4f, 0.9f, 0.4f);
-                }
-                s_lastMngCapKey = nowDown;
-            }
-#endif
-            // [rc.40a 2026-05-12] NUM9 test keybind removed per user spec.
-            // Bell toggle is right-click-only now. Discovery happens via the
-            // [BellHook] PE-pre logging on any UFunction called with the
-            // bell as context (see PE-pre handler ~line 880).
-            // Num. (Decimal) — toggle diag mode. When ON, every PE-pre call
-            // matching wide rescue-related keywords logs WITHOUT dedup.
-            // When OFF (default), back to the narrow Interact/Rescue
-            // filter with one-shot dedup. Use this to capture full
-            // dwarf-rescue chain in a fresh game.
-#if 0 // [v8.2.x] NUM. diag toggle disabled per user directive
-            {
-                static bool s_lastDiagKey = false;
-                bool nowDown = (GetAsyncKeyState(VK_DECIMAL) & 0x8000) != 0;
-                if (nowDown && !s_lastDiagKey && !m_ftVisible && !modDown)
-                {
-                    s_diagMode = !s_diagMode;
-                    VLOG(STR("[MoriaCppMod] [DiagMode] toggled {} (rescue-chain capture)\n"),
-                         s_diagMode ? STR("ON") : STR("OFF"));
-                    showOnScreen(s_diagMode ? L"Rescue diag: ON" : L"Rescue diag: OFF",
-                                 2.0f, 0.4f, 0.9f, 0.4f);
-                }
-                s_lastDiagKey = nowDown;
-            }
-#endif
-            // Num/ (Divide) — probe: dump BP_StoryManager.OnNpcRescued
-            // multicast subscriber list. Per desktop's BP-graph decode,
-            // each rescued NPC self-subscribes in BeginPlay; the goat
-            // doesn't, so the multicast bypasses it. Dumping the list
-            // before/after a real dwarf rescue confirms or refutes.
-#if 0 // [v8.2.x] NUM/ probe disabled per user directive
-            {
-                static bool s_lastProbeKey = false;
-                bool nowDown = (GetAsyncKeyState(VK_DIVIDE) & 0x8000) != 0;
-                if (nowDown && !s_lastProbeKey && !m_ftVisible && !modDown)
-                {
-                    VLOG(STR("[MoriaCppMod] [Probe] NUM/ press detected — dumping rescue subscribers\n"));
-                    dumpStoryMgrRescueSubscribers();
-                    showOnScreen(L"Rescue probe: dumped subscribers",
-                                 2.0f, 0.4f, 0.9f, 0.4f);
-                }
-                s_lastProbeKey = nowDown;
-            }
-#endif
             // Bell-in-hand LMB ring: while the bell is the equipped item and
             // we're in pure gameplay (no cursor, no mod UI), a left-click
             // rings it. The melee swing still plays — swinging the bell IS
@@ -3356,7 +3027,7 @@ namespace MoriaMods
                 static bool s_lastBellLMB = false;
                 bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
                 if (m_bellInHand && m_characterLoaded && lmb && !s_lastBellLMB
-                    && !m_ftVisible && !m_ftRenameVisible && !m_trashDlgVisible
+                    && !m_ftRenameVisible && !m_trashDlgVisible
                     && !m_repositionHudMode && !m_goatSaddlebagWidget
                     && !isSettingsScreenOpen())
                 {
@@ -3387,43 +3058,6 @@ namespace MoriaMods
             tickB7MoveBack();
             // Goat menu click dispatch (no-op unless menu visible).
             tickGoatMenu();
-            // Num0 - capture bubble info to clipboard + Target Info widget (v6.4.5+)
-            // Windows maps numpad-0 to VK_NUMPAD0 only when NumLock is ON; with NumLock OFF
-            // the same physical key sends VK_INSERT (which Replenish owns). We always
-            // check VK_NUMPAD0 and also fall back to a fresh key-state via GetKeyState
-            // to survive focus-related async state drops.
-#if 0 // [v8.2.x] NUM0 bubble-info capture disabled per user directive
-            {
-                static bool s_lastBubbleInfoKey = false;
-                bool nowDown = (GetAsyncKeyState(VK_NUMPAD0) & 0x8000) != 0;
-                if (nowDown && !s_lastBubbleInfoKey)
-                {
-                    bool numLockOn = (GetKeyState(VK_NUMLOCK) & 0x0001) != 0;
-                    VLOG(STR("[MoriaCppMod] [BubbleInfo] NUM0 press detected (numLock={} ftVisible={} modDown={})\n"),
-                         numLockOn ? 1 : 0, m_ftVisible ? 1 : 0, modDown ? 1 : 0);
-                    if (!m_ftVisible && !modDown)
-                        captureBubbleInfo();
-                }
-                s_lastBubbleInfoKey = nowDown;
-            }
-#endif
-#if 0 // [v8.2.x] N widget-harvest key disabled per user directive
-            // N - debug widget harvest (dev-only). Constructs the 12 Join World
-            // widget classes off-viewport, walks each WidgetTree, dumps to JSON
-            // under Mods/MoriaCppMod/widget-harvest/. Plain N (no modifier).
-            {
-                static bool s_lastHarvestKey = false;
-                bool nowDown = (GetAsyncKeyState('N') & 0x8000) != 0;
-                if (nowDown && !s_lastHarvestKey)
-                {
-                    VLOG(STR("[MoriaCppMod] [WidgetHarvest] N press detected (ftVisible={} modDown={})\n"),
-                         m_ftVisible ? 1 : 0, modDown ? 1 : 0);
-                    if (!m_ftVisible && !modDown)
-                        harvestJoinWorldWidgets();
-                }
-                s_lastHarvestKey = nowDown;
-            }
-#endif
             // Pitch rotation (. / SHIFT+.) - BIND_PITCH_ROTATE defaults to '.'
             // gated to ghost-visible (resolveGATA returns non-null).
             {
@@ -3432,7 +3066,7 @@ namespace MoriaMods
                 if (vk != 0)
                 {
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                    if (nowDown && !s_lastPitchKey && !m_ftVisible)
+                    if (nowDown && !s_lastPitchKey)
                     {
                         if (m_pitchRotateEnabled && resolveGATA())
                         {
@@ -3455,7 +3089,7 @@ namespace MoriaMods
                 if (vk != 0)
                 {
                     bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                    if (nowDown && !s_lastRollKey && !m_ftVisible)
+                    if (nowDown && !s_lastRollKey)
                     {
                         if (m_rollRotateEnabled && resolveGATA())
                         {
@@ -3471,33 +3105,11 @@ namespace MoriaMods
                 }
             }
 
-            {
-                HWND gameWnd = findGameWindow();
-                static bool s_lastGameFocused = true;
-                bool gameFocused = gameWnd && (GetForegroundWindow() == gameWnd);
-                if (gameFocused && !s_lastGameFocused && m_ftVisible)
-                {
-                    setInputModeUI();
-                    VLOG(STR("[MoriaCppMod] [Settings] Focus regained -- re-applied UI input mode\n"));
-                }
-                s_lastGameFocused = gameFocused;
-            }
 
 
-            if (m_ftVisible)
-            {
-                auto* pc = findPlayerController();
-                if (pc)
-                {
-                    if (!m_bpShowMouseCursor)
-                        m_bpShowMouseCursor = resolveBoolProperty(pc, L"bShowMouseCursor");
-                    if (m_bpShowMouseCursor && !m_bpShowMouseCursor->GetPropertyValueInContainer(pc))
-                        m_bpShowMouseCursor->SetPropertyValueInContainer(pc, true);
-                }
-            }
 
 
-            if (m_toolbarsVisible && !m_ftVisible && m_gameHudVisible)
+            if (m_toolbarsVisible && m_gameHudVisible)
             {
                 auto* pc = findPlayerController();
                 if (pc && !m_bpShowMouseCursor)
@@ -3588,571 +3200,8 @@ namespace MoriaMods
             }
 
 
-            if (m_ftVisible && m_fontTestWidget)
-            {
 
-                static bool s_lastFtEsc = false;
-                bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-                if (escDown && !s_lastFtEsc && s_capturingBind < 0 && !m_ftRenameVisible)
-                    toggleFontTestPanel();
-                s_lastFtEsc = escDown;
 
-
-                static bool s_lastFtLMB = false;
-                static bool s_ftCaptureSkipTick = false;
-                bool lmbDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-                if (lmbDown && !s_lastFtLMB && !m_ftRenameVisible)
-                {
-                    int curX, curY, viewW, viewH;
-                    if (m_screen.getCursorClientPixels(curX, curY, viewW, viewH))
-                    {
-                        float s2p = m_screen.viewportScale;
-                        int wLeft = static_cast<int>(viewW / 2.0f - 770.0f * s2p);  // half of 1540px panel
-                        int wTop  = static_cast<int>(viewH / 2.0f - 440.0f * s2p);
-
-
-                        int tabX0 = static_cast<int>(wLeft + 32.5f * s2p);
-                        int tabX1 = static_cast<int>(tabX0 + 512.0f * s2p);
-                        if (curX >= tabX0 && curX <= tabX1)
-                        {
-                            for (int t = 0; t < CONFIG_TAB_COUNT; t++)
-                            {
-                                int tY0 = static_cast<int>(wTop + (42.0f + t * 132.0f) * s2p);
-                                int tY1 = static_cast<int>(tY0 + 128.0f * s2p);
-                                if (curY >= tY0 && curY <= tY1)
-                                {
-                                    selectFontTestTab(t);
-                                    break;
-                                }
-                            }
-                        }
-
-
-                        if (m_ftSelectedTab == 0)
-                        {
-                            int kbImgX0 = static_cast<int>(wLeft + (1540.0f - 30.0f - 60.0f - 400.0f - 4.0f) * s2p);
-                            int kbX0 = static_cast<int>(kbImgX0 + 50.0f * s2p);   // inner dark area starts ~50px from image left
-                            int kbX1 = static_cast<int>(kbImgX0 + 350.0f * s2p);  // inner dark area ends ~50px from image right
-
-                            int cbX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f + 4.0f) * s2p);
-                            int cbX1 = static_cast<int>(cbX0 + 80.0f * s2p);
-                            int contentY = static_cast<int>(wTop + 40.0f * s2p);
-                            int rowHeight = static_cast<int>(128.0f * s2p);
-                            int sectionHeight = static_cast<int>(80.0f * s2p);
-
-                            float scrollOff = 0.0f;
-                            if (m_ftScrollBox && isObjectAlive(m_ftScrollBox))
-                            {
-                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
-                                if (getScrollFn)
-                                {
-                                    int sz = getScrollFn->GetParmsSize();
-                                    std::vector<uint8_t> sp(sz, 0);
-                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
-                                    auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
-                                    if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= sz)
-                                        scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
-                                }
-                            }
-
-                            bool inKeyBox = (curX >= kbX0 && curX <= kbX1);
-                            bool inCheckBox = (curX >= cbX0 && curX <= cbX1);
-                            if (inKeyBox || inCheckBox)
-                            {
-                                int y = curY - contentY + static_cast<int>(scrollOff * s2p);
-                                if (y >= 0)
-                                {
-                                    int currentY = 0;
-                                    std::wstring lastSec;
-                                    bool bindMatched = false;
-                                    for (int b = 0; b < BIND_COUNT; b++)
-                                    {
-                                        if (s_bindings[b].label == L"Reserved") continue;
-                                        if (lastSec.empty() || s_bindings[b].section != lastSec)
-                                        {
-                                            lastSec = s_bindings[b].section;
-                                            currentY += sectionHeight;
-                                        }
-                                        if (y >= currentY && y < currentY + rowHeight)
-                                        {
-                                            if (inCheckBox)
-                                            {
-
-                                                s_bindings[b].enabled = !s_bindings[b].enabled;
-                                                if (m_ftCheckImages[b] && isObjectAlive(m_ftCheckImages[b]))
-                                                {
-                                                    auto* visFn = m_ftCheckImages[b]->GetFunctionByNameInChain(STR("SetVisibility"));
-                                                    if (visFn) { uint8_t vp[8]{}; vp[0] = s_bindings[b].enabled ? 0 : 2; safeProcessEvent(m_ftCheckImages[b], visFn, vp); }
-                                                }
-                                                saveConfig();
-                                                VLOG(STR("[MoriaCppMod] [Settings] Bind {} enabled={}\n"), b, s_bindings[b].enabled);
-                                            }
-                                            else
-                                            {
-
-                                                s_capturingBind = b;
-                                                s_ftCaptureSkipTick = true;
-                                                updateFontTestKeyLabels();
-
-                                                VLOG(STR("[MoriaCppMod] [Settings] Capturing key for bind {}\n"), b);
-                                            }
-                                            bindMatched = true;
-                                            break;
-                                        }
-                                        currentY += rowHeight;
-                                    }
-                                    // Modifier key: it's the LAST row on the Key Bindings tab.
-                                    // Any click in the keyBox column below all keybind rows = modifier key.
-                                    if (!bindMatched && inKeyBox)
-                                    {
-                                        if (s_modifierVK == VK_CONTROL) s_modifierVK = VK_SHIFT;
-                                        else if (s_modifierVK == VK_SHIFT) s_modifierVK = VK_MENU;
-                                        else if (s_modifierVK == VK_MENU) s_modifierVK = VK_RMENU;
-                                        else s_modifierVK = VK_CONTROL;
-                                        saveConfig();
-                                        updateFontTestKeyLabels();
-                                    }
-                                }
-                            }
-                        }
-
-
-                        if (m_ftSelectedTab == 1)
-                        {
-
-                            int cbX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f + 4.0f) * s2p);
-                            int cbX1 = static_cast<int>(cbX0 + 80.0f * s2p);
-                            int kbImgX0 = static_cast<int>(wLeft + (1540.0f - 30.0f - 60.0f - 400.0f - 4.0f) * s2p);
-                            int kbX0 = static_cast<int>(kbImgX0 + 50.0f * s2p);   // inner dark area starts ~50px from image left
-                            int kbX1 = static_cast<int>(kbImgX0 + 350.0f * s2p);  // inner dark area ends ~50px from image right
-                            int contentY = static_cast<int>(wTop + 40.0f * s2p);
-                            int sectionH = static_cast<int>(80.0f * s2p);
-                            int rowH = static_cast<int>(128.0f * s2p);
-
-
-                            float scrollOff = 0.0f;
-                            if (m_ftScrollBox && isObjectAlive(m_ftScrollBox))
-                            {
-                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
-                                if (getScrollFn)
-                                {
-                                    int gsz = getScrollFn->GetParmsSize();
-                                    std::vector<uint8_t> sp(gsz, 0);
-                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
-                                    auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
-                                    if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
-                                        scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
-                                }
-                            }
-
-                            int y = curY - contentY + static_cast<int>(scrollOff * s2p);
-
-
-                            int ncY0 = sectionH;        // No Collision (first row)
-                            int rcY0 = ncY0 + rowH;
-                            int sgY0 = rcY0 + rowH;
-                            int trY0 = sgY0 + rowH;
-                            int rpY0 = trY0 + rowH;
-                            int raY0 = rpY0 + rowH;
-                            int ptY0 = raY0 + rowH;
-                            int rlY0 = ptY0 + rowH;
-
-                            bool inKeyBox = (curX >= kbX0 && curX <= kbX1);
-                            bool inCheckBox = (curX >= cbX0 && curX <= cbX1);
-                            bool inFullRow = (curX >= cbX0 && curX <= kbX1);
-
-
-                            if (inCheckBox && y >= ncY0 && y < ncY0 + rowH)
-                            {
-                                m_noCollisionWhileFlying = !m_noCollisionWhileFlying;
-                                saveConfig();
-                                updateFtNoCollision();
-                                VLOG(STR("[MoriaCppMod] [Settings] No Collision toggle: {}\n"), m_noCollisionWhileFlying ? 1 : 0);
-                            }
-
-                            else if (inFullRow && y >= rcY0 && y < rcY0 + rowH)
-                            {
-                                showRenameDialog_v2();
-                                VLOG(STR("[MoriaCppMod] [Settings] Rename Character via button\n"));
-                            }
-
-                            else if (inFullRow && y >= sgY0 && y < sgY0 + rowH)
-                            {
-                                triggerSaveGame();
-                                VLOG(STR("[MoriaCppMod] [Settings] Save Game via button\n"));
-                            }
-
-                            else if (inCheckBox && y >= trY0 && y < trY0 + rowH)
-                            {
-                                m_trashItemEnabled = !m_trashItemEnabled;
-                                saveConfig();
-                                updateFtGameOptCheckboxes();
-                                VLOG(STR("[MoriaCppMod] [Settings] Trash Item toggle: {}\n"), m_trashItemEnabled ? 1 : 0);
-                            }
-
-                            else if (inCheckBox && y >= rpY0 && y < rpY0 + rowH)
-                            {
-                                m_replenishItemEnabled = !m_replenishItemEnabled;
-                                saveConfig();
-                                updateFtGameOptCheckboxes();
-                                VLOG(STR("[MoriaCppMod] [Settings] Replenish Item toggle: {}\n"), m_replenishItemEnabled ? 1 : 0);
-                            }
-
-                            else if (inCheckBox && y >= raY0 && y < raY0 + rowH)
-                            {
-                                m_removeAttrsEnabled = !m_removeAttrsEnabled;
-                                saveConfig();
-                                updateFtGameOptCheckboxes();
-                                VLOG(STR("[MoriaCppMod] [Settings] Remove Attributes toggle: {}\n"), m_removeAttrsEnabled ? 1 : 0);
-                            }
-
-                            else if (inCheckBox && y >= ptY0 && y < ptY0 + rowH)
-                            {
-                                m_pitchRotateEnabled = !m_pitchRotateEnabled;
-                                saveConfig();
-                                updateFtGameOptCheckboxes();
-                                VLOG(STR("[MoriaCppMod] [Settings] Pitch Rotate toggle: {}\n"), m_pitchRotateEnabled ? 1 : 0);
-                            }
-
-                            else if (inCheckBox && y >= rlY0 && y < rlY0 + rowH)
-                            {
-                                m_rollRotateEnabled = !m_rollRotateEnabled;
-                                saveConfig();
-                                updateFtGameOptCheckboxes();
-                                VLOG(STR("[MoriaCppMod] [Settings] Roll Rotate toggle: {}\n"), m_rollRotateEnabled ? 1 : 0);
-                            }
-
-                            else if (inKeyBox && y >= trY0 && y < trY0 + rowH)
-                            {
-                                s_capturingBind = BIND_TRASH_ITEM;
-                                s_ftCaptureSkipTick = true;
-                                updateFontTestKeyLabels();
-                                VLOG(STR("[MoriaCppMod] [Settings] Capturing key for Trash Item (label={} cur={})\n"), (void*)m_ftKeyBoxLabels[BIND_TRASH_ITEM], keyName(s_bindings[BIND_TRASH_ITEM].key));
-                            }
-
-                            else if (inKeyBox && y >= rpY0 && y < rpY0 + rowH)
-                            {
-                                s_capturingBind = BIND_REPLENISH_ITEM;
-                                s_ftCaptureSkipTick = true;
-                                updateFontTestKeyLabels();
-                                VLOG(STR("[MoriaCppMod] [Settings] Capturing key for Replenish Item (label={} cur={})\n"), (void*)m_ftKeyBoxLabels[BIND_REPLENISH_ITEM], keyName(s_bindings[BIND_REPLENISH_ITEM].key));
-                            }
-
-                            else if (inKeyBox && y >= raY0 && y < raY0 + rowH)
-                            {
-                                s_capturingBind = BIND_REMOVE_ATTRS;
-                                s_ftCaptureSkipTick = true;
-                                updateFontTestKeyLabels();
-                                VLOG(STR("[MoriaCppMod] [Settings] Capturing key for Remove Attributes (label={} cur={})\n"), (void*)m_ftKeyBoxLabels[BIND_REMOVE_ATTRS], keyName(s_bindings[BIND_REMOVE_ATTRS].key));
-                            }
-
-                            else if (inKeyBox && y >= ptY0 && y < ptY0 + rowH)
-                            {
-                                s_capturingBind = BIND_PITCH_ROTATE;
-                                s_ftCaptureSkipTick = true;
-                                updateFontTestKeyLabels();
-                                VLOG(STR("[MoriaCppMod] [Settings] Capturing key for Pitch Rotate\n"));
-                            }
-
-                            else if (inKeyBox && y >= rlY0 && y < rlY0 + rowH)
-                            {
-                                s_capturingBind = BIND_ROLL_ROTATE;
-                                s_ftCaptureSkipTick = true;
-                                updateFontTestKeyLabels();
-                                VLOG(STR("[MoriaCppMod] [Settings] Capturing key for Roll Rotate\n"));
-                            }
-                        }
-
-
-                        if (m_ftSelectedTab == 2)
-                        {
-                            // Use full width for icon detection - icons are at the left of the content area
-                            // Icon is 56px wide with 4px left padding - click area covers just the icon
-                            int iconX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f) * s2p);
-                            int iconX1 = static_cast<int>(iconX0 + 64.0f * s2p);
-
-                            int entryStart = static_cast<int>(wTop + 40.0f * s2p + 30.0f * s2p);
-                            int entryH = static_cast<int>(72.0f * s2p);
-
-                            VLOG(STR("[MoriaCppMod] [Env] Click: cur=({},{}) iconX=[{},{}] entryStart={} count={}\n"),
-                                 curX, curY, iconX0, iconX1, entryStart, s_config.removalCount.load());
-
-                            float scrollOff = 0.0f;
-                            if (m_ftScrollBox && isObjectAlive(m_ftScrollBox))
-                            {
-                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
-                                if (getScrollFn)
-                                {
-                                    int sz = getScrollFn->GetParmsSize();
-                                    std::vector<uint8_t> sp(sz, 0);
-                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
-                                    auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
-                                    if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= sz)
-                                        scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
-                                }
-                            }
-
-                            if (curX >= iconX0 && curX <= iconX1 && curY >= entryStart)
-                            {
-                                int y = curY - entryStart + static_cast<int>(scrollOff * s2p);
-                                int entryIdx = y / entryH;
-                                int count = s_config.removalCount.load();
-                                if (entryIdx >= 0 && entryIdx < count)
-                                {
-                                    s_config.pendingRemoveIndex = entryIdx;
-                                    VLOG(STR("[MoriaCppMod] [Settings] Delete removal entry {} via icon click\n"), entryIdx);
-                                }
-                            }
-                        }
-
-
-                        if (m_ftSelectedTab == 3)
-                        {
-                            int cbX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f + 4.0f) * s2p);
-                            int cbX1 = static_cast<int>(cbX0 + 80.0f * s2p);
-                            int contentY = static_cast<int>(wTop + 40.0f * s2p);
-                            int sectionH = static_cast<int>(80.0f * s2p);
-                            int rowH = static_cast<int>(128.0f * s2p);
-
-                            float scrollOff = 0.0f;
-                            if (m_ftScrollBox && isObjectAlive(m_ftScrollBox))
-                            {
-                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
-                                if (getScrollFn)
-                                {
-                                    int gsz = getScrollFn->GetParmsSize();
-                                    std::vector<uint8_t> sp(gsz, 0);
-                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
-                                    auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
-                                    if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
-                                        scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
-                                }
-                            }
-
-                            if (curX >= cbX0 && curX <= cbX1)
-                            {
-                                int y = curY - contentY + static_cast<int>(scrollOff * s2p);
-
-                                int rowY = y - sectionH;
-                                if (rowY >= 0)
-                                {
-                                    int idx = rowY / rowH;
-                                    if (idx >= 0 && idx < static_cast<int>(m_ftGameModEntries.size()) && idx < MAX_GAME_MODS)
-                                    {
-                                        m_ftGameModEntries[idx].enabled = !m_ftGameModEntries[idx].enabled;
-                                        if (m_ftGameModCheckImages[idx] && isObjectAlive(m_ftGameModCheckImages[idx]))
-                                        {
-                                            auto* visFn = m_ftGameModCheckImages[idx]->GetFunctionByNameInChain(STR("SetVisibility"));
-                                            if (visFn) { uint8_t vp[8]{}; vp[0] = m_ftGameModEntries[idx].enabled ? 0 : 2; safeProcessEvent(m_ftGameModCheckImages[idx], visFn, vp); }
-                                        }
-
-                                        saveGameMods(m_ftGameModEntries);
-                                        VLOG(STR("[MoriaCppMod] [Settings] Game Mod '{}' = {}\n"),
-                                            std::wstring(m_ftGameModEntries[idx].name.begin(), m_ftGameModEntries[idx].name.end()),
-                                            m_ftGameModEntries[idx].enabled ? 1 : 0);
-                                    }
-                                }
-                            }
-                        }
-
-
-                        // Cheats tab (index 4): existing 3 rows (Unlock/Read/Peace) at
-                        // contentY + 0/128/256, plus the buff entries table beneath starting at
-                        // contentY + 384. All entries at 1x-scale Y offsets are in m_buffRowTopYs +
-                        // m_buffRowHeights; multiply by s2p and add scrollOff.
-                        if (m_ftSelectedTab == 4)
-                        {
-                            // Read current scroll offset (scrollbox moves tab content upward)
-                            float scrollOff = 0.0f;
-                            if (m_ftScrollBox && isObjectAlive(m_ftScrollBox))
-                            {
-                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
-                                if (getScrollFn)
-                                {
-                                    int gsz = getScrollFn->GetParmsSize();
-                                    std::vector<uint8_t> sp(gsz, 0);
-                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
-                                    auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
-                                    if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
-                                        scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
-                                }
-                            }
-
-                            int btnLeft  = static_cast<int>(wLeft + (1540.0f - 30.0f - 50.0f - 400.0f) * s2p);
-                            int btnRight = static_cast<int>(wLeft + (1540.0f - 30.0f - 50.0f) * s2p);
-
-                            int contentY = static_cast<int>(wTop + 40.0f * s2p);
-                            int scrollPx = static_cast<int>(scrollOff * s2p);
-
-                            // Existing 3 rows (unscrolled at tab top - tab content follows scroll like a VBox)
-                            auto rowY = [&](int y1x, int h1x, int& outTop, int& outBot) {
-                                outTop = contentY - scrollPx + static_cast<int>(y1x * s2p);
-                                outBot = outTop + static_cast<int>(h1x * s2p);
-                            };
-
-                            int unlockT, unlockB; rowY(0,   128, unlockT, unlockB);
-                            int readT,   readB;   rowY(128, 128, readT,   readB);
-                            int peaceT,  peaceB;  rowY(256, 128, peaceT,  peaceB);
-
-                            // Diamond checkbox column (for Peace Mode row + buff toggles)
-                            int cbX0 = static_cast<int>(wLeft + (30.0f + 517.0f + 10.0f + 4.0f + 4.0f) * s2p);
-                            int cbX1 = cbX0 + static_cast<int>(80.0f * s2p);
-
-                            bool handled = false;
-
-                            if (curX >= btnLeft && curX <= btnRight)
-                            {
-                                if (curY >= unlockT && curY <= unlockB)
-                                { VLOG(STR("[MoriaCppMod] [Cheats] UNLOCK clicked\n")); unlockAllAvailableRecipes(); handled = true; }
-                                else if (curY >= readT && curY <= readB)
-                                { VLOG(STR("[MoriaCppMod] [Cheats] READ clicked\n"));   markAllLoreRead(); handled = true; }
-                                else if (curY >= peaceT && curY <= peaceB)
-                                { VLOG(STR("[MoriaCppMod] [Cheats] PEACE/FIGHT clicked\n")); togglePeaceMode(); handled = true; }
-                            }
-                            if (!handled && curX >= cbX0 && curX <= cbX1 && curY >= peaceT && curY <= peaceB)
-                            { VLOG(STR("[MoriaCppMod] [Cheats] Peace checkbox clicked\n")); togglePeaceMode(); handled = true; }
-
-                            if (!handled)
-                            {
-                                int count = (int)m_buffRowTopYs.size();
-                                int ncEntries = 0;
-                                const CheatEntry* entries = cheatEntries(ncEntries);
-                                for (int i = 0; i < count && i < ncEntries; ++i)
-                                {
-                                    int rowT, rowB;
-                                    rowY(m_buffRowTopYs[i], m_buffRowHeights[i], rowT, rowB);
-                                    if (curY < rowT || curY > rowB) continue;
-
-                                    if (entries[i].kind == CheatRowKind::ClearAllBtn)
-                                    {
-                                        if (curX >= btnLeft && curX <= btnRight)
-                                        {
-                                            VLOG(STR("[MoriaCppMod] [Cheats] CLEAR clicked\n"));
-                                            clearAllBuffs();
-                                            handled = true;
-                                        }
-                                    }
-                                    else if (entries[i].kind == CheatRowKind::BuffToggle)
-                                    {
-                                        bool onCheckbox = (curX >= cbX0 && curX <= cbX1);
-                                        bool onButton   = (curX >= btnLeft && curX <= btnRight);
-                                        if (onCheckbox || onButton)
-                                        {
-                                            VLOG(STR("[MoriaCppMod] [Cheats] Toggle '{}' clicked (via {})\n"),
-                                                 entries[i].label, onButton ? STR("button") : STR("checkbox"));
-                                            toggleBuffEntry(i);
-                                            handled = true;
-                                        }
-                                    }
-                                    // Section headers are non-interactive.
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Tweaks tab (index 5). Click on a row's value button cycles.
-                        if (m_ftSelectedTab == 5)
-                        {
-                            // Read scroll offset (same pattern as tab 4)
-                            float scrollOff = 0.0f;
-                            if (m_ftScrollBox && isObjectAlive(m_ftScrollBox))
-                            {
-                                auto* getScrollFn = m_ftScrollBox->GetFunctionByNameInChain(STR("GetScrollOffset"));
-                                if (getScrollFn)
-                                {
-                                    int gsz = getScrollFn->GetParmsSize();
-                                    std::vector<uint8_t> sp(gsz, 0);
-                                    safeProcessEvent(m_ftScrollBox, getScrollFn, sp.data());
-                                    auto* pRV = findParam(getScrollFn, STR("ReturnValue"));
-                                    if (pRV && pRV->GetOffset_Internal() + (int)sizeof(float) <= gsz)
-                                        scrollOff = *reinterpret_cast<float*>(sp.data() + pRV->GetOffset_Internal());
-                                }
-                            }
-
-                            int btnLeft  = static_cast<int>(wLeft + (1540.0f - 30.0f - 50.0f - 400.0f) * s2p);
-                            int btnRight = static_cast<int>(wLeft + (1540.0f - 30.0f - 50.0f) * s2p);
-                            int contentY = static_cast<int>(wTop + 40.0f * s2p);
-                            int scrollPx = static_cast<int>(scrollOff * s2p);
-
-                            int count = (int)m_tweakRowTopYs.size();
-                            int nTweaks = 0;
-                            const TweakEntry* entries = tweakEntries(nTweaks);
-                            for (int i = 0; i < count && i < nTweaks; ++i)
-                            {
-                                int rowT = contentY - scrollPx + static_cast<int>(m_tweakRowTopYs[i] * s2p);
-                                int rowB = rowT + static_cast<int>(m_tweakRowHeights[i] * s2p);
-                                if (curY < rowT || curY > rowB) continue;
-
-                                if (entries[i].kind != TweakKind::SectionHeader &&
-                                    curX >= btnLeft && curX <= btnRight)
-                                {
-                                    VLOG(STR("[MoriaCppMod] [Tweaks] '{}' clicked\n"), entries[i].label);
-                                    cycleTweakValue(i);
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-                s_lastFtLMB = lmbDown;
-
-
-                static bool s_ftCaptureKeyPrev[256]{};
-                if (s_capturingBind >= 0 && s_capturingBind < BIND_COUNT)
-                {
-                    if (s_ftCaptureSkipTick)
-                    {
-                        s_ftCaptureSkipTick = false;
-                        VLOG(STR("[MoriaCppMod] [Settings] Capture skip tick for bind {}\n"), s_capturingBind.load());
-                        for (int vk = 0x08; vk <= 0xFE; vk++)
-                            s_ftCaptureKeyPrev[vk] = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                    }
-                    else
-                    {
-                        for (int vk = 0x08; vk <= 0xFE; vk++)
-                        {
-                            if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU ||
-                                vk == VK_LSHIFT || vk == VK_RSHIFT || vk == VK_LCONTROL ||
-                                vk == VK_RCONTROL || vk == VK_LMENU || vk == VK_RMENU)
-                                continue;
-                            bool nowDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-                            bool wasDown = s_ftCaptureKeyPrev[vk];
-                            s_ftCaptureKeyPrev[vk] = nowDown;
-                            if (!nowDown || wasDown) continue;
-                            if (vk == VK_ESCAPE)
-                            {
-                                s_capturingBind = -1;
-                                updateFontTestKeyLabels();
-                                break;
-                            }
-                            int idx = s_capturingBind.load();
-                            VLOG(STR("[MoriaCppMod] [Settings] Key captured: VK=0x{:02X} for bind {}\n"), vk, idx);
-                            if (idx >= 0 && idx < BIND_COUNT)
-                            {
-                                s_bindings[idx].key = static_cast<uint8_t>(vk);
-                                s_capturingBind = -1;
-                                saveConfig();
-                                updateFontTestKeyLabels();
-                                s_overlay.needsUpdate = true;
-                                s_pendingKeyLabelRefresh = true;
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-
-
-            {
-
-                if (m_ftVisible && m_ftSelectedTab == 2)
-                {
-                    int curCount = s_config.removalCount.load();
-                    if (curCount != m_ftLastRemovalCount)
-                        rebuildFtRemovalList();
-                }
-
-                }
 
             {
                 int removeIdx = s_config.pendingRemoveIndex.load();
@@ -4196,7 +3245,6 @@ namespace MoriaMods
                         }
                         rewriteSaveFile();
                         buildRemovalEntries();
-                        if (m_ftVisible) m_deferRemovalRebuild = 2;
                         VLOG(STR("[MoriaCppMod] Config UI: removed entry {} ({})\n"),
                                                         removeIdx,
                                                         std::wstring(toRemove.friendlyName));
@@ -4319,18 +3367,6 @@ namespace MoriaMods
                 refreshActionBar();
             }
 
-            if (m_deferRemovalRebuild == 2)
-            {
-                // close the F12 panel via toggle (deferred removal)
-                m_deferRemovalRebuild = 1;
-                if (m_ftVisible) toggleFontTestPanel(); // closes it
-            }
-            else if (m_deferRemovalRebuild == 1)
-            {
-                // reopen - toggle creates fresh panel with updated data
-                m_deferRemovalRebuild = 0;
-                if (!m_ftVisible) toggleFontTestPanel(); // reopens it
-            }
 
 
             placementTick();
@@ -4369,7 +3405,7 @@ namespace MoriaMods
             // Default F1..F8 USE still goes through register_keydown_event for
             // low-latency; this polling only handles user rebinds off the F-keys.
             // [rc.139] Gated on the Advanced Builder master switch.
-            if (m_advBuilderActive && !m_ftVisible && !isSettingsScreenOpen() &&
+            if (m_advBuilderActive && !isSettingsScreenOpen() &&
                 m_handleResolvePhase == HandleResolvePhase::Done)
             {
                 for (int i = 0; i < 8; ++i)
@@ -4538,32 +3574,10 @@ namespace MoriaMods
 
                     m_appliedRemovals.assign(m_appliedRemovals.size(), false);
                     m_deferHideAndRefresh = false;
-                    m_deferRemovalRebuild = 0;
                     m_gameHudVisible = true;
                     m_inFreeCam = false;
 
                     m_activeBuilderSlot = -1;
-                    m_fontTestWidget = nullptr;
-                    m_ftVisible = false;
-                    for (auto& t : m_ftTabImages) t = nullptr;
-                    for (auto& t : m_ftTabLabels) t = nullptr;
-                    m_ftTabActiveTexture = nullptr;
-                    m_ftTabInactiveTexture = nullptr;
-                    m_ftSelectedTab = 0;
-                    m_ftScrollBox = nullptr;
-                    for (auto& c : m_ftTabContent) c = nullptr;
-                    for (auto& l : m_ftKeyBoxLabels) l = nullptr;
-                    for (auto& c : m_ftCheckImages) c = nullptr;
-                    m_ftModBoxLabel = nullptr;
-                    m_ftControllerCheckImg = nullptr;
-                    m_ftControllerProfileLabel = nullptr;
-                    m_ftNoCollisionCheckImg = nullptr;
-                    m_ftNoCollisionLabel = nullptr;
-                    m_ftNoCollisionKeyLabel = nullptr;
-                    m_ftRemovalVBox = nullptr;
-                    m_ftRemovalHeader = nullptr;
-                    m_ftLastRemovalCount = -1;
-                    for (auto& c : m_ftGameModCheckImages) c = nullptr;
                     m_ftGameModEntries.clear();
                     m_ftRenameWidget = nullptr;
                     m_ftRenameInput = nullptr;
@@ -4615,6 +3629,42 @@ namespace MoriaMods
                     m_settingsKeySelectorCls = nullptr;
                     m_settingsSectionHeadingCls = nullptr;
                     m_fnCache.clear();
+
+                    // Captured-asset pointer caches (JoinWorld clone + NBB
+                    // textures). All are re-harvested from live widgets on
+                    // the next screen show / bar build; the pointers — and
+                    // the captured font/style byte blocks, which embed asset
+                    // pointers — can go stale across world transitions.
+                    m_jwCls_FrontEndButton = nullptr;
+                    m_jwCls_CraftBigButton = nullptr;
+                    m_jwCls_GameDataPanel = nullptr;
+                    m_jwCls_SessionHistoryList = nullptr;
+                    m_jwCls_AdvancedJoinPanel = nullptr;
+                    m_jwCls_LowerThird = nullptr;
+                    m_jwCls_NetworkAlert = nullptr;
+                    m_jwCls_ControlPrompt = nullptr;
+                    m_jwCls_TextHeader = nullptr;
+                    m_jwCls_SessionHistoryItem = nullptr;
+                    m_jwCls_GenericPopup = nullptr;
+                    m_jwIconTexSearch = nullptr;
+                    m_jwBgGradientTex = nullptr;
+                    m_jwTexBtnP1Up = nullptr;
+                    m_jwTexBtnP2Up = nullptr;
+                    m_jwTexBtnCTADisabled = nullptr;
+                    m_jwFontTitleCaptured = false;
+                    m_jwFontBreadcrumbCaptured = false;
+                    m_jwFontSubtitleCaptured = false;
+                    m_jwFontHistoryHeaderCaptured = false;
+                    m_jwInputStyleCaptured = false;
+                    m_nbbAssetsCached = false;
+                    m_nbbCachedSlotEmpty = nullptr;
+                    m_nbbCachedSlotFocus = nullptr;
+                    m_nbbCachedSlotCorners = nullptr;
+                    m_nbbCachedBarFrame = nullptr;
+                    m_nbbCachedKeyBg = nullptr;
+                    m_nbbCachedTexChromeTop = nullptr;
+                    m_nbbCachedTexChromeMiddle = nullptr;
+                    m_nbbCachedTexChromeBottom = nullptr;
 
                     clearStabilityHighlights();
                 }

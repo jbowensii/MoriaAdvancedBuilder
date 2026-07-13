@@ -105,7 +105,6 @@ namespace MoriaMods
             {L"Unstuck NPCs", L"General", VK_OEM_MINUS},
     };
 
-    inline std::atomic<int> s_capturingBind{-1};
 
 
     inline std::atomic<uint8_t> s_modifierVK{VK_SHIFT};

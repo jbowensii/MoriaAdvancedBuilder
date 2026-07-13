@@ -292,11 +292,7 @@ namespace MoriaMods
             s_table["key.page_up"] = L"PgUp";
             s_table["key.page_down"] = L"PgDn";
 
-            s_table["tab.optional_mods"] = L"Optional Mods";
-            s_table["tab.key_mapping"] = L"Key Mapping";
-            s_table["tab.hide_environment"] = L"Hide Environment";
 
-            s_table["ui.config_title"] = L"Building Mod Configuration Menu";
             s_table["ui.set_modifier_key"] = L"Set Modifier Key:  ";
             s_table["ui.set_modifier_key_short"] = L"Set Modifier Key";
             s_table["ui.press_key"] = L"Press key...";
@@ -434,7 +430,7 @@ namespace MoriaMods
     {
         auto dash = meshName.find('-');
         std::string shortName = (dash != std::string::npos) ? meshName.substr(0, dash) : meshName;
-        return std::wstring(shortName.begin(), shortName.end());
+        return Loc::utf8ToWide(shortName);
     }
 
 

@@ -479,7 +479,6 @@
                 default: break;
             }
 
-            updateTweakRowUI(idx);
             saveConfig();
         }
 
@@ -659,7 +658,6 @@
                 if (all[idx].effect2) removeGEByName(all[idx].effect2);
                 VLOG(STR("[Cheats] '{}' OFF\n"), all[idx].label);
             }
-            updateBuffRowUI(idx);
             saveConfig();
         }
 
@@ -687,7 +685,6 @@
                 if (!m_buffStates[i]) continue;
                 if (cheats[i].effect1) applyGEByName(cheats[i].effect1);
                 if (cheats[i].effect2) applyGEByName(cheats[i].effect2);
-                updateBuffRowUI(i);
                 applied++;
             }
             if (applied > 0) VLOG(STR("[Cheats] Re-applied {} buffs from INI\n"), applied);
@@ -715,7 +712,6 @@
                     case TweakKind::SpecialInstantCraft:  applyInstantCraft(false); break;
                     default: break;
                 }
-                updateTweakRowUI(i);
                 twApplied++;
             }
             if (twApplied > 0) VLOG(STR("[Tweaks] Re-applied {} tweaks from INI\n"), twApplied);
@@ -770,7 +766,6 @@
                 if (all[i].effect1) removeGEByName(all[i].effect1);
                 if (all[i].effect2) removeGEByName(all[i].effect2);
                 m_buffStates[i] = false;
-                updateBuffRowUI(i);
             }
             VLOG(STR("[Cheats] Clear All Buffs — all toggles reset\n"));
             showOnScreen(L"All buffs cleared", 3.0f, 0.3f, 1.0f, 0.3f);
@@ -1244,7 +1239,6 @@
                 showOnScreen(L"Peace Mode OFF", 3.0f, 1.0f, 0.5f, 0.2f);
             }
 
-            updateFtPeaceMode();
             saveConfig();
         }
 

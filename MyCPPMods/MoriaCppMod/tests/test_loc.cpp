@@ -173,7 +173,7 @@ TEST_F(LocTest, InitDefaults_PopulatesKeys)
     // Check a sample of known keys
     EXPECT_FALSE(Loc::get("bind.quick_build_1").empty());
     EXPECT_FALSE(Loc::get("key.shift").empty());
-    EXPECT_FALSE(Loc::get("ui.config_title").empty());
+    EXPECT_FALSE(Loc::get("bind.unstuck_npcs").empty());
     EXPECT_FALSE(Loc::get("msg.no_hit").empty());
     EXPECT_FALSE(Loc::get("save.removal_header").empty());
     // Count should be at least 80 keys

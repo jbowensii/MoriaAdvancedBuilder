@@ -96,7 +96,6 @@
         {
             auto* pc = findPlayerController();
             if (!pc) return;
-            if (!focusWidget) focusWidget = m_fontTestWidget;
             if (!focusWidget) return;
 
 

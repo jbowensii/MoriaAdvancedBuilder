@@ -46,8 +46,9 @@
         //  legacy spawn-duplicate path; in-place modification doesn't need it.)
         ULONGLONG m_modJoinWorldShownAt{0};
 
-        // Cached UClass refs harvested from the native widget tree on first intercept.
-        // UClasses live forever once loaded — safe to cache as raw pointers.
+        // Cached UClass refs harvested from the native widget tree on first
+        // intercept. Cleared on world unload (a BP class with no live
+        // instance CAN be GC-purged); re-harvested on the next intercept.
         UClass* m_jwCls_FrontEndButton{nullptr};       // WBP_FrontEndButton_C
         UClass* m_jwCls_CraftBigButton{nullptr};       // UI_WBP_Craft_BigButton_C
         UClass* m_jwCls_GameDataPanel{nullptr};        // WBP_JoinWorldScreen_GameDataPanel_C
@@ -73,7 +74,7 @@
         bool m_jwFontHistoryHeaderCaptured{false};
 
         // ---- Captured texture pointers from native widget tree ----
-        // UTexture2D assets live forever once loaded — safe to cache as raw pointers.
+        // Cleared on world unload and re-captured on the next intercept.
         UObject* m_jwIconTexSearch{nullptr};   // magnifying-glass on SearchButton (WBP_FrontEndButton_C IconTexture)
         UObject* m_jwBgGradientTex{nullptr};   // left-side dark gradient (BackgroundImg.Brush.ResourceObject)
         // Shared button textures pre-cached when the native widget shows. Once

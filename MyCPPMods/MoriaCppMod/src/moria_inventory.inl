@@ -959,9 +959,7 @@
             // the player's UI focus. Only call setInputModeGame() when we
             // know the world was in pure gameplay mode (cursor hidden)
             // before the popup.
-            if (m_ftVisible && m_fontTestWidget)
-                setInputModeUI(m_fontTestWidget);
-            else if (!m_trashCursorWasVisible)
+            if (!m_trashCursorWasVisible)
                 setInputModeGame();
             // else: cursor was already visible before the popup opened,
             // so the underlying native UI (inventory, etc.) still has
