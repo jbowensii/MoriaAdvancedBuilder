@@ -1,4 +1,4 @@
-// MoriaCppMod - Return to Moria UE4SS C++ mod. v8.5.1 "Porter Goat"
+// MoriaCppMod - Return to Moria UE4SS C++ mod. v8.6.0 "Clean Forge"
 // Top-level mod class lives here; subsystem implementations are #included via .inl files.
 
 #include "moria_common.h"
@@ -589,15 +589,15 @@ namespace MoriaMods
       public:
         MoriaCppMod()
         {
-            ModVersion = STR("8.5.1");
+            ModVersion = STR("8.6.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v8.5.1 \"Porter Goat\" (goat companion complete: LMB bell summon/dismiss, follow, saddlebags with native "
-                     "persistence; Advanced Builder toggle [=]; Unstuck NPCs [-])\n"));
+            VLOG(STR("[MoriaCppMod] Loaded v8.6.0 \"Clean Forge\" (code-review hardening + dead-code purge; quick-build ghost fix; bell staleness fix; "
+                     "F12=Save Game, config in native Settings)\n"));
         }
 
         ~MoriaCppMod() override
@@ -635,7 +635,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v8.5.1 (workDir={})\n"), utf8PathToWide(s_ue4ssWorkDir));
+            VLOG(STR("[MoriaCppMod] Loaded v8.6.0 (workDir={})\n"), utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
             // Mangled chars in the logged path indicate a wide-path conversion regression.
