@@ -9762,15 +9762,33 @@
 
         // Destroyed actors LINGER until garbage collection (isObjectAlive
         // still passes) — log-proven 2026-07-13: after a bell dismiss, four
-        // consecutive rings all "found" the same corpse and re-dismissed it
-        // instead of summoning. IsActorBeingDestroyed is the reliable filter.
+        // consecutive rings all "found" the same corpse and re-dismissed it.
+        // NOTE: AActor::IsActorBeingDestroyed is a plain C++ inline in 4.27
+        // (NOT a UFUNCTION — the first fix silently no-op'd). The PE-callable
+        // equivalent is KismetSystemLibrary::IsValid, which returns false for
+        // pending-kill objects.
         bool isGoatActorUsable(UObject* g)
         {
             if (!g || !isObjectAlive(g)) return false;
-            if (auto* fn = g->GetFunctionByNameInChain(STR("IsActorBeingDestroyed")))
+            auto* isValidFn = UObjectGlobals::StaticFindObject<UFunction*>(
+                nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary:IsValid"));
+            auto* kslCls = UObjectGlobals::StaticFindObject<UClass*>(
+                nullptr, nullptr, STR("/Script/Engine.KismetSystemLibrary"));
+            UObject* kslCDO = kslCls ? kslCls->GetClassDefaultObject() : nullptr;
+            if (isValidFn && kslCDO)
             {
-                std::vector<uint8_t> b(fn->GetParmsSize(), 0);
-                if (safeProcessEvent(g, fn, b.data()) && b[0] != 0) return false;
+                std::vector<uint8_t> b(isValidFn->GetParmsSize(), 0);
+                if (auto* pObj = findParam(isValidFn, STR("Object")))
+                    *reinterpret_cast<UObject**>(b.data() + pObj->GetOffset_Internal()) = g;
+                bool valid = false;
+                if (safeProcessEvent(kslCDO, isValidFn, b.data()))
+                    if (auto* pRet = findParam(isValidFn, STR("ReturnValue")))
+                        valid = *reinterpret_cast<bool*>(b.data() + pRet->GetOffset_Internal());
+                if (!valid)
+                {
+                    VLOG(STR("[MoriaCppMod] [BellToggle] corpse filtered (KSL IsValid=false): {:p}\n"), (void*)g);
+                    return false;
+                }
             }
             return true;
         }
