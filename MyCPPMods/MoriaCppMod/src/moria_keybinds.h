@@ -1,6 +1,5 @@
 
 
-
 #pragma once
 
 #include "moria_common.h"
@@ -39,21 +38,21 @@ namespace MoriaMods
     //           the automatic day-cycle/character-load scanning loop)
 
     static constexpr int MC_BIND_BASE = 8;
-    static constexpr int BIND_ROTATION  = 8;
-    static constexpr int BIND_SNAP      = 9;
+    static constexpr int BIND_ROTATION = 8;
+    static constexpr int BIND_SNAP = 9;
     // BIND_STABILITY (10) removed — unused
-    static constexpr int BIND_TARGET    = 12;
-    static constexpr int BIND_CONFIG    = 13;
+    static constexpr int BIND_TARGET = 12;
+    static constexpr int BIND_CONFIG = 13;
     static constexpr int BIND_AB_TOGGLE = 17;
     // slot 18 repurposed from "Reserved/Diagnostics" to Save Game
     // (default F12 — free since the legacy config menu was removed; all
     // configuration lives in the native Settings screen now). Triggers triggerSaveGame().
     static constexpr int BIND_SAVE_GAME = 18;
-    static constexpr int BIND_TRASH_ITEM     = 19;
+    static constexpr int BIND_TRASH_ITEM = 19;
     static constexpr int BIND_REPLENISH_ITEM = 20;
-    static constexpr int BIND_REMOVE_ATTRS   = 21;
-    static constexpr int BIND_PITCH_ROTATE   = 22;
-    static constexpr int BIND_ROLL_ROTATE    = 23;
+    static constexpr int BIND_REMOVE_ATTRS = 21;
+    static constexpr int BIND_PITCH_ROTATE = 22;
+    static constexpr int BIND_ROLL_ROTATE = 23;
     // HUD reposition mode toggle. Default F10. When pressed,
     // forces the inspect window + 4-circle rotation display visible so
     // the user can drag them. ESC or another F10 press exits the mode.
@@ -62,7 +61,7 @@ namespace MoriaMods
     // Default "-" (main-keyboard VK_OEM_MINUS, per user directive). The
     // dispatcher skips the press when a modifier is held so Shift+'-'
     // ('_') typed elsewhere doesn't fire it.
-    static constexpr int BIND_UNSTUCK_NPCS   = 25;
+    static constexpr int BIND_UNSTUCK_NPCS = 25;
 
     struct KeyBind
     {
@@ -105,8 +104,6 @@ namespace MoriaMods
             {L"Unstuck NPCs", L"General", VK_OEM_MINUS},
     };
 
-
-
     inline std::atomic<uint8_t> s_modifierVK{VK_SHIFT};
 
     // v6.8.0 CP3 — per-slot chord-aware storage for the Quick Build "Set"
@@ -115,18 +112,30 @@ namespace MoriaMods
     // until the user rebinds a SET row in Settings → Key Mapping.
     //   vk        — primary key VK code
     //   modBits   — bShift bit0, bCtrl bit1, bAlt bit2, bCmd bit3
-    struct SetBind { uint8_t vk; uint8_t modBits; };
+    struct SetBind
+    {
+        uint8_t vk;
+        uint8_t modBits;
+    };
     inline SetBind s_setBindings[8] = {
-        { Input::Key::F1, 0x01 }, { Input::Key::F2, 0x01 },
-        { Input::Key::F3, 0x01 }, { Input::Key::F4, 0x01 },
-        { Input::Key::F5, 0x01 }, { Input::Key::F6, 0x01 },
-        { Input::Key::F7, 0x01 }, { Input::Key::F8, 0x01 },
+            {Input::Key::F1, 0x01},
+            {Input::Key::F2, 0x01},
+            {Input::Key::F3, 0x01},
+            {Input::Key::F4, 0x01},
+            {Input::Key::F5, 0x01},
+            {Input::Key::F6, 0x01},
+            {Input::Key::F7, 0x01},
+            {Input::Key::F8, 0x01},
     };
 
-
-    inline std::string iniPath() { return modPath("Mods/MoriaCppMod/MoriaCppMod.ini"); }
-    inline std::string oldKeybindPath() { return modPath("Mods/MoriaCppMod/keybindings.txt"); }
-
+    inline std::string iniPath()
+    {
+        return modPath("Mods/MoriaCppMod/MoriaCppMod.ini");
+    }
+    inline std::string oldKeybindPath()
+    {
+        return modPath("Mods/MoriaCppMod/keybindings.txt");
+    }
 
     inline bool isModifierDown()
     {
@@ -141,34 +150,43 @@ namespace MoriaMods
     {
         if (!vk) return false;
         if ((GetAsyncKeyState(vk) & 0x8000) == 0) return false;
-        bool shift = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0;
-        bool ctrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-        bool alt   = (GetAsyncKeyState(VK_MENU)    & 0x8000) != 0;
+        bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+        bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
         if (((modBits & 0x01) != 0) != shift) return false;
-        if (((modBits & 0x02) != 0) != ctrl)  return false;
-        if (((modBits & 0x04) != 0) != alt)   return false;
+        if (((modBits & 0x02) != 0) != ctrl) return false;
+        if (((modBits & 0x04) != 0) != alt) return false;
         return true;
     }
-
 
     inline uint8_t numpadShiftAlternate(uint8_t vk)
     {
         switch (vk)
         {
-        case VK_NUMPAD0: return VK_INSERT;
-        case VK_NUMPAD1: return VK_END;
-        case VK_NUMPAD2: return VK_DOWN;
-        case VK_NUMPAD3: return VK_NEXT;
-        case VK_NUMPAD4: return VK_LEFT;
-        case VK_NUMPAD5: return VK_CLEAR;
-        case VK_NUMPAD6: return VK_RIGHT;
-        case VK_NUMPAD7: return VK_HOME;
-        case VK_NUMPAD8: return VK_UP;
-        case VK_NUMPAD9: return VK_PRIOR;
-        default: return 0;
+        case VK_NUMPAD0:
+            return VK_INSERT;
+        case VK_NUMPAD1:
+            return VK_END;
+        case VK_NUMPAD2:
+            return VK_DOWN;
+        case VK_NUMPAD3:
+            return VK_NEXT;
+        case VK_NUMPAD4:
+            return VK_LEFT;
+        case VK_NUMPAD5:
+            return VK_CLEAR;
+        case VK_NUMPAD6:
+            return VK_RIGHT;
+        case VK_NUMPAD7:
+            return VK_HOME;
+        case VK_NUMPAD8:
+            return VK_UP;
+        case VK_NUMPAD9:
+            return VK_PRIOR;
+        default:
+            return 0;
         }
     }
-
 
     inline HWND findGameWindow()
     {
@@ -200,4 +218,4 @@ namespace MoriaMods
         return fd.best;
     }
 
-}
+} // namespace MoriaMods

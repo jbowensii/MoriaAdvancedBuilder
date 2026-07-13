@@ -1,18 +1,21 @@
 
 
-
 struct DataTableUtil
 {
 
-    UObject*    table{nullptr};
-    UStruct*    rowStruct{nullptr};
+    UObject* table{nullptr};
+    UStruct* rowStruct{nullptr};
     std::wstring tableName;
-    int         rowStructOff{-2};
-    int         rowSize{0};
+    int rowStructOff{-2};
+    int rowSize{0};
     std::unordered_map<std::wstring, int> propOffsetCache;
 
-
-    struct RowMapHeader { uint8_t* Data; int32_t Num; int32_t Max; };
+    struct RowMapHeader
+    {
+        uint8_t* Data;
+        int32_t Num;
+        int32_t Max;
+    };
 
     static constexpr int SET_ELEMENT_SIZE = 24;
     static constexpr int FNAME_SIZE = 8;
@@ -26,11 +29,13 @@ struct DataTableUtil
         return out.Data != nullptr && out.Num >= 0;
     }
 
-
     bool bind(const wchar_t* name)
     {
-        table = nullptr; rowStruct = nullptr; rowSize = 0;
-        propOffsetCache.clear(); rowStructOff = -2;
+        table = nullptr;
+        rowStruct = nullptr;
+        rowSize = 0;
+        propOffsetCache.clear();
+        rowStructOff = -2;
         tableName = name;
 
         std::vector<UObject*> dataTables;
@@ -38,13 +43,17 @@ struct DataTableUtil
         for (auto* dt : dataTables)
         {
             if (!dt) continue;
-            try {
+            try
+            {
                 if (std::wstring(dt->GetName()) == name)
                 {
                     table = dt;
                     break;
                 }
-            } catch (...) {}
+            }
+            catch (...)
+            {
+            }
         }
         if (!table)
         {
@@ -60,19 +69,18 @@ struct DataTableUtil
             if (rowStruct) rowSize = rowStruct->GetPropertiesSize();
         }
 
-        VLOG(STR("[MoriaCppMod] [DT] Bound '{}' RowStruct={} rowSize={}\n"),
-             tableName,
-             rowStruct ? rowStruct->GetName() : STR("(null)"),
-             rowSize);
+        VLOG(STR("[MoriaCppMod] [DT] Bound '{}' RowStruct={} rowSize={}\n"), tableName, rowStruct ? rowStruct->GetName() : STR("(null)"), rowSize);
         return true;
     }
-
 
     // v6.4.5+ — bind from an already-resolved UDataTable UObject (skip FindAllOf lookup)
     bool bindFromObject(UObject* dt, const wchar_t* logName = nullptr)
     {
-        table = nullptr; rowStruct = nullptr; rowSize = 0;
-        propOffsetCache.clear(); rowStructOff = -2;
+        table = nullptr;
+        rowStruct = nullptr;
+        rowSize = 0;
+        propOffsetCache.clear();
+        rowStructOff = -2;
         tableName = logName ? logName : (dt ? std::wstring(dt->GetName()) : L"(null)");
         if (!dt) return false;
         table = dt;
@@ -83,22 +91,24 @@ struct DataTableUtil
             rowStruct = *reinterpret_cast<UStruct**>(base + rowStructOff);
             if (rowStruct) rowSize = rowStruct->GetPropertiesSize();
         }
-        VLOG(STR("[MoriaCppMod] [DT] BoundObj '{}' RowStruct={} rowSize={}\n"),
-             tableName,
-             rowStruct ? rowStruct->GetName() : STR("(null)"),
-             rowSize);
+        VLOG(STR("[MoriaCppMod] [DT] BoundObj '{}' RowStruct={} rowSize={}\n"), tableName, rowStruct ? rowStruct->GetName() : STR("(null)"), rowSize);
         return true;
     }
 
     void unbind()
     {
-        table = nullptr; rowStruct = nullptr; rowSize = 0;
-        propOffsetCache.clear(); rowStructOff = -2;
+        table = nullptr;
+        rowStruct = nullptr;
+        rowSize = 0;
+        propOffsetCache.clear();
+        rowStructOff = -2;
         tableName.clear();
     }
 
-    bool isBound() const { return table != nullptr; }
-
+    bool isBound() const
+    {
+        return table != nullptr;
+    }
 
     int32_t getRowCount() const
     {
@@ -116,11 +126,21 @@ struct DataTableUtil
         for (int32_t i = 0; i < hdr.Num; i++)
         {
             uint8_t* elem = hdr.Data + i * SET_ELEMENT_SIZE;
-            if (!isReadableMemory(elem, SET_ELEMENT_SIZE)) { VLOG(STR("[MoriaCppMod] DataTable row {} unreadable\n"), i); continue; }
+            if (!isReadableMemory(elem, SET_ELEMENT_SIZE))
+            {
+                VLOG(STR("[MoriaCppMod] DataTable row {} unreadable\n"), i);
+                continue;
+            }
             FName rowName;
             std::memcpy(&rowName, elem, FNAME_SIZE);
-            try { names.push_back(rowName.ToString()); }
-            catch (...) { names.push_back(L"(error)"); }
+            try
+            {
+                names.push_back(rowName.ToString());
+            }
+            catch (...)
+            {
+                names.push_back(L"(error)");
+            }
         }
         return names;
     }
@@ -145,7 +165,6 @@ struct DataTableUtil
         return out;
     }
 
-
     uint8_t* findRowData(const wchar_t* rowName) const
     {
         if (!rowName || !rowName[0]) return nullptr;
@@ -157,7 +176,11 @@ struct DataTableUtil
         for (int32_t i = 0; i < hdr.Num; i++)
         {
             uint8_t* elem = hdr.Data + i * SET_ELEMENT_SIZE;
-            if (!isReadableMemory(elem, SET_ELEMENT_SIZE)) { VLOG(STR("[MoriaCppMod] DataTable readRow: row {} unreadable\n"), i); continue; }
+            if (!isReadableMemory(elem, SET_ELEMENT_SIZE))
+            {
+                VLOG(STR("[MoriaCppMod] DataTable readRow: row {} unreadable\n"), i);
+                continue;
+            }
             if (std::memcmp(elem, &searchName, FNAME_SIZE) == 0)
             {
                 uint8_t* rowData = *reinterpret_cast<uint8_t**>(elem + FNAME_SIZE);
@@ -166,7 +189,6 @@ struct DataTableUtil
         }
         return nullptr;
     }
-
 
     int resolvePropertyOffset(const wchar_t* propName)
     {
@@ -182,12 +204,9 @@ struct DataTableUtil
             off = cache;
         }
         propOffsetCache[key] = off;
-        if (off < 0)
-            VLOG(STR("[MoriaCppMod] [DT] Property '{}' not found in '{}'\n"),
-                 std::wstring(propName), tableName);
+        if (off < 0) VLOG(STR("[MoriaCppMod] [DT] Property '{}' not found in '{}'\n"), std::wstring(propName), tableName);
         return off;
     }
-
 
     std::pair<uint8_t*, int> locateField(const wchar_t* row, const wchar_t* prop)
     {
@@ -198,8 +217,12 @@ struct DataTableUtil
         return {data, off};
     }
 
-
-    struct LocatedField { uint8_t* data; int off; FProperty* prop; };
+    struct LocatedField
+    {
+        uint8_t* data;
+        int off;
+        FProperty* prop;
+    };
     LocatedField locateFieldWithProp(const wchar_t* row, const wchar_t* propName)
     {
         uint8_t* data = findRowData(row);
@@ -230,7 +253,8 @@ struct DataTableUtil
         if (numProp) return static_cast<int32_t>(numProp->GetSignedIntPropertyValue(field.data + field.off));
 
         if (!isReadableMemory(field.data + field.off, 4)) return 0;
-        int32_t val; std::memcpy(&val, field.data + field.off, 4);
+        int32_t val;
+        std::memcpy(&val, field.data + field.off, 4);
         return val;
     }
 
@@ -239,12 +263,14 @@ struct DataTableUtil
         auto [data, off] = locateField(row, prop);
         if (!data || !isReadableMemory(data + off, 0x18)) return L"";
 
-
         FText* txt = reinterpret_cast<FText*>(data + off);
-        try {
-            if (txt && txt->Data && isReadableMemory(txt->Data, 8))
-                return txt->ToString();
-        } catch (...) {}
+        try
+        {
+            if (txt && txt->Data && isReadableMemory(txt->Data, 8)) return txt->ToString();
+        }
+        catch (...)
+        {
+        }
         return L"";
     }
 
@@ -256,20 +282,28 @@ struct DataTableUtil
         if (objProp) return objProp->GetObjectPropertyValue(field.data + field.off);
 
         if (!isReadableMemory(field.data + field.off, 8)) return nullptr;
-        UObject* obj; std::memcpy(&obj, field.data + field.off, 8);
+        UObject* obj;
+        std::memcpy(&obj, field.data + field.off, 8);
         return obj;
     }
 
-
-    struct TArrayHeader { uint8_t* Data; int32_t Num; int32_t Max; };
-
+    struct TArrayHeader
+    {
+        uint8_t* Data;
+        int32_t Num;
+        int32_t Max;
+    };
 
     bool writeInt32(const wchar_t* row, const wchar_t* prop, int32_t val)
     {
         auto field = locateFieldWithProp(row, prop);
         if (!field.data || !field.prop) return false;
         auto* numProp = CastField<FNumericProperty>(field.prop);
-        if (numProp) { numProp->SetIntPropertyValue(field.data + field.off, static_cast<int64>(val)); return true; }
+        if (numProp)
+        {
+            numProp->SetIntPropertyValue(field.data + field.off, static_cast<int64>(val));
+            return true;
+        }
         if (!isReadableMemory(field.data + field.off, 4)) return false;
         std::memcpy(field.data + field.off, &val, 4);
         return true;
@@ -280,15 +314,17 @@ struct DataTableUtil
         auto field = locateFieldWithProp(row, prop);
         if (!field.data || !field.prop) return false;
         auto* numProp = CastField<FNumericProperty>(field.prop);
-        if (numProp) { numProp->SetFloatingPointPropertyValue(field.data + field.off, static_cast<double>(val)); return true; }
+        if (numProp)
+        {
+            numProp->SetFloatingPointPropertyValue(field.data + field.off, static_cast<double>(val));
+            return true;
+        }
         if (!isReadableMemory(field.data + field.off, 4)) return false;
         std::memcpy(field.data + field.off, &val, 4);
         return true;
     }
 
-
     static constexpr uint32_t VTABLE_AddRowInternal = 0x278;
-
 
     // SEH guard: this function does a raw vtable dispatch on `table` (a
     // cached UDataTable*). DataTableUtil instances live at module scope
@@ -306,15 +342,18 @@ struct DataTableUtil
     //      logging consistency.
     static bool seh_callAddRowInternal(UObject* tbl, FName fname, uint8_t* rowData) noexcept
     {
-        __try {
+        __try
+        {
             std::byte* vt = std::bit_cast<std::byte*>(*std::bit_cast<std::byte**>(tbl));
             void* rawFunc = *std::bit_cast<void**>(vt + VTABLE_AddRowInternal);
             if (!rawFunc) return false;
-            using MFP = void(UObject::*)(FName, uint8_t*);
+            using MFP = void (UObject::*)(FName, uint8_t*);
             auto func = std::bit_cast<MFP>(rawFunc);
             (tbl->*func)(fname, rowData);
             return true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
             return false;
         }
     }
@@ -325,33 +364,34 @@ struct DataTableUtil
         if (!isObjectAlive(table))
         {
             RC::Output::send<RC::LogLevel::Warning>(
-                STR("[MoriaCppMod] [DT] callAddRowInternal: cached table is dead (RF flags or unreachable); refusing dispatch\n"));
+                    STR("[MoriaCppMod] [DT] callAddRowInternal: cached table is dead (RF flags or unreachable); refusing dispatch\n"));
             return false;
         }
         FName fname(rowName, FNAME_Add);
-        try {
+        try
+        {
             if (!seh_callAddRowInternal(table, fname, rowData))
             {
-                RC::Output::send<RC::LogLevel::Warning>(
-                    STR("[MoriaCppMod] [DT] callAddRowInternal: SEH-caught AV or null vtable slot 0x{:X} for '{}'\n"),
-                    VTABLE_AddRowInternal, std::wstring(rowName));
+                RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [DT] callAddRowInternal: SEH-caught AV or null vtable slot 0x{:X} for '{}'\n"),
+                                                        VTABLE_AddRowInternal,
+                                                        std::wstring(rowName));
                 return false;
             }
             return true;
-        } catch (const std::exception& e) {
-            RC::Output::send<RC::LogLevel::Warning>(
-                STR("[MoriaCppMod] [DT] callAddRowInternal EXCEPTION for '{}': {}\n"),
-                std::wstring(rowName),
-                std::wstring(std::string(e.what()).begin(), std::string(e.what()).end()));
+        }
+        catch (const std::exception& e)
+        {
+            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [DT] callAddRowInternal EXCEPTION for '{}': {}\n"),
+                                                    std::wstring(rowName),
+                                                    std::wstring(std::string(e.what()).begin(), std::string(e.what()).end()));
             return false;
-        } catch (...) {
-            RC::Output::send<RC::LogLevel::Warning>(
-                STR("[MoriaCppMod] [DT] callAddRowInternal UNKNOWN EXCEPTION for '{}'\n"),
-                std::wstring(rowName));
+        }
+        catch (...)
+        {
+            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [DT] callAddRowInternal UNKNOWN EXCEPTION for '{}'\n"), std::wstring(rowName));
             return false;
         }
     }
-
 
     uint8_t* addRow(const wchar_t* rowName)
     {
@@ -364,49 +404,40 @@ struct DataTableUtil
             return nullptr;
         }
 
-
         if (findRowData(rowName))
         {
-            VLOG(STR("[MoriaCppMod] [DT] addRow: '{}' already exists in '{}'\n"),
-                 std::wstring(rowName), tableName);
+            VLOG(STR("[MoriaCppMod] [DT] addRow: '{}' already exists in '{}'\n"), std::wstring(rowName), tableName);
             return nullptr;
         }
-
 
         uint8_t* newRow = static_cast<uint8_t*>(FMemory::Malloc(rowSize, 8));
         if (!newRow)
         {
-            RC::Output::send<RC::LogLevel::Warning>(
-                STR("[MoriaCppMod] [DT] addRow: FMemory::Malloc FAILED for '{}' (size={})\n"),
-                std::wstring(rowName), rowSize);
+            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [DT] addRow: FMemory::Malloc FAILED for '{}' (size={})\n"), std::wstring(rowName), rowSize);
             return nullptr;
         }
         std::memset(newRow, 0, rowSize);
 
-
-        try { rowStruct->InitializeStruct(newRow); }
-        catch (...) {
-            VLOG(STR("[MoriaCppMod] [DT] addRow: InitializeStruct failed for '{}', using zero-fill\n"),
-                 std::wstring(rowName));
+        try
+        {
+            rowStruct->InitializeStruct(newRow);
         }
-
+        catch (...)
+        {
+            VLOG(STR("[MoriaCppMod] [DT] addRow: InitializeStruct failed for '{}', using zero-fill\n"), std::wstring(rowName));
+        }
 
         if (!callAddRowInternal(rowName, newRow))
         {
-            RC::Output::send<RC::LogLevel::Warning>(
-                STR("[MoriaCppMod] [DT] addRow: AddRowInternal FAILED for '{}' in '{}'\n"),
-                std::wstring(rowName), tableName);
+            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [DT] addRow: AddRowInternal FAILED for '{}' in '{}'\n"), std::wstring(rowName), tableName);
             FMemory::Free(newRow);
             return nullptr;
         }
 
-        VLOG(STR("[MoriaCppMod] [DT] addRow: '{}' added to '{}' via engine AddRowInternal (size={})\n"),
-             std::wstring(rowName), tableName, rowSize);
+        VLOG(STR("[MoriaCppMod] [DT] addRow: '{}' added to '{}' via engine AddRowInternal (size={})\n"), std::wstring(rowName), tableName, rowSize);
         return newRow;
     }
-
 };
-
 
 DataTableUtil m_dtConstructions;
 DataTableUtil m_dtConstructionRecipes;
@@ -417,7 +448,6 @@ DataTableUtil m_dtArmor;
 DataTableUtil m_dtConsumables;
 DataTableUtil m_dtContainerItems;
 DataTableUtil m_dtOres;
-
 
 std::wstring resolveConstructionRowName(const wchar_t* recipeRowName)
 {
@@ -430,9 +460,15 @@ std::wstring resolveConstructionRowName(const wchar_t* recipeRowName)
     if (!isReadableMemory(rowData + handleOff + 0x08, 8)) return L"";
     FName rowName;
     std::memcpy(&rowName, rowData + handleOff + 0x08, 8);
-    try { return rowName.ToString(); } catch (...) { return L""; }
+    try
+    {
+        return rowName.ToString();
+    }
+    catch (...)
+    {
+        return L"";
+    }
 }
-
 
 UObject* lookupRecipeIcon(const wchar_t* recipeRowName)
 {
@@ -441,4 +477,3 @@ UObject* lookupRecipeIcon(const wchar_t* recipeRowName)
     if (constrName.empty()) return nullptr;
     return m_dtConstructions.readObjectPtr(constrName.c_str(), L"Icon");
 }
-

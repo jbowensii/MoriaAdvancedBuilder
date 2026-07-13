@@ -1,6 +1,5 @@
 
 
-
 // isGameWindowFocused / focusedAsyncKeyState / the
 // `#define GetAsyncKeyState focusedAsyncKeyState` macro all moved to
 // moria_common.h (free-function namespace scope) so every TU that
@@ -13,33 +12,36 @@ struct ScreenCoords
 
     int32_t viewW{1920};
     int32_t viewH{1080};
-    float   viewportScale{1.0f};
-    float   slateW{1920.0f};
-    float   slateH{1080.0f};
-    float   aspectRatio{16.0f/9.0f};
-    float   uiScale{1.0f};
-
+    float viewportScale{1.0f};
+    float slateW{1920.0f};
+    float slateH{1080.0f};
+    float aspectRatio{16.0f / 9.0f};
+    float uiScale{1.0f};
 
     static float queryViewportScale(UObject* worldContext)
     {
         if (!worldContext) return 1.0f;
-        auto* fn  = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr,
-                      STR("/Script/UMG.WidgetLayoutLibrary:GetViewportScale"));
-        auto* cdo = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr,
-                      STR("/Script/UMG.Default__WidgetLayoutLibrary"));
+        auto* fn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/UMG.WidgetLayoutLibrary:GetViewportScale"));
+        auto* cdo = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/UMG.Default__WidgetLayoutLibrary"));
         if (!fn || !cdo) return 1.0f;
-        struct { UObject* WCO{nullptr}; float RV{1.0f}; } p{worldContext};
+        struct
+        {
+            UObject* WCO{nullptr};
+            float RV{1.0f};
+        } p{worldContext};
         safeProcessEvent(cdo, fn, &p);
         return (p.RV > 0.1f) ? p.RV : 1.0f;
     }
-
 
     bool refresh(UObject* playerController)
     {
         if (!playerController) return false;
         auto* fn = playerController->GetFunctionByNameInChain(STR("GetViewportSize"));
         if (!fn) return false;
-        struct { int32_t SizeX{0}, SizeY{0}; } params{};
+        struct
+        {
+            int32_t SizeX{0}, SizeY{0};
+        } params{};
         safeProcessEvent(playerController, fn, &params);
         if (params.SizeX > 0) viewW = params.SizeX;
         if (params.SizeY > 0) viewH = params.SizeY;
@@ -47,50 +49,71 @@ struct ScreenCoords
         viewportScale = queryViewportScale(playerController);
         slateW = static_cast<float>(viewW) / viewportScale;
         slateH = static_cast<float>(viewH) / viewportScale;
-        aspectRatio = (viewH > 0) ? static_cast<float>(viewW) / static_cast<float>(viewH)
-                                  : 16.0f / 9.0f;
+        aspectRatio = (viewH > 0) ? static_cast<float>(viewW) / static_cast<float>(viewH) : 16.0f / 9.0f;
         uiScale = static_cast<float>(viewH) / 2160.0f;
         if (uiScale < 0.5f) uiScale = 0.5f;
         return true;
     }
 
-
     bool getCursorFraction(float& outFracX, float& outFracY) const
     {
         HWND gw = findGameWindow();
         if (!gw) return false;
-        POINT cur; GetCursorPos(&cur); ScreenToClient(gw, &cur);
-        RECT cr; GetClientRect(gw, &cr);
+        POINT cur;
+        GetCursorPos(&cur);
+        ScreenToClient(gw, &cur);
+        RECT cr;
+        GetClientRect(gw, &cr);
         if (cr.right <= 0 || cr.bottom <= 0) return false;
         outFracX = static_cast<float>(cur.x) / static_cast<float>(cr.right);
         outFracY = static_cast<float>(cur.y) / static_cast<float>(cr.bottom);
         return true;
     }
 
-
-    bool getCursorClientPixels(int& outX, int& outY,
-                               int& outClientW, int& outClientH) const
+    bool getCursorClientPixels(int& outX, int& outY, int& outClientW, int& outClientH) const
     {
         HWND gw = findGameWindow();
         if (!gw) return false;
-        POINT cur; GetCursorPos(&cur); ScreenToClient(gw, &cur);
-        RECT cr; GetClientRect(gw, &cr);
+        POINT cur;
+        GetCursorPos(&cur);
+        ScreenToClient(gw, &cur);
+        RECT cr;
+        GetClientRect(gw, &cr);
         if (cr.right <= 0 || cr.bottom <= 0) return false;
-        outX = cur.x; outY = cur.y;
-        outClientW = cr.right; outClientH = cr.bottom;
+        outX = cur.x;
+        outY = cur.y;
+        outClientW = cr.right;
+        outClientH = cr.bottom;
         return true;
     }
 
-    float fracToPixelX(float frac) const { return frac * static_cast<float>(viewW); }
-    float fracToPixelY(float frac) const { return frac * static_cast<float>(viewH); }
+    float fracToPixelX(float frac) const
+    {
+        return frac * static_cast<float>(viewW);
+    }
+    float fracToPixelY(float frac) const
+    {
+        return frac * static_cast<float>(viewH);
+    }
 
-    float pixelToSlateX(float px)  const { return px / viewportScale; }
-    float pixelToSlateY(float py)  const { return py / viewportScale; }
+    float pixelToSlateX(float px) const
+    {
+        return px / viewportScale;
+    }
+    float pixelToSlateY(float py) const
+    {
+        return py / viewportScale;
+    }
 
-    float slateToFracX(float sx)   const { return (slateW > 0.0f) ? sx / slateW : 0.0f; }
-    float slateToFracY(float sy)   const { return (slateH > 0.0f) ? sy / slateH : 0.0f; }
+    float slateToFracX(float sx) const
+    {
+        return (slateW > 0.0f) ? sx / slateW : 0.0f;
+    }
+    float slateToFracY(float sy) const
+    {
+        return (slateH > 0.0f) ? sy / slateH : 0.0f;
+    }
 };
-
 
 // SEH-wrapped helper. `safeClassName` is called from EVERY
 // ProcessEvent pre-hook in the mod, which fires once per UFunction call
@@ -111,19 +134,30 @@ struct ScreenCoords
 //      AFTER SEH protection is no longer needed.
 static void dispatchClassNameToBuf(UObject* obj, wchar_t* buf, size_t bufLen)
 {
-    if (!obj || bufLen == 0) { if (buf && bufLen) buf[0] = L'\0'; return; }
+    if (!obj || bufLen == 0)
+    {
+        if (buf && bufLen) buf[0] = L'\0';
+        return;
+    }
     UClass* cls = obj->GetClassPrivate();
-    if (!cls) { buf[0] = L'\0'; return; }
+    if (!cls)
+    {
+        buf[0] = L'\0';
+        return;
+    }
     auto name = cls->GetName();
     wcsncpy_s(buf, bufLen, name.c_str(), _TRUNCATE);
 }
 
 static bool seh_classNameToBuf(UObject* obj, wchar_t* buf, size_t bufLen) noexcept
 {
-    __try {
+    __try
+    {
         dispatchClassNameToBuf(obj, buf, bufLen);
         return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
         if (buf && bufLen) buf[0] = L'\0';
         return false;
     }
@@ -144,17 +178,24 @@ static std::wstring safeClassName(UObject* obj)
 // C++ unwinding objects.
 static void dispatchObjectNameToBuf(UObject* obj, wchar_t* buf, size_t bufLen)
 {
-    if (!obj || bufLen == 0) { if (buf && bufLen) buf[0] = L'\0'; return; }
+    if (!obj || bufLen == 0)
+    {
+        if (buf && bufLen) buf[0] = L'\0';
+        return;
+    }
     auto name = obj->GetName();
     wcsncpy_s(buf, bufLen, name.c_str(), _TRUNCATE);
 }
 
 static bool seh_objectNameToBuf(UObject* obj, wchar_t* buf, size_t bufLen) noexcept
 {
-    __try {
+    __try
+    {
         dispatchObjectNameToBuf(obj, buf, bufLen);
         return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
         if (buf && bufLen) buf[0] = L'\0';
         return false;
     }
@@ -179,7 +220,11 @@ static std::wstring safeObjectName(UObject* obj)
 // "AV protected" via the bool return.
 static void dispatchFNameToStringToBuf(void* fnameBytes, wchar_t* buf, size_t bufLen)
 {
-    if (!fnameBytes || bufLen == 0) { if (buf && bufLen) buf[0] = L'\0'; return; }
+    if (!fnameBytes || bufLen == 0)
+    {
+        if (buf && bufLen) buf[0] = L'\0';
+        return;
+    }
     auto* fname = reinterpret_cast<RC::Unreal::FName*>(fnameBytes);
     auto name = fname->ToString();
     wcsncpy_s(buf, bufLen, name.c_str(), _TRUNCATE);
@@ -187,10 +232,13 @@ static void dispatchFNameToStringToBuf(void* fnameBytes, wchar_t* buf, size_t bu
 
 static bool seh_fnameToStringToBuf(void* fnameBytes, wchar_t* buf, size_t bufLen) noexcept
 {
-    __try {
+    __try
+    {
         dispatchFNameToStringToBuf(fnameBytes, buf, bufLen);
         return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
         if (buf && bufLen) buf[0] = L'\0';
         return false;
     }
@@ -208,7 +256,11 @@ static std::wstring seh_fnameToString(void* fnameBytes)
 // in a mid-construction state. Same split-function pattern as the FName variant.
 static void dispatchFTextToStringToBuf(void* ftextBytes, wchar_t* buf, size_t bufLen)
 {
-    if (!ftextBytes || bufLen == 0) { if (buf && bufLen) buf[0] = L'\0'; return; }
+    if (!ftextBytes || bufLen == 0)
+    {
+        if (buf && bufLen) buf[0] = L'\0';
+        return;
+    }
     auto* ft = reinterpret_cast<RC::Unreal::FText*>(ftextBytes);
     auto s = ft->ToString();
     wcsncpy_s(buf, bufLen, s.c_str(), _TRUNCATE);
@@ -216,10 +268,13 @@ static void dispatchFTextToStringToBuf(void* ftextBytes, wchar_t* buf, size_t bu
 
 static bool seh_ftextToStringToBuf(void* ftextBytes, wchar_t* buf, size_t bufLen) noexcept
 {
-    __try {
+    __try
+    {
         dispatchFTextToStringToBuf(ftextBytes, buf, bufLen);
         return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
         if (buf && bufLen) buf[0] = L'\0';
         return false;
     }
@@ -232,7 +287,6 @@ static std::wstring seh_ftextToString(void* ftextBytes)
     if (!seh_ftextToStringToBuf(ftextBytes, buf, sizeof(buf) / sizeof(buf[0]))) return L"";
     return std::wstring(buf);
 }
-
 
 static bool isObjectAlive(UObject* obj)
 {
@@ -252,7 +306,6 @@ static bool isObjectAlive(UObject* obj)
     }
 }
 
-
 // true if a widget is currently displayed (parent slot non-null OR
 // IsInViewport returns true). Used to filter stale ghost UMG widgets returned
 // by FindAllOf that linger between GC passes after the screen was closed.
@@ -267,7 +320,10 @@ static bool isWidgetInViewport(UObject* widget)
         auto* isInVp = widget->GetFunctionByNameInChain(STR("IsInViewport"));
         if (isInVp)
         {
-            struct { bool ret; } parm{false};
+            struct
+            {
+                bool ret;
+            } parm{false};
             safeProcessEvent(widget, isInVp, &parm);
             if (parm.ret) return true;
         }
@@ -282,16 +338,18 @@ static bool isWidgetInViewport(UObject* widget)
     }
 }
 
-
 // SEH-wrapped FindAllOf. C++ functions with destructors can't host __try,
 // so we put the call in a plain helper. Returns false on AV (caller
 // should treat as "no results"). The output vector is filled on success.
 static bool seh_findAllOf(const wchar_t* className, std::vector<UObject*>* out) noexcept
 {
-    __try {
+    __try
+    {
         UObjectGlobals::FindAllOf(className, *out);
         return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
         return false;
     }
 }
@@ -325,8 +383,7 @@ UObject* findPlayerController()
     for (auto* pc : pcs)
     {
         if (!pc || !isObjectAlive(pc)) continue;
-        for (auto* strct = static_cast<UStruct*>(pc->GetClassPrivate());
-             strct; strct = strct->GetSuperStruct())
+        for (auto* strct = static_cast<UStruct*>(pc->GetClassPrivate()); strct; strct = strct->GetSuperStruct())
         {
             FBoolProperty* found = nullptr;
             for (auto* prop : strct->ForEachProperty())
@@ -374,7 +431,6 @@ FVec3f getPawnLocation()
     return loc;
 }
 
-
 void setWidgetVisibility(UObject* widget, uint8_t vis)
 {
     if (!widget || !isObjectAlive(widget)) return;
@@ -384,7 +440,6 @@ void setWidgetVisibility(UObject* widget, uint8_t vis)
     parms[0] = vis;
     safeProcessEvent(widget, fn, parms);
 }
-
 
 UObject* addChildToPanel(UObject* parent, const wchar_t* fnName, UObject* child)
 {
@@ -418,13 +473,11 @@ UObject* addToOverlay(UObject* parent, UObject* child)
     return addChildToPanel(parent, STR("AddChildToOverlay"), child);
 }
 
-
 UObject* findWidgetByClass(const wchar_t* className, bool requireVisible = false)
 {
     std::vector<UObject*> widgets;
     findAllOfSafe(STR("UserWidget"), widgets);
-    QBLOG(STR("[MoriaCppMod] [QB] findWidgetByClass('{}') requireVisible={} total={}\n"),
-          className, requireVisible, widgets.size());
+    QBLOG(STR("[MoriaCppMod] [QB] findWidgetByClass('{}') requireVisible={} total={}\n"), className, requireVisible, widgets.size());
     for (auto* w : widgets)
     {
         if (!w || !isObjectAlive(w)) continue;
@@ -458,7 +511,14 @@ UFunction* cachedFnInChain(UObject* obj, const wchar_t* name)
 {
     if (!obj) return nullptr;
     UClass* cls = nullptr;
-    try { cls = obj->GetClassPrivate(); } catch (...) { return nullptr; }
+    try
+    {
+        cls = obj->GetClassPrivate();
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
     if (!cls) return nullptr;
     auto& byName = m_fnCache[(void*)cls];
     auto it = byName.find(name);
@@ -469,7 +529,13 @@ UFunction* cachedFnInChain(UObject* obj, const wchar_t* name)
         byName.erase(it);
     }
     UFunction* fn = nullptr;
-    try { fn = obj->GetFunctionByNameInChain(name); } catch (...) {}
+    try
+    {
+        fn = obj->GetFunctionByNameInChain(name);
+    }
+    catch (...)
+    {
+    }
     if (fn) byName.emplace(name, fn);
     return fn;
 }

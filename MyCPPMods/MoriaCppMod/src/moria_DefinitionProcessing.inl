@@ -1,6 +1,5 @@
 
 
-
 struct DefChange
 {
     std::string item;
@@ -46,14 +45,13 @@ struct DefManifest
     std::vector<std::string> defPaths;
 };
 
-
 static bool strEndsWithCI(const std::string& str, const std::string& suffix)
 {
     if (suffix.size() > str.size()) return false;
-    return std::equal(suffix.rbegin(), suffix.rend(), str.rbegin(),
-        [](char a, char b) { return tolower(static_cast<unsigned char>(a)) == tolower(static_cast<unsigned char>(b)); });
+    return std::equal(suffix.rbegin(), suffix.rend(), str.rbegin(), [](char a, char b) {
+        return tolower(static_cast<unsigned char>(a)) == tolower(static_cast<unsigned char>(b));
+    });
 }
-
 
 struct XmlAttribute
 {
@@ -77,14 +75,12 @@ static std::string xmlGetAttr(const XmlElement& elem, const std::string& name)
     return "";
 }
 
-
 static size_t xmlSkipWS(const std::string& xml, size_t pos)
 {
     while (pos < xml.size() && (xml[pos] == ' ' || xml[pos] == '\t' || xml[pos] == '\r' || xml[pos] == '\n'))
         ++pos;
     return pos;
 }
-
 
 static size_t xmlParseAttrValue(const std::string& xml, size_t pos, std::string& out)
 {
@@ -93,7 +89,8 @@ static size_t xmlParseAttrValue(const std::string& xml, size_t pos, std::string&
     if (quote != '"' && quote != '\'') return pos;
     ++pos;
     size_t start = pos;
-    while (pos < xml.size() && xml[pos] != quote) ++pos;
+    while (pos < xml.size() && xml[pos] != quote)
+        ++pos;
     out = xml.substr(start, pos - start);
     if (pos < xml.size()) ++pos;
 
@@ -107,11 +104,36 @@ static size_t xmlParseAttrValue(const std::string& xml, size_t pos, std::string&
             if (semi != std::string::npos)
             {
                 std::string ent = out.substr(i + 1, semi - i - 1);
-                if (ent == "amp") { decoded += '&'; i = semi; continue; }
-                if (ent == "lt") { decoded += '<'; i = semi; continue; }
-                if (ent == "gt") { decoded += '>'; i = semi; continue; }
-                if (ent == "quot") { decoded += '"'; i = semi; continue; }
-                if (ent == "apos") { decoded += '\''; i = semi; continue; }
+                if (ent == "amp")
+                {
+                    decoded += '&';
+                    i = semi;
+                    continue;
+                }
+                if (ent == "lt")
+                {
+                    decoded += '<';
+                    i = semi;
+                    continue;
+                }
+                if (ent == "gt")
+                {
+                    decoded += '>';
+                    i = semi;
+                    continue;
+                }
+                if (ent == "quot")
+                {
+                    decoded += '"';
+                    i = semi;
+                    continue;
+                }
+                if (ent == "apos")
+                {
+                    decoded += '\'';
+                    i = semi;
+                    continue;
+                }
             }
         }
         decoded += out[i];
@@ -119,7 +141,6 @@ static size_t xmlParseAttrValue(const std::string& xml, size_t pos, std::string&
     out = decoded;
     return pos;
 }
-
 
 static size_t xmlParseAttrs(const std::string& xml, size_t pos, std::vector<XmlAttribute>& attrs, bool& selfClose)
 {
@@ -143,7 +164,8 @@ static size_t xmlParseAttrs(const std::string& xml, size_t pos, std::vector<XmlA
         }
 
         size_t nameStart = pos;
-        while (pos < xml.size() && xml[pos] != '=' && xml[pos] != ' ' && xml[pos] != '>' && xml[pos] != '/') ++pos;
+        while (pos < xml.size() && xml[pos] != '=' && xml[pos] != ' ' && xml[pos] != '>' && xml[pos] != '/')
+            ++pos;
         std::string attrName = xml.substr(nameStart, pos - nameStart);
         pos = xmlSkipWS(xml, pos);
         if (pos < xml.size() && xml[pos] == '=')
@@ -158,12 +180,10 @@ static size_t xmlParseAttrs(const std::string& xml, size_t pos, std::vector<XmlA
     return pos;
 }
 
-
 static size_t xmlParseElement(const std::string& xml, size_t pos, XmlElement& elem)
 {
     pos = xmlSkipWS(xml, pos);
     if (pos >= xml.size() || xml[pos] != '<') return pos;
-
 
     if (pos + 1 < xml.size() && xml[pos + 1] == '?')
     {
@@ -181,22 +201,20 @@ static size_t xmlParseElement(const std::string& xml, size_t pos, XmlElement& el
     ++pos;
 
     size_t tagStart = pos;
-    while (pos < xml.size() && xml[pos] != ' ' && xml[pos] != '>' && xml[pos] != '/' && xml[pos] != '\t' && xml[pos] != '\r' && xml[pos] != '\n') ++pos;
+    while (pos < xml.size() && xml[pos] != ' ' && xml[pos] != '>' && xml[pos] != '/' && xml[pos] != '\t' && xml[pos] != '\r' && xml[pos] != '\n')
+        ++pos;
     elem.tag = xml.substr(tagStart, pos - tagStart);
-
 
     bool selfClose = false;
     pos = xmlParseAttrs(xml, pos, elem.attrs, selfClose);
     elem.selfClosing = selfClose;
     if (selfClose) return pos;
 
-
     std::string closeTag = "</" + elem.tag;
     while (pos < xml.size())
     {
         pos = xmlSkipWS(xml, pos);
         if (pos >= xml.size()) break;
-
 
         if (pos + closeTag.size() < xml.size() && xml.substr(pos, closeTag.size()) == closeTag)
         {
@@ -237,30 +255,27 @@ static size_t xmlParseElement(const std::string& xml, size_t pos, XmlElement& el
                 continue;
             }
 
-            if (pos + 1 < xml.size() && xml[pos + 1] == '/')
-                break;
+            if (pos + 1 < xml.size() && xml[pos + 1] == '/') break;
 
             XmlElement child;
             pos = xmlParseElement(xml, pos, child);
-            if (!child.tag.empty())
-                elem.children.push_back(std::move(child));
+            if (!child.tag.empty()) elem.children.push_back(std::move(child));
         }
         else
         {
 
             size_t textStart = pos;
-            while (pos < xml.size() && xml[pos] != '<') ++pos;
+            while (pos < xml.size() && xml[pos] != '<')
+                ++pos;
             std::string text = xml.substr(textStart, pos - textStart);
 
             size_t a = text.find_first_not_of(" \t\r\n");
             size_t b = text.find_last_not_of(" \t\r\n");
-            if (a != std::string::npos)
-                elem.text += text.substr(a, b - a + 1);
+            if (a != std::string::npos) elem.text += text.substr(a, b - a + 1);
         }
     }
     return pos;
 }
-
 
 static XmlElement xmlParse(const std::string& xml)
 {
@@ -270,8 +285,11 @@ static XmlElement xmlParse(const std::string& xml)
     {
         pos = xmlSkipWS(xml, pos);
         if (pos >= xml.size()) break;
-        if (xml[pos] != '<') { ++pos; continue; }
-
+        if (xml[pos] != '<')
+        {
+            ++pos;
+            continue;
+        }
 
         if (pos + 1 < xml.size() && xml[pos + 1] == '?')
         {
@@ -292,7 +310,6 @@ static XmlElement xmlParse(const std::string& xml)
     return root;
 }
 
-
 static std::vector<std::string> listFiles(const std::string& dir, const std::string& pattern = "*")
 {
     // Use wide Windows API. FindFirstFileA interprets the path as the active
@@ -300,8 +317,7 @@ static std::vector<std::string> listFiles(const std::string& dir, const std::str
     std::vector<std::string> files;
     WIN32_FIND_DATAW fd;
     std::string searchPathUtf8 = dir;
-    if (!searchPathUtf8.empty() && searchPathUtf8.back() != '\\' && searchPathUtf8.back() != '/')
-        searchPathUtf8 += '\\';
+    if (!searchPathUtf8.empty() && searchPathUtf8.back() != '\\' && searchPathUtf8.back() != '/') searchPathUtf8 += '\\';
     searchPathUtf8 += pattern;
     std::wstring searchPathW = utf8PathToWide(searchPathUtf8);
 
@@ -309,8 +325,7 @@ static std::vector<std::string> listFiles(const std::string& dir, const std::str
     if (hFind == INVALID_HANDLE_VALUE)
     {
         DWORD err = GetLastError();
-        VLOG(STR("[MoriaCppMod] [Def] listFiles '{}' FindFirstFileW failed (GLE={})\n"),
-             utf8ToWide(searchPathUtf8), err);
+        VLOG(STR("[MoriaCppMod] [Def] listFiles '{}' FindFirstFileW failed (GLE={})\n"), utf8ToWide(searchPathUtf8), err);
         return files;
     }
     do
@@ -319,13 +334,11 @@ static std::vector<std::string> listFiles(const std::string& dir, const std::str
         {
             // Convert the wide filename back to UTF-8 for our std::string-based API
             std::wstring nameW(fd.cFileName);
-            int ulen = WideCharToMultiByte(CP_UTF8, 0, nameW.c_str(), (int)nameW.size(),
-                                           nullptr, 0, nullptr, nullptr);
+            int ulen = WideCharToMultiByte(CP_UTF8, 0, nameW.c_str(), (int)nameW.size(), nullptr, 0, nullptr, nullptr);
             if (ulen > 0)
             {
                 std::string nameU(ulen, '\0');
-                WideCharToMultiByte(CP_UTF8, 0, nameW.c_str(), (int)nameW.size(),
-                                    nameU.data(), ulen, nullptr, nullptr);
+                WideCharToMultiByte(CP_UTF8, 0, nameW.c_str(), (int)nameW.size(), nameU.data(), ulen, nullptr, nullptr);
                 files.emplace_back(std::move(nameU));
             }
         }
@@ -333,7 +346,6 @@ static std::vector<std::string> listFiles(const std::string& dir, const std::str
     FindClose(hFind);
     return files;
 }
-
 
 static std::string readFileToString(const std::string& path)
 {
@@ -343,7 +355,6 @@ static std::string readFileToString(const std::string& path)
     ss << f.rdbuf();
     return ss.str();
 }
-
 
 DefManifest parseManifest(const std::string& iniPath, const std::string& defBaseDir)
 {
@@ -364,19 +375,24 @@ DefManifest parseManifest(const std::string& iniPath, const std::string& defBase
         {
             if (strEqualCI(section, "ModInfo"))
             {
-                if (strEqualCI(kv->key, "Title")) manifest.title = kv->value;
-                else if (strEqualCI(kv->key, "Authors")) manifest.authors = kv->value;
-                else if (strEqualCI(kv->key, "Description")) manifest.description += kv->value + "\n";
+                if (strEqualCI(kv->key, "Title"))
+                    manifest.title = kv->value;
+                else if (strEqualCI(kv->key, "Authors"))
+                    manifest.authors = kv->value;
+                else if (strEqualCI(kv->key, "Description"))
+                    manifest.description += kv->value + "\n";
             }
             else if (strEqualCI(section, "Paths"))
             {
-
 
                 if (strEqualCI(kv->value, "true"))
                 {
                     std::string key = kv->key;
 
-                    for (auto& c : key) { if (c == '|') c = '\\'; }
+                    for (auto& c : key)
+                    {
+                        if (c == '|') c = '\\';
+                    }
 
                     if (strEndsWithCI(key, ".def"))
                     {
@@ -384,19 +400,16 @@ DefManifest parseManifest(const std::string& iniPath, const std::string& defBase
                         std::string fullPath = defBaseDir + "\\" + key;
                         manifest.defPaths.push_back(fullPath);
                     }
-
                 }
             }
             else if (strEqualCI(section, "Settings"))
             {
-                if (strEqualCI(kv->key, "include_secrets"))
-                    manifest.includeSecrets = strEqualCI(kv->value, "true") || kv->value == "1";
+                if (strEqualCI(kv->key, "include_secrets")) manifest.includeSecrets = strEqualCI(kv->value, "true") || kv->value == "1";
             }
         }
     }
     return manifest;
 }
-
 
 DefDefinition parseDef(const std::string& defPath)
 {
@@ -410,14 +423,16 @@ DefDefinition parseDef(const std::string& defPath)
 
     XmlElement root = xmlParse(xml);
 
-
     if (root.tag == "definition")
     {
         for (auto& child : root.children)
         {
-            if (child.tag == "title") def.title = child.text;
-            else if (child.tag == "author") def.author = child.text;
-            else if (child.tag == "description") def.description = child.text;
+            if (child.tag == "title")
+                def.title = child.text;
+            else if (child.tag == "author")
+                def.author = child.text;
+            else if (child.tag == "description")
+                def.description = child.text;
             else if (child.tag == "mod")
             {
                 DefMod mod;
@@ -445,8 +460,7 @@ DefDefinition parseDef(const std::string& defPath)
                         DefAddRow ar;
                         ar.rowName = xmlGetAttr(op, "name");
                         ar.json = op.text;
-                        if (!ar.rowName.empty() && !ar.json.empty())
-                            mod.addRows.push_back(std::move(ar));
+                        if (!ar.rowName.empty() && !ar.json.empty()) mod.addRows.push_back(std::move(ar));
                     }
                 }
                 def.mods.push_back(std::move(mod));
@@ -456,14 +470,11 @@ DefDefinition parseDef(const std::string& defPath)
     else if (root.tag == "manifest")
     {
 
-
-        VLOG(STR("[MoriaCppMod] [Def] Skipping manifest file (build-time only): {}\n"),
-             utf8ToWide(defPath));
+        VLOG(STR("[MoriaCppMod] [Def] Skipping manifest file (build-time only): {}\n"), utf8ToWide(defPath));
     }
 
     return def;
 }
-
 
 static std::string extractDataTableName(const std::string& filePath)
 {
@@ -471,13 +482,10 @@ static std::string extractDataTableName(const std::string& filePath)
     size_t lastSlash = filePath.find_last_of("/\\");
     std::string filename = (lastSlash != std::string::npos) ? filePath.substr(lastSlash + 1) : filePath;
 
-
-    if (strEndsWithCI(filename, ".json"))
-        filename = filename.substr(0, filename.size() - 5);
+    if (strEndsWithCI(filename, ".json")) filename = filename.substr(0, filename.size() - 5);
 
     return filename;
 }
-
 
 struct ResolvedField
 {
@@ -489,14 +497,18 @@ ResolvedField resolveNestedProperty(uint8_t* rowData, UStruct* rowStruct, const 
 {
     if (!rowData || !rowStruct || propertyPath.empty()) return {};
 
-
     std::vector<std::string> segments;
     {
         std::string seg;
         for (char c : propertyPath)
         {
-            if (c == '.') { if (!seg.empty()) segments.push_back(seg); seg.clear(); }
-            else seg += c;
+            if (c == '.')
+            {
+                if (!seg.empty()) segments.push_back(seg);
+                seg.clear();
+            }
+            else
+                seg += c;
         }
         if (!seg.empty()) segments.push_back(seg);
     }
@@ -509,7 +521,6 @@ ResolvedField resolveNestedProperty(uint8_t* rowData, UStruct* rowStruct, const 
         std::string& seg = segments[i];
         bool isLast = (i == segments.size() - 1);
 
-
         std::string fieldName = seg;
         int arrayIndex = -1;
         size_t bracket = seg.find('[');
@@ -520,10 +531,16 @@ ResolvedField resolveNestedProperty(uint8_t* rowData, UStruct* rowStruct, const 
             if (closeBracket != std::string::npos)
             {
                 std::string idxStr = seg.substr(bracket + 1, closeBracket - bracket - 1);
-                try { arrayIndex = std::stoi(idxStr); } catch (...) { return {}; }
+                try
+                {
+                    arrayIndex = std::stoi(idxStr);
+                }
+                catch (...)
+                {
+                    return {};
+                }
             }
         }
-
 
         std::wstring wFieldName(fieldName.begin(), fieldName.end());
         FProperty* foundProp = nullptr;
@@ -569,8 +586,7 @@ ResolvedField resolveNestedProperty(uint8_t* rowData, UStruct* rowStruct, const 
 
             if (arrayIndex >= arrayView.Num())
             {
-                VLOG(STR("[MoriaCppMod] [Def] Array '{}' index {} out of range (Num={})\n"),
-                     wFieldName, arrayIndex, arrayView.Num());
+                VLOG(STR("[MoriaCppMod] [Def] Array '{}' index {} out of range (Num={})\n"), wFieldName, arrayIndex, arrayView.Num());
                 return {};
             }
 
@@ -582,7 +598,6 @@ ResolvedField resolveNestedProperty(uint8_t* rowData, UStruct* rowStruct, const 
 
                 return {elemData, foundProp};
             }
-
 
             FProperty* inner = arrProp->GetInner();
             auto* structProp = inner ? CastField<FStructProperty>(inner) : nullptr;
@@ -613,30 +628,36 @@ ResolvedField resolveNestedProperty(uint8_t* rowData, UStruct* rowStruct, const 
     return {};
 }
 
-
 bool writeValueToField(uint8_t* fieldData, FProperty* prop, const std::string& value)
 {
     if (!fieldData || !prop) return false;
 
-
     if (strEqualCI(value, "NULL") || value.empty())
     {
-        try { prop->ClearValue(fieldData); return true; }
-        catch (...) { return false; }
+        try
+        {
+            prop->ClearValue(fieldData);
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
     }
 
-
-    try {
+    try
+    {
         std::wstring wval(value.begin(), value.end());
         const TCHAR* result = prop->ImportText_Direct(wval.c_str(), fieldData, nullptr, 0, nullptr);
         if (result) return true;
-    } catch (...) {}
+    }
+    catch (...)
+    {
+    }
 
-    VLOG(STR("[MoriaCppMod] [Def] ImportText_Direct failed for value '{}'\n"),
-         utf8ToWide(value));
+    VLOG(STR("[MoriaCppMod] [Def] ImportText_Direct failed for value '{}'\n"), utf8ToWide(value));
     return false;
 }
-
 
 std::string readFieldAsString(uint8_t* fieldData, FProperty* prop)
 {
@@ -653,20 +674,20 @@ std::string readFieldAsString(uint8_t* fieldData, FProperty* prop)
             result += static_cast<char>(*p);
         return result;
     }
-    catch (...) { return "<error>"; }
+    catch (...)
+    {
+        return "<error>";
+    }
 }
-
 
 bool removeGameplayTag(uint8_t* containerData, const std::string& tagName)
 {
     if (!containerData) return false;
 
-
     DataTableUtil::TArrayHeader hdr;
     if (!isReadableMemory(containerData, 16)) return false;
     std::memcpy(&hdr, containerData, 16);
     if (hdr.Num <= 0 || !hdr.Data) return false;
-
 
     static constexpr int TAG_SIZE = 8;
     std::wstring wTagName(tagName.begin(), tagName.end());
@@ -692,8 +713,7 @@ bool removeGameplayTag(uint8_t* containerData, const std::string& tagName)
             int32_t newNum = hdr.Num - 1;
             std::memcpy(containerData + 8, &newNum, 4);
 
-            VLOG(STR("[MoriaCppMod] [Def] Removed tag '{}' (slot {}, {} remaining)\n"),
-                 wTagName, i, newNum);
+            VLOG(STR("[MoriaCppMod] [Def] Removed tag '{}' (slot {}, {} remaining)\n"), wTagName, i, newNum);
             return true;
         }
     }
@@ -702,7 +722,6 @@ bool removeGameplayTag(uint8_t* containerData, const std::string& tagName)
     return false;
 }
 
-
 static std::string jsonExtractString(const std::string& json, size_t start, size_t end, const std::string& key)
 {
     std::string needle = "\"" + key + "\"";
@@ -710,7 +729,8 @@ static std::string jsonExtractString(const std::string& json, size_t start, size
     if (pos == std::string::npos || pos >= end) return "";
     pos += needle.size();
 
-    while (pos < end && (json[pos] == ' ' || json[pos] == ':' || json[pos] == '\t')) ++pos;
+    while (pos < end && (json[pos] == ' ' || json[pos] == ':' || json[pos] == '\t'))
+        ++pos;
     if (pos >= end) return "";
 
     if (json[pos] == '"')
@@ -718,7 +738,8 @@ static std::string jsonExtractString(const std::string& json, size_t start, size
 
         ++pos;
         size_t valEnd = pos;
-        while (valEnd < end && json[valEnd] != '"') {
+        while (valEnd < end && json[valEnd] != '"')
+        {
             if (json[valEnd] == '\\') valEnd++;
             valEnd++;
         }
@@ -731,10 +752,21 @@ static std::string jsonExtractString(const std::string& json, size_t start, size
         int depth = 1;
         size_t blockStart = pos;
         ++pos;
-        while (pos < end && depth > 0) {
-            if (json[pos] == '"') { ++pos; while (pos < end && json[pos] != '"') { if (json[pos] == '\\') ++pos; ++pos; } }
-            else if (json[pos] == open) depth++;
-            else if (json[pos] == close) depth--;
+        while (pos < end && depth > 0)
+        {
+            if (json[pos] == '"')
+            {
+                ++pos;
+                while (pos < end && json[pos] != '"')
+                {
+                    if (json[pos] == '\\') ++pos;
+                    ++pos;
+                }
+            }
+            else if (json[pos] == open)
+                depth++;
+            else if (json[pos] == close)
+                depth--;
             ++pos;
         }
         return json.substr(blockStart, pos - blockStart);
@@ -743,15 +775,15 @@ static std::string jsonExtractString(const std::string& json, size_t start, size
     {
 
         size_t valStart = pos;
-        while (pos < end && json[pos] != ',' && json[pos] != '}' && json[pos] != ']'
-               && json[pos] != '\r' && json[pos] != '\n') ++pos;
+        while (pos < end && json[pos] != ',' && json[pos] != '}' && json[pos] != ']' && json[pos] != '\r' && json[pos] != '\n')
+            ++pos;
         std::string val = json.substr(valStart, pos - valStart);
 
-        while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
+        while (!val.empty() && (val.back() == ' ' || val.back() == '\t'))
+            val.pop_back();
         return val;
     }
 }
-
 
 static std::vector<std::pair<size_t, size_t>> jsonArrayObjects(const std::string& json, size_t arrStart, size_t arrEnd)
 {
@@ -760,22 +792,33 @@ static std::vector<std::pair<size_t, size_t>> jsonArrayObjects(const std::string
     while (pos < arrEnd)
     {
 
-        while (pos < arrEnd && json[pos] != '{') ++pos;
+        while (pos < arrEnd && json[pos] != '{')
+            ++pos;
         if (pos >= arrEnd) break;
         size_t objStart = pos;
         int depth = 1;
         ++pos;
-        while (pos < arrEnd && depth > 0) {
-            if (json[pos] == '"') { ++pos; while (pos < arrEnd && json[pos] != '"') { if (json[pos] == '\\') ++pos; ++pos; } }
-            else if (json[pos] == '{') depth++;
-            else if (json[pos] == '}') depth--;
+        while (pos < arrEnd && depth > 0)
+        {
+            if (json[pos] == '"')
+            {
+                ++pos;
+                while (pos < arrEnd && json[pos] != '"')
+                {
+                    if (json[pos] == '\\') ++pos;
+                    ++pos;
+                }
+            }
+            else if (json[pos] == '{')
+                depth++;
+            else if (json[pos] == '}')
+                depth--;
             ++pos;
         }
         objects.push_back({objStart, pos});
     }
     return objects;
 }
-
 
 int64_t findEnumValueByName(UEnum* uenum, const std::string& val)
 {
@@ -798,16 +841,13 @@ int64_t findEnumValueByName(UEnum* uenum, const std::string& val)
         if (enumColon != std::wstring::npos)
         {
             std::wstring enumShort = enumName.substr(enumColon + 2);
-            if (enumShort == wVal || (!wShort.empty() && enumShort == wShort))
-                return pair.Value;
+            if (enumShort == wVal || (!wShort.empty() && enumShort == wShort)) return pair.Value;
         }
     }
     return INDEX_NONE;
 }
 
-
-bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
-                               const std::string& json, size_t objStart, size_t objEnd)
+bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct, const std::string& json, size_t objStart, size_t objEnd)
 {
     if (!structData || !ustruct) return false;
 
@@ -815,10 +855,8 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
     std::string name = jsonExtractString(json, objStart, objEnd, "Name");
     if (name.empty()) return false;
 
-
     std::string isZero = jsonExtractString(json, objStart, objEnd, "IsZero");
     if (isZero == "true") return false;
-
 
     std::wstring wName(name.begin(), name.end());
     FProperty* prop = nullptr;
@@ -840,9 +878,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         if (s_verbose)
         {
             std::wstring wType(type.begin(), type.end());
-            RC::Output::send<RC::LogLevel::Warning>(
-                STR("[MoriaCppMod] [Def]     SKIP '{}' ({}): not found in live struct\n"),
-                wName, wType);
+            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     SKIP '{}' ({}): not found in live struct\n"), wName, wType);
         }
         return false;
     }
@@ -850,14 +886,12 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
     int offset = prop->GetOffset_Internal();
     uint8_t* fieldData = structData + offset;
 
-
     if (type.find("IntPropertyData") != std::string::npos)
     {
         std::string val = jsonExtractString(json, objStart, objEnd, "Value");
         if (val.empty()) return false;
         return writeValueToField(fieldData, prop, val);
     }
-
 
     if (type.find("FloatPropertyData") != std::string::npos)
     {
@@ -868,13 +902,11 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return writeValueToField(fieldData, prop, val);
     }
 
-
     if (type.find("BoolPropertyData") != std::string::npos)
     {
         std::string val = jsonExtractString(json, objStart, objEnd, "Value");
         return writeValueToField(fieldData, prop, val);
     }
-
 
     if (type.find("BytePropertyData") != std::string::npos)
     {
@@ -883,7 +915,6 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return writeValueToField(fieldData, prop, val);
     }
 
-
     if (type.find("NamePropertyData") != std::string::npos)
     {
         std::string val = jsonExtractString(json, objStart, objEnd, "Value");
@@ -891,19 +922,23 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return writeValueToField(fieldData, prop, val);
     }
 
-
     if (type.find("EnumPropertyData") != std::string::npos)
     {
         std::string val = jsonExtractString(json, objStart, objEnd, "Value");
         if (val.empty() || val == "null") return false;
 
-
         std::wstring className;
-        try { className = prop->GetClass().GetName(); } catch (...) { return false; }
+        try
+        {
+            className = prop->GetClass().GetName();
+        }
+        catch (...)
+        {
+            return false;
+        }
 
         if (className.find(L"EnumProperty") != std::wstring::npos)
         {
-
 
             auto* enumProp = CastField<FEnumProperty>(prop);
             if (enumProp)
@@ -952,33 +987,36 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
                 }
             }
 
-            try {
+            try
+            {
                 uint8_t v = static_cast<uint8_t>(std::stoi(val));
-                if (isReadableMemory(fieldData, 1)) { fieldData[0] = v; return true; }
-            } catch (...) {}
+                if (isReadableMemory(fieldData, 1))
+                {
+                    fieldData[0] = v;
+                    return true;
+                }
+            }
+            catch (...)
+            {
+            }
             return false;
         }
         return false;
     }
 
-
     if (type.find("SoftObjectPropertyData") != std::string::npos)
     {
 
-
         std::string valueBlock = jsonExtractString(json, objStart, objEnd, "Value");
         if (valueBlock.empty() || valueBlock == "null") return false;
-
 
         std::string assetPath = jsonExtractString(valueBlock, 0, valueBlock.size(), "AssetPath");
         if (assetPath.empty()) return false;
         std::string assetName = jsonExtractString(assetPath, 0, assetPath.size(), "AssetName");
         if (assetName.empty() || assetName == "null" || assetName == "None") return false;
 
-
         std::wstring wPath(assetName.begin(), assetName.end());
         FName pathName(wPath.c_str(), FNAME_Add);
-
 
         if (isReadableMemory(fieldData, 8))
         {
@@ -986,15 +1024,12 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
             if (s_verbose)
             {
                 std::wstring wAsset(assetName.begin(), assetName.end());
-                RC::Output::send<RC::LogLevel::Warning>(
-                    STR("[MoriaCppMod] [Def]     SoftObj '{}' = '{}' (FName written to offset {})\n"),
-                    wName, wAsset, offset);
+                RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     SoftObj '{}' = '{}' (FName written to offset {})\n"), wName, wAsset, offset);
             }
             return true;
         }
         return false;
     }
-
 
     if (type.find("StructPropertyData") != std::string::npos)
     {
@@ -1002,11 +1037,9 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         std::string valueBlock = jsonExtractString(json, objStart, objEnd, "Value");
         if (valueBlock.empty() || valueBlock[0] != '[') return false;
 
-
         auto* structProp = CastField<FStructProperty>(prop);
         if (!structProp || !structProp->GetStruct()) return false;
         UStruct* innerStruct = structProp->GetStruct();
-
 
         if (structType == "GameplayTagContainer")
         {
@@ -1020,16 +1053,17 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
                     std::string tagsBlock = jsonExtractString(valueBlock, iStart, iEnd, "Value");
                     if (tagsBlock.empty() || tagsBlock == "[]") break;
 
-
                     std::vector<std::string> tagNames;
                     size_t tPos = 1;
                     while (tPos < tagsBlock.size())
                     {
-                        while (tPos < tagsBlock.size() && tagsBlock[tPos] != '"' && tagsBlock[tPos] != ']') ++tPos;
+                        while (tPos < tagsBlock.size() && tagsBlock[tPos] != '"' && tagsBlock[tPos] != ']')
+                            ++tPos;
                         if (tPos >= tagsBlock.size() || tagsBlock[tPos] == ']') break;
                         ++tPos;
                         size_t tEnd = tPos;
-                        while (tEnd < tagsBlock.size() && tagsBlock[tEnd] != '"') ++tEnd;
+                        while (tEnd < tagsBlock.size() && tagsBlock[tEnd] != '"')
+                            ++tEnd;
                         tagNames.push_back(tagsBlock.substr(tPos, tEnd - tPos));
                         tPos = tEnd + 1;
                     }
@@ -1071,7 +1105,6 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
             return true;
         }
 
-
         if (structType == "GameplayTag")
         {
             auto innerObjects = jsonArrayObjects(valueBlock, 0, valueBlock.size());
@@ -1086,15 +1119,13 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
 
                         std::wstring wTag(tagVal.begin(), tagVal.end());
                         FName fn(wTag.c_str(), FNAME_Add);
-                        if (isReadableMemory(fieldData, 8))
-                            std::memcpy(fieldData, &fn, 8);
+                        if (isReadableMemory(fieldData, 8)) std::memcpy(fieldData, &fn, 8);
                     }
                     return true;
                 }
             }
             return false;
         }
-
 
         auto innerObjects = jsonArrayObjects(valueBlock, 0, valueBlock.size());
         for (auto& [iStart, iEnd] : innerObjects)
@@ -1104,31 +1135,25 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return true;
     }
 
-
     if (type.find("ObjectPropertyData") != std::string::npos)
     {
         if (s_verbose)
-            RC::Output::send<RC::LogLevel::Warning>(
-                STR("[MoriaCppMod] [Def]     SKIP '{}' (ObjectPropertyData): requires package resolution\n"), wName);
+            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     SKIP '{}' (ObjectPropertyData): requires package resolution\n"), wName);
         return false;
     }
-
 
     if (type.find("TextPropertyData") != std::string::npos)
     {
         if (s_verbose)
-            RC::Output::send<RC::LogLevel::Warning>(
-                STR("[MoriaCppMod] [Def]     SKIP '{}' (TextPropertyData): requires StringTable binding\n"), wName);
+            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     SKIP '{}' (TextPropertyData): requires StringTable binding\n"), wName);
         return false;
     }
-
 
     if (type.find("ArrayPropertyData") != std::string::npos)
     {
         std::string valueBlock = jsonExtractString(json, objStart, objEnd, "Value");
 
         if (valueBlock.empty() || valueBlock == "[]") return false;
-
 
         std::string arrayType = jsonExtractString(json, objStart, objEnd, "ArrayType");
 
@@ -1144,17 +1169,14 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
 
         int count = static_cast<int>(elements.size());
 
-
         uint8_t* arrData = static_cast<uint8_t*>(FMemory::Malloc(count * elemSize, 8));
         if (!arrData) return false;
-
 
         for (int i = 0; i < count; i++)
             inner->InitializeValue(arrData + i * elemSize);
 
         auto* innerStructProp = CastField<FStructProperty>(inner);
         UStruct* innerStruct = innerStructProp ? innerStructProp->GetStruct() : nullptr;
-
 
         for (int i = 0; i < count; i++)
         {
@@ -1170,8 +1192,7 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
                     auto innerProps = jsonArrayObjects(elemValue, 0, elemValue.size());
                     for (auto& [ipStart, ipEnd] : innerProps)
                     {
-                        writeJsonPropertyToField(elemData, innerStruct,
-                                                  elemValue, ipStart, ipEnd);
+                        writeJsonPropertyToField(elemData, innerStruct, elemValue, ipStart, ipEnd);
                     }
                 }
             }
@@ -1179,11 +1200,9 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
             {
 
                 std::string val = jsonExtractString(valueBlock, eStart, eEnd, "Value");
-                if (!val.empty())
-                    writeValueToField(elemData, inner, val);
+                if (!val.empty()) writeValueToField(elemData, inner, val);
             }
         }
-
 
         // Heap-leak fix per code-review-MASTER.md TL;DR #1.
         // Was: std::memcpy(fieldData, &arrData, 8) overwrote the existing
@@ -1206,25 +1225,19 @@ bool writeJsonPropertyToField(uint8_t* structData, UStruct* ustruct,
         return true;
     }
 
-
-    if (type.find("MapPropertyData") != std::string::npos)
-        return false;
-
+    if (type.find("MapPropertyData") != std::string::npos) return false;
 
     if (s_verbose)
     {
         std::wstring wType(type.begin(), type.end());
-        RC::Output::send<RC::LogLevel::Warning>(
-            STR("[MoriaCppMod] [Def]     SKIP '{}' ({}): unhandled type\n"), wName, wType);
+        RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     SKIP '{}' ({}): unhandled type\n"), wName, wType);
     }
     return false;
 }
 
-
 void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
 {
     if (!dt.rowStruct || !newRow) return;
-
 
     DataTableUtil::RowMapHeader hdr{};
     if (!dt.getRowMapHeader(hdr) || !hdr.Data || hdr.Num < 1) return;
@@ -1243,20 +1256,15 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
             UStruct* innerStruct = sp->GetStruct();
             if (!innerStruct) continue;
 
-
             std::wstring structName = innerStruct->GetName();
-            if (structName.find(L"RowHandle") == std::wstring::npos &&
-                structName.find(L"DataTableRowHandle") == std::wstring::npos)
-                continue;
+            if (structName.find(L"RowHandle") == std::wstring::npos && structName.find(L"DataTableRowHandle") == std::wstring::npos) continue;
 
             int off = p->GetOffset_Internal();
             int sz = p->GetSize();
             if (off < 0 || sz < 16) continue;
 
-
             uint64_t newPtr = 0, refPtr = 0;
-            if (!isReadableMemory(newRow + off, 8) || !isReadableMemory(refRow + off, 8))
-                continue;
+            if (!isReadableMemory(newRow + off, 8) || !isReadableMemory(refRow + off, 8)) continue;
             std::memcpy(&newPtr, newRow + off, 8);
             std::memcpy(&refPtr, refRow + off, 8);
 
@@ -1265,13 +1273,14 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
                 std::memcpy(newRow + off, refRow + off, 8);
                 fixed++;
                 if (s_verbose)
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     RowHandle fix: '{}' @{} was=0x{:016X} now=0x{:016X}\n"),
-                        p->GetName(), off, newPtr, refPtr);
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     RowHandle fix: '{}' @{} was=0x{:016X} now=0x{:016X}\n"),
+                                                            p->GetName(),
+                                                            off,
+                                                            newPtr,
+                                                            refPtr);
             }
         }
     }
-
 
     for (auto* s = dt.rowStruct; s; s = s->GetSuperStruct())
     {
@@ -1286,7 +1295,6 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
             int elemSize = innerSP->GetSize();
             if (elemSize <= 0) continue;
 
-
             bool hasRowHandle = false;
             for (auto* es = elemStruct; es && !hasRowHandle; es = es->GetSuperStruct())
                 for (auto* ep : es->ForEachProperty())
@@ -1294,12 +1302,15 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
                     auto* esp = CastField<FStructProperty>(ep);
                     if (!esp || !esp->GetStruct()) continue;
                     std::wstring esName = esp->GetStruct()->GetName();
-                    if (esName.find(L"RowHandle") != std::wstring::npos) { hasRowHandle = true; break; }
+                    if (esName.find(L"RowHandle") != std::wstring::npos)
+                    {
+                        hasRowHandle = true;
+                        break;
+                    }
                 }
             if (!hasRowHandle) continue;
 
             int arrOff = p->GetOffset_Internal();
-
 
             TArrayView newArr(arrProp, newRow + arrOff);
             TArrayView refArr(arrProp, refRow + arrOff);
@@ -1321,11 +1332,9 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
                     int subOff = ep->GetOffset_Internal();
                     if (subOff < 0 || ep->GetSize() < 16) continue;
 
-
                     uint64_t refSubPtr = 0;
                     std::memcpy(&refSubPtr, refElem0 + subOff, 8);
                     if (refSubPtr == 0) continue;
-
 
                     for (int i = 0; i < newArr.Num(); i++)
                     {
@@ -1340,18 +1349,17 @@ void fixRowHandlePointers(DataTableUtil& dt, uint8_t* newRow)
                         }
                     }
                     if (s_verbose && fixed > 0)
-                        RC::Output::send<RC::LogLevel::Warning>(
-                            STR("[MoriaCppMod] [Def]     RowHandle fix (array): '{}.{}' DataTable*=0x{:016X}\n"),
-                            p->GetName(), ep->GetName(), refSubPtr);
+                        RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     RowHandle fix (array): '{}.{}' DataTable*=0x{:016X}\n"),
+                                                                p->GetName(),
+                                                                ep->GetName(),
+                                                                refSubPtr);
                 }
             }
         }
     }
 
-    if (fixed > 0)
-        VLOG(STR("[MoriaCppMod] [Def]   RowHandle DataTable* pointers fixed: {}\n"), fixed);
+    if (fixed > 0) VLOG(STR("[MoriaCppMod] [Def]   RowHandle DataTable* pointers fixed: {}\n"), fixed);
 }
-
 
 int applyAddRow(DataTableUtil& dt, const DefAddRow& addRow)
 {
@@ -1359,24 +1367,18 @@ int applyAddRow(DataTableUtil& dt, const DefAddRow& addRow)
 
     std::wstring wRowName(addRow.rowName.begin(), addRow.rowName.end());
 
-
     if (dt.findRowData(wRowName.c_str()))
     {
-        VLOG(STR("[MoriaCppMod] [Def] add_row: '{}' already exists in '{}', skipping\n"),
-             wRowName, dt.tableName);
+        VLOG(STR("[MoriaCppMod] [Def] add_row: '{}' already exists in '{}', skipping\n"), wRowName, dt.tableName);
         return 0;
     }
-
 
     uint8_t* rowData = dt.addRow(wRowName.c_str());
     if (!rowData)
     {
-        RC::Output::send<RC::LogLevel::Warning>(
-            STR("[MoriaCppMod] [Def] add_row: FAILED to add '{}' to '{}'\n"),
-            wRowName, dt.tableName);
+        RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] add_row: FAILED to add '{}' to '{}'\n"), wRowName, dt.tableName);
         return 0;
     }
-
 
     const std::string& json = addRow.json;
     std::string valueBlock = jsonExtractString(json, 0, json.size(), "Value");
@@ -1390,41 +1392,33 @@ int applyAddRow(DataTableUtil& dt, const DefAddRow& addRow)
     int propsWritten = 0;
     for (auto& [pStart, pEnd] : properties)
     {
-        if (writeJsonPropertyToField(rowData, dt.rowStruct, valueBlock, pStart, pEnd))
-            propsWritten++;
+        if (writeJsonPropertyToField(rowData, dt.rowStruct, valueBlock, pStart, pEnd)) propsWritten++;
     }
-
 
     {
         FName rowFName(wRowName.c_str(), FNAME_Add);
         std::memcpy(rowData + 0x08, &rowFName, sizeof(FName));
     }
 
-
     fixRowHandlePointers(dt, rowData);
 
     if (s_verbose)
     {
-        RC::Output::send<RC::LogLevel::Warning>(
-            STR("[MoriaCppMod] [Def]   + {} ({} props written)\n"),
-            wRowName, propsWritten);
+        RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]   + {} ({} props written)\n"), wRowName, propsWritten);
     }
 
     return 1;
 }
 
-
 int applyChange(DataTableUtil& dt, const DefChange& change)
 {
     if (!dt.isBound()) return 0;
 
-    bool isSimple = (change.property.find('.') == std::string::npos &&
-                     change.property.find('[') == std::string::npos);
+    bool isSimple = (change.property.find('.') == std::string::npos && change.property.find('[') == std::string::npos);
     bool isNone = strEqualCI(change.item, "NONE");
     int applied = 0;
 
-    auto applyToRow = [&](const wchar_t* rowName) -> bool
-    {
+    auto applyToRow = [&](const wchar_t* rowName) -> bool {
         if (isSimple)
         {
 
@@ -1434,7 +1428,6 @@ int applyChange(DataTableUtil& dt, const DefChange& change)
 
             uint8_t* rowData = dt.findRowData(rowName);
             if (!rowData) return false;
-
 
             FProperty* prop = nullptr;
             if (dt.rowStruct)
@@ -1461,23 +1454,32 @@ int applyChange(DataTableUtil& dt, const DefChange& change)
                     std::string readback = readFieldAsString(rowData + off, prop);
                     std::wstring wReadback(readback.begin(), readback.end());
                     std::wstring wVal(change.value.begin(), change.value.end());
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]   {} . {} = {} (readback: {})\n"),
-                        rowName, wProp, wVal, wReadback);
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]   {} . {} = {} (readback: {})\n"), rowName, wProp, wVal, wReadback);
                 }
                 return ok;
             }
 
-
             if (change.value.find('.') != std::string::npos)
             {
-                try { return dt.writeFloat(rowName, wProp.c_str(), std::stof(change.value)); }
-                catch (...) { return false; }
+                try
+                {
+                    return dt.writeFloat(rowName, wProp.c_str(), std::stof(change.value));
+                }
+                catch (...)
+                {
+                    return false;
+                }
             }
             else
             {
-                try { return dt.writeInt32(rowName, wProp.c_str(), std::stoi(change.value)); }
-                catch (...) { return false; }
+                try
+                {
+                    return dt.writeInt32(rowName, wProp.c_str(), std::stoi(change.value));
+                }
+                catch (...)
+                {
+                    return false;
+                }
             }
         }
         else
@@ -1497,9 +1499,7 @@ int applyChange(DataTableUtil& dt, const DefChange& change)
                 std::wstring wItem(change.item.begin(), change.item.end());
                 std::wstring wProp(change.property.begin(), change.property.end());
                 std::wstring wVal(change.value.begin(), change.value.end());
-                RC::Output::send<RC::LogLevel::Warning>(
-                    STR("[MoriaCppMod] [Def]   {} . {} = {} (readback: {})\n"),
-                    wItem, wProp, wVal, wReadback);
+                RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]   {} . {} = {} (readback: {})\n"), wItem, wProp, wVal, wReadback);
             }
             return ok;
         }
@@ -1543,40 +1543,33 @@ int applyDelete(DataTableUtil& dt, const DefDelete& del)
         int32_t tagCount = 0;
         std::memcpy(&tagCount, rowData + off + 8, 4);
         std::wstring wVal(del.value.begin(), del.value.end());
-        RC::Output::send<RC::LogLevel::Warning>(
-            STR("[MoriaCppMod] [Def]   {} . {} -= '{}' (tags remaining: {})\n"),
-            wItem, wProp, wVal, tagCount);
+        RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]   {} . {} -= '{}' (tags remaining: {})\n"), wItem, wProp, wVal, tagCount);
     }
     return ok ? 1 : 0;
 }
-
 
 DataTableUtil& getOrBindDataTable(const std::string& dtName, std::unordered_map<std::string, DataTableUtil>& dynamicTables)
 {
 
     static const std::unordered_map<std::string, DataTableUtil*> knownTables = {
-        {"DT_Constructions", &m_dtConstructions},
-        {"DT_ConstructionRecipes", &m_dtConstructionRecipes},
-        {"DT_Items", &m_dtItems},
-        {"DT_Weapons", &m_dtWeapons},
-        {"DT_Tools", &m_dtTools},
-        {"DT_Armor", &m_dtArmor},
-        {"DT_Consumables", &m_dtConsumables},
-        {"DT_ContainerItems", &m_dtContainerItems},
-        {"DT_Ores", &m_dtOres},
+            {"DT_Constructions", &m_dtConstructions},
+            {"DT_ConstructionRecipes", &m_dtConstructionRecipes},
+            {"DT_Items", &m_dtItems},
+            {"DT_Weapons", &m_dtWeapons},
+            {"DT_Tools", &m_dtTools},
+            {"DT_Armor", &m_dtArmor},
+            {"DT_Consumables", &m_dtConsumables},
+            {"DT_ContainerItems", &m_dtContainerItems},
+            {"DT_Ores", &m_dtOres},
     };
-
 
     for (auto& [name, dt] : knownTables)
     {
-        if (strEqualCI(name, dtName) && dt->isBound())
-            return *dt;
+        if (strEqualCI(name, dtName) && dt->isBound()) return *dt;
     }
 
-
     auto it = dynamicTables.find(dtName);
-    if (it != dynamicTables.end() && it->second.isBound())
-        return it->second;
+    if (it != dynamicTables.end() && it->second.isBound()) return it->second;
 
     auto& dt = dynamicTables[dtName];
     std::wstring wName(dtName.begin(), dtName.end());
@@ -1584,9 +1577,14 @@ DataTableUtil& getOrBindDataTable(const std::string& dtName, std::unordered_map<
     return dt;
 }
 
-
-static inline std::string gameModsIniPath() { return modPath("Mods/GameMods.ini"); }
-static inline std::string definitionsDir() { return modPath("Mods/MoriaCppMod/definitions"); }
+static inline std::string gameModsIniPath()
+{
+    return modPath("Mods/GameMods.ini");
+}
+static inline std::string definitionsDir()
+{
+    return modPath("Mods/MoriaCppMod/definitions");
+}
 
 struct GameModEntry
 {
@@ -1596,11 +1594,9 @@ struct GameModEntry
     bool enabled{false};
 };
 
-
 std::vector<GameModEntry> discoverGameMods()
 {
     std::vector<GameModEntry> entries;
-
 
     std::unordered_map<std::string, bool> enabledMap;
     {
@@ -1615,26 +1611,21 @@ std::vector<GameModEntry> discoverGameMods()
                     section = sec->name;
                 else if (auto* kv = std::get_if<ParsedIniKeyValue>(&parsed))
                 {
-                    if (strEqualCI(section, "EnabledMods"))
-                        enabledMap[kv->key] = strEqualCI(kv->value, "true");
+                    if (strEqualCI(section, "EnabledMods")) enabledMap[kv->key] = strEqualCI(kv->value, "true");
                 }
             }
         }
     }
-
 
     auto iniFiles = listFiles(definitionsDir(), "*.ini");
     for (auto& iniFile : iniFiles)
     {
 
         std::string name = iniFile;
-        if (strEndsWithCI(name, ".ini"))
-            name = name.substr(0, name.size() - 4);
-
+        if (strEndsWithCI(name, ".ini")) name = name.substr(0, name.size() - 4);
 
         std::string iniPath = definitionsDir() + "\\" + iniFile;
         DefManifest manifest = parseManifest(iniPath, definitionsDir());
-
 
         if (manifest.defPaths.empty()) continue;
 
@@ -1642,7 +1633,6 @@ std::vector<GameModEntry> discoverGameMods()
         entry.name = name;
         entry.title = manifest.title.empty() ? name : manifest.title;
         entry.description = manifest.description;
-
 
         auto it = enabledMap.find(name);
         entry.enabled = (it != enabledMap.end()) ? it->second : false;
@@ -1652,7 +1642,6 @@ std::vector<GameModEntry> discoverGameMods()
 
     return entries;
 }
-
 
 void saveGameMods(const std::vector<GameModEntry>& entries)
 {
@@ -1671,7 +1660,6 @@ void saveGameMods(const std::vector<GameModEntry>& entries)
     file.flush();
 }
 
-
 static std::vector<std::string> readEnabledMods(const std::string& gameModsPath)
 {
     std::vector<std::string> enabled;
@@ -1689,13 +1677,11 @@ static std::vector<std::string> readEnabledMods(const std::string& gameModsPath)
         }
         else if (auto* kv = std::get_if<ParsedIniKeyValue>(&parsed))
         {
-            if (strEqualCI(section, "EnabledMods") && strEqualCI(kv->value, "true"))
-                enabled.push_back(kv->key);
+            if (strEqualCI(section, "EnabledMods") && strEqualCI(kv->value, "true")) enabled.push_back(kv->key);
         }
     }
     return enabled;
 }
-
 
 void loadAndApplyDefinitions()
 {
@@ -1706,7 +1692,6 @@ void loadAndApplyDefinitions()
         VLOG(STR("[MoriaCppMod] [Def] No mods enabled in Mods/GameMods.ini (or file not found)\n"));
         return;
     }
-
 
     // v6.4.3 (hotfix) — wide API for Steam ™ path compatibility
     WIN32_FIND_DATAW fd;
@@ -1719,8 +1704,7 @@ void loadAndApplyDefinitions()
     }
     FindClose(hTest);
 
-    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] {} mods enabled in GameMods.ini\n"),
-        enabledMods.size());
+    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] {} mods enabled in GameMods.ini\n"), enabledMods.size());
 
     int totalManifests = 0;
     int totalAddRows = 0;
@@ -1738,10 +1722,7 @@ void loadAndApplyDefinitions()
         std::ifstream testFile = openInputFile(iniPath);
         if (!testFile.is_open())
         {
-            RC::Output::send<RC::LogLevel::Warning>(
-                STR("[MoriaCppMod] [Def] Manifest '{}' not found at {}\n"),
-                utf8ToWide(modName),
-                utf8ToWide(iniPath));
+            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Manifest '{}' not found at {}\n"), utf8ToWide(modName), utf8ToWide(iniPath));
             continue;
         }
         testFile.close();
@@ -1749,16 +1730,13 @@ void loadAndApplyDefinitions()
         DefManifest manifest = parseManifest(iniPath, definitionsDir());
         if (manifest.defPaths.empty())
         {
-            VLOG(STR("[MoriaCppMod] [Def] Manifest '{}' has no .def paths, skipping\n"),
-                 utf8ToWide(modName));
+            VLOG(STR("[MoriaCppMod] [Def] Manifest '{}' has no .def paths, skipping\n"), utf8ToWide(modName));
             continue;
         }
 
         totalManifests++;
         std::string displayName = manifest.title.empty() ? modName : manifest.title;
-        RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Loading '{}' ({} defs)\n"),
-            utf8ToWide(displayName),
-            manifest.defPaths.size());
+        RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Loading '{}' ({} defs)\n"), utf8ToWide(displayName), manifest.defPaths.size());
 
         for (auto& defPath : manifest.defPaths)
         {
@@ -1770,19 +1748,16 @@ void loadAndApplyDefinitions()
                 std::string dtName = extractDataTableName(mod.filePath);
                 if (dtName.empty())
                 {
-                    VLOG(STR("[MoriaCppMod] [Def] Cannot extract DT name from '{}'\n"),
-                         utf8ToWide(mod.filePath));
+                    VLOG(STR("[MoriaCppMod] [Def] Cannot extract DT name from '{}'\n"), utf8ToWide(mod.filePath));
                     continue;
                 }
 
                 DataTableUtil& dt = getOrBindDataTable(dtName, dynamicTables);
                 if (!dt.isBound())
                 {
-                    VLOG(STR("[MoriaCppMod] [Def] DataTable '{}' not found in game — skipping\n"),
-                         utf8ToWide(dtName));
+                    VLOG(STR("[MoriaCppMod] [Def] DataTable '{}' not found in game — skipping\n"), utf8ToWide(dtName));
                     continue;
                 }
-
 
                 for (auto& ar : mod.addRows)
                 {
@@ -1790,10 +1765,8 @@ void loadAndApplyDefinitions()
                     int ok = applyAddRow(dt, ar);
                     totalApplied += ok;
 
-                    if (tablesWithAddRows.find(dtName) == tablesWithAddRows.end())
-                        tablesWithAddRows[dtName] = ar.rowName;
+                    if (tablesWithAddRows.find(dtName) == tablesWithAddRows.end()) tablesWithAddRows[dtName] = ar.rowName;
                 }
-
 
                 for (auto& del : mod.deletes)
                 {
@@ -1801,7 +1774,6 @@ void loadAndApplyDefinitions()
                     int n = applyDelete(dt, del);
                     totalApplied += n;
                 }
-
 
                 for (auto& change : mod.changes)
                 {
@@ -1813,7 +1785,6 @@ void loadAndApplyDefinitions()
         }
     }
 
-
     // The post-apply add-row verification dump below is a ~280-line
     // diagnostic block (hex dumps, ID round-trip checks, RowMap walks).
     // Useful when wiring up new definition tables, but every shipped run
@@ -1824,28 +1795,24 @@ void loadAndApplyDefinitions()
 
         auto hexDump = [](const uint8_t* data, int len) -> std::wstring {
             std::wstring hex;
-            for (int b = 0; b < len; b++) {
-                wchar_t buf[8]; swprintf(buf, 8, L"%02X ", data[b]);
+            for (int b = 0; b < len; b++)
+            {
+                wchar_t buf[8];
+                swprintf(buf, 8, L"%02X ", data[b]);
                 hex += buf;
             }
             return hex;
         };
 
-
         UObject* dtFuncLib = nullptr;
         UFunction* doesRowExistFn = nullptr;
         {
-            doesRowExistFn = UObjectGlobals::StaticFindObject<UFunction*>(
-                nullptr, nullptr,
-                STR("/Script/Engine.DataTableFunctionLibrary:DoesDataTableRowExist"));
-            dtFuncLib = UObjectGlobals::StaticFindObject<UObject*>(
-                nullptr, nullptr,
-                STR("/Script/Engine.Default__DataTableFunctionLibrary"));
+            doesRowExistFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Engine.DataTableFunctionLibrary:DoesDataTableRowExist"));
+            dtFuncLib = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Engine.Default__DataTableFunctionLibrary"));
         }
 
-        RC::Output::send<RC::LogLevel::Warning>(
-            STR("[MoriaCppMod] [Def] === ADD_ROW VERIFICATION === (hash check: {})\n"),
-            doesRowExistFn ? STR("AVAILABLE") : STR("NOT AVAILABLE"));
+        RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] === ADD_ROW VERIFICATION === (hash check: {})\n"),
+                                                doesRowExistFn ? STR("AVAILABLE") : STR("NOT AVAILABLE"));
 
         for (auto& [dtName, firstRow] : tablesWithAddRows)
         {
@@ -1857,60 +1824,46 @@ void loadAndApplyDefinitions()
             std::wstring wDtName(dtName.begin(), dtName.end());
             std::wstring wFirstRow(firstRow.begin(), firstRow.end());
 
-
             {
                 auto* dtBase = reinterpret_cast<uint8_t*>(dt.table);
 
-
                 if (isReadableMemory(dtBase + 0x28, 0x78))
                 {
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]   UDataTable obj @ 0x{:016X}\n"),
-                        reinterpret_cast<uint64_t>(dtBase));
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     +0x28 (RowStruct*):  {}\n"),
-                        hexDump(dtBase + 0x28, 8));
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     +0x30 (RowMap):      {}\n"),
-                        hexDump(dtBase + 0x30, 24));
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     +0x48..+0x60:        {}\n"),
-                        hexDump(dtBase + 0x48, 24));
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     +0x60..+0x80:        {}\n"),
-                        hexDump(dtBase + 0x60, 32));
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     +0x80..+0xA0:        {}\n"),
-                        hexDump(dtBase + 0x80, 32));
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]   UDataTable obj @ 0x{:016X}\n"), reinterpret_cast<uint64_t>(dtBase));
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     +0x28 (RowStruct*):  {}\n"), hexDump(dtBase + 0x28, 8));
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     +0x30 (RowMap):      {}\n"), hexDump(dtBase + 0x30, 24));
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     +0x48..+0x60:        {}\n"), hexDump(dtBase + 0x48, 24));
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     +0x60..+0x80:        {}\n"), hexDump(dtBase + 0x60, 32));
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     +0x80..+0xA0:        {}\n"), hexDump(dtBase + 0x80, 32));
                 }
 
-                try {
+                try
+                {
                     auto* outermost = dt.table->GetOutermost();
-                    if (outermost)
-                        RC::Output::send<RC::LogLevel::Warning>(
-                            STR("[MoriaCppMod] [Def]     Package: {}\n"),
-                            outermost->GetPathName());
-                } catch (...) {}
+                    if (outermost) RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     Package: {}\n"), outermost->GetPathName());
+                }
+                catch (...)
+                {
+                }
 
                 if (dt.rowStruct)
                 {
-                    try {
-                        RC::Output::send<RC::LogLevel::Warning>(
-                            STR("[MoriaCppMod] [Def]     RowStruct: {} (size={})\n"),
-                            dt.rowStruct->GetFullName(), dt.rowSize);
-                    } catch (...) {}
+                    try
+                    {
+                        RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     RowStruct: {} (size={})\n"), dt.rowStruct->GetFullName(), dt.rowSize);
+                    }
+                    catch (...)
+                    {
+                    }
                 }
             }
-
 
             {
                 std::vector<UObject*> fgkBases;
                 findAllOfSafe(STR("FGKDataTableBase"), fgkBases);
                 if (!fgkBases.empty())
                 {
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     FGKDataTableBase instances: {}\n"),
-                        fgkBases.size());
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     FGKDataTableBase instances: {}\n"), fgkBases.size());
                     for (auto* fgkBase : fgkBases)
                     {
                         auto* fgkBytes = reinterpret_cast<uint8_t*>(fgkBase);
@@ -1921,31 +1874,24 @@ void loadAndApplyDefinitions()
                         std::memcpy(&dynamicAsset, fgkBytes + 0x38, 8);
                         if (tableAsset == dt.table)
                         {
-                            RC::Output::send<RC::LogLevel::Warning>(
-                                STR("[MoriaCppMod] [Def]     >>> FGKDataTableBase FOUND for '{}'\n"),
-                                wDtName);
-                            RC::Output::send<RC::LogLevel::Warning>(
-                                STR("[MoriaCppMod] [Def]       TableAsset @0x28: 0x{:016X}\n"),
-                                reinterpret_cast<uint64_t>(tableAsset));
-                            RC::Output::send<RC::LogLevel::Warning>(
-                                STR("[MoriaCppMod] [Def]       TestTableAsset @0x30: {}\n"),
-                                hexDump(fgkBytes + 0x30, 8));
-                            RC::Output::send<RC::LogLevel::Warning>(
-                                STR("[MoriaCppMod] [Def]       DynamicTableAsset @0x38: 0x{:016X} ({})\n"),
-                                reinterpret_cast<uint64_t>(dynamicAsset),
-                                dynamicAsset ? STR("HAS DYNAMIC TABLE") : STR("NULL"));
+                            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     >>> FGKDataTableBase FOUND for '{}'\n"), wDtName);
+                            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]       TableAsset @0x28: 0x{:016X}\n"),
+                                                                    reinterpret_cast<uint64_t>(tableAsset));
+                            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]       TestTableAsset @0x30: {}\n"), hexDump(fgkBytes + 0x30, 8));
+                            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]       DynamicTableAsset @0x38: 0x{:016X} ({})\n"),
+                                                                    reinterpret_cast<uint64_t>(dynamicAsset),
+                                                                    dynamicAsset ? STR("HAS DYNAMIC TABLE") : STR("NULL"));
                             if (dynamicAsset)
                             {
-
 
                                 auto* dynBytes = reinterpret_cast<uint8_t*>(dynamicAsset);
                                 if (isReadableMemory(dynBytes + 0x30, 16))
                                 {
                                     DataTableUtil::RowMapHeader dynHdr{};
                                     std::memcpy(&dynHdr, dynBytes + 0x30, 16);
-                                    RC::Output::send<RC::LogLevel::Warning>(
-                                        STR("[MoriaCppMod] [Def]       DynamicTable RowMap: Num={} Max={}\n"),
-                                        dynHdr.Num, dynHdr.Max);
+                                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]       DynamicTable RowMap: Num={} Max={}\n"),
+                                                                            dynHdr.Num,
+                                                                            dynHdr.Max);
                                 }
                             }
                             break;
@@ -1955,115 +1901,110 @@ void loadAndApplyDefinitions()
                 else
                 {
                     RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     FGKDataTableBase: no instances found (may not be instantiated yet)\n"));
+                            STR("[MoriaCppMod] [Def]     FGKDataTableBase: no instances found (may not be instantiated yet)\n"));
                 }
             }
 
-
             uint8_t* rowData = dt.findRowData(wFirstRow.c_str());
             bool foundLinear = (rowData != nullptr);
-
 
             bool foundHash = false;
             bool hashTestRan = false;
             if (doesRowExistFn && dtFuncLib && dt.table)
             {
-                struct { UObject* Table; FName RowName; bool ReturnValue; } params{};
+                struct
+                {
+                    UObject* Table;
+                    FName RowName;
+                    bool ReturnValue;
+                } params{};
                 params.Table = dt.table;
                 params.RowName = FName(wFirstRow.c_str(), FNAME_Find);
                 params.ReturnValue = false;
-                try {
+                try
+                {
                     safeProcessEvent(dtFuncLib, doesRowExistFn, &params);
                     foundHash = params.ReturnValue;
                     hashTestRan = true;
-                } catch (...) {}
+                }
+                catch (...)
+                {
+                }
             }
-
 
             bool controlHash = false;
             bool controlRan = false;
             if (doesRowExistFn && dtFuncLib && dt.table && totalRows > 0)
             {
                 DataTableUtil::RowMapHeader hdr{};
-                if (dt.getRowMapHeader(hdr) && hdr.Data && hdr.Num > 0
-                    && isReadableMemory(hdr.Data, DataTableUtil::SET_ELEMENT_SIZE))
+                if (dt.getRowMapHeader(hdr) && hdr.Data && hdr.Num > 0 && isReadableMemory(hdr.Data, DataTableUtil::SET_ELEMENT_SIZE))
                 {
                     FName controlFName;
                     std::memcpy(&controlFName, hdr.Data, DataTableUtil::FNAME_SIZE);
-                    struct { UObject* Table; FName RowName; bool ReturnValue; } ctrlP{};
+                    struct
+                    {
+                        UObject* Table;
+                        FName RowName;
+                        bool ReturnValue;
+                    } ctrlP{};
                     ctrlP.Table = dt.table;
                     ctrlP.RowName = controlFName;
                     ctrlP.ReturnValue = false;
-                    try {
+                    try
+                    {
                         safeProcessEvent(dtFuncLib, doesRowExistFn, &ctrlP);
                         controlHash = ctrlP.ReturnValue;
                         controlRan = true;
-                    } catch (...) {}
+                    }
+                    catch (...)
+                    {
+                    }
                 }
             }
 
-            RC::Output::send<RC::LogLevel::Warning>(
-                STR("[MoriaCppMod] [Def]   {} : rows={} linear={} hash={} control={}\n"),
-                wDtName, totalRows,
-                foundLinear ? STR("YES") : STR("NO"),
-                hashTestRan ? (foundHash ? STR("YES") : STR("NO")) : STR("N/A"),
-                controlRan ? (controlHash ? STR("YES") : STR("NO")) : STR("N/A"));
-
+            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]   {} : rows={} linear={} hash={} control={}\n"),
+                                                    wDtName,
+                                                    totalRows,
+                                                    foundLinear ? STR("YES") : STR("NO"),
+                                                    hashTestRan ? (foundHash ? STR("YES") : STR("NO")) : STR("N/A"),
+                                                    controlRan ? (controlHash ? STR("YES") : STR("NO")) : STR("N/A"));
 
             if (foundLinear && dtName == "DT_Constructions")
             {
                 int actorOff = dt.resolvePropertyOffset(L"Actor");
-                int tagsOff  = dt.resolvePropertyOffset(L"Tags");
+                int tagsOff = dt.resolvePropertyOffset(L"Tags");
                 int enableOff = dt.resolvePropertyOffset(L"EnabledState");
 
                 if (actorOff >= 0 && isReadableMemory(rowData + actorOff, 24))
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     Actor @{} raw: {}\n"),
-                        actorOff, hexDump(rowData + actorOff, 24));
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     Actor @{} raw: {}\n"), actorOff, hexDump(rowData + actorOff, 24));
 
                 if (tagsOff >= 0 && isReadableMemory(rowData + tagsOff, 16))
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     Tags @{} raw: {}\n"),
-                        tagsOff, hexDump(rowData + tagsOff, 16));
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     Tags @{} raw: {}\n"), tagsOff, hexDump(rowData + tagsOff, 16));
 
                 if (enableOff >= 0 && isReadableMemory(rowData + enableOff, 1))
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     EnabledState @{}: {}\n"),
-                        enableOff, rowData[enableOff]);
-
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     EnabledState @{}: {}\n"), enableOff, rowData[enableOff]);
 
                 if (isReadableMemory(rowData, 32))
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     Row first 32B: {}\n"),
-                        hexDump(rowData, 32));
-
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     Row first 32B: {}\n"), hexDump(rowData, 32));
 
                 DataTableUtil::RowMapHeader hdr{};
-                if (dt.getRowMapHeader(hdr) && hdr.Data && hdr.Num > 0
-                    && isReadableMemory(hdr.Data, DataTableUtil::SET_ELEMENT_SIZE))
+                if (dt.getRowMapHeader(hdr) && hdr.Data && hdr.Num > 0 && isReadableMemory(hdr.Data, DataTableUtil::SET_ELEMENT_SIZE))
                 {
 
                     uint8_t* existingRow = *reinterpret_cast<uint8_t**>(hdr.Data + DataTableUtil::FNAME_SIZE);
                     if (existingRow && isReadableMemory(existingRow, dt.rowSize))
                     {
-                        RC::Output::send<RC::LogLevel::Warning>(
-                            STR("[MoriaCppMod] [Def]     --- EXISTING row[0] for comparison ---\n"));
+                        RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     --- EXISTING row[0] for comparison ---\n"));
                         if (actorOff >= 0 && isReadableMemory(existingRow + actorOff, 24))
-                            RC::Output::send<RC::LogLevel::Warning>(
-                                STR("[MoriaCppMod] [Def]     Actor @{} raw: {}\n"),
-                                actorOff, hexDump(existingRow + actorOff, 24));
+                            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     Actor @{} raw: {}\n"),
+                                                                    actorOff,
+                                                                    hexDump(existingRow + actorOff, 24));
                         if (tagsOff >= 0 && isReadableMemory(existingRow + tagsOff, 16))
-                            RC::Output::send<RC::LogLevel::Warning>(
-                                STR("[MoriaCppMod] [Def]     Tags @{} raw: {}\n"),
-                                tagsOff, hexDump(existingRow + tagsOff, 16));
+                            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     Tags @{} raw: {}\n"), tagsOff, hexDump(existingRow + tagsOff, 16));
                         if (enableOff >= 0 && isReadableMemory(existingRow + enableOff, 1))
-                            RC::Output::send<RC::LogLevel::Warning>(
-                                STR("[MoriaCppMod] [Def]     EnabledState @{}: {}\n"),
-                                enableOff, existingRow[enableOff]);
+                            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     EnabledState @{}: {}\n"), enableOff, existingRow[enableOff]);
                         if (isReadableMemory(existingRow, 32))
-                            RC::Output::send<RC::LogLevel::Warning>(
-                                STR("[MoriaCppMod] [Def]     Row first 32B: {}\n"),
-                                hexDump(existingRow, 32));
+                            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     Row first 32B: {}\n"), hexDump(existingRow, 32));
                     }
                 }
             }
@@ -2075,56 +2016,52 @@ void loadAndApplyDefinitions()
 
                 if (resultOff >= 0 && isReadableMemory(rowData + resultOff, 16))
                 {
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     ADDED ResultConstructionHandle @{} raw: {}\n"),
-                        resultOff, hexDump(rowData + resultOff, 16));
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     ADDED ResultConstructionHandle @{} raw: {}\n"),
+                                                            resultOff,
+                                                            hexDump(rowData + resultOff, 16));
 
                     uint64_t dtPtr = 0;
                     std::memcpy(&dtPtr, rowData + resultOff, 8);
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]       bytes[0-7] (DataTable*?): 0x{:016X} ({})\n"),
-                        dtPtr, dtPtr ? STR("NON-NULL") : STR("NULL"));
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]       bytes[0-7] (DataTable*?): 0x{:016X} ({})\n"),
+                                                            dtPtr,
+                                                            dtPtr ? STR("NON-NULL") : STR("NULL"));
                 }
 
                 if (bOnFloorOff >= 0 && isReadableMemory(rowData + bOnFloorOff, 1))
-                    RC::Output::send<RC::LogLevel::Warning>(
-                        STR("[MoriaCppMod] [Def]     bOnFloor @{}: {}\n"),
-                        bOnFloorOff, rowData[bOnFloorOff]);
-
+                    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     bOnFloor @{}: {}\n"), bOnFloorOff, rowData[bOnFloorOff]);
 
                 DataTableUtil::RowMapHeader hdr2{};
-                if (dt.getRowMapHeader(hdr2) && hdr2.Data && hdr2.Num > 0
-                    && isReadableMemory(hdr2.Data, DataTableUtil::SET_ELEMENT_SIZE))
+                if (dt.getRowMapHeader(hdr2) && hdr2.Data && hdr2.Num > 0 && isReadableMemory(hdr2.Data, DataTableUtil::SET_ELEMENT_SIZE))
                 {
                     uint8_t* existRow = *reinterpret_cast<uint8_t**>(hdr2.Data + DataTableUtil::FNAME_SIZE);
                     if (existRow && isReadableMemory(existRow, dt.rowSize))
                     {
-                        RC::Output::send<RC::LogLevel::Warning>(
-                            STR("[MoriaCppMod] [Def]     --- EXISTING row[0] for comparison ---\n"));
+                        RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     --- EXISTING row[0] for comparison ---\n"));
                         if (resultOff >= 0 && isReadableMemory(existRow + resultOff, 16))
                         {
-                            RC::Output::send<RC::LogLevel::Warning>(
-                                STR("[MoriaCppMod] [Def]     EXISTING ResultConstructionHandle @{} raw: {}\n"),
-                                resultOff, hexDump(existRow + resultOff, 16));
+                            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]     EXISTING ResultConstructionHandle @{} raw: {}\n"),
+                                                                    resultOff,
+                                                                    hexDump(existRow + resultOff, 16));
                             uint64_t existDtPtr = 0;
                             std::memcpy(&existDtPtr, existRow + resultOff, 8);
-                            RC::Output::send<RC::LogLevel::Warning>(
-                                STR("[MoriaCppMod] [Def]       bytes[0-7] (DataTable*?): 0x{:016X} ({})\n"),
-                                existDtPtr, existDtPtr ? STR("NON-NULL") : STR("NULL"));
+                            RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def]       bytes[0-7] (DataTable*?): 0x{:016X} ({})\n"),
+                                                                    existDtPtr,
+                                                                    existDtPtr ? STR("NON-NULL") : STR("NULL"));
                         }
                     }
                 }
             }
         }
-        RC::Output::send<RC::LogLevel::Warning>(
-            STR("[MoriaCppMod] [Def] === END VERIFICATION ===\n"));
+        RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] === END VERIFICATION ===\n"));
     }
-
 
     for (auto& [name, dt] : dynamicTables)
         dt.unbind();
 
-    RC::Output::send<RC::LogLevel::Warning>(
-        STR("[MoriaCppMod] [Def] Done: {} manifests, {} add_rows + {} changes + {} deletes = {} applied\n"),
-        totalManifests, totalAddRows, totalChanges, totalDeletes, totalApplied);
+    RC::Output::send<RC::LogLevel::Warning>(STR("[MoriaCppMod] [Def] Done: {} manifests, {} add_rows + {} changes + {} deletes = {} applied\n"),
+                                            totalManifests,
+                                            totalAddRows,
+                                            totalChanges,
+                                            totalDeletes,
+                                            totalApplied);
 }

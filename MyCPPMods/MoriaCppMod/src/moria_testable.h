@@ -1,6 +1,5 @@
 
 
-
 #pragma once
 #ifndef MORIA_TESTABLE_H
 #define MORIA_TESTABLE_H
@@ -26,17 +25,14 @@
 namespace MoriaMods
 {
 
-
     // UTF-8 conversion helper for bubble display names.
     static std::string wideToUtf8(const std::wstring& w)
     {
         if (w.empty()) return {};
-        int needed = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(),
-                                         nullptr, 0, nullptr, nullptr);
+        int needed = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
         if (needed <= 0) return {};
         std::string out(needed, '\0');
-        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(),
-                            out.data(), needed, nullptr, nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), out.data(), needed, nullptr, nullptr);
         return out;
     }
 
@@ -48,24 +44,20 @@ namespace MoriaMods
     inline std::wstring utf8PathToWide(const std::string& utf8Path)
     {
         if (utf8Path.empty()) return {};
-        int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(),
-                                       static_cast<int>(utf8Path.size()), nullptr, 0);
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(), static_cast<int>(utf8Path.size()), nullptr, 0);
         if (wlen <= 0) return std::wstring(utf8Path.begin(), utf8Path.end()); // ASCII fallback
         std::wstring out(static_cast<size_t>(wlen), L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(),
-                            static_cast<int>(utf8Path.size()), out.data(), wlen);
+        MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(), static_cast<int>(utf8Path.size()), out.data(), wlen);
         return out;
     }
 
-    inline std::ifstream openInputFile(const std::string& utf8Path,
-                                       std::ios_base::openmode mode = std::ios::in)
+    inline std::ifstream openInputFile(const std::string& utf8Path, std::ios_base::openmode mode = std::ios::in)
     {
         std::wstring w = utf8PathToWide(utf8Path);
         return std::ifstream(w.c_str(), mode);
     }
 
-    inline std::ofstream openOutputFile(const std::string& utf8Path,
-                                        std::ios_base::openmode mode = std::ios::out)
+    inline std::ofstream openOutputFile(const std::string& utf8Path, std::ios_base::openmode mode = std::ios::out)
     {
         std::wstring w = utf8PathToWide(utf8Path);
         return std::ofstream(w.c_str(), mode);
@@ -87,14 +79,17 @@ namespace MoriaMods
         out.reserve(label.size());
         for (wchar_t wc : label)
         {
-            if (wc == L' ' || wc == L'\t') { out += '_'; }
-            else if (wc >= 128) { /* skip non-ASCII */ }
+            if (wc == L' ' || wc == L'\t')
+            {
+                out += '_';
+            }
+            else if (wc >= 128)
+            { /* skip non-ASCII */
+            }
             else
             {
                 char c = static_cast<char>(wc);
-                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                    (c >= '0' && c <= '9') || c == '_')
-                    out += c;
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') out += c;
             }
         }
         return out;
@@ -103,35 +98,32 @@ namespace MoriaMods
     struct SavedRemoval
     {
         std::string meshName;
-        float posX{0}, posY{0}, posZ{0};          // world coords (absolute)
-        float localX{0}, localY{0}, localZ{0};    // bubble-local coords (world - bubble.Translation)
-        std::string bubbleId;                     // sanitized ASCII id (e.g. "Hollin_01")
-        std::string bubbleName;                   // human-readable display name (UTF-8)
+        float posX{0}, posY{0}, posZ{0};       // world coords (absolute)
+        float localX{0}, localY{0}, localZ{0}; // bubble-local coords (world - bubble.Translation)
+        std::string bubbleId;                  // sanitized ASCII id (e.g. "Hollin_01")
+        std::string bubbleName;                // human-readable display name (UTF-8)
     };
 
     struct RemovalEntry
     {
         bool isTypeRule{false};
         std::string meshName;
-        float posX{0}, posY{0}, posZ{0};          // world
-        float localX{0}, localY{0}, localZ{0};    // bubble-local
+        float posX{0}, posY{0}, posZ{0};       // world
+        float localX{0}, localY{0}, localZ{0}; // bubble-local
         std::string bubbleId;
-        std::string bubbleName;                   // human-readable display name
+        std::string bubbleName; // human-readable display name
         std::wstring friendlyName;
         std::wstring fullPathW;
         std::wstring coordsW;
     };
 
-
     static constexpr int BIND_COUNT = 26;
     static constexpr int OVERLAY_BUILD_SLOTS = 8;
-
 
     namespace Loc
     {
         static std::unordered_map<std::string, std::wstring> s_table;
         static const std::wstring s_empty;
-
 
         static std::wstring utf8ToWide(const std::string& s)
         {
@@ -143,7 +135,6 @@ namespace MoriaMods
             return w;
         }
 
-
         static bool parseJsonFile(const std::string& path)
         {
             std::ifstream file = openInputFile(path, std::ios::binary);
@@ -151,17 +142,18 @@ namespace MoriaMods
             std::string json((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
             file.close();
 
-
             size_t pos = 0;
-            if (json.size() >= 3 && json[0] == '\xEF' && json[1] == '\xBB' && json[2] == '\xBF')
-                pos = 3;
+            if (json.size() >= 3 && json[0] == '\xEF' && json[1] == '\xBB' && json[2] == '\xBF') pos = 3;
 
-
-            while (pos < json.size() && json[pos] != '{') pos++;
+            while (pos < json.size() && json[pos] != '{')
+                pos++;
             if (pos >= json.size()) return false;
             pos++;
 
-            auto skipWS = [&]() { while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r')) pos++; };
+            auto skipWS = [&]() {
+                while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r'))
+                    pos++;
+            };
 
             auto parseString = [&](std::string& out) -> bool {
                 skipWS();
@@ -175,12 +167,24 @@ namespace MoriaMods
                         pos++;
                         switch (json[pos])
                         {
-                        case '"': out += '"'; break;
-                        case '\\': out += '\\'; break;
-                        case 'n': out += '\n'; break;
-                        case 't': out += '\t'; break;
-                        case 'r': out += '\r'; break;
-                        case '/': out += '/'; break;
+                        case '"':
+                            out += '"';
+                            break;
+                        case '\\':
+                            out += '\\';
+                            break;
+                        case 'n':
+                            out += '\n';
+                            break;
+                        case 't':
+                            out += '\t';
+                            break;
+                        case 'r':
+                            out += '\r';
+                            break;
+                        case '/':
+                            out += '/';
+                            break;
                         case 'u': {
 
                             if (pos + 4 < json.size())
@@ -190,19 +194,34 @@ namespace MoriaMods
                                 {
                                     char c = json[pos + i];
                                     cp <<= 4;
-                                    if (c >= '0' && c <= '9') cp |= (c - '0');
-                                    else if (c >= 'a' && c <= 'f') cp |= (c - 'a' + 10);
-                                    else if (c >= 'A' && c <= 'F') cp |= (c - 'A' + 10);
+                                    if (c >= '0' && c <= '9')
+                                        cp |= (c - '0');
+                                    else if (c >= 'a' && c <= 'f')
+                                        cp |= (c - 'a' + 10);
+                                    else if (c >= 'A' && c <= 'F')
+                                        cp |= (c - 'A' + 10);
                                 }
                                 pos += 4;
 
-                                if (cp < 0x80) out += static_cast<char>(cp);
-                                else if (cp < 0x800) { out += static_cast<char>(0xC0 | (cp >> 6)); out += static_cast<char>(0x80 | (cp & 0x3F)); }
-                                else { out += static_cast<char>(0xE0 | (cp >> 12)); out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F)); out += static_cast<char>(0x80 | (cp & 0x3F)); }
+                                if (cp < 0x80)
+                                    out += static_cast<char>(cp);
+                                else if (cp < 0x800)
+                                {
+                                    out += static_cast<char>(0xC0 | (cp >> 6));
+                                    out += static_cast<char>(0x80 | (cp & 0x3F));
+                                }
+                                else
+                                {
+                                    out += static_cast<char>(0xE0 | (cp >> 12));
+                                    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                                    out += static_cast<char>(0x80 | (cp & 0x3F));
+                                }
                             }
                             break;
                         }
-                        default: out += json[pos]; break;
+                        default:
+                            out += json[pos];
+                            break;
                         }
                     }
                     else
@@ -220,7 +239,11 @@ namespace MoriaMods
             {
                 skipWS();
                 if (pos >= json.size() || json[pos] == '}') break;
-                if (json[pos] == ',') { pos++; continue; }
+                if (json[pos] == ',')
+                {
+                    pos++;
+                    continue;
+                }
 
                 std::string key, value;
                 if (!parseString(key)) break;
@@ -234,7 +257,6 @@ namespace MoriaMods
             }
             return count > 0;
         }
-
 
         static void initDefaults()
         {
@@ -291,7 +313,6 @@ namespace MoriaMods
             s_table["key.end"] = L"End";
             s_table["key.page_up"] = L"PgUp";
             s_table["key.page_down"] = L"PgDn";
-
 
             s_table["ui.set_modifier_key"] = L"Set Modifier Key:  ";
             s_table["ui.set_modifier_key_short"] = L"Set Modifier Key";
@@ -379,20 +400,17 @@ namespace MoriaMods
             s_table["save.keybind_header"] = L"# MoriaCppMod keybindings (index|VK_code)";
         }
 
-
         static const std::wstring& get(const char* key)
         {
             auto it = s_table.find(key);
             return (it != s_table.end()) ? it->second : s_empty;
         }
 
-
         static void clear()
         {
             s_table.clear();
         }
-    }
-
+    } // namespace Loc
 
     static std::wstring wrapText(const std::wstring& prefix, const std::wstring& value, size_t maxLine = 70)
     {
@@ -433,7 +451,6 @@ namespace MoriaMods
         return Loc::utf8ToWide(shortName);
     }
 
-
     static std::string componentNameToMeshId(const std::wstring& name)
     {
         std::string narrow;
@@ -459,7 +476,6 @@ namespace MoriaMods
         }
         return narrow;
     }
-
 
     static const wchar_t* modifierName(uint8_t vk)
     {
@@ -581,7 +597,6 @@ namespace MoriaMods
         }
     }
 
-
     static bool wstrEqualCI(const std::wstring& a, const wchar_t* b)
     {
         std::wstring la = a, lb = b;
@@ -592,11 +607,9 @@ namespace MoriaMods
         return la == lb;
     }
 
-
     static std::optional<uint8_t> nameToVK(const std::wstring& name)
     {
         if (name.empty()) return std::nullopt;
-
 
         if ((name[0] == L'F' || name[0] == L'f') && name.size() >= 2 && name.size() <= 3)
         {
@@ -606,18 +619,17 @@ namespace MoriaMods
             if (allDigits)
             {
                 std::string narrow;
-                for (size_t i = 1; i < name.size(); i++) narrow += static_cast<char>(name[i]);
+                for (size_t i = 1; i < name.size(); i++)
+                    narrow += static_cast<char>(name[i]);
                 int n = std::stoi(narrow);
                 if (n >= 1 && n <= 24) return static_cast<uint8_t>(0x70 + n - 1);
             }
         }
 
-
         if (name.size() == 4 && wstrEqualCI(name.substr(0, 3), L"Num") && iswdigit(name[3]))
         {
             return static_cast<uint8_t>(0x60 + (name[3] - L'0'));
         }
-
 
         if (wstrEqualCI(name, L"Num*")) return 0x6A;
         if (wstrEqualCI(name, L"Num+")) return 0x6B;
@@ -626,34 +638,43 @@ namespace MoriaMods
         if (wstrEqualCI(name, L"Num.")) return 0x6E;
         if (wstrEqualCI(name, L"Num/")) return 0x6F;
 
-
         if (name.size() == 1)
         {
             switch (name[0])
             {
-            case L'\\': return 0xDC;
-            case L'`': return 0xC0;
-            case L';': return 0xBA;
-            case L'=': return 0xBB;
-            case L'+': return 0xBB;  // accept "+" as an alias for the =/+ key
-            case L',': return 0xBC;
-            case L'-': return 0xBD;
-            case L'.': return 0xBE;
-            case L'/': return 0xBF;
-            case L'[': return 0xDB;
-            case L']': return 0xDD;
-            case L'\'': return 0xDE;
-            default: break;
+            case L'\\':
+                return 0xDC;
+            case L'`':
+                return 0xC0;
+            case L';':
+                return 0xBA;
+            case L'=':
+                return 0xBB;
+            case L'+':
+                return 0xBB; // accept "+" as an alias for the =/+ key
+            case L',':
+                return 0xBC;
+            case L'-':
+                return 0xBD;
+            case L'.':
+                return 0xBE;
+            case L'/':
+                return 0xBF;
+            case L'[':
+                return 0xDB;
+            case L']':
+                return 0xDD;
+            case L'\'':
+                return 0xDE;
+            default:
+                break;
             }
 
-            if (name[0] >= L'0' && name[0] <= L'9')
-                return static_cast<uint8_t>(name[0]);
+            if (name[0] >= L'0' && name[0] <= L'9') return static_cast<uint8_t>(name[0]);
 
             wchar_t upper = towupper(name[0]);
-            if (upper >= L'A' && upper <= L'Z')
-                return static_cast<uint8_t>(upper);
+            if (upper >= L'A' && upper <= L'Z') return static_cast<uint8_t>(upper);
         }
-
 
         if (wstrEqualCI(name, L"Space")) return 0x20;
         if (wstrEqualCI(name, L"Tab")) return 0x09;
@@ -665,22 +686,23 @@ namespace MoriaMods
         if (wstrEqualCI(name, L"PgUp")) return 0x21;
         if (wstrEqualCI(name, L"PgDn")) return 0x22;
 
-
         if (name.size() == 4 && name[0] == L'0' && (name[1] == L'x' || name[1] == L'X'))
         {
             try
             {
                 std::string hexStr;
-                for (auto c : name) hexStr += static_cast<char>(c);
+                for (auto c : name)
+                    hexStr += static_cast<char>(c);
                 unsigned long val = std::stoul(hexStr, nullptr, 16);
                 if (val > 0 && val < 256) return static_cast<uint8_t>(val);
             }
-            catch (...) {}
+            catch (...)
+            {
+            }
         }
 
         return std::nullopt;
     }
-
 
     static std::optional<uint8_t> modifierNameToVK(const std::wstring& name)
     {
@@ -691,19 +713,22 @@ namespace MoriaMods
         return std::nullopt;
     }
 
-
     static std::string modifierToIniName(uint8_t vk)
     {
         switch (vk)
         {
-        case VK_SHIFT: return "SHIFT";
-        case VK_CONTROL: return "CTRL";
-        case VK_MENU: return "ALT";
-        case VK_RMENU: return "RALT";
-        default: return "SHIFT";
+        case VK_SHIFT:
+            return "SHIFT";
+        case VK_CONTROL:
+            return "CTRL";
+        case VK_MENU:
+            return "ALT";
+        case VK_RMENU:
+            return "RALT";
+        default:
+            return "SHIFT";
         }
     }
-
 
     struct ParsedIniSection
     {
@@ -716,7 +741,6 @@ namespace MoriaMods
     };
     using ParsedIniLine = std::variant<std::monostate, ParsedIniSection, ParsedIniKeyValue>;
 
-
     static std::string trimStr(const std::string& s)
     {
         size_t start = s.find_first_not_of(" \t\r\n");
@@ -725,13 +749,10 @@ namespace MoriaMods
         return s.substr(start, end - start + 1);
     }
 
-
     static ParsedIniLine parseIniLine(const std::string& line)
     {
         std::string trimmed = trimStr(line);
-        if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#')
-            return std::monostate{};
-
+        if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#') return std::monostate{};
 
         if (trimmed.front() == '[' && trimmed.back() == ']')
         {
@@ -740,13 +761,11 @@ namespace MoriaMods
             return std::monostate{};
         }
 
-
         auto eq = trimmed.find('=');
         if (eq == std::string::npos) return std::monostate{};
 
         std::string key = trimStr(trimmed.substr(0, eq));
         std::string value = trimStr(trimmed.substr(eq + 1));
-
 
         for (size_t i = 1; i < value.size(); i++)
         {
@@ -761,51 +780,46 @@ namespace MoriaMods
         return std::monostate{};
     }
 
-
     static const char* bindIndexToIniKey(int idx)
     {
-        static const char* keys[BIND_COUNT] = {
-            "QuickBuild1",
-            "QuickBuild2",
-            "QuickBuild3",
-            "QuickBuild4",
-            "QuickBuild5",
-            "QuickBuild6",
-            "QuickBuild7",
-            "QuickBuild8",
-            "Rotation",
-            "SnapToggle",
-            "StabilityCheck",
-            "SuperDwarf",
-            "Target",
-            "Configuration",
-            "RemoveTarget",
-            "UndoLast",
-            "RemoveAll",
-            // slot 17 repurposed: "Advanced Builder Open" (never dispatched)
-            // → master Advanced Builder toggle. Old "AdvancedBuilderOpen"
-            // ini lines are simply ignored on load (unknown key).
-            "ToggleAdvancedBuilder",
-            "SaveGame",
-            "TrashItem",
-            "ReplenishItem",
-            "RemoveAttributes",
-            "PitchRotate",
-            "RollRotate",
-            "RepositionHud",
-            "UnstuckNpcs"
-        };
+        static const char* keys[BIND_COUNT] = {"QuickBuild1",
+                                               "QuickBuild2",
+                                               "QuickBuild3",
+                                               "QuickBuild4",
+                                               "QuickBuild5",
+                                               "QuickBuild6",
+                                               "QuickBuild7",
+                                               "QuickBuild8",
+                                               "Rotation",
+                                               "SnapToggle",
+                                               "StabilityCheck",
+                                               "SuperDwarf",
+                                               "Target",
+                                               "Configuration",
+                                               "RemoveTarget",
+                                               "UndoLast",
+                                               "RemoveAll",
+                                               // slot 17 repurposed: "Advanced Builder Open" (never dispatched)
+                                               // → master Advanced Builder toggle. Old "AdvancedBuilderOpen"
+                                               // ini lines are simply ignored on load (unknown key).
+                                               "ToggleAdvancedBuilder",
+                                               "SaveGame",
+                                               "TrashItem",
+                                               "ReplenishItem",
+                                               "RemoveAttributes",
+                                               "PitchRotate",
+                                               "RollRotate",
+                                               "RepositionHud",
+                                               "UnstuckNpcs"};
         if (idx < 0 || idx >= BIND_COUNT) return nullptr;
         return keys[idx];
     }
-
 
     static bool strEqualCI(const std::string& a, const std::string& b)
     {
         if (a.size() != b.size()) return false;
         for (size_t i = 0; i < a.size(); i++)
-            if (tolower(static_cast<unsigned char>(a[i])) != tolower(static_cast<unsigned char>(b[i])))
-                return false;
+            if (tolower(static_cast<unsigned char>(a[i])) != tolower(static_cast<unsigned char>(b[i]))) return false;
         return true;
     }
 
@@ -817,7 +831,6 @@ namespace MoriaMods
         }
         return -1;
     }
-
 
     static bool isReadableMemory(const void* ptr, size_t size = 8)
     {
@@ -839,7 +852,6 @@ namespace MoriaMods
         return true;
     }
 
-
     struct ParsedRemovalPosition
     {
         std::string meshName;
@@ -855,7 +867,6 @@ namespace MoriaMods
     };
 
     using ParsedRemovalLine = std::variant<std::monostate, ParsedRemovalPosition, ParsedRemovalTypeRule>;
-
 
     // Minimal JSON field extractors for our specific schema.
     // Handles: "key":"value", "key":[num,num,num]. No nested objects, no escapes beyond basic.
@@ -882,8 +893,13 @@ namespace MoriaMods
             out.reserve(raw.size());
             for (size_t i = 0; i < raw.size(); ++i)
             {
-                if (raw[i] == '\\' && i + 1 < raw.size()) { out += raw[i + 1]; ++i; }
-                else out += raw[i];
+                if (raw[i] == '\\' && i + 1 < raw.size())
+                {
+                    out += raw[i + 1];
+                    ++i;
+                }
+                else
+                    out += raw[i];
             }
             return out;
         }
@@ -903,8 +919,14 @@ namespace MoriaMods
             std::string tok;
             while (std::getline(ss, tok, ','))
             {
-                try { result.push_back(std::stof(tok)); }
-                catch (...) { return {}; }
+                try
+                {
+                    result.push_back(std::stof(tok));
+                }
+                catch (...)
+                {
+                    return {};
+                }
             }
             return result;
         }
@@ -916,27 +938,40 @@ namespace MoriaMods
             out.reserve(s.size() + 4);
             for (char c : s)
             {
-                if (c == '"' || c == '\\') { out += '\\'; out += c; }
-                else if (c == '\n') out += "\\n";
-                else if (c == '\r') out += "\\r";
-                else if (c == '\t') out += "\\t";
-                else out += c;
+                if (c == '"' || c == '\\')
+                {
+                    out += '\\';
+                    out += c;
+                }
+                else if (c == '\n')
+                    out += "\\n";
+                else if (c == '\r')
+                    out += "\\r";
+                else if (c == '\t')
+                    out += "\\t";
+                else
+                    out += c;
             }
             return out;
         }
-    }
+    } // namespace RemovalJson
 
     // Format one SavedRemoval as a single-line JSON object (JSON Lines style).
     static std::string formatRemovalJson(const SavedRemoval& sr)
     {
         char buf[1024];
-        std::snprintf(buf, sizeof(buf),
-            "{\"mesh\":\"%s\",\"bubble\":\"%s\",\"bubbleName\":\"%s\",\"world\":[%.2f,%.2f,%.2f],\"local\":[%.2f,%.2f,%.2f]}",
-            RemovalJson::escape(sr.meshName).c_str(),
-            RemovalJson::escape(sr.bubbleId).c_str(),
-            RemovalJson::escape(sr.bubbleName).c_str(),
-            sr.posX, sr.posY, sr.posZ,
-            sr.localX, sr.localY, sr.localZ);
+        std::snprintf(buf,
+                      sizeof(buf),
+                      "{\"mesh\":\"%s\",\"bubble\":\"%s\",\"bubbleName\":\"%s\",\"world\":[%.2f,%.2f,%.2f],\"local\":[%.2f,%.2f,%.2f]}",
+                      RemovalJson::escape(sr.meshName).c_str(),
+                      RemovalJson::escape(sr.bubbleId).c_str(),
+                      RemovalJson::escape(sr.bubbleName).c_str(),
+                      sr.posX,
+                      sr.posY,
+                      sr.posZ,
+                      sr.localX,
+                      sr.localY,
+                      sr.localZ);
         return buf;
     }
 
@@ -945,7 +980,6 @@ namespace MoriaMods
     {
         return "{\"typeRule\":\"" + RemovalJson::escape(meshName) + "\"}";
     }
-
 
     static ParsedRemovalLine parseRemovalLine(const std::string& line)
     {
@@ -956,8 +990,7 @@ namespace MoriaMods
         {
             // Type rule?
             std::string typeRule = RemovalJson::extractString(line, "typeRule");
-            if (!typeRule.empty())
-                return ParsedRemovalTypeRule{typeRule};
+            if (!typeRule.empty()) return ParsedRemovalTypeRule{typeRule};
 
             // Position entry
             ParsedRemovalPosition result;
@@ -968,17 +1001,26 @@ namespace MoriaMods
             result.bubbleName = RemovalJson::extractString(line, "bubbleName");
 
             auto world = RemovalJson::extractFloatArray(line, "world");
-            if (world.size() >= 3) { result.posX = world[0]; result.posY = world[1]; result.posZ = world[2]; }
+            if (world.size() >= 3)
+            {
+                result.posX = world[0];
+                result.posY = world[1];
+                result.posZ = world[2];
+            }
 
             auto local = RemovalJson::extractFloatArray(line, "local");
-            if (local.size() >= 3) { result.localX = local[0]; result.localY = local[1]; result.localZ = local[2]; }
+            if (local.size() >= 3)
+            {
+                result.localX = local[0];
+                result.localY = local[1];
+                result.localZ = local[2];
+            }
 
             return result;
         }
 
         // Legacy @ prefix for type rules.
-        if (line[0] == '@')
-            return ParsedRemovalTypeRule{line.substr(1)};
+        if (line[0] == '@') return ParsedRemovalTypeRule{line.substr(1)};
 
         // Legacy pipe-delimited format; parsed for backwards compat, rewritten as JSON on next save.
         std::istringstream ss(line);
@@ -993,8 +1035,7 @@ namespace MoriaMods
             result.posY = std::stof(token);
             if (!std::getline(ss, token, '|')) return std::monostate{};
             result.posZ = std::stof(token);
-            if (std::getline(ss, token, '|') && !token.empty())
-                result.bubbleId = token;
+            if (std::getline(ss, token, '|') && !token.empty()) result.bubbleId = token;
         }
         catch (...)
         {
@@ -1002,7 +1043,6 @@ namespace MoriaMods
         }
         return result;
     }
-
 
     struct ParsedSlot
     {
@@ -1019,14 +1059,12 @@ namespace MoriaMods
 
     using ParsedSlotLine = std::variant<std::monostate, ParsedSlot, ParsedRotation>;
 
-
     static ParsedSlotLine parseSlotLine(const std::string& line)
     {
         if (line.empty() || line[0] == '#') return std::monostate{};
         auto sep1 = line.find('|');
         if (sep1 == std::string::npos) return std::monostate{};
         std::string key = line.substr(0, sep1);
-
 
         if (key == "rotation")
         {
@@ -1035,7 +1073,9 @@ namespace MoriaMods
                 int val = std::stoi(line.substr(sep1 + 1));
                 if (val >= 0 && val <= 90) return ParsedRotation{val};
             }
-            catch (...) {}
+            catch (...)
+            {
+            }
             return std::monostate{};
         }
 
@@ -1049,7 +1089,6 @@ namespace MoriaMods
             return std::monostate{};
         }
         if (slot < 0 || slot >= OVERLAY_BUILD_SLOTS) return std::monostate{};
-
 
         auto sep2 = line.find('|', sep1 + 1);
         std::string name, tex, row;
@@ -1074,7 +1113,6 @@ namespace MoriaMods
         return ParsedSlot{slot, name, tex, row};
     }
 
-
     struct ParsedKeybind
     {
         int bindIndex;
@@ -1088,21 +1126,20 @@ namespace MoriaMods
 
     using ParsedKeybindLine = std::variant<std::monostate, ParsedKeybind, ParsedModifier>;
 
-
     static ParsedKeybindLine parseKeybindLine(const std::string& line)
     {
         if (line.empty() || line[0] == '#') return std::monostate{};
-
 
         if (line.size() > 4 && line.substr(0, 4) == "mod|")
         {
             try
             {
                 int mvk = std::stoi(line.substr(4));
-                if (mvk == VK_SHIFT || mvk == VK_CONTROL || mvk == VK_MENU || mvk == VK_RMENU)
-                    return ParsedModifier{static_cast<uint8_t>(mvk)};
+                if (mvk == VK_SHIFT || mvk == VK_CONTROL || mvk == VK_MENU || mvk == VK_RMENU) return ParsedModifier{static_cast<uint8_t>(mvk)};
             }
-            catch (...) {}
+            catch (...)
+            {
+            }
             return std::monostate{};
         }
 
@@ -1118,11 +1155,10 @@ namespace MoriaMods
         {
             return std::monostate{};
         }
-        if (idx >= 0 && idx < BIND_COUNT && vk > 0 && vk < 256)
-            return ParsedKeybind{idx, static_cast<uint8_t>(vk)};
+        if (idx >= 0 && idx < BIND_COUNT && vk > 0 && vk < 256) return ParsedKeybind{idx, static_cast<uint8_t>(vk)};
         return std::monostate{};
     }
 
-}
+} // namespace MoriaMods
 
 #endif

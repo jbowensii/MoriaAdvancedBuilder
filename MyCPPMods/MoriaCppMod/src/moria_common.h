@@ -4,7 +4,6 @@
 
 #pragma once
 
-
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -32,7 +31,6 @@
 #include <objidl.h>
 #include <gdiplus.h>
 #pragma comment(lib, "gdiplus.lib")
-
 
 #include <DynamicOutput/Output.hpp>
 #include <Mod/CppUserModBase.hpp>
@@ -98,14 +96,13 @@ namespace MoriaMods
     // Win32 API calls outside our mod (UE4SS internals, system code) are
     // unaffected because they don't include this header.
 #ifdef GetAsyncKeyState
-#  undef GetAsyncKeyState
+#undef GetAsyncKeyState
 #endif
 #define GetAsyncKeyState ::MoriaMods::focusedAsyncKeyState
 
-
     inline bool s_verbose = true;
     inline std::string s_language = "en";
-    inline std::string s_ue4ssWorkDir;  // set once in on_unreal_init from UE4SSProgram::get_working_directory
+    inline std::string s_ue4ssWorkDir; // set once in on_unreal_init from UE4SSProgram::get_working_directory
 
     inline std::string modPath(const char* relativePath)
     {
@@ -135,36 +132,52 @@ namespace MoriaMods
 
     // wideToUtf8 already defined in moria_testable.h (above) — re-using it.
 
-    #define VLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
+#define VLOG(...)                                                                                                                                              \
+    do                                                                                                                                                         \
+    {                                                                                                                                                          \
+        if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__);                                                                  \
+    } while (0)
 
-    #define QUICKBUILD_LOGGING 0
+#define QUICKBUILD_LOGGING 0
 
-    #if QUICKBUILD_LOGGING
-        #define QBLOG(...) do { if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__); } while (0)
-    #else
-        #define QBLOG(...) do {} while (0)
-    #endif
-
+#if QUICKBUILD_LOGGING
+#define QBLOG(...)                                                                                                                                             \
+    do                                                                                                                                                         \
+    {                                                                                                                                                          \
+        if (::MoriaMods::s_verbose) ::RC::Output::send<::RC::LogLevel::Warning>(__VA_ARGS__);                                                                  \
+    } while (0)
+#else
+#define QBLOG(...)                                                                                                                                             \
+    do                                                                                                                                                         \
+    {                                                                                                                                                          \
+    } while (0)
+#endif
 
     // Safe ProcessEvent wrapper — validates object and function before calling
     inline bool safeProcessEvent(UObject* obj, UFunction* fn, void* parms)
     {
-        if (!obj || !fn) {
+        if (!obj || !fn)
+        {
             VLOG(STR("[MoriaCppMod] [SAFE] ProcessEvent BLOCKED: obj={} fn={}\n"), (void*)obj, (void*)fn);
             return false;
         }
-        __try {
-            if (obj->HasAnyFlags(static_cast<EObjectFlags>(0x00400000))) { // RF_FinishDestroyed only
+        __try
+        {
+            if (obj->HasAnyFlags(static_cast<EObjectFlags>(0x00400000)))
+            { // RF_FinishDestroyed only
                 VLOG(STR("[MoriaCppMod] [SAFE] ProcessEvent BLOCKED: obj {} is FinishDestroyed\n"), (void*)obj);
                 return false;
             }
-            if (obj->IsUnreachable()) {
+            if (obj->IsUnreachable())
+            {
                 VLOG(STR("[MoriaCppMod] [SAFE] ProcessEvent BLOCKED: obj {} is Unreachable\n"), (void*)obj);
                 return false;
             }
             obj->ProcessEvent(fn, parms);
             return true;
-        } __except(1) {
+        }
+        __except (1)
+        {
             VLOG(STR("[MoriaCppMod] [SAFE] ProcessEvent CAUGHT SEH exception on obj={}\n"), (void*)obj);
             return false;
         }
@@ -172,7 +185,6 @@ namespace MoriaMods
 
     static constexpr float TRACE_DIST = 5000.0f;
     static constexpr float POS_TOLERANCE = 100.0f;
-
 
     // Hardcoded UE4.27 struct/property offsets used as the FALLBACK when
     // reflection-based lookup hasn't run yet (or failed). Every value below
@@ -203,15 +215,13 @@ namespace MoriaMods
     static constexpr int DT_ROWMAP_OFFSET = 0x30;
     static constexpr int SOFTCLASSPTR_ASSETPATH_FNAME = 0x10;
 
-
     struct TArrayView
     {
         uint8_t* data{nullptr};
-        int32_t  num{0};
-        int32_t  elemSize{0};
+        int32_t num{0};
+        int32_t elemSize{0};
 
         TArrayView() = default;
-
 
         TArrayView(FArrayProperty* arrProp, uint8_t* arrayField)
         {
@@ -226,8 +236,14 @@ namespace MoriaMods
             std::memcpy(&num, arrayField + 8, 4);
         }
 
-        [[nodiscard]] int32_t Num() const { return num; }
-        [[nodiscard]] bool IsValidIndex(int32_t idx) const { return idx >= 0 && idx < num && data != nullptr; }
+        [[nodiscard]] int32_t Num() const
+        {
+            return num;
+        }
+        [[nodiscard]] bool IsValidIndex(int32_t idx) const
+        {
+            return idx >= 0 && idx < num && data != nullptr;
+        }
 
         [[nodiscard]] uint8_t* GetRawPtr(int32_t idx) const
         {
@@ -235,7 +251,6 @@ namespace MoriaMods
             return data + idx * elemSize;
         }
     };
-
 
     struct FVec3f
     {
@@ -255,7 +270,6 @@ namespace MoriaMods
     };
     static_assert(sizeof(FTransformRaw) == 48, "FTransformRaw must be 48 bytes");
 
-
     struct GetInstanceCount_Params
     {
         int32_t ReturnValue{0};
@@ -272,7 +286,6 @@ namespace MoriaMods
     };
 #pragma pack(pop)
     static_assert(sizeof(GetInstanceTransform_Params) == 66, "Must be 66 bytes");
-
 
 #pragma pack(push, 1)
     struct FHitResultLocal
@@ -301,7 +314,6 @@ namespace MoriaMods
 #pragma pack(pop)
     static_assert(sizeof(FHitResultLocal) == 0x88, "FHitResult must be 136 bytes");
 
-
     struct RemovedInstance
     {
         RC::Unreal::FWeakObjectPtr component;
@@ -311,7 +323,6 @@ namespace MoriaMods
         bool isTypeRule{false};
         std::string typeRuleMeshId;
     };
-
 
     struct PSOffsets
     {
@@ -324,7 +335,6 @@ namespace MoriaMods
         int parmsSize{0};
         bool valid{false};
     };
-
 
     static constexpr int OVERLAY_SLOTS = 12;
 
@@ -363,17 +373,14 @@ namespace MoriaMods
             std::string jsonPath = locDir + lang + ".json";
             if (parseJsonFile(jsonPath))
             {
-                VLOG(STR("[MoriaCppMod] Loaded localization from {}\n"),
-                                                utf8ToWide(jsonPath));
+                VLOG(STR("[MoriaCppMod] Loaded localization from {}\n"), utf8ToWide(jsonPath));
             }
             else
             {
                 VLOG(STR("[MoriaCppMod] Using compiled English defaults (no localization file)\n"));
             }
         }
-    }
-
-
+    } // namespace Loc
 
     struct ConfigState
     {
@@ -387,14 +394,19 @@ namespace MoriaMods
 
     inline std::atomic<bool> s_pendingKeyLabelRefresh{false};
 
-
     struct CriticalSectionLock
     {
         CRITICAL_SECTION& cs;
-        explicit CriticalSectionLock(CRITICAL_SECTION& c) : cs(c) { EnterCriticalSection(&cs); }
-        ~CriticalSectionLock() { LeaveCriticalSection(&cs); }
+        explicit CriticalSectionLock(CRITICAL_SECTION& c) : cs(c)
+        {
+            EnterCriticalSection(&cs);
+        }
+        ~CriticalSectionLock()
+        {
+            LeaveCriticalSection(&cs);
+        }
         CriticalSectionLock(const CriticalSectionLock&) = delete;
         CriticalSectionLock& operator=(const CriticalSectionLock&) = delete;
     };
 
-}
+} // namespace MoriaMods
