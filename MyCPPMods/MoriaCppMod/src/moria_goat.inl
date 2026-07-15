@@ -3772,7 +3772,85 @@ ULONGLONG m_contReSetupAtMs{0};
 // path: write its members (storageHandle + components + screen ref),
 // then call its own 'Set Up Storage Container' (which ClearChildren's
 // the pane and builds the grid widget from the handle).
-void driveSaddlebagStorageContainer(UObject* screen, UObject* goatInv, UObject* playerInv, const uint8_t bagHandle[20], const wchar_t* tag)
+// [ChestTrace] Phase-0 diagnostic for the chest-flow saddlebag rework
+// (plan: duplicate the native CHEST open instead of the takeover). While
+// the player opens a REAL chest, log the StorageMode screen's show-
+// sequence events and dump the screen/container state after each, so the
+// mod can mirror the exact chest bind. Verbose-gated; capped per session.
+void traceChestOpenEvent(UObject* screen, const wchar_t* evt)
+{
+    if (!s_verbose) return;
+    static int s_traceLines = 0;
+    if (s_traceLines >= 60) return;
+    if (!screen || !isObjectAlive(screen)) return;
+    s_traceLines++;
+
+    VLOG(STR("[ChestTrace] ===== {} on screen={:p} =====\n"), evt, (void*)screen);
+
+    // Is this the UI manager's cached instance?
+    do
+    {
+        auto* getMgrFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Moria.MorUIManager:BPGetManager"));
+        auto* mgrCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Moria.Default__MorUIManager"));
+        if (!getMgrFn || !mgrCDO || !m_localPC || !isObjectAlive(m_localPC)) break;
+        std::vector<uint8_t> gb(getMgrFn->GetParmsSize(), 0);
+        writeGoatParm<UObject*>(getMgrFn, gb.data(), STR("WorldContextObject"), m_localPC);
+        if (!safeProcessEvent(mgrCDO, getMgrFn, gb.data())) break;
+        UObject* mgr = readGoatParm<UObject*>(getMgrFn, gb.data(), STR("ReturnValue"), nullptr);
+        if (!mgr || !isObjectAlive(mgr)) break;
+        auto* getScreenFn = mgr->GetFunctionByNameInChain(STR("GetScreen"));
+        if (!getScreenFn) { VLOG(STR("[ChestTrace] mgr={:p} but GetScreen fn missing\n"), (void*)mgr); break; }
+        std::vector<uint8_t> sb(getScreenFn->GetParmsSize(), 0);
+        writeGoatParm<UClass*>(getScreenFn, sb.data(), STR("ScreenClass"), screen->GetClassPrivate());
+        if (!safeProcessEvent(mgr, getScreenFn, sb.data())) break;
+        UObject* mgrScreen = readGoatParm<UObject*>(getScreenFn, sb.data(), STR("ReturnValue"), nullptr);
+        VLOG(STR("[ChestTrace]   uiMgr={:p} GetScreen(StorageMode)={:p} sameAsEvent={}\n"),
+             (void*)mgr, (void*)mgrScreen, mgrScreen == screen ? STR("YES") : STR("NO"));
+    } while (false);
+
+    // Screen-level members.
+    if (auto* p = screen->GetValuePtrByPropertyNameInChain<bool>(STR("isOpenedFromNPC")))
+        VLOG(STR("[ChestTrace]   screen.isOpenedFromNPC={}\n"), *p);
+    if (auto* p = screen->GetValuePtrByPropertyNameInChain<bool>(STR("isStorageView")))
+        VLOG(STR("[ChestTrace]   screen.isStorageView={}\n"), *p);
+    if (auto* p = screen->GetValuePtrByPropertyNameInChain<UObject*>(STR("AssociatedNPC")))
+        VLOG(STR("[ChestTrace]   screen.AssociatedNPC={:p} ({})\n"), (void*)*p, *p ? safeClassName(*p).c_str() : STR("null"));
+    if (auto* p = screen->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageObject")))
+        VLOG(STR("[ChestTrace]   screen.StorageObject={:p} ({})\n"), (void*)*p, *p ? safeClassName(*p).c_str() : STR("null"));
+
+    // Container-level members.
+    UObject* cont = jw_findChildInTree(screen, STR("WBP_UI_Inventory_Storage_Container"));
+    if (!cont || !isObjectAlive(cont))
+    {
+        VLOG(STR("[ChestTrace]   Storage_Container child NOT FOUND\n"));
+        return;
+    }
+    if (auto* p = cont->GetValuePtrByPropertyNameInChain<uint8_t>(STR("storageHandle")))
+    {
+        wchar_t hex[80]; int off = 0;
+        for (int i = 0; i < 20 && off < 76; i++) off += swprintf(hex + off, 80 - off, L"%02X ", p[i]);
+        int32_t id = *reinterpret_cast<int32_t*>(p);
+        UObject* owner = nullptr;
+        // FWeakObjectPtr at +8 — resolve via the same layout the mod writes.
+        VLOG(STR("[ChestTrace]   cont.storageHandle id={} bytes=[{}]\n"), id, hex);
+        (void)owner;
+    }
+    if (auto* p = cont->GetValuePtrByPropertyNameInChain<uint8_t>(STR("InteractableRef")))
+    {
+        UObject* obj = *reinterpret_cast<UObject**>(p);
+        VLOG(STR("[ChestTrace]   cont.InteractableRef obj={:p} ({})\n"), (void*)obj,
+             (obj && isObjectAlive(obj)) ? safeClassName(obj).c_str() : STR("null/dead"));
+    }
+    if (auto* p = cont->GetValuePtrByPropertyNameInChain<UObject*>(STR("storageInventoryComponent")))
+        VLOG(STR("[ChestTrace]   cont.storageInventoryComponent={:p} ({})\n"), (void*)*p, *p ? safeClassName(*p).c_str() : STR("null"));
+    if (auto* p = cont->GetValuePtrByPropertyNameInChain<UObject*>(STR("InventoryComponent")))
+        VLOG(STR("[ChestTrace]   cont.InventoryComponent={:p} ({})\n"), (void*)*p, *p ? safeClassName(*p).c_str() : STR("null"));
+    if (auto* p = cont->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageScreenRef")))
+        VLOG(STR("[ChestTrace]   cont.StorageScreenRef={:p}\n"), (void*)*p);
+}
+
+void driveSaddlebagStorageContainer(UObject* screen, UObject* goatInv, UObject* playerInv, const uint8_t bagHandle[20], const wchar_t* tag,
+                                    UObject* interactableOverride = nullptr)
 {
     UObject* cont = jw_findChildInTree(screen, STR("WBP_UI_Inventory_Storage_Container"));
     if (!cont || !isObjectAlive(cont))
@@ -3807,7 +3885,18 @@ void driveSaddlebagStorageContainer(UObject* screen, UObject* goatInv, UObject* 
     {
         UObject* prev = *reinterpret_cast<UObject**>(p);
         std::memset(p, 0, 16);
-        VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.110] InteractableRef was {:p} -> NULLED (kills NPC-type classification)\n"), (void*)prev);
+        // [ChestFlow] When a chest-like actor is supplied, write it as the
+        // interactable so any native rebuild classifies the pane as a CHEST
+        // (generic DT-driven grid) instead of re-deriving the goat → NPC →
+        // hardcoded dwarf 4x3. Interface half left null; the BP validity
+        // check keys off the object.
+        if (interactableOverride && isObjectAlive(interactableOverride))
+        {
+            *reinterpret_cast<UObject**>(p) = interactableOverride;
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] [{}] InteractableRef was {:p} -> chest {:p}\n"), tag, (void*)prev, (void*)interactableOverride);
+        }
+        else
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.110] InteractableRef was {:p} -> NULLED (kills NPC-type classification)\n"), (void*)prev);
     }
     else
         VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.110] InteractableRef property NOT FOUND\n"));
@@ -3827,6 +3916,119 @@ void driveSaddlebagStorageContainer(UObject* screen, UObject* goatInv, UObject* 
     }
     else
         VLOG(STR("[MoriaCppMod] [GoatSaddle] [{}] 'Set Up Storage Container' fn NOT FOUND\n"), tag);
+}
+
+// [ChestFlow 2026-07-15] Open the Saddlebags exactly the way a CHEST
+// opens (trace-verified): use the UI MANAGER's cached StorageMode screen
+// and show it natively so the manager owns input mode — native drag,
+// native shift/ctrl-right-click stack splitting, native close; no 10 Hz
+// input re-assert, no 4 Hz pane sweep. The container is driven once
+// AFTER the show sequence (the native RebindThisPack that runs during
+// Show writes an empty bind — driving after wins), with the hidden goat
+// chest as InteractableRef so any native rebuild classifies the pane as
+// a chest (generic DT-driven grid), never the goat → NPC → dwarf 4x3.
+FWeakObjectPtr m_sbChestFlowScreen;
+
+void openSaddlebagsChestFlow(UObject* goat, UObject* playerInv, const uint8_t bagHandle[20])
+{
+    // Toggle: pressing Saddlebags while our screen is up closes it.
+    if (UObject* prev = m_sbChestFlowScreen.Get())
+    {
+        if (isObjectAlive(prev))
+        {
+            bool showing = false;
+            if (auto* showingFn = prev->GetFunctionByNameInChain(STR("IsShowing")))
+            {
+                std::vector<uint8_t> b(showingFn->GetParmsSize(), 0);
+                if (safeProcessEvent(prev, showingFn, b.data()))
+                    if (auto* pr = findParam(showingFn, STR("ReturnValue"))) showing = *(b.data() + pr->GetOffset_Internal()) != 0;
+            }
+            if (showing)
+            {
+                if (auto* hideFn = prev->GetFunctionByNameInChain(STR("Hide")))
+                {
+                    std::vector<uint8_t> b(hideFn->GetParmsSize(), 0);
+                    safeProcessEvent(prev, hideFn, b.data());
+                }
+                m_sbChestFlowScreen = FWeakObjectPtr();
+                VLOG(STR("[MoriaCppMod] [ChestFlow] toggle — screen hidden via native Hide\n"));
+                return;
+            }
+        }
+        m_sbChestFlowScreen = FWeakObjectPtr();
+    }
+
+    // Resolve the UI manager and ITS cached StorageMode instance.
+    auto* getMgrFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Moria.MorUIManager:BPGetManager"));
+    auto* mgrCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Moria.Default__MorUIManager"));
+    UObject* ctx = (m_localPC && isObjectAlive(m_localPC)) ? m_localPC : goat;
+    UObject* mgr = nullptr;
+    if (getMgrFn && mgrCDO && ctx)
+    {
+        std::vector<uint8_t> gb(getMgrFn->GetParmsSize(), 0);
+        writeGoatParm<UObject*>(getMgrFn, gb.data(), STR("WorldContextObject"), ctx);
+        if (safeProcessEvent(mgrCDO, getMgrFn, gb.data()))
+            mgr = readGoatParm<UObject*>(getMgrFn, gb.data(), STR("ReturnValue"), nullptr);
+    }
+    const wchar_t* screenPath = STR("/Game/UI/Inventory/WBP_UI_Inventory_Screen_StorageMode.WBP_UI_Inventory_Screen_StorageMode_C");
+    UClass* screenCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, screenPath);
+    UObject* screen = nullptr;
+    if (mgr && isObjectAlive(mgr) && screenCls)
+    {
+        if (auto* getScreenFn = mgr->GetFunctionByNameInChain(STR("GetScreen")))
+        {
+            std::vector<uint8_t> sb(getScreenFn->GetParmsSize(), 0);
+            writeGoatParm<UClass*>(getScreenFn, sb.data(), STR("ScreenClass"), screenCls);
+            if (safeProcessEvent(mgr, getScreenFn, sb.data()))
+                screen = readGoatParm<UObject*>(getScreenFn, sb.data(), STR("ReturnValue"), nullptr);
+        }
+    }
+    if (!screen || !isObjectAlive(screen))
+    {
+        VLOG(STR("[MoriaCppMod] [ChestFlow] manager/screen unavailable (mgr={:p} cls={:p}) — falling back to legacy takeover\n"),
+             (void*)mgr, (void*)screenCls);
+        openStorageWidgetForHandle(goat, playerInv, bagHandle);
+        return;
+    }
+
+    // Chest-state per the trace: NOT an NPC open, storage view, no NPC refs.
+    setBoolProp(screen, STR("isOpenedFromNPC"), false);
+    setBoolProp(screen, STR("isStorageView"), true);
+    if (auto* p = screen->GetValuePtrByPropertyNameInChain<UObject*>(STR("AssociatedNPC"))) *p = nullptr;
+    if (auto* p = screen->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageObject"))) *p = nullptr;
+
+    // Classification shield for native rebuilds.
+    spawnHiddenGoatChest(goat);
+    UObject* chest = (m_hiddenGoatChest && isObjectAlive(m_hiddenGoatChest)) ? m_hiddenGoatChest : nullptr;
+
+    // Native show FIRST — the manager takes input ownership here.
+    if (auto* showFn = screen->GetFunctionByNameInChain(STR("Show")))
+    {
+        std::vector<uint8_t> b(showFn->GetParmsSize(), 0);
+        if (!safeProcessEvent(screen, showFn, b.data()))
+        {
+            VLOG(STR("[MoriaCppMod] [ChestFlow] Show PE FAILED — falling back to legacy takeover\n"));
+            openStorageWidgetForHandle(goat, playerInv, bagHandle);
+            return;
+        }
+    }
+    else
+    {
+        VLOG(STR("[MoriaCppMod] [ChestFlow] Show fn missing — falling back to legacy takeover\n"));
+        openStorageWidgetForHandle(goat, playerInv, bagHandle);
+        return;
+    }
+
+    // Drive the container once with the pack handle (after the show
+    // sequence, which native-writes an empty bind).
+    driveSaddlebagStorageContainer(screen, playerInv, playerInv, bagHandle, STR("chest-flow"), chest);
+    m_sbGoatInvCache = playerInv;
+    m_sbPlayerInvCache = playerInv;
+    std::memcpy(m_sbHandleCache, bagHandle, 20);
+    m_sbChestFlowScreen = FWeakObjectPtr(screen);
+    m_sbWidgetOpenMs = GetTickCount64();
+    VLOG(STR("[MoriaCppMod] [ChestFlow] OPEN via UI manager: screen={:p} chest={:p} (native input/split/close)\n"),
+         (void*)screen, (void*)chest);
 }
 
 // [rc.67 STORAGE WIDGET HELPER 2026-06-29] Spawn vanilla
@@ -4536,7 +4738,13 @@ void openGoatSaddlebagInventory()
                         std::memcpy(ph + 8, &wpP, sizeof(wpP));
                         equipPorterSaddlebag(goat); // visual saddle on the goat (rc.87, cosmetic)
                         VLOG(STR("[MoriaCppMod] [rc.136] opening PLAYER-side pack container id={} via goat menu\n"), cid);
-                        openStorageWidgetForHandle(goat, pInvF, ph);
+                        // [ChestFlow] native chest-style open via the UI
+                        // manager (default); legacy takeover kept behind
+                        // [GoatCompanion] ChestFlowUI=false as a fallback.
+                        if (m_chestFlowUI)
+                            openSaddlebagsChestFlow(goat, pInvF, ph);
+                        else
+                            openStorageWidgetForHandle(goat, pInvF, ph);
                         m_storageSuppressAtMs = GetTickCount64() + 1500;
                         m_storageHarvestAtMs = GetTickCount64() + 1200;
                         return;

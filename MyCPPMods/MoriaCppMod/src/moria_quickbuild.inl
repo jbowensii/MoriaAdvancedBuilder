@@ -137,6 +137,7 @@ void saveConfig()
     // [rc.52 2026-05-12] Porter Goat companion settings.
     file << "\n[GoatCompanion]\n";
     file << "Name = " << wideToUtf8(m_goatName) << "\n";
+    file << "ChestFlowUI = " << (m_chestFlowUI ? "true" : "false") << "\n";
 
     // [Cheats]: only "true" entries written; absent keys = false.
     {
@@ -393,6 +394,10 @@ void loadConfig()
                     if (strEqualCI(kv->key, "Name"))
                     {
                         if (!kv->value.empty()) m_goatName = utf8ToWide(kv->value);
+                    }
+                    else if (strEqualCI(kv->key, "ChestFlowUI"))
+                    {
+                        m_chestFlowUI = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
                     }
                 }
                 else if (strEqualCI(section, "Cheats"))

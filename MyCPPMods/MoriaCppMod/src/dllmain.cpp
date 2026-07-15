@@ -53,6 +53,9 @@ namespace MoriaMods
         ULONGLONG m_lastBellToggleMs{0};
         // [rc.52] Goat companion settings (persisted via MoriaCppMod.ini [GoatCompanion]).
         std::wstring m_goatName{L"Rûdh"}; // default "Rûdh"
+        // [ChestFlow] Saddlebags open like a native chest via the UI manager
+        // (input/split/close all native). false = legacy takeover fallback.
+        bool m_chestFlowUI{true};
         // [rc.22] Test 3 saddlebag widget — spawned on saddlebag click, dismissed by ESC.
         UObject* m_test3SaddlebagWidget{nullptr};
         ULONGLONG m_lastGoatMenuMs{0}; // E-press dedupe cooldown
@@ -1448,6 +1451,22 @@ namespace MoriaMods
                     if (ctxCls == STR("UI_WBP_InteractionMenu_C"))
                     {
                         s_instance->onInteractMenuShownPost(context);
+                    }
+                }
+
+                // [ChestTrace] Phase-0 chest-flow diagnostic (verbose-only):
+                // capture the StorageMode screen's native show sequence while
+                // the player opens a REAL chest, so the saddlebag open can
+                // mirror the exact chest bind. Cheap name compares first.
+                if (context &&
+                    (wcscmp(fnStr2, STR("OnBindInputs")) == 0 || wcscmp(fnStr2, STR("OnBeforeShow")) == 0 ||
+                     wcscmp(fnStr2, STR("RebindThisPack")) == 0 || wcscmp(fnStr2, STR("OnCustomFocusSet")) == 0 ||
+                     wcscmp(fnStr2, STR("OnAfterShow")) == 0))
+                {
+                    std::wstring ctxCls = safeClassName(context);
+                    if (ctxCls == STR("WBP_UI_Inventory_Screen_StorageMode_C"))
+                    {
+                        s_instance->traceChestOpenEvent(context, fnStr2);
                     }
                 }
 
@@ -3354,6 +3373,9 @@ namespace MoriaMods
                     m_newBuildingBarSpawnAttempted = false;
                     m_repositionHudMode = false;
                     m_bellInHand = false;
+                    // [ChestFlow] screen + hidden chest die with the world.
+                    m_sbChestFlowScreen = FWeakObjectPtr{};
+                    m_hiddenGoatChest = nullptr;
 
                     // Settings-screen widget UClasses were captured off LIVE
                     // widget instances — stale after world transitions; a
