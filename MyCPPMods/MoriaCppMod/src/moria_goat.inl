@@ -4352,6 +4352,9 @@ void tickPendingStorageHarvest()
             {
                 if (!w || !isObjectAlive(w)) continue;
                 if (w == m_test3SaddlebagWidget) continue;
+                // [ChestFlow] the manager's native instance IS our screen
+                // on the chest-flow path — never collapse it.
+                if (w == m_sbChestFlowScreen.Get()) continue;
                 bool inViewport = false;
                 if (auto* ivFn = cachedFnInChain(w, STR("IsInViewport")))
                 {
@@ -4396,7 +4399,7 @@ void tickPendingStorageHarvest()
         for (auto* w : all)
         {
             if (!w || !isObjectAlive(w)) continue;
-            bool ours = (w == m_test3SaddlebagWidget);
+            bool ours = (w == m_test3SaddlebagWidget) || (w == m_sbChestFlowScreen.Get());
             bool inViewport = false;
             if (auto* ivFn = w->GetFunctionByNameInChain(STR("IsInViewport")))
             {
