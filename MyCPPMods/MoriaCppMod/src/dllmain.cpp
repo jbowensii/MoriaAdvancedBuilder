@@ -2710,8 +2710,13 @@ namespace MoriaMods
             // MC keybind polling: dispatch independent of any toolbar widget.
             // Suppressed while Settings UI is open so rebind keystrokes don't
             // double as gameplay actions.
-            // [rc.139] Also gated on the Advanced Builder master switch.
-            if (m_advBuilderActive && m_characterLoaded && !isSettingsScreenOpen())
+            // NOT gated on the Advanced Builder master switch: MC keys carry
+            // non-builder utilities (fly/hide, target info, integrity check,
+            // HISM removal) that must work without pressing '='. The '='
+            // toggle gates only the building bar, F1-F8 quick build, and
+            // handle-resolve priming. (v8.2.0 briefly gated this loop too,
+            // which players reported as "flying is broken.")
+            if (m_characterLoaded && !isSettingsScreenOpen())
             {
                 static bool s_lastMcKey[MC_SLOTS]{};
 
