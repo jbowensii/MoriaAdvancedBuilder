@@ -4101,6 +4101,18 @@ void dumpScreenForensics(UObject* scr, const wchar_t* label)
     for (const wchar_t* bn : {STR("isStorageView"), STR("isOpenedFromNPC")})
         if (auto* bp = resolveBoolProperty(scr, bn))
             VLOG(STR("[Forensics] {}={}\n"), bn, bp->GetPropertyValueInContainer(scr));
+    // Native unreflected tail (0x3C8 StorageObject .. 0x3D7): the
+    // opened-with-storage / from-interact flags live here per layout.
+    {
+        uint8_t* base = reinterpret_cast<uint8_t*>(scr);
+        if (isReadableMemory(base + 0x3C8, 0x10))
+        {
+            wchar_t hex[64];
+            int off = 0;
+            for (int i = 0; i < 0x10 && off < 60; i++) off += swprintf(hex + off, 64 - off, L"%02X ", base[0x3C8 + i]);
+            VLOG(STR("[Forensics] tail 0x3C8-0x3D7: {}\n"), hex);
+        }
+    }
 
     int lines = 0;
     std::function<void(UObject*, int)> walk = [&](UObject* w, int depth) {
@@ -4503,6 +4515,29 @@ void tickChestFlowDeferredDrive()
     if (drifted)
         driveSaddlebagStorageContainer(scr, m_sbGoatInvCache, m_sbPlayerInvCache, m_sbHandleCache, STR("chest-flow drive"), chest);
     applyChestFlowScreenDressing(scr);
+
+    // [v3 2026-07-16] Forensic diff verdict: ONLY isStorageView (+ its
+    // background swap) differs between a rendering native-chest screen
+    // and ours — the screen's tick recomputes isStorageView from the
+    // NATIVE "opened with storage / activated from interact" state that
+    // only the real interact-open sets. Those flags are UNREFLECTED;
+    // by layout (UMorInventoryScreen size 0x3D8, StorageObject @0x3C8)
+    // they live in the 0x3D0-0x3D7 tail. No reflective path exists
+    // (WasOpenedWithStorage/IsActivatedFromInteract are pure getters),
+    // so write the suspected flag bytes directly — precedent: NpcInfo
+    // raw walks. Hex-logged before writing for verification.
+    {
+        uint8_t* base = reinterpret_cast<uint8_t*>(scr);
+        if (isReadableMemory(base + 0x3C8, 0x10))
+        {
+            wchar_t hex[64];
+            int off = 0;
+            for (int i = 0; i < 0x10 && off < 60; i++) off += swprintf(hex + off, 64 - off, L"%02X ", base[0x3C8 + i]);
+            VLOG(STR("[MoriaCppMod] [ChestFlow] screen tail 0x3C8-0x3D7 pre-write: {}\n"), hex);
+            base[0x3D0] = 1; // suspected bOpenedWithStorage
+            base[0x3D1] = 1; // suspected bActivatedFromInteract
+        }
+    }
 
     // [v2] Reveal animations — once per show (the actual render fix).
     if (!m_chestFlowAnimsPlayed)
