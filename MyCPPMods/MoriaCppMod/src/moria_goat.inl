@@ -4162,13 +4162,49 @@ void tickChestFlowDeferredDrive()
     // real chest keeps the storage view. Point it at the hidden chest.
     if (chest)
         if (auto* p = scr->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageObject"))) *p = chest;
-    driveSaddlebagStorageContainer(scr, m_sbGoatInvCache, m_sbPlayerInvCache, m_sbHandleCache, STR("chest-flow drive"), chest);
+
+    // Rebuild the grid only when the handle actually drifted — the
+    // rebuild (ClearChildren) is the flash source; clean passes just
+    // re-dress.
+    bool drifted = true;
+    if (UObject* cont0 = m_sbChestFlowCont.Get())
+        if (isObjectAlive(cont0))
+            if (auto* hp = cont0->GetValuePtrByPropertyNameInChain<uint8_t>(STR("storageHandle")))
+                drifted = (std::memcmp(hp, m_sbHandleCache, 20) != 0);
+    if (drifted)
+        driveSaddlebagStorageContainer(scr, m_sbGoatInvCache, m_sbPlayerInvCache, m_sbHandleCache, STR("chest-flow drive"), chest);
     applyChestFlowScreenDressing(scr);
+
+    // [2026-07-16] Opacity insurance: the E-press that opened the goat
+    // menu can reach the fresh screen as OnInteractInput and start a
+    // fade-out — the screen stays "Showing"/Visible/in-viewport but
+    // renders at opacity 0 (this session: all flags good, nothing on
+    // screen). Force full opacity every pass.
+    float opBefore = -1.0f;
+    if (auto* op = scr->GetValuePtrByPropertyNameInChain<float>(STR("RenderOpacity"))) opBefore = *op;
+    if (auto* sroFn = scr->GetFunctionByNameInChain(STR("SetRenderOpacity")))
+    {
+        std::vector<uint8_t> b(sroFn->GetParmsSize(), 0);
+        if (auto* p = findParam(sroFn, STR("InOpacity"))) *reinterpret_cast<float*>(b.data() + p->GetOffset_Internal()) = 1.0f;
+        try
+        {
+            safeProcessEvent(scr, sroFn, b.data());
+        }
+        catch (...)
+        {
+        }
+    }
+
     // Cache the container child so the rebind hook can compare handles
     // without a tree walk (memory read only — no PE inside hooks).
     if (UObject* cont = jw_findChildInTree(scr, STR("WBP_UI_Inventory_Storage_Container")))
         m_sbChestFlowCont = FWeakObjectPtr(cont);
-    VLOG(STR("[MoriaCppMod] [ChestFlow] deferred drive #{} applied (screen={:p})\n"), m_chestFlowDriveCount, (void*)scr);
+    VLOG(STR("[MoriaCppMod] [ChestFlow] pass #{}: drifted={} opacityBefore={:.2f} (screen={:p})\n"),
+         m_chestFlowDriveCount, drifted ? STR("YES") : STR("no"), opBefore, (void*)scr);
+
+    // Late verify pass: catches a fade/hide that lands after this pass.
+    if (m_chestFlowDriveCount < 4)
+        m_chestFlowDriveAtMs = GetTickCount64() + 900;
 }
 
 void openSaddlebagsChestFlow(UObject* goat, UObject* playerInv, const uint8_t bagHandle[20])
