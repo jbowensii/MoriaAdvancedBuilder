@@ -1511,6 +1511,46 @@ namespace MoriaMods
                     }
                 }
 
+                // [ChestFlow v6 2026-07-16] Interact-selection redirect.
+                // ActivateHud(bFromInteract=true) fixed IsActivatedFromInteract
+                // (v5 log: 8x8 rendered) but the WBP derives the storage
+                // TARGET from the interact component's selection — the GOAT
+                // (E-menu) — so the initial bind and every drag-time rebind
+                // classified NPC (dwarf pane) and fought our correction
+                // (flashing). GetSelectedInteractable is BlueprintPure: BP
+                // callers get it via ProcessEvent, so rewriting ReturnValue
+                // here redirects ONLY script callers, only while our screen
+                // is bound to the hidden chest (StorageObject==chest, which
+                // the native close unbinds). The real selection member and
+                // all native readers stay untouched. Plain memory ops only.
+                if (parms && wcscmp(fnStr2, STR("GetSelectedInteractable")) == 0 && s_instance->m_chestFlowUI)
+                {
+                    UObject* chest = s_instance->m_hiddenGoatChest;
+                    UObject* scr = s_instance->m_sbChestFlowScreen.Get();
+                    if (chest && scr && isObjectAlive(chest) && isObjectAlive(scr))
+                    {
+                        UObject* bound = nullptr;
+                        if (auto* sp = scr->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageObject"))) bound = *sp;
+                        if (bound == chest)
+                        {
+                            if (auto* rv = findParam(func, STR("ReturnValue")))
+                            {
+                                auto* slot = reinterpret_cast<UObject**>(static_cast<uint8_t*>(parms) + rv->GetOffset_Internal());
+                                UObject* was = slot[0];
+                                slot[0] = chest;   // TScriptInterface.ObjectPointer
+                                slot[1] = nullptr; // .InterfacePointer — BP callers use the object only
+                                static int s_selRedirectLogs = 8;
+                                if (s_selRedirectLogs > 0)
+                                {
+                                    --s_selRedirectLogs;
+                                    VLOG(STR("[MoriaCppMod] [ChestFlow] GetSelectedInteractable redirected {:p} -> chest {:p}\n"),
+                                         (void*)was, (void*)chest);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // rc.26: event-driven NPC blocked-bed trigger.
                 // SetCurrentActivity is the canonical UFunction the
                 // game calls when an NPC's activity transitions; its
