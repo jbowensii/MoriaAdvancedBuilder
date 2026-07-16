@@ -3986,7 +3986,80 @@ FWeakObjectPtr m_sbChestFlowScreen;
 // hook re-arms this timer after RebindThisPack/OnAfterShow; the tick
 // then drives our pack bind once the native pass is done.
 ULONGLONG m_chestFlowDriveAtMs{0};
-int m_chestFlowDriveCount{0}; // per-open cap (loop guard)
+ULONGLONG m_chestFlowLastDriveMs{0}; // echo suppression: our own drive fires a RebindThisPack echo
+int m_chestFlowDriveCount{0};        // per-open cap (loop guard)
+
+// Screen-level "storage view" dressing. The container bind alone leaves
+// the LEFT pane invisible: the screen only shows the storage overlay
+// after its view-switch runs (HandleStorageView) — a real chest gets
+// this from the native flow via StorageObject; our open must do it
+// explicitly (2026-07-16: bind verified correct in trace, pane still
+// blank until this ran). Idempotent.
+void applyChestFlowScreenDressing(UObject* scr)
+{
+    if (auto* p = scr->GetValuePtrByPropertyNameInChain<uint8_t>(STR("storageInventoryHandle")))
+        std::memcpy(p, m_sbHandleCache, 20);
+
+    if (auto* hsvFn = scr->GetFunctionByNameInChain(STR("HandleStorageView")))
+    {
+        std::vector<uint8_t> b(hsvFn->GetParmsSize(), 0);
+        for (auto* p : hsvFn->ForEachProperty())
+        {
+            if (!p) continue;
+            std::wstring pn, pt;
+            try
+            {
+                pn = p->GetName();
+                pt = p->GetClass().GetName();
+            }
+            catch (...)
+            {
+                continue;
+            }
+            if (pt == STR("BoolProperty"))
+            {
+                bool val = false;
+                if (pn.find(STR("NPC")) != std::wstring::npos || pn.find(STR("Npc")) != std::wstring::npos)
+                    val = false;
+                else if (pn.find(STR("torage")) != std::wstring::npos || pn.find(STR("View")) != std::wstring::npos ||
+                         pn.find(STR("Show")) != std::wstring::npos || pn.find(STR("Enable")) != std::wstring::npos)
+                    val = true;
+                b[p->GetOffset_Internal()] = val ? 1 : 0;
+            }
+        }
+        try
+        {
+            safeProcessEvent(scr, hsvFn, b.data());
+        }
+        catch (...)
+        {
+        }
+    }
+
+    // Overlay/background visibility (what the 4 Hz sweep used to force).
+    auto setVis = [&](const wchar_t* childName, uint8_t v) {
+        UObject* c = jw_findChildInTree(scr, childName);
+        if (!c || !isObjectAlive(c)) return;
+        if (auto* f = cachedFnInChain(c, STR("SetVisibility")))
+        {
+            std::vector<uint8_t> vb(f->GetParmsSize(), 0);
+            vb[0] = v;
+            try
+            {
+                safeProcessEvent(c, f, vb.data());
+            }
+            catch (...)
+            {
+            }
+        }
+    };
+    setVis(STR("storageOverlay"), 4);      // SelfHitTestInvisible
+    setVis(STR("Background"), 1);          // Collapsed
+    setVis(STR("BackgroundWStorage"), 0);  // Visible
+    setVis(STR("NPCTitleCluster"), 1);
+    setVis(STR("SkillPanel"), 1);
+    setVis(STR("NPCDetailsBox"), 1);
+}
 
 // Runs from the main tick: (re)binds the pack onto the chest-flow screen.
 void tickChestFlowDeferredDrive()
@@ -3998,11 +4071,13 @@ void tickChestFlowDeferredDrive()
     if (!scr || !isObjectAlive(scr)) return;
     if (!m_sbPlayerInvCache || !isObjectAlive(m_sbPlayerInvCache)) return;
     m_chestFlowDriveCount++;
+    m_chestFlowLastDriveMs = GetTickCount64();
     setBoolProp(scr, STR("isOpenedFromNPC"), false);
     setBoolProp(scr, STR("isStorageView"), true);
     if (auto* p = scr->GetValuePtrByPropertyNameInChain<UObject*>(STR("AssociatedNPC"))) *p = nullptr;
     UObject* chest = (m_hiddenGoatChest && isObjectAlive(m_hiddenGoatChest)) ? m_hiddenGoatChest : nullptr;
     driveSaddlebagStorageContainer(scr, m_sbGoatInvCache, m_sbPlayerInvCache, m_sbHandleCache, STR("chest-flow drive"), chest);
+    applyChestFlowScreenDressing(scr);
     VLOG(STR("[MoriaCppMod] [ChestFlow] deferred drive #{} applied (screen={:p})\n"), m_chestFlowDriveCount, (void*)scr);
 }
 

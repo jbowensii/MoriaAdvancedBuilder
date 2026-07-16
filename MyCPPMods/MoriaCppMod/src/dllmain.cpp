@@ -1207,9 +1207,12 @@ namespace MoriaMods
                                             }
                                             if (clsName == STR("EQ_GoatBell_C"))
                                             {
-                                                // [rc.98 2026-07-10] summon re-enabled (our mod owns summon)
-                                                VLOG(STR("[MoriaCppMod] [BellHook] *** bell ServerUse (hotbar) ID={} — firing toggleGoatFromBell ***\n"), handleID);
-                                                s_instance->toggleGoatFromBell();
+                                                // [2026-07-16 user spec] SELECTING the bell on the
+                                                // toolbar must do NOTHING — only a gameplay LMB with
+                                                // the bell in hand (or an inventory right-click)
+                                                // rings it. Track in-hand state only.
+                                                s_instance->m_bellInHand = true;
+                                                VLOG(STR("[MoriaCppMod] [BellHook] bell selected (hotbar) ID={} — in-hand tracked, no summon\n"), handleID);
                                             }
                                         }
                                     }
@@ -1475,7 +1478,12 @@ namespace MoriaMods
                         if (context == s_instance->m_sbChestFlowScreen.Get() &&
                             (wcscmp(fnStr2, STR("RebindThisPack")) == 0 || wcscmp(fnStr2, STR("OnAfterShow")) == 0))
                         {
-                            s_instance->m_chestFlowDriveAtMs = GetTickCount64() + 30;
+                            // Echo suppression: our own drive fires a
+                            // RebindThisPack echo ~10ms later — re-arming on
+                            // it looped drive→echo→drive (6x, 2026-07-16 log).
+                            ULONGLONG nowT = GetTickCount64();
+                            if (nowT - s_instance->m_chestFlowLastDriveMs > 150)
+                                s_instance->m_chestFlowDriveAtMs = nowT + 30;
                         }
                     }
                 }
@@ -3389,6 +3397,7 @@ namespace MoriaMods
                     m_hiddenGoatChest = nullptr;
                     m_chestFlowDriveAtMs = 0;
                     m_chestFlowDriveCount = 0;
+                    m_chestFlowLastDriveMs = 0;
                     m_bellSeedDone = false;
                     m_cachedBellID = 0;
 
