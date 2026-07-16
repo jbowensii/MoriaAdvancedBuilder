@@ -1439,7 +1439,11 @@ void spawnHiddenGoatChest(UObject* goat)
     }
     FTransformRaw xform{};
     xform.Rotation = {0.0f, 0.0f, 0.0f, 1.0f};
-    xform.Translation = {loc.X, loc.Y, loc.Z - 50.0f}; // slightly under the goat
+    // 3000 units under the world: the chest is only a POINTER target
+    // (StorageObject/InteractableRef) — if it sits near the goat its
+    // interaction prompt floats in the world ("Open Chest" in mid-air,
+    // 2026-07-16 report) and it persists into the save at that spot.
+    xform.Translation = {loc.X, loc.Y, loc.Z - 3000.0f};
     xform.Scale3D = {1.0f, 1.0f, 1.0f};
 
     std::vector<uint8_t> buf(m_goatBeginSpawnFn->GetParmsSize(), 0);
@@ -3049,6 +3053,54 @@ bool m_goatSaddlebagDiagDumped{false};
 // [rc.64 B3 HELPER 2026-06-28] Walk player's MorInventoryComponent
 // Items.List and return the FItemInstance ID whose Item UClass name
 // matches the given class-name substring. Returns 0 if not found.
+// [ChestSweep 2026-07-16] Earlier builds spawned the hidden broker chest
+// AT the goat's position; receptacles persist in the world save, so old
+// spots kept an invisible chest with a floating "Open Chest" prompt.
+// One-shot at character load: destroy every HIDDEN receptacle of the
+// phantom classes (legit world chests are never hidden).
+void sweepStrandedHiddenChests()
+{
+    static const wchar_t* kChestClasses[] = {
+        STR("BP_ChestReceptacle_C"),
+        STR("BP_SmallChestReceptacle_C"),
+        STR("BP_StorageChest_Construction_C"),
+        STR("BP_FallBackReceptacle_C"),
+        STR("BP_BarrelReceptacle_C"),
+    };
+    int destroyed = 0;
+    for (const wchar_t* cls : kChestClasses)
+    {
+        std::vector<UObject*> found;
+        if (!seh_findAllOf(cls, &found)) continue;
+        for (UObject* a : found)
+        {
+            if (!a || !isObjectAlive(a)) continue;
+            if (a == m_hiddenGoatChest) continue; // current session's broker
+            std::wstring nm = safeObjectName(a);
+            if (nm.rfind(STR("Default__"), 0) == 0) continue;
+            bool hidden = false;
+            if (auto* bp = resolveBoolProperty(a, L"bHidden"))
+                hidden = bp->GetPropertyValueInContainer(a);
+            if (!hidden) continue;
+            if (auto* dFn = a->GetFunctionByNameInChain(STR("K2_DestroyActor")))
+            {
+                std::vector<uint8_t> b(dFn->GetParmsSize(), 0);
+                try
+                {
+                    safeProcessEvent(a, dFn, b.data());
+                }
+                catch (...)
+                {
+                }
+                destroyed++;
+                VLOG(STR("[MoriaCppMod] [ChestSweep] destroyed stranded hidden {} '{}'\n"), cls, nm.c_str());
+            }
+        }
+    }
+    if (destroyed > 0)
+        VLOG(STR("[MoriaCppMod] [ChestSweep] {} stranded hidden chest(s) removed (save cleans on next save)\n"), destroyed);
+}
+
 // [BellSeed] If the bell is ALREADY selected (sitting in the MainHand
 // equip container) when the character loads, no ItemEquipped event ever
 // fires, so m_bellInHand stays false and a gameplay LMB does nothing
@@ -3979,6 +4031,7 @@ void driveSaddlebagStorageContainer(UObject* screen, UObject* goatInv, UObject* 
 // chest as InteractableRef so any native rebuild classifies the pane as
 // a chest (generic DT-driven grid), never the goat → NPC → dwarf 4x3.
 FWeakObjectPtr m_sbChestFlowScreen;
+FWeakObjectPtr m_sbChestFlowCont; // Storage_Container child (for hook-side handle compare)
 // Deferred-drive timer: the native show sequence fires on the tick(s)
 // AFTER Show(), and its RebindThisPack re-derives the bind from the
 // goat interaction (trace 2026-07-16: handle→goat id=2, InteractableRef→
@@ -4103,8 +4156,18 @@ void tickChestFlowDeferredDrive()
     setBoolProp(scr, STR("isStorageView"), true);
     if (auto* p = scr->GetValuePtrByPropertyNameInChain<UObject*>(STR("AssociatedNPC"))) *p = nullptr;
     UObject* chest = (m_hiddenGoatChest && isObjectAlive(m_hiddenGoatChest)) ? m_hiddenGoatChest : nullptr;
+    // [2026-07-16] StorageObject drives the screen's PER-TICK view logic:
+    // with it null the BP re-asserts the non-storage layout every frame
+    // (widget dump: our dressing reverted within 50ms) — exactly how a
+    // real chest keeps the storage view. Point it at the hidden chest.
+    if (chest)
+        if (auto* p = scr->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageObject"))) *p = chest;
     driveSaddlebagStorageContainer(scr, m_sbGoatInvCache, m_sbPlayerInvCache, m_sbHandleCache, STR("chest-flow drive"), chest);
     applyChestFlowScreenDressing(scr);
+    // Cache the container child so the rebind hook can compare handles
+    // without a tree walk (memory read only — no PE inside hooks).
+    if (UObject* cont = jw_findChildInTree(scr, STR("WBP_UI_Inventory_Storage_Container")))
+        m_sbChestFlowCont = FWeakObjectPtr(cont);
     VLOG(STR("[MoriaCppMod] [ChestFlow] deferred drive #{} applied (screen={:p})\n"), m_chestFlowDriveCount, (void*)scr);
 }
 

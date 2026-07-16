@@ -1478,12 +1478,21 @@ namespace MoriaMods
                         if (context == s_instance->m_sbChestFlowScreen.Get() &&
                             (wcscmp(fnStr2, STR("RebindThisPack")) == 0 || wcscmp(fnStr2, STR("OnAfterShow")) == 0))
                         {
-                            // Echo suppression: our own drive fires a
-                            // RebindThisPack echo ~10ms later — re-arming on
-                            // it looped drive→echo→drive (6x, 2026-07-16 log).
-                            ULONGLONG nowT = GetTickCount64();
-                            if (nowT - s_instance->m_chestFlowLastDriveMs > 150)
-                                s_instance->m_chestFlowDriveAtMs = nowT + 30;
+                            // Re-arm the deferred drive ONLY when the bind
+                            // actually drifted off the pack (StorageObject =
+                            // hidden chest makes native rebinds derive the
+                            // CHEST container). Our own drive's echo carries
+                            // the pack handle → compare says equal → no loop.
+                            // Handle read is plain memory (no PE in hooks).
+                            bool drifted = true;
+                            if (UObject* cont = s_instance->m_sbChestFlowCont.Get())
+                            {
+                                if (isObjectAlive(cont))
+                                    if (auto* hp = cont->GetValuePtrByPropertyNameInChain<uint8_t>(STR("storageHandle")))
+                                        drifted = (std::memcmp(hp, s_instance->m_sbHandleCache, 20) != 0);
+                            }
+                            if (drifted)
+                                s_instance->m_chestFlowDriveAtMs = GetTickCount64() + 30;
                         }
                     }
                 }
@@ -3398,6 +3407,7 @@ namespace MoriaMods
                     m_chestFlowDriveAtMs = 0;
                     m_chestFlowDriveCount = 0;
                     m_chestFlowLastDriveMs = 0;
+                    m_sbChestFlowCont = FWeakObjectPtr{};
                     m_bellSeedDone = false;
                     m_cachedBellID = 0;
 
@@ -3595,6 +3605,9 @@ namespace MoriaMods
             {
                 m_bellSeedDone = true;
                 seedBellInHand();
+                // [ChestSweep] destroy save-stranded hidden broker chests
+                // (floating "Open Chest" prompts from earlier builds).
+                sweepStrandedHiddenChests();
             }
 
             if (!m_initialReplayDone && msSinceChar >= 15000)
