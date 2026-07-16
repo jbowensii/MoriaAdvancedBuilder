@@ -4348,8 +4348,42 @@ bool chestFlowShowViaConfigRow(UObject* mgr, UObject* screen)
 // renders (2026-07-16: every widget-level flag green, nothing on
 // screen) — the manager's ShowScreenInstance owns the stack push and
 // the actual presentation.
+// [v5 2026-07-16] The getter probe pinned the real gate: with the chest
+// pre-bound, WasOpenedWithStorage=1 but IsActivatedFromInteract=0 on
+// every pass — and THAT snapshot is what the screen's tick recomputes
+// isStorageView from. It records HOW the screen was activated, and the
+// one native entry that sets it is the controller's interact-activation
+// path: AMorPlayerController::ActivateHud(HudClass, bFromInteract).
+// BlueprintCallable — show the screen the way a chest interact does.
+bool chestFlowActivateHud(UObject* screen)
+{
+    if (!m_localPC || !isObjectAlive(m_localPC) || !screen) return false;
+    auto* fn = cachedFnInChain(m_localPC, STR("ActivateHud"));
+    if (!fn) return false;
+    UClass* cls = nullptr;
+    try
+    {
+        cls = static_cast<UClass*>(screen->GetClassPrivate());
+    }
+    catch (...)
+    {
+        return false;
+    }
+    if (!cls) return false;
+    std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+    if (auto* p = findParam(fn, STR("HudClass"))) *reinterpret_cast<UClass**>(b.data() + p->GetOffset_Internal()) = cls;
+    if (auto* p = findParam(fn, STR("bFromInteract"))) *(b.data() + p->GetOffset_Internal()) = 1;
+    bool ok = safeProcessEvent(m_localPC, fn, b.data());
+    VLOG(STR("[MoriaCppMod] [ChestFlow] ActivateHud(StorageMode, bFromInteract=true) -> {}\n"), ok ? STR("OK") : STR("FAILED"));
+    return ok;
+}
+
 bool chestFlowShowViaManager(UObject* screen)
 {
+    // v5: the interact-activation entry first — the ONLY path that sets
+    // the IsActivatedFromInteract state the storage view depends on.
+    if (chestFlowActivateHud(screen)) return true;
+
     // v2: prefer the CONFIG-ROW pipeline (native presentation params).
     UObject* mgrCfg = m_sbChestFlowMgr.Get();
     if (mgrCfg && isObjectAlive(mgrCfg) && chestFlowShowViaConfigRow(mgrCfg, screen)) return true;
@@ -4538,20 +4572,8 @@ void tickChestFlowDeferredDrive()
         driveSaddlebagStorageContainer(scr, m_sbGoatInvCache, m_sbPlayerInvCache, m_sbHandleCache, STR("chest-flow drive"), chest);
     applyChestFlowScreenDressing(scr);
 
-    // [v4 2026-07-16] 0x3D0 = native opened-with-storage flag (verified:
-    // native chest tail 01 00, cleared on hide). Re-assert it each pass
-    // (a hide clears it); 0x3D1 stays 0 natively — do not touch it.
-    {
-        uint8_t* base = reinterpret_cast<uint8_t*>(scr);
-        if (isReadableMemory(base + 0x3C8, 0x10))
-        {
-            wchar_t hex[64];
-            int off = 0;
-            for (int i = 0; i < 0x10 && off < 60; i++) off += swprintf(hex + off, 64 - off, L"%02X ", base[0x3C8 + i]);
-            VLOG(STR("[MoriaCppMod] [ChestFlow] screen tail 0x3C8-0x3D7 pre-write: {}\n"), hex);
-            base[0x3D0] = 1;
-        }
-    }
+    // Diagnostics only — the getters are the source of truth for the
+    // native view-decision state (v5: no raw tail writes).
     probeStorageGetters(scr, STR("drive"));
 
     // [v2] Reveal animations — once per show (the actual render fix).
@@ -4674,13 +4696,10 @@ void openSaddlebagsChestFlow(UObject* goat, UObject* playerInv, const uint8_t ba
     if (auto* p = screen->GetValuePtrByPropertyNameInChain<UObject*>(STR("AssociatedNPC"))) *p = nullptr;
     if (auto* p = screen->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageObject"))) *p = chest;
 
-    // Native opened-with-storage flag (0x3D0; confirmed against the
-    // native-chest tail dump: 01 there, cleared on hide, 0x3D1 stays 0).
-    // Seed it pre-show so the pipeline snapshot sees a storage open.
-    {
-        uint8_t* base = reinterpret_cast<uint8_t*>(screen);
-        if (isReadableMemory(base + 0x3D0, 1)) base[0x3D0] = 1;
-    }
+    // [v5] No raw tail writes: the getter probe disproved the 0x3D0
+    // guess (WasOpenedWithStorage=1 with 0x3D0=0 — it reads
+    // StorageObject). The real gate is IsActivatedFromInteract, set by
+    // showing via ActivateHud(bFromInteract=true) below.
 
     // Native show FIRST — via the MANAGER pipeline (stack push + input +
     // presentation). PE-ing the screen's own Show() fires events and
