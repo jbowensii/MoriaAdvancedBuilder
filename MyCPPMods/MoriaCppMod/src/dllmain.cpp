@@ -521,6 +521,8 @@ namespace MoriaMods
         // Bell currently equipped in the main hand (tracked via the
         // ItemEquipped/ItemUnequipped events carrying the bell's item ID).
         bool m_bellInHand{false};
+        int32_t m_cachedBellID{0};   // EQ_GoatBell_C item id (seeded at load or on first equip event)
+        bool m_bellSeedDone{false};  // one-shot: seed m_bellInHand when the bell loads already selected
 
         UClass* m_lastPickedUpItemClass{nullptr};
         std::wstring m_lastPickedUpItemName;
@@ -1078,10 +1080,9 @@ namespace MoriaMods
                 if (parms && func && s_instance && s_instance->m_localPawn && isObjectAlive(s_instance->m_localPawn))
                 {
                     // Resolve bell ID once per session via the player's inventory.
-                    static int32_t s_cachedBellID = 0;
                     static ULONGLONG s_lastBellIDScan = 0;
                     ULONGLONG nowMs = GetTickCount64();
-                    if (s_cachedBellID == 0 && nowMs - s_lastBellIDScan > 2000)
+                    if (s_instance->m_cachedBellID == 0 && nowMs - s_lastBellIDScan > 2000)
                     {
                         s_lastBellIDScan = nowMs;
                         UObject* invComp = s_instance->findPlayerInventoryComponent(s_instance->m_localPawn);
@@ -1116,8 +1117,8 @@ namespace MoriaMods
                                                 }
                                                 if (n == STR("EQ_GoatBell_C"))
                                                 {
-                                                    s_cachedBellID = *reinterpret_cast<int32_t*>(entry + idOff);
-                                                    VLOG(STR("[MoriaCppMod] [BellHook] cached bell ID={} for wide-discovery probe\n"), s_cachedBellID);
+                                                    s_instance->m_cachedBellID = *reinterpret_cast<int32_t*>(entry + idOff);
+                                                    VLOG(STR("[MoriaCppMod] [BellHook] cached bell ID={} for wide-discovery probe\n"), s_instance->m_cachedBellID);
                                                     break;
                                                 }
                                             }
@@ -1128,11 +1129,11 @@ namespace MoriaMods
                         }
                     }
                     // Probe: if first parm bytes equal cached bell ID, log fn.
-                    if (s_cachedBellID != 0)
+                    if (s_instance->m_cachedBellID != 0)
                     {
                         const uint8_t* parmBytes = reinterpret_cast<const uint8_t*>(parms);
                         int32_t maybeID = *reinterpret_cast<const int32_t*>(parmBytes + 0);
-                        if (maybeID == s_cachedBellID)
+                        if (maybeID == s_instance->m_cachedBellID)
                         {
                             // Track "bell in hand" from the equip events so a
                             // gameplay LMB can ring it (the melee-swing path
@@ -1467,6 +1468,15 @@ namespace MoriaMods
                     if (ctxCls == STR("WBP_UI_Inventory_Screen_StorageMode_C"))
                     {
                         s_instance->traceChestOpenEvent(context, fnStr2);
+                        // [ChestFlow] the native rebind runs AFTER our open
+                        // and rebinds the goat interaction; re-arm the
+                        // deferred pack drive so it lands after the native
+                        // pass (no PE from inside the hook — tick drives).
+                        if (context == s_instance->m_sbChestFlowScreen.Get() &&
+                            (wcscmp(fnStr2, STR("RebindThisPack")) == 0 || wcscmp(fnStr2, STR("OnAfterShow")) == 0))
+                        {
+                            s_instance->m_chestFlowDriveAtMs = GetTickCount64() + 30;
+                        }
                     }
                 }
 
@@ -2597,6 +2607,7 @@ namespace MoriaMods
             // Tobi's native workflow. [rc.107] saddlebag widget tick RE-ENABLED:
             // Esc/Tab close + 4Hz storage view-state re-assert for our chest UI.
             s_instance->tickGoatSaddlebagWidget();
+            s_instance->tickChestFlowDeferredDrive();
 
             // Reposition HUD keybind dispatcher (default F10). First press
             // shows the inspect window + rotation display draggable; second
@@ -3376,6 +3387,10 @@ namespace MoriaMods
                     // [ChestFlow] screen + hidden chest die with the world.
                     m_sbChestFlowScreen = FWeakObjectPtr{};
                     m_hiddenGoatChest = nullptr;
+                    m_chestFlowDriveAtMs = 0;
+                    m_chestFlowDriveCount = 0;
+                    m_bellSeedDone = false;
+                    m_cachedBellID = 0;
 
                     // Settings-screen widget UClasses were captured off LIVE
                     // widget instances — stale after world transitions; a
@@ -3564,6 +3579,14 @@ namespace MoriaMods
             }
 
             ULONGLONG msSinceChar = GetTickCount64() - m_charLoadTime;
+
+            // [BellSeed] the bell can load ALREADY selected (MainHand) —
+            // no equip event fires, so seed the in-hand state directly.
+            if (m_characterLoaded && !m_bellSeedDone && msSinceChar >= 5000)
+            {
+                m_bellSeedDone = true;
+                seedBellInHand();
+            }
 
             if (!m_initialReplayDone && msSinceChar >= 15000)
             {

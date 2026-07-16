@@ -3049,6 +3049,57 @@ bool m_goatSaddlebagDiagDumped{false};
 // [rc.64 B3 HELPER 2026-06-28] Walk player's MorInventoryComponent
 // Items.List and return the FItemInstance ID whose Item UClass name
 // matches the given class-name substring. Returns 0 if not found.
+// [BellSeed] If the bell is ALREADY selected (sitting in the MainHand
+// equip container) when the character loads, no ItemEquipped event ever
+// fires, so m_bellInHand stays false and a gameplay LMB does nothing
+// until the player re-selects the bell. Seed the cached bell id and the
+// in-hand state from a direct inventory read shortly after load.
+void seedBellInHand()
+{
+    UObject* inv = playerInvOf();
+    if (!inv || !isObjectAlive(inv)) return;
+    FProperty* itemsProp = inv->GetPropertyByNameInChain(STR("Items"));
+    if (!itemsProp) return;
+    uint8_t* listBase = reinterpret_cast<uint8_t*>(inv) + itemsProp->GetOffset_Internal() + iiaListOff();
+    if (!isReadableMemory(listBase, 16)) return;
+    uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+    int32_t arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
+    if (!arrData || arrNum <= 0 || arrNum > 10000) return;
+    const int stride = iiSize(), itemOff = iiItemOff(), idOff = iiIDOff();
+    const int slotOff = iiSlotOff(), csOff = iiContainerStartOff();
+    int32_t mainHandStart = -1, bellSlot = -1, bellId = 0;
+    for (int i = 0; i < arrNum && i < 256; ++i)
+    {
+        uint8_t* e = arrData + i * stride;
+        if (!isReadableMemory(e, stride)) continue;
+        UClass* c = *reinterpret_cast<UClass**>(e + itemOff);
+        if (!c || !isObjectAlive(c)) continue;
+        std::wstring n;
+        try
+        {
+            n = c->GetName();
+        }
+        catch (...)
+        {
+            continue;
+        }
+        if (n == STR("EQ_GoatBell_C"))
+        {
+            bellId = *reinterpret_cast<int32_t*>(e + idOff);
+            bellSlot = *reinterpret_cast<int32_t*>(e + slotOff);
+        }
+        else if (n.find(STR("Slot_MainHand")) != std::wstring::npos)
+        {
+            mainHandStart = *reinterpret_cast<int32_t*>(e + csOff);
+        }
+    }
+    if (bellId != 0 && m_cachedBellID == 0) m_cachedBellID = bellId;
+    const bool inHand = (bellId != 0 && mainHandStart > 0 && bellSlot == mainHandStart);
+    if (inHand) m_bellInHand = true;
+    VLOG(STR("[MoriaCppMod] [BellSeed] bellId={} bellSlot={} mainHandStart={} -> inHand={}\n"),
+         bellId, bellSlot, mainHandStart, inHand ? STR("YES") : STR("no"));
+}
+
 int32_t findPlayerItemIdByClassName(UObject* playerInv, const wchar_t* classNameSubstr)
 {
     if (!playerInv || !isObjectAlive(playerInv) || !classNameSubstr) return 0;
@@ -3928,6 +3979,32 @@ void driveSaddlebagStorageContainer(UObject* screen, UObject* goatInv, UObject* 
 // chest as InteractableRef so any native rebuild classifies the pane as
 // a chest (generic DT-driven grid), never the goat → NPC → dwarf 4x3.
 FWeakObjectPtr m_sbChestFlowScreen;
+// Deferred-drive timer: the native show sequence fires on the tick(s)
+// AFTER Show(), and its RebindThisPack re-derives the bind from the
+// goat interaction (trace 2026-07-16: handle→goat id=2, InteractableRef→
+// MorNPCComponent, isStorageView→false), wiping an immediate drive. The
+// hook re-arms this timer after RebindThisPack/OnAfterShow; the tick
+// then drives our pack bind once the native pass is done.
+ULONGLONG m_chestFlowDriveAtMs{0};
+int m_chestFlowDriveCount{0}; // per-open cap (loop guard)
+
+// Runs from the main tick: (re)binds the pack onto the chest-flow screen.
+void tickChestFlowDeferredDrive()
+{
+    if (m_chestFlowDriveAtMs == 0 || GetTickCount64() < m_chestFlowDriveAtMs) return;
+    m_chestFlowDriveAtMs = 0;
+    if (m_chestFlowDriveCount >= 6) return; // cap per open
+    UObject* scr = m_sbChestFlowScreen.Get();
+    if (!scr || !isObjectAlive(scr)) return;
+    if (!m_sbPlayerInvCache || !isObjectAlive(m_sbPlayerInvCache)) return;
+    m_chestFlowDriveCount++;
+    setBoolProp(scr, STR("isOpenedFromNPC"), false);
+    setBoolProp(scr, STR("isStorageView"), true);
+    if (auto* p = scr->GetValuePtrByPropertyNameInChain<UObject*>(STR("AssociatedNPC"))) *p = nullptr;
+    UObject* chest = (m_hiddenGoatChest && isObjectAlive(m_hiddenGoatChest)) ? m_hiddenGoatChest : nullptr;
+    driveSaddlebagStorageContainer(scr, m_sbGoatInvCache, m_sbPlayerInvCache, m_sbHandleCache, STR("chest-flow drive"), chest);
+    VLOG(STR("[MoriaCppMod] [ChestFlow] deferred drive #{} applied (screen={:p})\n"), m_chestFlowDriveCount, (void*)scr);
+}
 
 void openSaddlebagsChestFlow(UObject* goat, UObject* playerInv, const uint8_t bagHandle[20])
 {
@@ -3951,6 +4028,7 @@ void openSaddlebagsChestFlow(UObject* goat, UObject* playerInv, const uint8_t ba
                     safeProcessEvent(prev, hideFn, b.data());
                 }
                 m_sbChestFlowScreen = FWeakObjectPtr();
+                m_chestFlowDriveAtMs = 0;
                 VLOG(STR("[MoriaCppMod] [ChestFlow] toggle — screen hidden via native Hide\n"));
                 return;
             }
@@ -4019,15 +4097,18 @@ void openSaddlebagsChestFlow(UObject* goat, UObject* playerInv, const uint8_t ba
         return;
     }
 
-    // Drive the container once with the pack handle (after the show
-    // sequence, which native-writes an empty bind).
-    driveSaddlebagStorageContainer(screen, playerInv, playerInv, bagHandle, STR("chest-flow"), chest);
+    // Do NOT drive yet: the native show sequence runs on the following
+    // tick(s) and its RebindThisPack would overwrite us with the goat
+    // interaction bind. Cache everything and arm the deferred drive
+    // (also re-armed by the RebindThisPack/OnAfterShow hook).
     m_sbGoatInvCache = playerInv;
     m_sbPlayerInvCache = playerInv;
     std::memcpy(m_sbHandleCache, bagHandle, 20);
     m_sbChestFlowScreen = FWeakObjectPtr(screen);
     m_sbWidgetOpenMs = GetTickCount64();
-    VLOG(STR("[MoriaCppMod] [ChestFlow] OPEN via UI manager: screen={:p} chest={:p} (native input/split/close)\n"),
+    m_chestFlowDriveCount = 0;
+    m_chestFlowDriveAtMs = GetTickCount64() + 250; // fallback if no event fires
+    VLOG(STR("[MoriaCppMod] [ChestFlow] OPEN via UI manager: screen={:p} chest={:p} (drive deferred past native rebind)\n"),
          (void*)screen, (void*)chest);
 }
 
