@@ -3146,10 +3146,43 @@ void seedBellInHand()
         }
     }
     if (bellId != 0 && m_cachedBellID == 0) m_cachedBellID = bellId;
-    const bool inHand = (bellId != 0 && mainHandStart > 0 && bellSlot == mainHandStart);
+
+    // [2026-07-16] A toolbar-SELECTED bell stays in the backpack container
+    // (slot 1916, log-proven) — MainHand membership was the wrong test.
+    // Ask the equip component directly: ItemIsEquipped(FItemHandle).
+    bool inHand = false;
+    if (bellId != 0 && m_localPawn && isObjectAlive(m_localPawn))
+    {
+        UObject* equipCls = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Moria.MorEquipComponent"));
+        auto* getCompFn = m_localPawn->GetFunctionByNameInChain(STR("GetComponentByClass"));
+        UObject* equipComp = nullptr;
+        if (equipCls && getCompFn)
+        {
+            std::vector<uint8_t> b(getCompFn->GetParmsSize(), 0);
+            writeGoatParm<UObject*>(getCompFn, b.data(), STR("ComponentClass"), equipCls);
+            if (safeProcessEvent(m_localPawn, getCompFn, b.data()))
+                equipComp = readGoatParm<UObject*>(getCompFn, b.data(), STR("ReturnValue"), nullptr);
+        }
+        if (equipComp && isObjectAlive(equipComp))
+        {
+            if (auto* iieFn = equipComp->GetFunctionByNameInChain(STR("ItemIsEquipped")))
+            {
+                std::vector<uint8_t> b(iieFn->GetParmsSize(), 0);
+                if (auto* pItem = findParam(iieFn, STR("Item")))
+                {
+                    uint8_t* h = b.data() + pItem->GetOffset_Internal();
+                    *reinterpret_cast<int32_t*>(h) = bellId;
+                    RC::Unreal::FWeakObjectPtr wp(inv);
+                    std::memcpy(h + 8, &wp, sizeof(wp));
+                }
+                if (safeProcessEvent(equipComp, iieFn, b.data()))
+                    if (auto* pr = findParam(iieFn, STR("ReturnValue"))) inHand = *(b.data() + pr->GetOffset_Internal()) != 0;
+            }
+        }
+    }
     if (inHand) m_bellInHand = true;
-    VLOG(STR("[MoriaCppMod] [BellSeed] bellId={} bellSlot={} mainHandStart={} -> inHand={}\n"),
-         bellId, bellSlot, mainHandStart, inHand ? STR("YES") : STR("no"));
+    VLOG(STR("[MoriaCppMod] [BellSeed] bellId={} bellSlot={} mainHandStart={} ItemIsEquipped={} -> inHand={}\n"),
+         bellId, bellSlot, mainHandStart, inHand ? STR("YES") : STR("no"), inHand ? STR("YES") : STR("no"));
 }
 
 int32_t findPlayerItemIdByClassName(UObject* playerInv, const wchar_t* classNameSubstr)

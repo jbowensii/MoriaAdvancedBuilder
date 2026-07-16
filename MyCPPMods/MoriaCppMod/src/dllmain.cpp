@@ -54,8 +54,13 @@ namespace MoriaMods
         // [rc.52] Goat companion settings (persisted via MoriaCppMod.ini [GoatCompanion]).
         std::wstring m_goatName{L"Rûdh"}; // default "Rûdh"
         // [ChestFlow] Saddlebags open like a native chest via the UI manager
-        // (input/split/close all native). false = legacy takeover fallback.
-        bool m_chestFlowUI{true};
+        // (input/split/close all native). DEFAULT OFF (2026-07-16): the
+        // manager-shown screen passes every widget-level check (Showing,
+        // in-viewport, Visible, opacity 1, bound, dressed) yet never
+        // presents — the presentation layer needs offline discovery. The
+        // legacy takeover displays and works; flip via
+        // [GoatCompanion] ChestFlowUI=true to resume the experiment.
+        bool m_chestFlowUI{false};
         // [rc.22] Test 3 saddlebag widget — spawned on saddlebag click, dismissed by ESC.
         UObject* m_test3SaddlebagWidget{nullptr};
         ULONGLONG m_lastGoatMenuMs{0}; // E-press dedupe cooldown
