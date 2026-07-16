@@ -4113,6 +4113,7 @@ void dumpScreenForensics(UObject* scr, const wchar_t* label)
             VLOG(STR("[Forensics] tail 0x3C8-0x3D7: {}\n"), hex);
         }
     }
+    probeStorageGetters(scr, label);
 
     int lines = 0;
     std::function<void(UObject*, int)> walk = [&](UObject* w, int depth) {
@@ -4392,6 +4393,27 @@ bool m_chestFlowAnimsPlayed{false};  // reveal anims played for the current show
 // this from the native flow via StorageObject; our open must do it
 // explicitly (2026-07-16: bind verified correct in trace, pane still
 // blank until this ran). Idempotent.
+// PE-calls the screen's pure native getters — the direct readout of the
+// internal state the per-tick view recompute uses. THE decisive probe:
+// native chest shows true/true; whatever ours reports is what we must fix.
+void probeStorageGetters(UObject* scr, const wchar_t* tag)
+{
+    auto callBoolGetter = [&](const wchar_t* fnName, int& out) {
+        out = -1;
+        if (auto* fn = scr->GetFunctionByNameInChain(fnName))
+        {
+            std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+            if (safeProcessEvent(scr, fn, b.data()))
+                if (auto* pr = findParam(fn, STR("ReturnValue"))) out = (*(b.data() + pr->GetOffset_Internal()) != 0) ? 1 : 0;
+        }
+    };
+    int openedWithStorage = -1, fromInteract = -1;
+    callBoolGetter(STR("WasOpenedWithStorage"), openedWithStorage);
+    callBoolGetter(STR("IsActivatedFromInteract"), fromInteract);
+    VLOG(STR("[MoriaCppMod] [ChestFlow] getters[{}]: WasOpenedWithStorage={} IsActivatedFromInteract={}\n"),
+         tag, openedWithStorage, fromInteract);
+}
+
 void applyChestFlowScreenDressing(UObject* scr)
 {
     if (auto* p = scr->GetValuePtrByPropertyNameInChain<uint8_t>(STR("storageInventoryHandle")))
@@ -4516,16 +4538,9 @@ void tickChestFlowDeferredDrive()
         driveSaddlebagStorageContainer(scr, m_sbGoatInvCache, m_sbPlayerInvCache, m_sbHandleCache, STR("chest-flow drive"), chest);
     applyChestFlowScreenDressing(scr);
 
-    // [v3 2026-07-16] Forensic diff verdict: ONLY isStorageView (+ its
-    // background swap) differs between a rendering native-chest screen
-    // and ours — the screen's tick recomputes isStorageView from the
-    // NATIVE "opened with storage / activated from interact" state that
-    // only the real interact-open sets. Those flags are UNREFLECTED;
-    // by layout (UMorInventoryScreen size 0x3D8, StorageObject @0x3C8)
-    // they live in the 0x3D0-0x3D7 tail. No reflective path exists
-    // (WasOpenedWithStorage/IsActivatedFromInteract are pure getters),
-    // so write the suspected flag bytes directly — precedent: NpcInfo
-    // raw walks. Hex-logged before writing for verification.
+    // [v4 2026-07-16] 0x3D0 = native opened-with-storage flag (verified:
+    // native chest tail 01 00, cleared on hide). Re-assert it each pass
+    // (a hide clears it); 0x3D1 stays 0 natively — do not touch it.
     {
         uint8_t* base = reinterpret_cast<uint8_t*>(scr);
         if (isReadableMemory(base + 0x3C8, 0x10))
@@ -4534,10 +4549,10 @@ void tickChestFlowDeferredDrive()
             int off = 0;
             for (int i = 0; i < 0x10 && off < 60; i++) off += swprintf(hex + off, 64 - off, L"%02X ", base[0x3C8 + i]);
             VLOG(STR("[MoriaCppMod] [ChestFlow] screen tail 0x3C8-0x3D7 pre-write: {}\n"), hex);
-            base[0x3D0] = 1; // suspected bOpenedWithStorage
-            base[0x3D1] = 1; // suspected bActivatedFromInteract
+            base[0x3D0] = 1;
         }
     }
+    probeStorageGetters(scr, STR("drive"));
 
     // [v2] Reveal animations — once per show (the actual render fix).
     if (!m_chestFlowAnimsPlayed)
@@ -4641,15 +4656,31 @@ void openSaddlebagsChestFlow(UObject* goat, UObject* playerInv, const uint8_t ba
         return;
     }
 
+    // [v4 2026-07-16] BIND STORAGE BEFORE SHOW. v3 proved the flip is a
+    // show-time snapshot: isStorageView was still true at RebindThisPack
+    // and false by OnCustomFocusSet, and NOTHING written afterwards
+    // (isStorageView each pass, StorageObject=chest, tail 0x3D0=1) undid
+    // it — "WasOpenedWithStorage" is decided DURING the show pipeline
+    // from what is bound at that moment. Native keeps it true because
+    // the chest is bound before the show events fire; ours was null
+    // (bound +250ms later). So: spawn the chest and point StorageObject
+    // at it BEFORE the manager show.
+    spawnHiddenGoatChest(goat);
+    UObject* chest = (m_hiddenGoatChest && isObjectAlive(m_hiddenGoatChest)) ? m_hiddenGoatChest : nullptr;
+
     // Chest-state per the trace: NOT an NPC open, storage view, no NPC refs.
     setBoolProp(screen, STR("isOpenedFromNPC"), false);
     setBoolProp(screen, STR("isStorageView"), true);
     if (auto* p = screen->GetValuePtrByPropertyNameInChain<UObject*>(STR("AssociatedNPC"))) *p = nullptr;
-    if (auto* p = screen->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageObject"))) *p = nullptr;
+    if (auto* p = screen->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageObject"))) *p = chest;
 
-    // Classification shield for native rebuilds.
-    spawnHiddenGoatChest(goat);
-    UObject* chest = (m_hiddenGoatChest && isObjectAlive(m_hiddenGoatChest)) ? m_hiddenGoatChest : nullptr;
+    // Native opened-with-storage flag (0x3D0; confirmed against the
+    // native-chest tail dump: 01 there, cleared on hide, 0x3D1 stays 0).
+    // Seed it pre-show so the pipeline snapshot sees a storage open.
+    {
+        uint8_t* base = reinterpret_cast<uint8_t*>(screen);
+        if (isReadableMemory(base + 0x3D0, 1)) base[0x3D0] = 1;
+    }
 
     // Native show FIRST — via the MANAGER pipeline (stack push + input +
     // presentation). PE-ing the screen's own Show() fires events and
