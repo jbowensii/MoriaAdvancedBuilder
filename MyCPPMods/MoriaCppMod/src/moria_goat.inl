@@ -4067,6 +4067,114 @@ FWeakObjectPtr m_sbChestFlowScreen;
 FWeakObjectPtr m_sbChestFlowCont; // Storage_Container child (for hook-side handle compare)
 FWeakObjectPtr m_sbChestFlowMgr;  // MorUIManager (shows/re-shows via ShowScreenInstance)
 
+// [Forensics 2026-07-16] Comparative screen dump: capture the full
+// layered render state (per-widget Visibility, RenderOpacity,
+// RenderTransform, switcher index; screen tab/storage state) once while
+// a REAL chest is open (renders) and once while our open is active
+// (doesn't). The offline diff of the two dumps pinpoints the hidden
+// layer no single-lever probe has reached.
+ULONGLONG m_forensicsDumpAtMs{0};
+const wchar_t* m_forensicsLabel{STR("")};
+
+void dumpScreenForensics(UObject* scr, const wchar_t* label)
+{
+    if (!scr || !isObjectAlive(scr)) return;
+    VLOG(STR("[Forensics] ===== {} screen={:p} =====\n"), label, (void*)scr);
+    // Screen-level state.
+    if (auto* p = scr->GetValuePtrByPropertyNameInChain<UObject*>(STR("ActiveTab")))
+        VLOG(STR("[Forensics] ActiveTab={:p} ({})\n"), (void*)*p, *p ? safeClassName(*p).c_str() : STR("null"));
+    if (auto* p = scr->GetValuePtrByPropertyNameInChain<uint8_t>(STR("ActiveTabName")))
+    {
+        RC::Unreal::FName* fn = reinterpret_cast<RC::Unreal::FName*>(p);
+        std::wstring n;
+        try
+        {
+            n = fn->ToString();
+        }
+        catch (...)
+        {
+        }
+        VLOG(STR("[Forensics] ActiveTabName='{}'\n"), n.c_str());
+    }
+    if (auto* p = scr->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageObject")))
+        VLOG(STR("[Forensics] StorageObject={:p} ({})\n"), (void*)*p, *p ? safeClassName(*p).c_str() : STR("null"));
+    for (const wchar_t* bn : {STR("isStorageView"), STR("isOpenedFromNPC")})
+        if (auto* bp = resolveBoolProperty(scr, bn))
+            VLOG(STR("[Forensics] {}={}\n"), bn, bp->GetPropertyValueInContainer(scr));
+
+    int lines = 0;
+    std::function<void(UObject*, int)> walk = [&](UObject* w, int depth) {
+        if (!w || !isObjectAlive(w) || depth > 12 || lines > 220) return;
+        lines++;
+        std::wstring nm, cls = safeClassName(w);
+        try
+        {
+            nm = w->GetName();
+        }
+        catch (...)
+        {
+        }
+        uint8_t vis = 255;
+        if (auto* vp = w->GetValuePtrByPropertyNameInChain<uint8_t>(STR("Visibility"))) vis = *vp;
+        float op = -1.0f;
+        if (auto* opp = w->GetValuePtrByPropertyNameInChain<float>(STR("RenderOpacity"))) op = *opp;
+        // FWidgetTransform RenderTransform: Translation(2f) Scale(2f) Shear(2f) Angle(f)
+        float tx = 0, ty = 0, sx = 1, sy = 1, ang = 0;
+        bool hasXf = false;
+        if (auto* xf = w->GetValuePtrByPropertyNameInChain<uint8_t>(STR("RenderTransform")))
+        {
+            float* f = reinterpret_cast<float*>(xf);
+            tx = f[0];
+            ty = f[1];
+            sx = f[2];
+            sy = f[3];
+            ang = f[6];
+            hasXf = true;
+        }
+        int32_t swIdx = -999;
+        if (cls == STR("WidgetSwitcher"))
+            if (auto* ip = w->GetValuePtrByPropertyNameInChain<int32_t>(STR("ActiveWidgetIndex"))) swIdx = *ip;
+        std::wstring pad(static_cast<size_t>(depth) * 2, L' ');
+        if (hasXf && (tx != 0 || ty != 0 || sx != 1 || sy != 1 || ang != 0))
+            VLOG(STR("[Forensics] {}{} '{}' vis={} op={:.2f} XF=({:.0f},{:.0f} s{:.2f},{:.2f} a{:.0f}){}\n"),
+                 pad.c_str(), cls.c_str(), nm.c_str(), vis, op, tx, ty, sx, sy, ang,
+                 swIdx != -999 ? (STR(" swIdx=") + std::to_wstring(swIdx)).c_str() : STR(""));
+        else
+            VLOG(STR("[Forensics] {}{} '{}' vis={} op={:.2f}{}\n"),
+                 pad.c_str(), cls.c_str(), nm.c_str(), vis, op,
+                 swIdx != -999 ? (STR(" swIdx=") + std::to_wstring(swIdx)).c_str() : STR(""));
+        // Recurse: panel Slots + single Content + WidgetTree root.
+        if (auto* slots = w->GetValuePtrByPropertyNameInChain<TArray<UObject*>>(STR("Slots")))
+            for (int i = 0; i < slots->Num() && i < 40; ++i)
+            {
+                UObject* slot = (*slots)[i];
+                if (!slot) continue;
+                if (auto* cp = slot->GetValuePtrByPropertyNameInChain<UObject*>(STR("Content")))
+                    if (*cp) walk(*cp, depth + 1);
+            }
+        if (auto* cp = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("Content")))
+            if (*cp && *cp != w) walk(*cp, depth + 1);
+        if (auto* wt = w->GetValuePtrByPropertyNameInChain<UObject*>(STR("WidgetTree")))
+            if (*wt)
+                if (auto* rp = (*wt)->GetValuePtrByPropertyNameInChain<UObject*>(STR("RootWidget")))
+                    if (*rp) walk(*rp, depth + 1);
+    };
+    walk(scr, 0);
+    VLOG(STR("[Forensics] ===== END {} ({} widgets) =====\n"), label, lines);
+}
+
+void tickForensicsDump()
+{
+    if (m_forensicsDumpAtMs == 0 || GetTickCount64() < m_forensicsDumpAtMs) return;
+    m_forensicsDumpAtMs = 0;
+    // Dump whichever StorageMode instance is live.
+    std::vector<UObject*> all;
+    seh_findAllOf(STR("WBP_UI_Inventory_Screen_StorageMode_C"), &all);
+    for (auto* w : all)
+        if (w && isObjectAlive(w) && safeObjectName(w).rfind(STR("Default__"), 0) != 0)
+            dumpScreenForensics(w, m_forensicsLabel);
+}
+
 // [v2 2026-07-16] Play the screen's inherited reveal animations. The
 // deep dive found the render bug: the BP's OnAfterShow plays
 // StorageIntro/StorageOpen — UMG animations that drive the CHILD
@@ -4118,7 +4226,11 @@ bool chestFlowShowViaConfigRow(UObject* mgr, UObject* screen)
     // Resolve the screen-configs DataTable via the manager's UFGKUIConfig.
     UObject* cfg = nullptr;
     if (auto* p = mgr->GetValuePtrByPropertyNameInChain<UObject*>(STR("Config"))) cfg = *p;
-    if (!cfg || !isObjectAlive(cfg)) return false;
+    if (!cfg || !isObjectAlive(cfg))
+    {
+        VLOG(STR("[MoriaCppMod] [ChestFlow] mgr Config unreadable/null (cfg={:p}) - config-row show unavailable\n"), (void*)cfg);
+        return false;
+    }
     UObject* table = nullptr;
     // TSoftObjectPtr<UDataTable>: resolve via the property's weak ptr Get?
     // Read as FSoftObjectPath is complex; try the already-loaded object via
@@ -4530,6 +4642,8 @@ void openSaddlebagsChestFlow(UObject* goat, UObject* playerInv, const uint8_t ba
     m_chestFlowDriveCount = 0;
     m_chestFlowAnimsPlayed = false;
     m_chestFlowDriveAtMs = GetTickCount64() + 250; // fallback if no event fires
+    m_forensicsLabel = STR("MOD-OPEN");
+    m_forensicsDumpAtMs = GetTickCount64() + 1600;
     VLOG(STR("[MoriaCppMod] [ChestFlow] OPEN via UI manager: screen={:p} chest={:p} (drive deferred past native rebind)\n"),
          (void*)screen, (void*)chest);
 }

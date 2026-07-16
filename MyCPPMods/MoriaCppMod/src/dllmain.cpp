@@ -1480,6 +1480,15 @@ namespace MoriaMods
                         // and rebinds the goat interaction; re-arm the
                         // deferred pack drive so it lands after the native
                         // pass (no PE from inside the hook — tick drives).
+                        // [Forensics] schedule the comparative dump: native
+                        // chest opens (screen shown while NOT our flow) get
+                        // label NATIVE; our flow labels itself at open.
+                        if (wcscmp(fnStr2, STR("OnAfterShow")) == 0 &&
+                            context != s_instance->m_sbChestFlowScreen.Get())
+                        {
+                            s_instance->m_forensicsLabel = STR("NATIVE-CHEST");
+                            s_instance->m_forensicsDumpAtMs = GetTickCount64() + 1200;
+                        }
                         if (context == s_instance->m_sbChestFlowScreen.Get() &&
                             (wcscmp(fnStr2, STR("RebindThisPack")) == 0 || wcscmp(fnStr2, STR("OnAfterShow")) == 0))
                         {
@@ -2630,6 +2639,7 @@ namespace MoriaMods
             // Esc/Tab close + 4Hz storage view-state re-assert for our chest UI.
             s_instance->tickGoatSaddlebagWidget();
             s_instance->tickChestFlowDeferredDrive();
+            s_instance->tickForensicsDump();
 
             // Reposition HUD keybind dispatcher (default F10). First press
             // shows the inspect window + rotation display draggable; second
