@@ -4066,10 +4066,37 @@ void tickChestFlowDeferredDrive()
 {
     if (m_chestFlowDriveAtMs == 0 || GetTickCount64() < m_chestFlowDriveAtMs) return;
     m_chestFlowDriveAtMs = 0;
-    if (m_chestFlowDriveCount >= 6) return; // cap per open
+    if (m_chestFlowDriveCount >= 8) return; // cap per open
     UObject* scr = m_sbChestFlowScreen.Get();
     if (!scr || !isObjectAlive(scr)) return;
     if (!m_sbPlayerInvCache || !isObjectAlive(m_sbPlayerInvCache)) return;
+
+    // [2026-07-16] The native goat handler shows the screen on the row
+    // click, but the SAME E-press then reaches the open screen as
+    // OnInteractInput and closes it (~120ms later) — by the time our
+    // deferred drive ran, the screen was hidden (inViewport but
+    // !IsShowing → "saddlebag UI did not display"). If it got closed,
+    // re-show it first; the drive lands on the next pass.
+    bool showing = false;
+    if (auto* showingFn = scr->GetFunctionByNameInChain(STR("IsShowing")))
+    {
+        std::vector<uint8_t> b(showingFn->GetParmsSize(), 0);
+        if (safeProcessEvent(scr, showingFn, b.data()))
+            if (auto* pr = findParam(showingFn, STR("ReturnValue"))) showing = *(b.data() + pr->GetOffset_Internal()) != 0;
+    }
+    if (!showing)
+    {
+        if (auto* showFn = scr->GetFunctionByNameInChain(STR("Show")))
+        {
+            std::vector<uint8_t> b(showFn->GetParmsSize(), 0);
+            safeProcessEvent(scr, showFn, b.data());
+        }
+        m_chestFlowDriveCount++;
+        m_chestFlowDriveAtMs = GetTickCount64() + 120; // drive after the show pipeline settles
+        VLOG(STR("[MoriaCppMod] [ChestFlow] screen was hidden — re-shown, drive re-armed (round {})\n"), m_chestFlowDriveCount);
+        return;
+    }
+
     m_chestFlowDriveCount++;
     m_chestFlowLastDriveMs = GetTickCount64();
     setBoolProp(scr, STR("isOpenedFromNPC"), false);
