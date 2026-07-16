@@ -4067,6 +4067,157 @@ FWeakObjectPtr m_sbChestFlowScreen;
 FWeakObjectPtr m_sbChestFlowCont; // Storage_Container child (for hook-side handle compare)
 FWeakObjectPtr m_sbChestFlowMgr;  // MorUIManager (shows/re-shows via ShowScreenInstance)
 
+// [v2 2026-07-16] Play the screen's inherited reveal animations. The
+// deep dive found the render bug: the BP's OnAfterShow plays
+// StorageIntro/StorageOpen — UMG animations that drive the CHILD
+// widgets' transforms/opacity from the authored-hidden design pose into
+// view. Every flag we checked (root visibility/opacity/IsShowing) was
+// green because the hidden pose lives in the children's animated
+// properties. Without the intro the screen is "shown" but parked.
+void chestFlowPlayRevealAnims(UObject* scr)
+{
+    auto* paFn = scr->GetFunctionByNameInChain(STR("PlayAnimationForward"));
+    if (!paFn)
+    {
+        VLOG(STR("[MoriaCppMod] [ChestFlow] PlayAnimationForward fn missing\n"));
+        return;
+    }
+    for (const wchar_t* animName : {STR("StorageIntro"), STR("StorageOpen")})
+    {
+        UObject* anim = nullptr;
+        if (auto* p = scr->GetValuePtrByPropertyNameInChain<UObject*>(animName)) anim = *p;
+        if (!anim || !isObjectAlive(anim))
+        {
+            VLOG(STR("[MoriaCppMod] [ChestFlow] anim '{}' not found on screen\n"), animName);
+            continue;
+        }
+        std::vector<uint8_t> b(paFn->GetParmsSize(), 0);
+        if (auto* p = findParam(paFn, STR("InAnimation"))) *reinterpret_cast<UObject**>(b.data() + p->GetOffset_Internal()) = anim;
+        if (auto* p = findParam(paFn, STR("PlaybackSpeed"))) *reinterpret_cast<float*>(b.data() + p->GetOffset_Internal()) = 1.0f;
+        // bRestoreState stays false: keep the end pose.
+        bool ok = false;
+        try
+        {
+            ok = safeProcessEvent(scr, paFn, b.data());
+        }
+        catch (...)
+        {
+        }
+        VLOG(STR("[MoriaCppMod] [ChestFlow] PlayAnimationForward('{}') -> {}\n"), animName, ok ? STR("OK") : STR("FAILED"));
+    }
+}
+
+// [v2 2026-07-16] Present via the CONFIG-ROW pipeline when possible —
+// the native interact path shows screens through an FFGKUIScreenConfig
+// row (ZOrderOffset, HudBehavior, bTakesInputControl, tab). Direct
+// ShowScreenInstance has no config. Config table: mgr->Config(+0x38)
+// ->ScreensConfigTable; row = the one whose ScreenClass soft path names
+// StorageMode. Falls back to ShowScreenInstance, then screen->Show().
+bool chestFlowShowViaConfigRow(UObject* mgr, UObject* screen)
+{
+    // Resolve the screen-configs DataTable via the manager's UFGKUIConfig.
+    UObject* cfg = nullptr;
+    if (auto* p = mgr->GetValuePtrByPropertyNameInChain<UObject*>(STR("Config"))) cfg = *p;
+    if (!cfg || !isObjectAlive(cfg)) return false;
+    UObject* table = nullptr;
+    // TSoftObjectPtr<UDataTable>: resolve via the property's weak ptr Get?
+    // Read as FSoftObjectPath is complex; try the already-loaded object via
+    // StaticFindObject on the path string is overkill — instead many FGK
+    // configs also keep the table resident; read the soft ptr's weak part.
+    if (auto* p = cfg->GetValuePtrByPropertyNameInChain<uint8_t>(STR("ScreensConfigTable")))
+    {
+        // TSoftObjectPtr layout: FSoftObjectPath(FName + FString) then
+        // TWeakObjectPtr at +24... but the reliable route is the weak ptr
+        // only if the table is loaded. Fall back to name-based find below.
+        RC::Unreal::FWeakObjectPtr* wp = reinterpret_cast<RC::Unreal::FWeakObjectPtr*>(p + 24 + 4);
+        (void)wp; // layout uncertain — use findAllOf below instead
+    }
+    // Robust: the configs table is a UMorUIScreenConfigsTable instance.
+    {
+        std::vector<UObject*> tabs;
+        if (seh_findAllOf(STR("MorUIScreenConfigsTable"), &tabs))
+            for (auto* t : tabs)
+                if (t && isObjectAlive(t) && safeObjectName(t).rfind(STR("Default__"), 0) != 0)
+                {
+                    table = t;
+                    break;
+                }
+    }
+    if (!table)
+    {
+        VLOG(STR("[MoriaCppMod] [ChestFlow] screen-configs table not found\n"));
+        return false;
+    }
+
+    // Find the row whose ScreenClass path mentions StorageMode.
+    DataTableUtil cfgDT;
+    if (!cfgDT.bindFromObject(table, L"ScreenConfigs")) return false;
+    int clsOff = cfgDT.resolvePropertyOffset(L"ScreenClass");
+    if (clsOff < 0) return false;
+    RC::Unreal::FName rowName{};
+    bool haveRow = false;
+    for (const auto& rn : cfgDT.getRowNamesRaw())
+    {
+        std::wstring rnStr;
+        try
+        {
+            rnStr = rn.ToString();
+        }
+        catch (...)
+        {
+            continue;
+        }
+        uint8_t* rowData = cfgDT.findRowData(rnStr.c_str());
+        if (!rowData) continue;
+        // TSoftClassPtr: FSoftObjectPath at +0 = FName AssetPathName at +0.
+        RC::Unreal::FName* apn = reinterpret_cast<RC::Unreal::FName*>(rowData + clsOff);
+        std::wstring path;
+        try
+        {
+            path = apn->ToString();
+        }
+        catch (...)
+        {
+            continue;
+        }
+        if (path.find(STR("StorageMode")) != std::wstring::npos)
+        {
+            rowName = rn;
+            haveRow = true;
+            VLOG(STR("[MoriaCppMod] [ChestFlow] config row '{}' -> {}\n"), rnStr.c_str(), path.c_str());
+            break;
+        }
+    }
+    if (!haveRow)
+    {
+        VLOG(STR("[MoriaCppMod] [ChestFlow] no StorageMode row in screen configs\n"));
+        return false;
+    }
+
+    // ShowScreenWithHandle(FMorUIScreenConfigRowHandle{DataTable*, RowName})
+    auto* sswhFn = mgr->GetFunctionByNameInChain(STR("ShowScreenWithHandle"));
+    if (!sswhFn) return false;
+    std::vector<uint8_t> b(sswhFn->GetParmsSize(), 0);
+    if (auto* p = findParam(sswhFn, STR("ScreenHandle")))
+    {
+        uint8_t* h = b.data() + p->GetOffset_Internal();
+        *reinterpret_cast<UObject**>(h) = table;
+        std::memcpy(h + 8, &rowName, sizeof(RC::Unreal::FName));
+    }
+    bool ok = false;
+    try
+    {
+        ok = safeProcessEvent(mgr, sswhFn, b.data());
+    }
+    catch (...)
+    {
+    }
+    UObject* shown = ok ? readGoatParm<UObject*>(sswhFn, b.data(), STR("ReturnValue"), nullptr) : nullptr;
+    VLOG(STR("[MoriaCppMod] [ChestFlow] ShowScreenWithHandle -> {} shown={:p} (expected {:p})\n"),
+         ok ? STR("OK") : STR("FAILED"), (void*)shown, (void*)screen);
+    return ok && shown != nullptr;
+}
+
 // Show the screen through the MANAGER pipeline. PE-ing the screen's own
 // Show() fires the events and flips IsShowing, but the screen never
 // renders (2026-07-16: every widget-level flag green, nothing on
@@ -4074,6 +4225,10 @@ FWeakObjectPtr m_sbChestFlowMgr;  // MorUIManager (shows/re-shows via ShowScreen
 // the actual presentation.
 bool chestFlowShowViaManager(UObject* screen)
 {
+    // v2: prefer the CONFIG-ROW pipeline (native presentation params).
+    UObject* mgrCfg = m_sbChestFlowMgr.Get();
+    if (mgrCfg && isObjectAlive(mgrCfg) && chestFlowShowViaConfigRow(mgrCfg, screen)) return true;
+
     UObject* mgr = m_sbChestFlowMgr.Get();
     if (mgr && isObjectAlive(mgr))
     {
@@ -4105,6 +4260,7 @@ bool chestFlowShowViaManager(UObject* screen)
 ULONGLONG m_chestFlowDriveAtMs{0};
 ULONGLONG m_chestFlowLastDriveMs{0}; // echo suppression: our own drive fires a RebindThisPack echo
 int m_chestFlowDriveCount{0};        // per-open cap (loop guard)
+bool m_chestFlowAnimsPlayed{false};  // reveal anims played for the current show
 
 // Screen-level "storage view" dressing. The container bind alone leaves
 // the LEFT pane invisible: the screen only shows the storage overlay
@@ -4204,6 +4360,7 @@ void tickChestFlowDeferredDrive()
     if (!showing)
     {
         chestFlowShowViaManager(scr);
+        m_chestFlowAnimsPlayed = false; // reveal anims must re-run after a re-show
         m_chestFlowDriveCount++;
         m_chestFlowDriveAtMs = GetTickCount64() + 120; // drive after the show pipeline settles
         VLOG(STR("[MoriaCppMod] [ChestFlow] screen was hidden — re-shown via manager, drive re-armed (round {})\n"), m_chestFlowDriveCount);
@@ -4234,6 +4391,13 @@ void tickChestFlowDeferredDrive()
     if (drifted)
         driveSaddlebagStorageContainer(scr, m_sbGoatInvCache, m_sbPlayerInvCache, m_sbHandleCache, STR("chest-flow drive"), chest);
     applyChestFlowScreenDressing(scr);
+
+    // [v2] Reveal animations — once per show (the actual render fix).
+    if (!m_chestFlowAnimsPlayed)
+    {
+        m_chestFlowAnimsPlayed = true;
+        chestFlowPlayRevealAnims(scr);
+    }
 
     // [2026-07-16] Opacity insurance: the E-press that opened the goat
     // menu can reach the fresh screen as OnInteractInput and start a
@@ -4364,6 +4528,7 @@ void openSaddlebagsChestFlow(UObject* goat, UObject* playerInv, const uint8_t ba
     m_sbChestFlowScreen = FWeakObjectPtr(screen);
     m_sbWidgetOpenMs = GetTickCount64();
     m_chestFlowDriveCount = 0;
+    m_chestFlowAnimsPlayed = false;
     m_chestFlowDriveAtMs = GetTickCount64() + 250; // fallback if no event fires
     VLOG(STR("[MoriaCppMod] [ChestFlow] OPEN via UI manager: screen={:p} chest={:p} (drive deferred past native rebind)\n"),
          (void*)screen, (void*)chest);

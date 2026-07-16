@@ -3414,6 +3414,7 @@ namespace MoriaMods
                     m_chestFlowLastDriveMs = 0;
                     m_sbChestFlowCont = FWeakObjectPtr{};
                     m_sbChestFlowMgr = FWeakObjectPtr{};
+                    m_chestFlowAnimsPlayed = false;
                     m_bellSeedDone = false;
                     m_cachedBellID = 0;
 
