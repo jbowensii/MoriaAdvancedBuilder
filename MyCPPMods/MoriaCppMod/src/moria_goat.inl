@@ -4032,6 +4032,37 @@ void driveSaddlebagStorageContainer(UObject* screen, UObject* goatInv, UObject* 
 // a chest (generic DT-driven grid), never the goat → NPC → dwarf 4x3.
 FWeakObjectPtr m_sbChestFlowScreen;
 FWeakObjectPtr m_sbChestFlowCont; // Storage_Container child (for hook-side handle compare)
+FWeakObjectPtr m_sbChestFlowMgr;  // MorUIManager (shows/re-shows via ShowScreenInstance)
+
+// Show the screen through the MANAGER pipeline. PE-ing the screen's own
+// Show() fires the events and flips IsShowing, but the screen never
+// renders (2026-07-16: every widget-level flag green, nothing on
+// screen) — the manager's ShowScreenInstance owns the stack push and
+// the actual presentation.
+bool chestFlowShowViaManager(UObject* screen)
+{
+    UObject* mgr = m_sbChestFlowMgr.Get();
+    if (mgr && isObjectAlive(mgr))
+    {
+        if (auto* ssiFn = mgr->GetFunctionByNameInChain(STR("ShowScreenInstance")))
+        {
+            std::vector<uint8_t> b(ssiFn->GetParmsSize(), 0);
+            writeGoatParm<UObject*>(ssiFn, b.data(), STR("ScreenInstance"), screen);
+            if (safeProcessEvent(mgr, ssiFn, b.data()))
+            {
+                VLOG(STR("[MoriaCppMod] [ChestFlow] ShowScreenInstance via manager {:p}\n"), (void*)mgr);
+                return true;
+            }
+        }
+        VLOG(STR("[MoriaCppMod] [ChestFlow] ShowScreenInstance unavailable — falling back to screen Show()\n"));
+    }
+    if (auto* showFn = screen->GetFunctionByNameInChain(STR("Show")))
+    {
+        std::vector<uint8_t> b(showFn->GetParmsSize(), 0);
+        return safeProcessEvent(screen, showFn, b.data());
+    }
+    return false;
+}
 // Deferred-drive timer: the native show sequence fires on the tick(s)
 // AFTER Show(), and its RebindThisPack re-derives the bind from the
 // goat interaction (trace 2026-07-16: handle→goat id=2, InteractableRef→
@@ -4139,14 +4170,10 @@ void tickChestFlowDeferredDrive()
     }
     if (!showing)
     {
-        if (auto* showFn = scr->GetFunctionByNameInChain(STR("Show")))
-        {
-            std::vector<uint8_t> b(showFn->GetParmsSize(), 0);
-            safeProcessEvent(scr, showFn, b.data());
-        }
+        chestFlowShowViaManager(scr);
         m_chestFlowDriveCount++;
         m_chestFlowDriveAtMs = GetTickCount64() + 120; // drive after the show pipeline settles
-        VLOG(STR("[MoriaCppMod] [ChestFlow] screen was hidden — re-shown, drive re-armed (round {})\n"), m_chestFlowDriveCount);
+        VLOG(STR("[MoriaCppMod] [ChestFlow] screen was hidden — re-shown via manager, drive re-armed (round {})\n"), m_chestFlowDriveCount);
         return;
     }
 
@@ -4280,20 +4307,16 @@ void openSaddlebagsChestFlow(UObject* goat, UObject* playerInv, const uint8_t ba
     spawnHiddenGoatChest(goat);
     UObject* chest = (m_hiddenGoatChest && isObjectAlive(m_hiddenGoatChest)) ? m_hiddenGoatChest : nullptr;
 
-    // Native show FIRST — the manager takes input ownership here.
-    if (auto* showFn = screen->GetFunctionByNameInChain(STR("Show")))
+    // Native show FIRST — via the MANAGER pipeline (stack push + input +
+    // presentation). PE-ing the screen's own Show() fires events and
+    // flips IsShowing but renders nothing (2026-07-16: every widget-
+    // level flag green, screen never visible).
+    m_sbChestFlowMgr = FWeakObjectPtr(mgr);
+    m_sbChestFlowScreen = FWeakObjectPtr(screen);
+    if (!chestFlowShowViaManager(screen))
     {
-        std::vector<uint8_t> b(showFn->GetParmsSize(), 0);
-        if (!safeProcessEvent(screen, showFn, b.data()))
-        {
-            VLOG(STR("[MoriaCppMod] [ChestFlow] Show PE FAILED — falling back to legacy takeover\n"));
-            openStorageWidgetForHandle(goat, playerInv, bagHandle);
-            return;
-        }
-    }
-    else
-    {
-        VLOG(STR("[MoriaCppMod] [ChestFlow] Show fn missing — falling back to legacy takeover\n"));
+        VLOG(STR("[MoriaCppMod] [ChestFlow] manager show FAILED — falling back to legacy takeover\n"));
+        m_sbChestFlowScreen = FWeakObjectPtr();
         openStorageWidgetForHandle(goat, playerInv, bagHandle);
         return;
     }
