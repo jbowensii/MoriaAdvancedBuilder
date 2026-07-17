@@ -8660,9 +8660,37 @@ void ensureGoatBodyInventoryArchetype()
         {
             continue;
         }
-        // component TEMPLATES inside the BP_NpcGoat_C class only
+        // component TEMPLATES inside the BP_NpcGoat_C class only.
+        // [fix 2026-07-17] templates are outered to SCS_Node/ICH objects,
+        // not the BPGC directly — walk the whole outer CHAIN for NpcGoat
+        // (log proved immediate-outer matching found 0 templates).
         if (nm.find(STR("GEN_VARIABLE")) == std::wstring::npos) continue;
-        if (outerNm.find(STR("NpcGoat")) == std::wstring::npos) continue;
+        bool inGoat = false;
+        try
+        {
+            UObject* o = c->GetOuterPrivate();
+            for (int d = 0; o && d < 6 && !inGoat; d++)
+            {
+                std::wstring on = o->GetName();
+                if (on.find(STR("NpcGoat")) != std::wstring::npos) inGoat = true;
+                o = o->GetOuterPrivate();
+            }
+        }
+        catch (...)
+        {
+            continue;
+        }
+        if (!inGoat)
+        {
+            // one-shot diagnostic: log every non-goat template's identity once
+            static int s_tplLogs = 30;
+            if (s_tplLogs > 0)
+            {
+                --s_tplLogs;
+                VLOG(STR("[MoriaCppMod] [BodyInv] (skip) template '{}' outer '{}'\n"), nm.c_str(), outerNm.c_str());
+            }
+            continue;
+        }
         goatTemplates++;
         auto* shP = c->GetPropertyByNameInChain(STR("StorageHandle"));
         auto* dcProp = c->GetPropertyByNameInChain(STR("DefaultContainers"));
@@ -8701,6 +8729,109 @@ void ensureGoatBodyInventoryArchetype()
     }
     VLOG(STR("[MoriaCppMod] [BodyInv] archetype patch: {} goat templates found, {} patched\n"), goatTemplates, patched);
     if (patched > 0) m_goatBodyInvPatched = true;
+}
+
+// [NPC-REG 2026-07-17] Instance-side pass: patch the LIVE goat's
+// MorInventoryComponents to the dwarf defs and retry instantiation.
+// Rationale: construction-time DefaultContainers instantiation failed
+// silently for the goat because its DT rows didn't exist — every
+// rc.100-era trigger (ResetToStarting etc.) was tested against BROKEN
+// defs. With valid dwarf rows in place, retry ResetToStarting and log
+// HasContainers before/after (the ground-truth signal).
+void patchGoatInstanceInventory(UObject* goat)
+{
+    if (!goat || !isObjectAlive(goat)) return;
+    UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/FGK.MorInventoryComponent"));
+    if (!invCls) invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MorInventoryComponent"));
+    UClass* bodyCls = UObjectGlobals::StaticFindObject<UClass*>(
+            nullptr, nullptr, STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_BodyInventoryNPC.BP_ContainerItem_Dwarf_BodyInventoryNPC_C"));
+    if (!invCls || !bodyCls)
+    {
+        VLOG(STR("[MoriaCppMod] [BodyInv] instance pass: classes unavailable (inv={:p} body={:p})\n"), (void*)invCls, (void*)bodyCls);
+        return;
+    }
+    auto* getComps = goat->GetFunctionByNameInChain(STR("K2_GetComponentsByClass"));
+    if (!getComps) getComps = goat->GetFunctionByNameInChain(STR("GetComponentsByClass"));
+    if (!getComps)
+    {
+        VLOG(STR("[MoriaCppMod] [BodyInv] instance pass: GetComponentsByClass missing\n"));
+        return;
+    }
+    std::vector<uint8_t> b(getComps->GetParmsSize(), 0);
+    writeGoatParm<UClass*>(getComps, b.data(), STR("ComponentClass"), invCls);
+    if (!safeProcessEvent(goat, getComps, b.data())) return;
+    auto* pr = findParam(getComps, STR("ReturnValue"));
+    if (!pr) return;
+    uint8_t* arr = b.data() + pr->GetOffset_Internal();
+    uint8_t* data = *reinterpret_cast<uint8_t**>(arr);
+    int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+    VLOG(STR("[MoriaCppMod] [BodyInv] instance pass: {} MorInventoryComponent(s) on goat\n"), num);
+    for (int32_t i = 0; data && i < num && i < 8; i++)
+    {
+        UObject* c = *reinterpret_cast<UObject**>(data + i * 8);
+        if (!c || !isObjectAlive(c)) continue;
+        std::wstring nm;
+        try
+        {
+            nm = c->GetName();
+        }
+        catch (...)
+        {
+            continue;
+        }
+        // current state
+        auto hasContainers = [&]() -> int {
+            if (auto* fn = c->GetFunctionByNameInChain(STR("HasContainers")))
+            {
+                std::vector<uint8_t> hb(fn->GetParmsSize(), 0);
+                if (safeProcessEvent(c, fn, hb.data()))
+                    if (auto* hr = findParam(fn, STR("ReturnValue"))) return (*(hb.data() + hr->GetOffset_Internal()) != 0) ? 1 : 0;
+            }
+            return -1;
+        };
+        int before = hasContainers();
+        std::wstring shBefore;
+        if (auto* shP = c->GetPropertyByNameInChain(STR("StorageHandle")))
+        {
+            RC::Unreal::FName* rn = reinterpret_cast<RC::Unreal::FName*>(reinterpret_cast<uint8_t*>(c) + shP->GetOffset_Internal() + 8);
+            try
+            {
+                shBefore = rn->ToString();
+            }
+            catch (...)
+            {
+            }
+            RC::Unreal::FName dwarfRow(STR("Dwarf.Inventory"), RC::Unreal::FNAME_Add);
+            *rn = dwarfRow;
+        }
+        if (auto* dcProp = c->GetPropertyByNameInChain(STR("DefaultContainers")))
+        {
+            uint8_t* arrPtr = reinterpret_cast<uint8_t*>(c) + dcProp->GetOffset_Internal();
+            void* elemMem = FMemory::Malloc(sizeof(UClass*), alignof(UClass*));
+            if (elemMem)
+            {
+                *reinterpret_cast<UClass**>(elemMem) = bodyCls;
+                *reinterpret_cast<void**>(arrPtr + 0) = elemMem;
+                *reinterpret_cast<int32_t*>(arrPtr + 8) = 1;
+                *reinterpret_cast<int32_t*>(arrPtr + 12) = 1;
+            }
+        }
+        // retry the instantiation trigger against VALID defs
+        if (auto* rsFn = c->GetFunctionByNameInChain(STR("ResetToStarting")))
+        {
+            std::vector<uint8_t> rb(rsFn->GetParmsSize(), 0);
+            try
+            {
+                safeProcessEvent(c, rsFn, rb.data());
+            }
+            catch (...)
+            {
+            }
+        }
+        int after = hasContainers();
+        VLOG(STR("[MoriaCppMod] [BodyInv] instance comp '{}': SH '{}' -> 'Dwarf.Inventory', HasContainers {} -> {}\n"),
+             nm.c_str(), shBefore.c_str(), before, after);
+    }
 }
 
 // Spawn-tail identity pass: ADOPT existing marker GUID or REGISTER,
@@ -9109,6 +9240,8 @@ void spawnBellGoat()
         // existing 'Rûdh' marker GUID or register + write identity into
         // NpcInfo (manager reload respawns it natively via the NPCGoat row).
         adoptOrRegisterGoatIdentity(goat);
+        // Live-instance inventory pass: valid dwarf defs + instantiation retry.
+        patchGoatInstanceInventory(goat);
         FollowGoatRecord rec{};
         rec.pawn = RC::Unreal::FWeakObjectPtr(goat);
         rec.controller = RC::Unreal::FWeakObjectPtr();
