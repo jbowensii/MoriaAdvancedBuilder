@@ -5275,8 +5275,42 @@ void openGoatSaddlebagInventory()
         // compiled behind this gate.
         if (m_sbNativeUI)
         {
+            // [NPC44 v2 2026-07-17] Tobi's v1.12 Saddlebags row has NO
+            // native handler (log-proven: gate fired 6x, zero screen-show
+            // events) — the UI was always mod-opened. Minimal native open:
+            // resolve the manager's StorageMode screen and fire
+            // ActivateHud(bFromInteract=true). NOTHING else — no property
+            // writes, no chest, no drives. The interact selection IS the
+            // goat, so the native flow classifies NPC and binds the goat's
+            // storage root itself (dwarf pane, 4x4 via the NPC44 paks).
             equipPorterSaddlebag(goat); // cosmetic saddle only
-            VLOG(STR("[MoriaCppMod] [GoatSaddle] NATIVE mode — letting the game's own NPC screen open (no override)\n"));
+            auto* getMgrFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Moria.MorUIManager:BPGetManager"));
+            auto* mgrCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Moria.Default__MorUIManager"));
+            UObject* ctx = (m_localPC && isObjectAlive(m_localPC)) ? m_localPC : goat;
+            UObject* mgr = nullptr;
+            if (getMgrFn && mgrCDO && ctx)
+            {
+                std::vector<uint8_t> gb(getMgrFn->GetParmsSize(), 0);
+                writeGoatParm<UObject*>(getMgrFn, gb.data(), STR("WorldContextObject"), ctx);
+                if (safeProcessEvent(mgrCDO, getMgrFn, gb.data()))
+                    mgr = readGoatParm<UObject*>(getMgrFn, gb.data(), STR("ReturnValue"), nullptr);
+            }
+            UObject* screen = nullptr;
+            UClass* screenCls = UObjectGlobals::StaticFindObject<UClass*>(
+                    nullptr, nullptr, STR("/Game/UI/Inventory/WBP_UI_Inventory_Screen_StorageMode.WBP_UI_Inventory_Screen_StorageMode_C"));
+            if (mgr && isObjectAlive(mgr) && screenCls)
+            {
+                if (auto* getScreenFn = mgr->GetFunctionByNameInChain(STR("GetScreen")))
+                {
+                    std::vector<uint8_t> sb(getScreenFn->GetParmsSize(), 0);
+                    writeGoatParm<UClass*>(getScreenFn, sb.data(), STR("ScreenClass"), screenCls);
+                    if (safeProcessEvent(mgr, getScreenFn, sb.data()))
+                        screen = readGoatParm<UObject*>(getScreenFn, sb.data(), STR("ReturnValue"), nullptr);
+                }
+            }
+            bool shown = (screen && isObjectAlive(screen)) ? chestFlowActivateHud(screen) : false;
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] NATIVE mode — ActivateHud(no override) -> {} (screen={:p})\n"),
+                 shown ? STR("OK") : STR("FAILED"), (void*)screen);
             return;
         }
 
