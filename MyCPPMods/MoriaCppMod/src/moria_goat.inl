@@ -8499,6 +8499,60 @@ void autoRestoreGoatsFromMarker()
 // than a working dwarf settler. Called after spawn from
 // spawnBellGoat once the actor is fully constructed.
 
+// Does this goat's MorNPCComponent.NpcGuid match a 'Rûdh' NpcInfo marker?
+// Distinguishes OUR registered goat (bell-spawned or manager-restored)
+// from the game's WILD goats — 2026-07-17 log: wild-herd churn re-adopted
+// a fresh wild goat every 2s (same recycled address), hogging the single
+// herd slot and blocking bell summons.
+bool goatHasRudhMarker(UObject* goat)
+{
+    UObject* npcComp = nullptr;
+    UClass* npcCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+    if (npcCls)
+    {
+        if (auto* getComp = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
+        {
+            std::vector<uint8_t> gb(getComp->GetParmsSize(), 0);
+            writeGoatParm<UClass*>(getComp, gb.data(), STR("ComponentClass"), npcCls);
+            if (safeProcessEvent(goat, getComp, gb.data()))
+                npcComp = readGoatParm<UObject*>(getComp, gb.data(), STR("ReturnValue"), nullptr);
+        }
+    }
+    if (!npcComp || !isObjectAlive(npcComp)) return false;
+    uint8_t* guidPtr = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+    if (!guidPtr) return false;
+    static const uint8_t kZero[16] = {0};
+    if (std::memcmp(guidPtr, kZero, 16) == 0) return false;
+
+    UObject* mgr = nullptr;
+    std::vector<UObject*> mgrs;
+    if (findAllOfSafe(STR("MorNPCManager"), mgrs))
+        for (UObject* o : mgrs)
+        {
+            if (!o || !isObjectAlive(o)) continue;
+            std::wstring cn = safeClassName(o);
+            if (cn.size() >= 9 && cn.substr(0, 9) == STR("Default__")) continue;
+            mgr = o;
+            break;
+        }
+    if (!mgr) return false;
+    uint8_t* hdr = reinterpret_cast<uint8_t*>(mgr) + 0x03a0 + 0x0108;
+    if (!isReadableMemory(hdr, 16)) return false;
+    uint8_t* data = *reinterpret_cast<uint8_t**>(hdr);
+    int32_t num = *reinterpret_cast<int32_t*>(hdr + 8);
+    constexpr int kStride = 0x260, kGuidOff = 0x001c, kNameOff = 0x0030;
+    if (!data || num <= 0 || num > 500 || !isReadableMemory(data, num * kStride)) return false;
+    for (int i = 0; i < num; ++i)
+    {
+        uint8_t* entry = data + i * kStride;
+        if (std::memcmp(entry + kGuidOff, guidPtr, 16) != 0) continue;
+        wchar_t nameBuf[256] = L"";
+        seh_ftextToStringToBuf(entry + kNameOff, nameBuf, 256);
+        return isGoatNameMatch(std::wstring(nameBuf));
+    }
+    return false;
+}
+
 void adoptNativeGoat(UObject* goat)
 {
     if (!goat || !isObjectAlive(goat)) return;
@@ -8507,6 +8561,8 @@ void adoptNativeGoat(UObject* goat)
     std::wstring cls;
     try { cls = goat->GetClassPrivate()->GetName(); } catch (...) { return; }
     if (cls != STR("BP_NpcGoat_C") && cls != STR("BP_PorterGoat_C")) return;
+    // [NPC-REG gate] only OUR registered goat — never wild goats.
+    if (!goatHasRudhMarker(goat)) return;
     FollowGoatRecord rec{};
     rec.pawn               = RC::Unreal::FWeakObjectPtr(goat);
     rec.bellSpawned        = false;  // porter-role goat: leash-follow, not manual MoveToActor
@@ -8545,6 +8601,85 @@ void tickAdoptNativeGoat()
         adoptNativeGoat(g);
         break;  // MAX_FOLLOW_GOATS == 1
     }
+}
+
+// [NPC-REG 2026-07-17] Goat body-inventory archetype patch (rc.82
+// technique, retargeted). Root cause of the "all helmets /
+// uninitialized" goat pane: the goat components' StorageHandle row
+// 'Goat.Slot.EpicPack' does NOT exist in live DT_Storage (Tobi never
+// shipped it), so native container instantiation has nothing to build.
+// Fix: patch the BP_NpcGoat_C component TEMPLATEs to the DWARF defs
+// that DO exist — StorageHandle row 'Dwarf.Inventory' +
+// DefaultContainers = [BP_ContainerItem_Dwarf_BodyInventoryNPC_C]
+// (the row our paks grew to 6x6). Templates only: future spawns
+// inherit; native construction should instantiate a real container.
+bool m_goatBodyInvPatched{false};
+void ensureGoatBodyInventoryArchetype()
+{
+    if (m_goatBodyInvPatched) return;
+    const wchar_t* contPath = STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_BodyInventoryNPC.BP_ContainerItem_Dwarf_BodyInventoryNPC_C");
+    UClass* cc = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, contPath);
+    if (!cc) cc = goat_loadClassAssetBlocking(contPath);
+    if (!cc)
+    {
+        VLOG(STR("[MoriaCppMod] [BodyInv] dwarf body container class not loadable — patch skipped\n"));
+        return;
+    }
+    std::vector<UObject*> comps;
+    if (!seh_findAllOf(STR("MorInventoryComponent"), &comps)) return;
+    int patched = 0, goatTemplates = 0;
+    for (auto* c : comps)
+    {
+        if (!c || !isObjectAlive(c)) continue;
+        std::wstring nm, outerNm;
+        try
+        {
+            nm = c->GetName();
+            if (auto* outer = c->GetOuterPrivate()) outerNm = outer->GetName();
+        }
+        catch (...)
+        {
+            continue;
+        }
+        // component TEMPLATES inside the BP_NpcGoat_C class only
+        if (nm.find(STR("GEN_VARIABLE")) == std::wstring::npos) continue;
+        if (outerNm.find(STR("NpcGoat")) == std::wstring::npos) continue;
+        goatTemplates++;
+        auto* shP = c->GetPropertyByNameInChain(STR("StorageHandle"));
+        auto* dcProp = c->GetPropertyByNameInChain(STR("DefaultContainers"));
+        std::wstring shBefore;
+        if (shP)
+        {
+            RC::Unreal::FName* rn = reinterpret_cast<RC::Unreal::FName*>(reinterpret_cast<uint8_t*>(c) + shP->GetOffset_Internal() + 8);
+            try
+            {
+                shBefore = rn->ToString();
+            }
+            catch (...)
+            {
+            }
+            RC::Unreal::FName dwarfRow(STR("Dwarf.Inventory"), RC::Unreal::FNAME_Add);
+            *rn = dwarfRow;
+        }
+        if (dcProp)
+        {
+            uint8_t* arrPtr = reinterpret_cast<uint8_t*>(c) + dcProp->GetOffset_Internal();
+            int32_t oldNum = *reinterpret_cast<int32_t*>(arrPtr + 8);
+            void* elemMem = FMemory::Malloc(sizeof(UClass*), alignof(UClass*));
+            if (elemMem)
+            {
+                *reinterpret_cast<UClass**>(elemMem) = cc;
+                *reinterpret_cast<void**>(arrPtr + 0) = elemMem;
+                *reinterpret_cast<int32_t*>(arrPtr + 8) = 1;
+                *reinterpret_cast<int32_t*>(arrPtr + 12) = 1;
+                VLOG(STR("[MoriaCppMod] [BodyInv] template '{}' (outer '{}'): StorageHandle '{}' -> 'Dwarf.Inventory', DefaultContainers {} -> [Dwarf_BodyInventoryNPC]\n"),
+                     nm.c_str(), outerNm.c_str(), shBefore.c_str(), oldNum);
+                patched++;
+            }
+        }
+    }
+    VLOG(STR("[MoriaCppMod] [BodyInv] archetype patch: {} goat templates found, {} patched\n"), goatTemplates, patched);
+    if (patched > 0) m_goatBodyInvPatched = true;
 }
 
 // Spawn-tail identity pass: ADOPT existing marker GUID or REGISTER,
@@ -8683,6 +8818,11 @@ void spawnBellGoat()
          (void*)m_goatBeginSpawnFn,
          (void*)m_goatFinishSpawnFn,
          (void*)m_kismetGameplayStaticsCDO);
+
+    // [NPC-REG] patch the goat component templates to VALID dwarf storage
+    // defs BEFORE the spawn so this instance inherits an instantiable
+    // body-inventory container (6x6 via the NPC44 paks).
+    ensureGoatBodyInventoryArchetype();
 
     UObject* pawn = m_localPawn ? m_localPawn : getPawn();
     if (!pawn || !isObjectAlive(pawn))
