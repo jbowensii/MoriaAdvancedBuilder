@@ -8645,27 +8645,104 @@ void adoptNativeGoat(UObject* goat)
 }
 
 
+// Total loose stacks across a goat's containers (0 = empty/fresh).
+int countGoatStacks(UObject* goat)
+{
+    std::vector<UObject*> comps;
+    goatInvCompsWithContainers(goat, comps);
+    std::vector<std::string> lines;
+    for (auto* c : comps) collectCompStacks(c, lines);
+    return (int)lines.size();
+}
+
+// [NATIVE-PERSIST v2 2026-07-17] Marker-goat ARBITRATION. The native
+// record restore streams in LATE (bubble timing) — a bell ring before
+// that spawns a fresh empty goat that steals the single herd slot,
+// leaving the restored, loaded goat orphaned + invisible (the user's
+// "mystery invisible goat"). Every 2s: collect ALL live marker goats,
+// prefer the one CARRYING ITEMS, swap the tracked slot to it, and
+// destroy only EMPTY duplicates (never a loaded goat).
 void tickAdoptNativeGoat()
 {
     if (!m_characterLoaded) return;
-    if (m_followGoats.size() >= MAX_FOLLOW_GOATS) return;
     ULONGLONG now = GetTickCount64();
     if (now - m_lastNativeGoatScanMs < 2000) return;
     m_lastNativeGoatScanMs = now;
 
     std::vector<UObject*> hits;
     if (!seh_findAnyGoatActor(&hits)) return;
+    std::vector<UObject*> markers;
     for (UObject* g : hits)
     {
         if (!g || !isObjectAlive(g)) continue;
         std::wstring cls;
-        try { cls = g->GetClassPrivate()->GetName(); } catch (...) { continue; }
+        try
+        {
+            cls = g->GetClassPrivate()->GetName();
+        }
+        catch (...)
+        {
+            continue;
+        }
         if (cls != STR("BP_NpcGoat_C") && cls != STR("BP_PorterGoat_C")) continue;
         std::wstring nm;
-        try { nm = g->GetName(); } catch (...) {}
-        if (nm.rfind(STR("Default__"), 0) == 0) continue;  // skip the CDO
-        adoptNativeGoat(g);
-        break;  // MAX_FOLLOW_GOATS == 1
+        try
+        {
+            nm = g->GetName();
+        }
+        catch (...)
+        {
+        }
+        if (nm.rfind(STR("Default__"), 0) == 0) continue;
+        if (!goatHasRudhMarker(g)) continue; // wild goats never participate
+        markers.push_back(g);
+    }
+    if (markers.empty()) return;
+
+    UObject* tracked = findOurGoatAlive();
+    if (markers.size() == 1 && markers[0] == tracked) return; // steady state
+
+    // pick the best: most stacks; tie-break = currently tracked
+    UObject* best = nullptr;
+    int bestStacks = -1;
+    for (auto* g : markers)
+    {
+        int s = countGoatStacks(g);
+        bool win = (s > bestStacks) || (s == bestStacks && g == tracked);
+        VLOG(STR("[MoriaCppMod] [NativeGoat] marker goat {:p} stacks={}{}\n"), (void*)g, s, g == tracked ? STR(" (tracked)") : STR(""));
+        if (win)
+        {
+            best = g;
+            bestStacks = s;
+        }
+    }
+    if (!best) return;
+
+    if (best != tracked)
+    {
+        // swap the slot to the loaded goat
+        if (tracked && countGoatStacks(tracked) == 0)
+        {
+            VLOG(STR("[MoriaCppMod] [NativeGoat] SWAP: destroying empty fresh goat {:p} in favor of loaded goat {:p} ({} stacks)\n"),
+                 (void*)tracked, (void*)best, bestStacks);
+            destroyGoat(tracked);
+        }
+        m_followGoats.clear();
+        adoptNativeGoat(best);
+    }
+    // dedupe: destroy OTHER marker goats only when empty
+    for (auto* g : markers)
+    {
+        if (g == best || !isObjectAlive(g)) continue;
+        if (countGoatStacks(g) == 0)
+        {
+            VLOG(STR("[MoriaCppMod] [NativeGoat] dedupe: destroying empty duplicate goat {:p}\n"), (void*)g);
+            destroyGoat(g);
+        }
+        else
+        {
+            VLOG(STR("[MoriaCppMod] [NativeGoat] duplicate goat {:p} has items — left alone (manual cleanup)\n"), (void*)g);
+        }
     }
 }
 
