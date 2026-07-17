@@ -8617,14 +8617,33 @@ bool m_goatBodyInvPatched{false};
 void ensureGoatBodyInventoryArchetype()
 {
     if (m_goatBodyInvPatched) return;
-    const wchar_t* contPath = STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_BodyInventoryNPC.BP_ContainerItem_Dwarf_BodyInventoryNPC_C");
-    UClass* cc = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, contPath);
-    if (!cc) cc = goat_loadClassAssetBlocking(contPath);
+    // Full dwarf-NPC parity: the SAME 7 DefaultContainers BP_NpcDwarf uses
+    // (body 6x6 + 6 equipment slot containers), all with LIVE DT rows.
+    static const wchar_t* kDwarfContainers[] = {
+            STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_BodyInventoryNPC.BP_ContainerItem_Dwarf_BodyInventoryNPC_C"),
+            STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_Slot_Helmet.BP_ContainerItem_Dwarf_Slot_Helmet_C"),
+            STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_Slot_Torso.BP_ContainerItem_Dwarf_Slot_Torso_C"),
+            STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_Slot_Gloves.BP_ContainerItem_Dwarf_Slot_Gloves_C"),
+            STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_Slot_Boots.BP_ContainerItem_Dwarf_Slot_Boots_C"),
+            STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_Slot_MainHandNPC.BP_ContainerItem_Dwarf_Slot_MainHandNPC_C"),
+            STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_Slot_OffHandNPC.BP_ContainerItem_Dwarf_Slot_OffHandNPC_C"),
+    };
+    constexpr int kNumContainers = 7;
+    UClass* classes[kNumContainers] = {nullptr};
+    int loaded = 0;
+    for (int i = 0; i < kNumContainers; i++)
+    {
+        classes[i] = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kDwarfContainers[i]);
+        if (!classes[i]) classes[i] = goat_loadClassAssetBlocking(kDwarfContainers[i]);
+        if (classes[i]) loaded++;
+    }
+    UClass* cc = classes[0]; // body container is mandatory
     if (!cc)
     {
         VLOG(STR("[MoriaCppMod] [BodyInv] dwarf body container class not loadable — patch skipped\n"));
         return;
     }
+    VLOG(STR("[MoriaCppMod] [BodyInv] dwarf container classes loaded {}/{}\n"), loaded, kNumContainers);
     std::vector<UObject*> comps;
     if (!seh_findAllOf(STR("MorInventoryComponent"), &comps)) return;
     int patched = 0, goatTemplates = 0;
@@ -8665,15 +8684,17 @@ void ensureGoatBodyInventoryArchetype()
         {
             uint8_t* arrPtr = reinterpret_cast<uint8_t*>(c) + dcProp->GetOffset_Internal();
             int32_t oldNum = *reinterpret_cast<int32_t*>(arrPtr + 8);
-            void* elemMem = FMemory::Malloc(sizeof(UClass*), alignof(UClass*));
+            void* elemMem = FMemory::Malloc(sizeof(UClass*) * kNumContainers, alignof(UClass*));
             if (elemMem)
             {
-                *reinterpret_cast<UClass**>(elemMem) = cc;
+                int n = 0;
+                for (int i = 0; i < kNumContainers; i++)
+                    if (classes[i]) reinterpret_cast<UClass**>(elemMem)[n++] = classes[i];
                 *reinterpret_cast<void**>(arrPtr + 0) = elemMem;
-                *reinterpret_cast<int32_t*>(arrPtr + 8) = 1;
-                *reinterpret_cast<int32_t*>(arrPtr + 12) = 1;
-                VLOG(STR("[MoriaCppMod] [BodyInv] template '{}' (outer '{}'): StorageHandle '{}' -> 'Dwarf.Inventory', DefaultContainers {} -> [Dwarf_BodyInventoryNPC]\n"),
-                     nm.c_str(), outerNm.c_str(), shBefore.c_str(), oldNum);
+                *reinterpret_cast<int32_t*>(arrPtr + 8) = n;
+                *reinterpret_cast<int32_t*>(arrPtr + 12) = n;
+                VLOG(STR("[MoriaCppMod] [BodyInv] template '{}' (outer '{}'): StorageHandle '{}' -> 'Dwarf.Inventory', DefaultContainers {} -> {} dwarf containers (body 6x6 + equip slots)\n"),
+                     nm.c_str(), outerNm.c_str(), shBefore.c_str(), oldNum, n);
                 patched++;
             }
         }
