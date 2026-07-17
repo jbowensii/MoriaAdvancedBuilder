@@ -138,6 +138,7 @@ void saveConfig()
     file << "\n[GoatCompanion]\n";
     file << "Name = " << wideToUtf8(m_goatName) << "\n";
     file << "ChestFlowUI = " << (m_chestFlowUI ? "true" : "false") << "\n";
+    file << "NativeSaddlebagsUI = " << (m_sbNativeUI ? "true" : "false") << "\n";
 
     // [Cheats]: only "true" entries written; absent keys = false.
     {
@@ -398,6 +399,10 @@ void loadConfig()
                     else if (strEqualCI(kv->key, "ChestFlowUI"))
                     {
                         m_chestFlowUI = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
+                    }
+                    else if (strEqualCI(kv->key, "NativeSaddlebagsUI"))
+                    {
+                        m_sbNativeUI = (kv->value == "true" || kv->value == "1" || kv->value == "yes");
                     }
                 }
                 else if (strEqualCI(section, "Cheats"))

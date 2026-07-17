@@ -5267,6 +5267,19 @@ void openGoatSaddlebagInventory()
             return;
         }
 
+        // [NPC44 2026-07-17] Pure NATIVE saddlebags: do not open, drive,
+        // suppress, or spawn anything — Tobi's own Saddlebags row handler
+        // shows the StorageMode screen, the goat classifies as NPC, and
+        // the NPC44-pak-enlarged dwarf pane renders 4x4. All override
+        // machinery (chest-flow, legacy takeover, suppress window) stays
+        // compiled behind this gate.
+        if (m_sbNativeUI)
+        {
+            equipPorterSaddlebag(goat); // cosmetic saddle only
+            VLOG(STR("[MoriaCppMod] [GoatSaddle] NATIVE mode — letting the game's own NPC screen open (no override)\n"));
+            return;
+        }
+
         // [rc.99 EPIC-SLOT 2026-07-10] Option A: open Tobi's native
         // StorageMode bound to the goat's epic-pack slot so the player
         // can drop a CRAFTED PorterGoatSaddlebags in. Native manage showed

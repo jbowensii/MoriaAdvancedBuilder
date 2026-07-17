@@ -61,6 +61,12 @@ namespace MoriaMods
         // legacy takeover displays and works; flip via
         // [GoatCompanion] ChestFlowUI=true to resume the experiment.
         bool m_chestFlowUI{false};
+        // [NPC44 2026-07-17] Pure-native saddlebags: the goat menu's
+        // Saddlebags row lets Tobi's own handler show the NPC screen
+        // (dwarf pane, 4x4 via the NPC44 paks) — no override machinery.
+        // Takes precedence over ChestFlowUI; [GoatCompanion]
+        // NativeSaddlebagsUI=false re-enables the override paths.
+        bool m_sbNativeUI{true};
         // [rc.22] Test 3 saddlebag widget — spawned on saddlebag click, dismissed by ESC.
         UObject* m_test3SaddlebagWidget{nullptr};
         ULONGLONG m_lastGoatMenuMs{0}; // E-press dedupe cooldown
