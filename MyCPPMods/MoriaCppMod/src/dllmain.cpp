@@ -2755,8 +2755,9 @@ namespace MoriaMods
             // [NPC-REG 2026-07-17] adopt a manager-restored (or Tobi-summoned)
             // goat into m_followGoats so menu/bell/saddlebags work on it.
             s_instance->tickAdoptNativeGoat();
-            // [Sidecar v2] 60s insurance snapshot of goat bag contents.
+            // [WorldStore] 60s native store of the goat actor record.
             s_instance->tickSidecarSnapshot();
+            s_instance->tickDwarfBagProbe();
             s_instance->tickChestFlowDeferredDrive();
             s_instance->tickForensicsDump();
 
@@ -3756,9 +3757,10 @@ namespace MoriaMods
                 // manager-restored goat (and lazy container instantiation)
                 // sees valid defs.
                 ensureGoatStorageRows();
-                // [DwarfBag probe] one-shot dwarf inventory dump — compare
-                // across relogin to learn if the game persists NPC bags.
-                probeDwarfBagContents();
+                // [DwarfBag probe] retried by tickDwarfBagProbe (dwarves
+                // stream late; one-shot at +5s always found 0).
+                m_dwarfProbeTries = 0;
+                m_dwarfProbeNextMs = 0;
                 // [NPC-REG 2026-07-17] rc.112 machinery reconnected: if the
                 // manager did NOT natively respawn the goat (old worlds /
                 // ValidNpcRestores quirks), spawn one for an orphan 'Rûdh'

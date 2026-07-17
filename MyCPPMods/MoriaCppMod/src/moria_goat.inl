@@ -9256,10 +9256,21 @@ void tickSidecarSnapshot()
 // [DwarfBag probe 2026-07-17] one-shot dump of every settlement dwarf's
 // inventory stacks (GUID-tagged) — run once per session; compare across
 // relogin to learn whether the GAME persists NPC dwarf bag contents.
-void probeDwarfBagContents()
+int m_dwarfProbeTries{0};
+ULONGLONG m_dwarfProbeNextMs{0};
+int probeDwarfBagContents()
 {
     std::vector<UObject*> dwarves;
-    findAllOfSafe(STR("BP_NpcDwarf_C"), dwarves);
+    // [fix] settlement dwarves are BP_NpcDwarf_NoLink etc., and they stream
+    // in late — caller retries until at least one is found.
+    for (const wchar_t* cls : {STR("BP_NpcDwarf_C"), STR("BP_NpcDwarf_NoLink_C"), STR("BP_NpcDwarf_Survivor_C"),
+                               STR("BP_NpcDwarf_Recruit_C"), STR("BP_NpcDwarf_Wanderer_C"),
+                               STR("BP_NpcDwarf_Wanderer_RecruitAndSettlement_C")})
+    {
+        std::vector<UObject*> found;
+        findAllOfSafe(cls, found);
+        dwarves.insert(dwarves.end(), found.begin(), found.end());
+    }
     int logged = 0;
     for (auto* d : dwarves)
     {
@@ -9292,7 +9303,7 @@ void probeDwarfBagContents()
                         {
                             char buf[40];
                             const uint32_t* u = reinterpret_cast<const uint32_t*>(g);
-                            snprintf(buf, sizeof(buf), "%08X", u[0]);
+                            snprintf(buf, sizeof(buf), "%08X%08X%08X%08X", u[0], u[1], u[2], u[3]);
                             guid = buf;
                         }
             }
@@ -9303,6 +9314,18 @@ void probeDwarfBagContents()
         logged++;
     }
     VLOG(STR("[MoriaCppMod] [DwarfBag] === {} dwarf(s) dumped ===\n"), logged);
+    return logged;
+}
+
+// Retry wrapper: dwarves stream in late — probe every 10s until found.
+void tickDwarfBagProbe()
+{
+    if (!m_characterLoaded || m_dwarfProbeTries >= 12) return;
+    ULONGLONG now = GetTickCount64();
+    if (now < m_dwarfProbeNextMs) return;
+    m_dwarfProbeNextMs = now + 10000;
+    m_dwarfProbeTries++;
+    if (probeDwarfBagContents() > 0) m_dwarfProbeTries = 12; // done this session
 }
 
 // Spawn-tail identity pass: ADOPT existing marker GUID or REGISTER,
