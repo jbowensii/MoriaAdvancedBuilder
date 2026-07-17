@@ -67,6 +67,8 @@ namespace MoriaMods
         // Takes precedence over ChestFlowUI; [GoatCompanion]
         // NativeSaddlebagsUI=false re-enables the override paths.
         bool m_sbNativeUI{true};
+        // [NATIVE-PERSIST] late AutoRestore fallback timer (0 = disarmed).
+        ULONGLONG m_autoRestoreAtMs{0};
         // [rc.22] Test 3 saddlebag widget — spawned on saddlebag click, dismissed by ESC.
         UObject* m_test3SaddlebagWidget{nullptr};
         ULONGLONG m_lastGoatMenuMs{0}; // E-press dedupe cooldown
@@ -2758,6 +2760,14 @@ namespace MoriaMods
             // [WorldStore] 60s native store of the goat actor record.
             s_instance->tickSidecarSnapshot();
             s_instance->tickDwarfBagProbe();
+            // [NATIVE-PERSIST] late AutoRestore fallback (+90s, once): only
+            // if the native record restore did not bring a goat back.
+            if (s_instance->m_autoRestoreAtMs != 0 && GetTickCount64() >= s_instance->m_autoRestoreAtMs)
+            {
+                s_instance->m_autoRestoreAtMs = 0;
+                if (!s_instance->findOurGoatAlive()) s_instance->autoRestoreGoatsFromMarker();
+                else VLOG(STR("[MoriaCppMod] [AutoRestore] skipped — native record restore already brought the goat back\n"));
+            }
             s_instance->tickChestFlowDeferredDrive();
             s_instance->tickForensicsDump();
 
@@ -3555,6 +3565,9 @@ namespace MoriaMods
                     // [WorldStore] per-world record handle.
                     std::memset(m_goatStoreHandle, 0, sizeof(m_goatStoreHandle));
                     m_goatStoredOnce = false;
+                    // [NATIVE-PERSIST] per-world park + fallback timer.
+                    m_goatParked = false;
+                    m_autoRestoreAtMs = 0;
 
                     // Settings-screen widget UClasses were captured off LIVE
                     // widget instances — stale after world transitions; a
@@ -3761,11 +3774,13 @@ namespace MoriaMods
                 // stream late; one-shot at +5s always found 0).
                 m_dwarfProbeTries = 0;
                 m_dwarfProbeNextMs = 0;
-                // [NPC-REG 2026-07-17] rc.112 machinery reconnected: if the
-                // manager did NOT natively respawn the goat (old worlds /
-                // ValidNpcRestores quirks), spawn one for an orphan 'Rûdh'
-                // marker; the spawn tail re-adopts the same GUID.
-                autoRestoreGoatsFromMarker();
+                // [NATIVE-PERSIST 2026-07-17] AutoRestore DEMOTED to a late
+                // fallback: the goat's own world-save actor record restores
+                // it natively (with inventory!) when its bubble streams in —
+                // an early orphan-spawn would steal the herd slot from the
+                // record goat (the proven relogin-loss mechanism). Fire at
+                // +90s only if no live goat appeared by then.
+                m_autoRestoreAtMs = GetTickCount64() + 90000;
             }
 
             if (!m_initialReplayDone && msSinceChar >= 15000)

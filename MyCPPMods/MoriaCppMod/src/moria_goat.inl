@@ -7855,6 +7855,37 @@ bool destroyGoat(UObject* goat)
 
 // Main toggle entry — bell right-click target (and NUM9 test keybind).
 // 2-second cooldown enforced via m_lastBellToggleMs.
+// [NATIVE-PERSIST] parked-goat state (hidden in place; record persists).
+bool m_goatParked{false};
+void setGoatHidden(UObject* goat, bool hidden)
+{
+    if (!goat || !isObjectAlive(goat)) return;
+    if (auto* fn = goat->GetFunctionByNameInChain(STR("SetActorHiddenInGame")))
+    {
+        std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+        b[0] = hidden ? 1 : 0;
+        try
+        {
+            safeProcessEvent(goat, fn, b.data());
+        }
+        catch (...)
+        {
+        }
+    }
+    if (auto* fn = goat->GetFunctionByNameInChain(STR("SetActorEnableCollision")))
+    {
+        std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+        b[0] = hidden ? 0 : 1;
+        try
+        {
+            safeProcessEvent(goat, fn, b.data());
+        }
+        catch (...)
+        {
+        }
+    }
+}
+
 void toggleGoatFromBell()
 {
     ULONGLONG now = GetTickCount64();
@@ -7881,13 +7912,14 @@ void toggleGoatFromBell()
                                        }),
                         m_followGoats.end());
 
-    // EPHEMERAL GOAT (user decision 2026-07-12): the only persistent
-    // state is the saddlebag pack in the PLAYER's inventory. The goat
-    // itself carries nothing, so the bell is a plain toggle:
-    //   goat present → DESTROY it
-    //   no goat      → SPAWN a fresh one (unregistered passive fauna)
-    // No hide/park/recall, no identity, no registry. History of the
-    // old design: memory goat-final-architecture.
+    // [NATIVE-PERSIST 2026-07-17] Save-forensics verdict: NPC inventories
+    // persist inside the actor's world-save record (Nithi's 10 star
+    // ingots found + format cracked: 1-based 3-byte class idx, count,
+    // durability). DESTROYING the goat severed that chain — so the bell
+    // is now PARK / RECALL / SUMMON:
+    //   goat visible → PARK (hide + no collision; actor + record live on)
+    //   goat parked  → RECALL (unhide + teleport to player)
+    //   no goat      → SPAWN (registered; native record restores it later)
     UObject* live = nullptr;
     for (auto& g : m_followGoats)
     {
@@ -7898,30 +7930,49 @@ void toggleGoatFromBell()
             break;
         }
     }
-    if (!live) live = findAnyGoatInWorld(); // untracked stray counts too
-
-    if (live)
+    if (!live)
     {
-        VLOG(STR("[MoriaCppMod] [BellToggle] DISMISS — destroying goat {:p} (ephemeral; pack lives with player)\n"), (void*)live);
-        // [WorldStore] capture the actor record (with contents) natively
-        // BEFORE the destroy — the level record can then restore it.
-        storeGoatToWorldState(live, STR("pre-dismiss"));
-        if (auto* dFn = live->GetFunctionByNameInChain(STR("K2_DestroyActor")))
+        // untracked candidate — but ONLY our marker goat, never wild goats
+        UObject* stray = findAnyGoatInWorld();
+        if (stray && goatHasRudhMarker(stray)) live = stray;
+    }
+
+    if (live && !m_goatParked)
+    {
+        VLOG(STR("[MoriaCppMod] [BellToggle] PARK — hiding goat {:p} (actor + save record preserved)\n"), (void*)live);
+        storeGoatToWorldState(live, STR("pre-park"));
+        setGoatHidden(live, true);
+        m_goatParked = true;
+        showOnScreen(L"Rûdh waits out of sight (cargo safe)", 2.0f, 0.7f, 0.9f, 0.7f);
+        return;
+    }
+    if (live && m_goatParked)
+    {
+        setGoatHidden(live, false);
+        UObject* pawn = m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr;
+        if (pawn)
         {
-            try
+            if (auto* getLoc = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
             {
-                safeProcessEvent(live, dFn, nullptr);
-            }
-            catch (...)
-            {
+                std::vector<uint8_t> lb(getLoc->GetParmsSize(), 0);
+                if (safeProcessEvent(pawn, getLoc, lb.data()))
+                {
+                    if (auto* pr = findParam(getLoc, STR("ReturnValue")))
+                    {
+                        float* v = reinterpret_cast<float*>(lb.data() + pr->GetOffset_Internal());
+                        npcTeleportPawn(live, v[0] + 150.0f, v[1] + 150.0f, v[2] + 50.0f);
+                    }
+                }
             }
         }
-        m_followGoats.clear();
-        showOnScreen(L"Rûdh wanders off (saddlebags safe with you)", 2.0f, 0.7f, 0.9f, 0.7f);
+        m_goatParked = false;
+        VLOG(STR("[MoriaCppMod] [BellToggle] RECALL — goat {:p} unhidden + teleported to player\n"), (void*)live);
+        showOnScreen(L"Rûdh returns", 2.0f, 0.4f, 0.9f, 0.4f);
         return;
     }
 
     VLOG(STR("[MoriaCppMod] [BellToggle] SUMMON — spawning fresh goat\n"));
+    m_goatParked = false;
     spawnBellGoat();
 }
 
@@ -8575,6 +8626,14 @@ void adoptNativeGoat(UObject* goat)
     rec.controllerReplaced = true;   // never swap Tobi's AIController
     rec.interactiveRefired = true;   // leave Tobi's interaction prompts untouched
     rec.postRegDumpDone    = true;
+    // [NATIVE-PERSIST] a record-restored goat saved while PARKED comes
+    // back hidden — sync the park state so the first bell ring RECALLS
+    // instead of invisibly re-parking.
+    if (auto* hiddenPtr = goat->GetValuePtrByPropertyNameInChain<uint8_t>(STR("bHidden")))
+    {
+        m_goatParked = ((*hiddenPtr & 0x01) != 0);
+        if (m_goatParked) VLOG(STR("[MoriaCppMod] [NativeGoat] adopted goat is HIDDEN — park state synced (first ring recalls)\n"));
+    }
     m_followGoats.push_back(rec);
     VLOG(STR("[MoriaCppMod] [NativeGoat] adopted Tobi-summoned {} {:p} (herd={})\n"),
          cls.c_str(), (void*)goat, (int)m_followGoats.size());
@@ -8921,6 +8980,15 @@ void patchGoatInstanceInventory(UObject* goat)
             return *reinterpret_cast<int32_t*>(gb.data() + gr->GetOffset_Internal() + 8);
         };
         int32_t cntBefore = containerCount();
+        // [NATIVE-PERSIST] a record-restored goat already HAS containers
+        // (with contents!) — AddItem would duplicate them. Only build
+        // containers on a genuinely fresh (empty) component.
+        if (cntBefore > 0)
+        {
+            VLOG(STR("[MoriaCppMod] [BodyInv] instance comp '{}' already has {} container(s) — AddItem skipped (restored goat)\n"),
+                 nm.c_str(), cntBefore);
+            continue;
+        }
         if (auto* af = c->GetFunctionByNameInChain(STR("AddItem")))
         {
             auto* pItem = findParam(af, STR("Item"));
