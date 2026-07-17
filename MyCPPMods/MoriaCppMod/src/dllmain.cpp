@@ -3551,6 +3551,9 @@ namespace MoriaMods
                     m_goatRowsEnsured = false;
                     m_dtStorageGoat = DataTableUtil{};
                     m_dtContItemsGoat = DataTableUtil{};
+                    // [WorldStore] per-world record handle.
+                    std::memset(m_goatStoreHandle, 0, sizeof(m_goatStoreHandle));
+                    m_goatStoredOnce = false;
 
                     // Settings-screen widget UClasses were captured off LIVE
                     // widget instances — stale after world transitions; a

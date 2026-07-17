@@ -7903,10 +7903,9 @@ void toggleGoatFromBell()
     if (live)
     {
         VLOG(STR("[MoriaCppMod] [BellToggle] DISMISS — destroying goat {:p} (ephemeral; pack lives with player)\n"), (void*)live);
-        // [Sidecar v2] preserve contents before the destroy (destroy drops
-        // them to the floor via bDropContentsOnDeath; the snapshot makes the
-        // NEXT summon restore them into the fresh containers by GUID).
-        snapshotGoatSaddlebag();
+        // [WorldStore] capture the actor record (with contents) natively
+        // BEFORE the destroy — the level record can then restore it.
+        storeGoatToWorldState(live, STR("pre-dismiss"));
         if (auto* dFn = live->GetFunctionByNameInChain(STR("K2_DestroyActor")))
         {
             try
@@ -8582,8 +8581,7 @@ void adoptNativeGoat(UObject* goat)
     // [NPC-REG v4] a manager-restored goat spawned natively BEFORE our
     // template patch could land — apply dwarf defs to its live comps too.
     patchGoatInstanceInventory(goat);
-    // [Sidecar v2] refill from this GUID's snapshot.
-    restoreGoatSaddlebagFromSidecar(goat);
+    // [WorldStore] sidecar rejected — restore is native (level record).
     showOnScreen(L"Porter Goat linked", 1.5f, 0.7f, 0.9f, 0.7f);
 }
 
@@ -9189,14 +9187,70 @@ void restoreGoatSaddlebagFromSidecar(UObject* goat)
     if (restored > 0) showOnScreen(L"Saddlebag contents restored", 2.0f, 0.4f, 0.9f, 0.4f);
 }
 
-// Periodic insurance snapshot (covers logout without save/dismiss).
+// [WORLDSTORE 2026-07-17] Sidecar REJECTED by user — native save only.
+// Save-file forensics verdict: the game persists NO NPC inventory (Nithi's
+// star ingots absent from the save; goat's silver absent; the NPC record
+// struct has no inventory field). The ONE untested native mechanism is the
+// generic runtime-actor store: StoreRuntimeActor provably round-trips
+// actors (rc.116 restored a stored prop), UInventoryComponent implements
+// IFGKSaveGameObject, and every FItemInstance field is SaveGame-flagged.
+// Experiment: store the goat actor periodically + at dismiss; on reload,
+// does the level record respawn it WITH contents?
+uint8_t m_goatStoreHandle[0x20]{};
+bool m_goatStoredOnce{false};
+void storeGoatToWorldState(UObject* goat, const wchar_t* tag)
+{
+    if (!goat || !isObjectAlive(goat)) return;
+    UObject* ws = nullptr;
+    auto* libFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Moria.MorSaveSystemBlueprintLibrary:GetSaveSystemWorldState"));
+    auto* libCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Moria.Default__MorSaveSystemBlueprintLibrary"));
+    if (libFn && libCDO)
+    {
+        std::vector<uint8_t> b(libFn->GetParmsSize(), 0);
+        if (safeProcessEvent(libCDO, libFn, b.data()))
+            ws = readGoatParm<UObject*>(libFn, b.data(), STR("ReturnValue"), nullptr);
+    }
+    if (!ws || !isObjectAlive(ws))
+    {
+        VLOG(STR("[MoriaCppMod] [WorldStore] WorldState unavailable ({})\n"), tag);
+        return;
+    }
+    auto* fn = ws->GetFunctionByNameInChain(STR("StoreRuntimeActor"));
+    if (!fn) return;
+    std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+    if (auto* p = findParam(fn, STR("Actor"))) *reinterpret_cast<UObject**>(b.data() + p->GetOffset_Internal()) = goat;
+    auto* ph = findParam(fn, STR("InOutRuntimeActorHandle"));
+    if (ph) std::memcpy(b.data() + ph->GetOffset_Internal(), m_goatStoreHandle, 0x20);
+    if (auto* p = findParam(fn, STR("bStoreStability"))) *(b.data() + p->GetOffset_Internal()) = 0;
+    bool ok = safeProcessEvent(ws, fn, b.data());
+    bool ret = false;
+    if (auto* pr = findParam(fn, STR("ReturnValue"))) ret = *(b.data() + pr->GetOffset_Internal()) != 0;
+    if (ph) std::memcpy(m_goatStoreHandle, b.data() + ph->GetOffset_Internal(), 0x20);
+    wchar_t hex[80];
+    int off = 0;
+    for (int i = 0; i < 0x20 && off < 76; i++) off += swprintf(hex + off, 80 - off, L"%02X", m_goatStoreHandle[i]);
+    VLOG(STR("[MoriaCppMod] [WorldStore] StoreRuntimeActor({}) pe={} ret={} handle={}\n"), tag, ok, ret, hex);
+    if (ret) m_goatStoredOnce = true;
+}
+
+// Periodic native store (was the sidecar tick; sidecar rejected).
 void tickSidecarSnapshot()
 {
     if (!m_characterLoaded) return;
     ULONGLONG now = GetTickCount64();
     if (now - m_lastSidecarTickMs < 60000) return;
     m_lastSidecarTickMs = now;
-    snapshotGoatSaddlebag();
+    UObject* goat = nullptr;
+    for (auto& g : m_followGoats)
+    {
+        UObject* p = g.pawn.Get();
+        if (p && isObjectAlive(p))
+        {
+            goat = p;
+            break;
+        }
+    }
+    if (goat) storeGoatToWorldState(goat, STR("60s tick"));
 }
 
 // [DwarfBag probe 2026-07-17] one-shot dump of every settlement dwarf's
@@ -9662,8 +9716,7 @@ void spawnBellGoat()
         adoptOrRegisterGoatIdentity(goat);
         // Live-instance inventory pass: valid dwarf defs + instantiation retry.
         patchGoatInstanceInventory(goat);
-        // [Sidecar v2] refill the fresh containers from this GUID's snapshot.
-        restoreGoatSaddlebagFromSidecar(goat);
+        // [WorldStore] sidecar rejected — restore is native (level record).
         FollowGoatRecord rec{};
         rec.pawn = RC::Unreal::FWeakObjectPtr(goat);
         rec.controller = RC::Unreal::FWeakObjectPtr();
