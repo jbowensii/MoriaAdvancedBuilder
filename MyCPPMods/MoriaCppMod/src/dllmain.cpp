@@ -2752,6 +2752,9 @@ namespace MoriaMods
             // Tobi's native workflow. [rc.107] saddlebag widget tick RE-ENABLED:
             // Esc/Tab close + 4Hz storage view-state re-assert for our chest UI.
             s_instance->tickGoatSaddlebagWidget();
+            // [NPC-REG 2026-07-17] adopt a manager-restored (or Tobi-summoned)
+            // goat into m_followGoats so menu/bell/saddlebags work on it.
+            s_instance->tickAdoptNativeGoat();
             s_instance->tickChestFlowDeferredDrive();
             s_instance->tickForensicsDump();
 
@@ -3739,6 +3742,11 @@ namespace MoriaMods
                 // [ChestSweep] destroy save-stranded hidden broker chests
                 // (floating "Open Chest" prompts from earlier builds).
                 sweepStrandedHiddenChests();
+                // [NPC-REG 2026-07-17] rc.112 machinery reconnected: if the
+                // manager did NOT natively respawn the goat (old worlds /
+                // ValidNpcRestores quirks), spawn one for an orphan 'Rûdh'
+                // marker; the spawn tail re-adopts the same GUID.
+                autoRestoreGoatsFromMarker();
             }
 
             if (!m_initialReplayDone && msSinceChar >= 15000)
