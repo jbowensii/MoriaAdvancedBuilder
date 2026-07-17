@@ -832,6 +832,74 @@ namespace MoriaMods
                 const auto fnName = func->GetName();
                 const wchar_t* fnStr = fnName.c_str();
 
+                // [ChestFlow v7 2026-07-17] Bytecode analysis (extracted WBP
+                // JSON): the container's 'Is NPC Type Container?' classifies
+                // by InteractableRef's actor having a MorNPCComponent, and NO
+                // Blueprint writes InteractableRef — the NATIVE screen
+                // periodically re-pushes its stored interact target (the goat,
+                // captured at ActivateHud) into the container via these PE
+                // setup calls (~850ms cadence in the v5/v6 logs; the dwarf-
+                // pane takeover + flashing). Cross-object BP/native calls go
+                // through ProcessEvent, so a PRE-hook parm rewrite reaches
+                // the callee: swap any goat-context object parm to the hidden
+                // chest while our chest-flow screen is bound to it. Plain
+                // memory ops only (no PE inside hooks).
+                if (parms && s_instance->m_hiddenGoatChest &&
+                    (wcscmp(fnStr, STR("Set Up Storage Container")) == 0 ||
+                     wcscmp(fnStr, STR("Set Up Storage Container as NPC")) == 0 ||
+                     wcscmp(fnStr, STR("Set Up Storage Container As Interactable")) == 0 ||
+                     wcscmp(fnStr, STR("Use Existing Storage Container")) == 0 ||
+                     wcscmp(fnStr, STR("No Accessible Storage")) == 0 ||
+                     wcscmp(fnStr, STR("CheckToRecreateContainer")) == 0 ||
+                     wcscmp(fnStr, STR("Set Up NPC Container")) == 0 ||
+                     wcscmp(fnStr, STR("Set Up NPC Inventory")) == 0 ||
+                     wcscmp(fnStr, STR("Set Up Pack Dynamic Container")) == 0))
+                {
+                    UObject* chest = s_instance->m_hiddenGoatChest;
+                    UObject* scr = s_instance->m_sbChestFlowScreen.Get();
+                    if (chest && scr && isObjectAlive(chest) && isObjectAlive(scr))
+                    {
+                        UObject* bound = nullptr;
+                        if (auto* sp = scr->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageObject"))) bound = *sp;
+                        if (bound == chest)
+                        {
+                            int swapped = 0;
+                            for (auto* p : func->ForEachProperty())
+                            {
+                                if (!p) continue;
+                                std::wstring pt;
+                                try
+                                {
+                                    pt = p->GetClass().GetName();
+                                }
+                                catch (...)
+                                {
+                                    continue;
+                                }
+                                bool isIface = (pt == STR("InterfaceProperty"));
+                                if (pt != STR("ObjectProperty") && !isIface) continue;
+                                auto* slot = reinterpret_cast<UObject**>(static_cast<uint8_t*>(parms) + p->GetOffset_Internal());
+                                UObject* v = slot[0];
+                                if (!v || v == chest) continue;
+                                std::wstring vcls = safeClassName(v);
+                                if (vcls == STR("MorNPCComponent") || vcls.rfind(STR("BP_NpcGoat"), 0) == 0)
+                                {
+                                    slot[0] = chest;
+                                    if (isIface) slot[1] = nullptr; // BP callees use the object only
+                                    swapped++;
+                                }
+                            }
+                            static int s_v7Logs = 60;
+                            if (s_v7Logs > 0)
+                            {
+                                --s_v7Logs;
+                                VLOG(STR("[MoriaCppMod] [ChestFlow] pre-hook '{}' on {:p}: swapped {} goat parm(s) -> chest\n"),
+                                     fnStr, (void*)context, swapped);
+                            }
+                        }
+                    }
+                }
+
                 // [rc.97 GA_BELL DIAG 2026-07-10] Does Tobi's native bell fire ANY
                 // ability / summon logic on use? Cheap fn-name filter first
                 // (feedback_filter_pe_by_function_name_first), then log the context
