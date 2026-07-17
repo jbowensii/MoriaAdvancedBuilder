@@ -3544,6 +3544,11 @@ namespace MoriaMods
                     m_chestFlowAnimsPlayed = false;
                     m_bellSeedDone = false;
                     m_cachedBellID = 0;
+                    // [NPC-REG v3] goat row synthesis is per-world (tables die
+                    // with the world) — re-bind and re-add next world.
+                    m_goatRowsEnsured = false;
+                    m_dtStorageGoat = DataTableUtil{};
+                    m_dtContItemsGoat = DataTableUtil{};
 
                     // Settings-screen widget UClasses were captured off LIVE
                     // widget instances — stale after world transitions; a
@@ -3742,6 +3747,10 @@ namespace MoriaMods
                 // [ChestSweep] destroy save-stranded hidden broker chests
                 // (floating "Open Chest" prompts from earlier builds).
                 sweepStrandedHiddenChests();
+                // [NPC-REG v3] make the goat slot rows live EARLY so any
+                // manager-restored goat (and lazy container instantiation)
+                // sees valid defs.
+                ensureGoatStorageRows();
                 // [NPC-REG 2026-07-17] rc.112 machinery reconnected: if the
                 // manager did NOT natively respawn the goat (old worlds /
                 // ValidNpcRestores quirks), spawn one for an orphan 'Rûdh'

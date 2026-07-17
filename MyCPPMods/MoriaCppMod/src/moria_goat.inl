@@ -8731,6 +8731,88 @@ void ensureGoatBodyInventoryArchetype()
     if (patched > 0) m_goatBodyInvPatched = true;
 }
 
+// [NPC-REG v3 2026-07-17] Missing-row synthesis (user direction: honor
+// Tobi's ORIGINAL design instead of aliasing the goat onto dwarf defs).
+// The goat's components reference 'Goat.Slot.EpicPack' — the row Tobi
+// never shipped in DT_Storage/DT_ContainerItems ("missing DT row").
+// The DWARF has the exact same pattern (Dwarf.Slot.EpicPack, a 1x1
+// equipped-only slot that holds a pack whose OWN container provides
+// the grid) — so synthesize the goat rows at runtime as copies of the
+// dwarf rows with goat-specific fixups. Rows are never destroyed, so
+// byte-copied FText internals are safe (no double-free path).
+bool m_goatRowsEnsured{false};
+DataTableUtil m_dtStorageGoat;
+DataTableUtil m_dtContItemsGoat;
+void ensureGoatStorageRows()
+{
+    if (m_goatRowsEnsured) return;
+    if (!m_dtStorageGoat.isBound()) m_dtStorageGoat.bind(STR("DT_Storage"));
+    if (!m_dtContItemsGoat.isBound()) m_dtContItemsGoat.bind(STR("DT_ContainerItems"));
+    if (!m_dtStorageGoat.isBound() || !m_dtContItemsGoat.isBound())
+    {
+        VLOG(STR("[MoriaCppMod] [GoatRows] bind failed (storage={} items={})\n"), m_dtStorageGoat.isBound(), m_dtContItemsGoat.isBound());
+        return;
+    }
+    auto propOff = [](DataTableUtil& dt, const wchar_t* name) -> int {
+        if (!dt.rowStruct) return -1;
+        try
+        {
+            for (auto* p : dt.rowStruct->ForEachProperty())
+                if (p && p->GetName() == name) return p->GetOffset_Internal();
+        }
+        catch (...)
+        {
+        }
+        return -1;
+    };
+
+    bool okStorage = true, okItems = true;
+
+    // 1) DT_Storage['Goat.Slot.EpicPack'] — verbatim copy of the dwarf slot row (1x1, equipped-only).
+    if (!m_dtStorageGoat.findRowData(STR("Goat.Slot.EpicPack")))
+    {
+        uint8_t* src = m_dtStorageGoat.findRowData(STR("Dwarf.Slot.EpicPack"));
+        if (src && m_dtStorageGoat.rowSize > 0)
+        {
+            uint8_t* copy = reinterpret_cast<uint8_t*>(FMemory::Malloc(m_dtStorageGoat.rowSize));
+            std::memcpy(copy, src, m_dtStorageGoat.rowSize);
+            okStorage = m_dtStorageGoat.callAddRowInternal(STR("Goat.Slot.EpicPack"), copy);
+        }
+        else okStorage = false;
+        VLOG(STR("[MoriaCppMod] [GoatRows] DT_Storage['Goat.Slot.EpicPack'] add -> {} (rowSize={})\n"), okStorage, m_dtStorageGoat.rowSize);
+    }
+
+    // 2) DT_ContainerItems['Goat.Slot.EpicPack'] — dwarf copy + goat fixups:
+    //    StorageRowHandle.RowName -> our new storage row, Actor -> Tobi's
+    //    BP_ContainerItem_Goat_Slot_EpicPack (softpath FName @ +16 per
+    //    dt-npcunique-structure: TSoftObjectPtr stores AssetPathName at +16).
+    if (!m_dtContItemsGoat.findRowData(STR("Goat.Slot.EpicPack")))
+    {
+        uint8_t* src = m_dtContItemsGoat.findRowData(STR("Dwarf.Slot.EpicPack"));
+        int srhOff = propOff(m_dtContItemsGoat, STR("StorageRowHandle"));
+        int actorOff = propOff(m_dtContItemsGoat, STR("Actor"));
+        if (src && m_dtContItemsGoat.rowSize > 0 && srhOff >= 0 && actorOff >= 0)
+        {
+            uint8_t* copy = reinterpret_cast<uint8_t*>(FMemory::Malloc(m_dtContItemsGoat.rowSize));
+            std::memcpy(copy, src, m_dtContItemsGoat.rowSize);
+            RC::Unreal::FName goatRow(STR("Goat.Slot.EpicPack"), RC::Unreal::FNAME_Add);
+            std::memcpy(copy + srhOff + 8, &goatRow, 8); // FDataTableRowHandle.RowName @ +8
+            RC::Unreal::FName goatActor(STR("/Game/Mods/PorterGoat/Items/BP_ContainerItem_Goat_Slot_EpicPack.BP_ContainerItem_Goat_Slot_EpicPack_C"),
+                                        RC::Unreal::FNAME_Add);
+            std::memcpy(copy + actorOff + 16, &goatActor, 8); // TSoftObjectPtr.AssetPathName @ +16
+            okItems = m_dtContItemsGoat.callAddRowInternal(STR("Goat.Slot.EpicPack"), copy);
+        }
+        else okItems = false;
+        VLOG(STR("[MoriaCppMod] [GoatRows] DT_ContainerItems['Goat.Slot.EpicPack'] add -> {} (srhOff={} actorOff={})\n"),
+             okItems, propOff(m_dtContItemsGoat, STR("StorageRowHandle")), propOff(m_dtContItemsGoat, STR("Actor")));
+    }
+    if (okStorage && okItems)
+    {
+        m_goatRowsEnsured = true;
+        VLOG(STR("[MoriaCppMod] [GoatRows] goat slot rows LIVE — Tobi's original defs now resolve\n"));
+    }
+}
+
 // [NPC-REG 2026-07-17] Instance-side pass: patch the LIVE goat's
 // MorInventoryComponents to the dwarf defs and retry instantiation.
 // Rationale: construction-time DefaultContainers instantiation failed
@@ -8790,33 +8872,22 @@ void patchGoatInstanceInventory(UObject* goat)
             return -1;
         };
         int before = hasContainers();
-        std::wstring shBefore;
+        std::wstring sh;
         if (auto* shP = c->GetPropertyByNameInChain(STR("StorageHandle")))
         {
             RC::Unreal::FName* rn = reinterpret_cast<RC::Unreal::FName*>(reinterpret_cast<uint8_t*>(c) + shP->GetOffset_Internal() + 8);
             try
             {
-                shBefore = rn->ToString();
+                sh = rn->ToString();
             }
             catch (...)
             {
             }
-            RC::Unreal::FName dwarfRow(STR("Dwarf.Inventory"), RC::Unreal::FNAME_Add);
-            *rn = dwarfRow;
         }
-        if (auto* dcProp = c->GetPropertyByNameInChain(STR("DefaultContainers")))
-        {
-            uint8_t* arrPtr = reinterpret_cast<uint8_t*>(c) + dcProp->GetOffset_Internal();
-            void* elemMem = FMemory::Malloc(sizeof(UClass*), alignof(UClass*));
-            if (elemMem)
-            {
-                *reinterpret_cast<UClass**>(elemMem) = bodyCls;
-                *reinterpret_cast<void**>(arrPtr + 0) = elemMem;
-                *reinterpret_cast<int32_t*>(arrPtr + 8) = 1;
-                *reinterpret_cast<int32_t*>(arrPtr + 12) = 1;
-            }
-        }
-        // retry the instantiation trigger against VALID defs
+        // [v3] Tobi's ORIGINAL defs stay untouched — the synthesized
+        // Goat.Slot.EpicPack rows make them resolve now. Just retry the
+        // instantiation trigger (rc.100 negatives were all against
+        // broken defs) and report ground truth.
         if (auto* rsFn = c->GetFunctionByNameInChain(STR("ResetToStarting")))
         {
             std::vector<uint8_t> rb(rsFn->GetParmsSize(), 0);
@@ -8829,8 +8900,8 @@ void patchGoatInstanceInventory(UObject* goat)
             }
         }
         int after = hasContainers();
-        VLOG(STR("[MoriaCppMod] [BodyInv] instance comp '{}': SH '{}' -> 'Dwarf.Inventory', HasContainers {} -> {}\n"),
-             nm.c_str(), shBefore.c_str(), before, after);
+        VLOG(STR("[MoriaCppMod] [BodyInv] instance comp '{}' (SH '{}'): HasContainers {} -> {}\n"),
+             nm.c_str(), sh.c_str(), before, after);
     }
 }
 
@@ -8971,10 +9042,10 @@ void spawnBellGoat()
          (void*)m_goatFinishSpawnFn,
          (void*)m_kismetGameplayStaticsCDO);
 
-    // [NPC-REG] patch the goat component templates to VALID dwarf storage
-    // defs BEFORE the spawn so this instance inherits an instantiable
-    // body-inventory container (6x6 via the NPC44 paks).
-    ensureGoatBodyInventoryArchetype();
+    // [NPC-REG v3] synthesize the missing Goat.Slot.EpicPack rows BEFORE
+    // the spawn so Tobi's ORIGINAL component defs resolve at construction
+    // (per user direction: no dwarf aliasing — honor the epic-pack design).
+    ensureGoatStorageRows();
 
     UObject* pawn = m_localPawn ? m_localPawn : getPawn();
     if (!pawn || !isObjectAlive(pawn))
