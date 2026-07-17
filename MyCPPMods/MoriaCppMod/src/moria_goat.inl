@@ -8575,6 +8575,9 @@ void adoptNativeGoat(UObject* goat)
     m_followGoats.push_back(rec);
     VLOG(STR("[MoriaCppMod] [NativeGoat] adopted Tobi-summoned {} {:p} (herd={})\n"),
          cls.c_str(), (void*)goat, (int)m_followGoats.size());
+    // [NPC-REG v4] a manager-restored goat spawned natively BEFORE our
+    // template patch could land — apply dwarf defs to its live comps too.
+    patchGoatInstanceInventory(goat);
     showOnScreen(L"Porter Goat linked", 1.5f, 0.7f, 0.9f, 0.7f);
 }
 
@@ -8614,11 +8617,11 @@ void tickAdoptNativeGoat()
 // (the row our paks grew to 6x6). Templates only: future spawns
 // inherit; native construction should instantiate a real container.
 bool m_goatBodyInvPatched{false};
-void ensureGoatBodyInventoryArchetype()
+// Load the SAME 7 DefaultContainers classes BP_NpcDwarf uses (body 6x6 +
+// 6 equipment slot containers) — all with LIVE DT rows. Returns count
+// loaded; out[0] (the body container) is mandatory for callers.
+int loadDwarfContainerClasses(UClass** out)
 {
-    if (m_goatBodyInvPatched) return;
-    // Full dwarf-NPC parity: the SAME 7 DefaultContainers BP_NpcDwarf uses
-    // (body 6x6 + 6 equipment slot containers), all with LIVE DT rows.
     static const wchar_t* kDwarfContainers[] = {
             STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_BodyInventoryNPC.BP_ContainerItem_Dwarf_BodyInventoryNPC_C"),
             STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_Slot_Helmet.BP_ContainerItem_Dwarf_Slot_Helmet_C"),
@@ -8628,22 +8631,52 @@ void ensureGoatBodyInventoryArchetype()
             STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_Slot_MainHandNPC.BP_ContainerItem_Dwarf_Slot_MainHandNPC_C"),
             STR("/Game/Items/ContainerItems/BP_ContainerItem_Dwarf_Slot_OffHandNPC.BP_ContainerItem_Dwarf_Slot_OffHandNPC_C"),
     };
-    constexpr int kNumContainers = 7;
-    UClass* classes[kNumContainers] = {nullptr};
     int loaded = 0;
-    for (int i = 0; i < kNumContainers; i++)
+    for (int i = 0; i < 7; i++)
     {
-        classes[i] = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kDwarfContainers[i]);
-        if (!classes[i]) classes[i] = goat_loadClassAssetBlocking(kDwarfContainers[i]);
-        if (classes[i]) loaded++;
+        out[i] = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, kDwarfContainers[i]);
+        if (!out[i]) out[i] = goat_loadClassAssetBlocking(kDwarfContainers[i]);
+        if (out[i]) loaded++;
     }
-    UClass* cc = classes[0]; // body container is mandatory
-    if (!cc)
+    VLOG(STR("[MoriaCppMod] [BodyInv] dwarf container classes loaded {}/7\n"), loaded);
+    return loaded;
+}
+
+// Write the dwarf defs onto one MorInventoryComponent (template OR live
+// instance): StorageHandle row -> 'Dwarf.Inventory', DefaultContainers ->
+// the 7 dwarf containers. Returns true if the array was written.
+bool writeDwarfDefsToComp(UObject* c, UClass** classes)
+{
+    if (auto* shP = c->GetPropertyByNameInChain(STR("StorageHandle")))
+    {
+        RC::Unreal::FName* rn = reinterpret_cast<RC::Unreal::FName*>(reinterpret_cast<uint8_t*>(c) + shP->GetOffset_Internal() + 8);
+        RC::Unreal::FName dwarfRow(STR("Dwarf.Inventory"), RC::Unreal::FNAME_Add);
+        *rn = dwarfRow;
+    }
+    auto* dcProp = c->GetPropertyByNameInChain(STR("DefaultContainers"));
+    if (!dcProp) return false;
+    uint8_t* arrPtr = reinterpret_cast<uint8_t*>(c) + dcProp->GetOffset_Internal();
+    void* elemMem = FMemory::Malloc(sizeof(UClass*) * 7, alignof(UClass*));
+    if (!elemMem) return false;
+    int n = 0;
+    for (int i = 0; i < 7; i++)
+        if (classes[i]) reinterpret_cast<UClass**>(elemMem)[n++] = classes[i];
+    if (n == 0) return false;
+    *reinterpret_cast<void**>(arrPtr + 0) = elemMem;
+    *reinterpret_cast<int32_t*>(arrPtr + 8) = n;
+    *reinterpret_cast<int32_t*>(arrPtr + 12) = n;
+    return true;
+}
+
+void ensureGoatBodyInventoryArchetype()
+{
+    if (m_goatBodyInvPatched) return;
+    UClass* classes[7] = {nullptr};
+    if (loadDwarfContainerClasses(classes) == 0 || !classes[0])
     {
         VLOG(STR("[MoriaCppMod] [BodyInv] dwarf body container class not loadable — patch skipped\n"));
         return;
     }
-    VLOG(STR("[MoriaCppMod] [BodyInv] dwarf container classes loaded {}/{}\n"), loaded, kNumContainers);
     std::vector<UObject*> comps;
     if (!seh_findAllOf(STR("MorInventoryComponent"), &comps)) return;
     int patched = 0, goatTemplates = 0;
@@ -8692,39 +8725,11 @@ void ensureGoatBodyInventoryArchetype()
             continue;
         }
         goatTemplates++;
-        auto* shP = c->GetPropertyByNameInChain(STR("StorageHandle"));
-        auto* dcProp = c->GetPropertyByNameInChain(STR("DefaultContainers"));
-        std::wstring shBefore;
-        if (shP)
+        if (writeDwarfDefsToComp(c, classes))
         {
-            RC::Unreal::FName* rn = reinterpret_cast<RC::Unreal::FName*>(reinterpret_cast<uint8_t*>(c) + shP->GetOffset_Internal() + 8);
-            try
-            {
-                shBefore = rn->ToString();
-            }
-            catch (...)
-            {
-            }
-            RC::Unreal::FName dwarfRow(STR("Dwarf.Inventory"), RC::Unreal::FNAME_Add);
-            *rn = dwarfRow;
-        }
-        if (dcProp)
-        {
-            uint8_t* arrPtr = reinterpret_cast<uint8_t*>(c) + dcProp->GetOffset_Internal();
-            int32_t oldNum = *reinterpret_cast<int32_t*>(arrPtr + 8);
-            void* elemMem = FMemory::Malloc(sizeof(UClass*) * kNumContainers, alignof(UClass*));
-            if (elemMem)
-            {
-                int n = 0;
-                for (int i = 0; i < kNumContainers; i++)
-                    if (classes[i]) reinterpret_cast<UClass**>(elemMem)[n++] = classes[i];
-                *reinterpret_cast<void**>(arrPtr + 0) = elemMem;
-                *reinterpret_cast<int32_t*>(arrPtr + 8) = n;
-                *reinterpret_cast<int32_t*>(arrPtr + 12) = n;
-                VLOG(STR("[MoriaCppMod] [BodyInv] template '{}' (outer '{}'): StorageHandle '{}' -> 'Dwarf.Inventory', DefaultContainers {} -> {} dwarf containers (body 6x6 + equip slots)\n"),
-                     nm.c_str(), outerNm.c_str(), shBefore.c_str(), oldNum, n);
-                patched++;
-            }
+            VLOG(STR("[MoriaCppMod] [BodyInv] template '{}' (outer '{}') -> dwarf defs (Dwarf.Inventory + 7 containers)\n"),
+                 nm.c_str(), outerNm.c_str());
+            patched++;
         }
     }
     VLOG(STR("[MoriaCppMod] [BodyInv] archetype patch: {} goat templates found, {} patched\n"), goatTemplates, patched);
@@ -8884,24 +8889,66 @@ void patchGoatInstanceInventory(UObject* goat)
             {
             }
         }
-        // [v3] Tobi's ORIGINAL defs stay untouched — the synthesized
-        // Goat.Slot.EpicPack rows make them resolve now. Just retry the
-        // instantiation trigger (rc.100 negatives were all against
-        // broken defs) and report ground truth.
-        if (auto* rsFn = c->GetFunctionByNameInChain(STR("ResetToStarting")))
-        {
-            std::vector<uint8_t> rb(rsFn->GetParmsSize(), 0);
+        // [v5 2026-07-17] THE missing dwarf step, finally identified:
+        // containers are created by ADDING the container ITEM into the
+        // inventory (rc.92: AddItem was the ONLY operation that ever
+        // created a goat container; v3 log: valid rows + construction +
+        // ResetToStarting all still 0->0). Dwarf init AddItems its
+        // DefaultContainers natively; our goat never runs that init —
+        // so do the AddItems ourselves: dwarf defs + AddItem(body 6x6)
+        // + AddItem(equip slots), Method sweep as in ensureGoatSlotContainer.
+        UClass* classes[7] = {nullptr};
+        int loaded = loadDwarfContainerClasses(classes);
+        if (loaded > 0) writeDwarfDefsToComp(c, classes);
+        auto containerCount = [&]() -> int32_t {
+            auto* gc = c->GetFunctionByNameInChain(STR("GetContainers"));
+            if (!gc) return -1;
+            std::vector<uint8_t> gb(gc->GetParmsSize(), 0);
             try
             {
-                safeProcessEvent(c, rsFn, rb.data());
+                safeProcessEvent(c, gc, gb.data());
             }
             catch (...)
             {
+                return -1;
+            }
+            auto* gr = findParam(gc, STR("ReturnValue"));
+            if (!gr) return -1;
+            return *reinterpret_cast<int32_t*>(gb.data() + gr->GetOffset_Internal() + 8);
+        };
+        int32_t cntBefore = containerCount();
+        if (auto* af = c->GetFunctionByNameInChain(STR("AddItem")))
+        {
+            auto* pItem = findParam(af, STR("Item"));
+            if (!pItem) pItem = findParam(af, STR("Class"));
+            auto* pCount = findParam(af, STR("Count"));
+            auto* pMeth = findParam(af, STR("Method"));
+            for (int k = 0; k < 7; k++)
+            {
+                if (!classes[k]) continue;
+                int32_t pre = containerCount();
+                for (uint8_t m = 0; m <= 3; m++)
+                {
+                    std::vector<uint8_t> ab(af->GetParmsSize(), 0);
+                    if (pItem) *reinterpret_cast<UClass**>(ab.data() + pItem->GetOffset_Internal()) = classes[k];
+                    if (pCount) *reinterpret_cast<int32_t*>(ab.data() + pCount->GetOffset_Internal()) = 1;
+                    if (pMeth) ab[pMeth->GetOffset_Internal()] = m;
+                    try
+                    {
+                        safeProcessEvent(c, af, ab.data());
+                    }
+                    catch (...)
+                    {
+                        break;
+                    }
+                    if (containerCount() > pre) break; // this class landed
+                    if (!pMeth) break;
+                }
             }
         }
         int after = hasContainers();
-        VLOG(STR("[MoriaCppMod] [BodyInv] instance comp '{}' (SH '{}'): HasContainers {} -> {}\n"),
-             nm.c_str(), sh.c_str(), before, after);
+        VLOG(STR("[MoriaCppMod] [BodyInv] instance comp '{}' (SH was '{}' -> Dwarf.Inventory): HasContainers {} -> {}, containers {} -> {} (AddItem x{} dwarf classes)\n"),
+             nm.c_str(), sh.c_str(), before, after, cntBefore, containerCount(), loaded);
     }
 }
 
@@ -9042,10 +9089,13 @@ void spawnBellGoat()
          (void*)m_goatFinishSpawnFn,
          (void*)m_kismetGameplayStaticsCDO);
 
-    // [NPC-REG v3] synthesize the missing Goat.Slot.EpicPack rows BEFORE
-    // the spawn so Tobi's ORIGINAL component defs resolve at construction
-    // (per user direction: no dwarf aliasing — honor the epic-pack design).
+    // [NPC-REG v4] the goat is a DWARF-PATTERN NPC (Tobi's epic-pack
+    // design retired per user — "his did not work"): patch the component
+    // TEMPLATES to dwarf defs before the spawn so this instance inherits
+    // an instantiable 6x6 body inventory. Row synthesis kept as belt-and-
+    // suspenders for anything still referencing Goat.Slot.EpicPack.
     ensureGoatStorageRows();
+    ensureGoatBodyInventoryArchetype();
 
     UObject* pawn = m_localPawn ? m_localPawn : getPawn();
     if (!pawn || !isObjectAlive(pawn))
