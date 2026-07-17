@@ -7903,6 +7903,10 @@ void toggleGoatFromBell()
     if (live)
     {
         VLOG(STR("[MoriaCppMod] [BellToggle] DISMISS — destroying goat {:p} (ephemeral; pack lives with player)\n"), (void*)live);
+        // [Sidecar v2] preserve contents before the destroy (destroy drops
+        // them to the floor via bDropContentsOnDeath; the snapshot makes the
+        // NEXT summon restore them into the fresh containers by GUID).
+        snapshotGoatSaddlebag();
         if (auto* dFn = live->GetFunctionByNameInChain(STR("K2_DestroyActor")))
         {
             try
@@ -8578,6 +8582,8 @@ void adoptNativeGoat(UObject* goat)
     // [NPC-REG v4] a manager-restored goat spawned natively BEFORE our
     // template patch could land — apply dwarf defs to its live comps too.
     patchGoatInstanceInventory(goat);
+    // [Sidecar v2] refill from this GUID's snapshot.
+    restoreGoatSaddlebagFromSidecar(goat);
     showOnScreen(L"Porter Goat linked", 1.5f, 0.7f, 0.9f, 0.7f);
 }
 
@@ -8950,6 +8956,299 @@ void patchGoatInstanceInventory(UObject* goat)
         VLOG(STR("[MoriaCppMod] [BodyInv] instance comp '{}' (SH was '{}' -> Dwarf.Inventory): HasContainers {} -> {}, containers {} -> {} (AddItem x{} dwarf classes)\n"),
              nm.c_str(), sh.c_str(), before, after, cntBefore, containerCount(), loaded);
     }
+}
+
+// ============================================================
+// [SIDECAR v2 2026-07-17] GUID-keyed contents persistence for the
+// dwarf-pattern goat (recovered from rc.119-124, which was user-
+// confirmed working before the ephemeral pivot removed it).
+// Containers are session-local (AddItem-built, entry-only — no actor,
+// so Channel-C StoreRuntimeActor can't apply, and NpcInfo carries no
+// inventory). Contents therefore persist via a per-GUID file:
+//   snapshot: bell dismiss (before destroy), F12 save, 60s tick
+//   restore:  after the spawn/adopt container build
+// ============================================================
+bool m_sidecarRestoreFailed{false};
+ULONGLONG m_lastSidecarTickMs{0};
+
+std::string sidecarClassPath(UClass* ic)
+{
+    if (!ic) return "";
+    std::wstring full;
+    try
+    {
+        full = ic->GetFullName();
+    }
+    catch (...)
+    {
+        return "";
+    }
+    std::string s = wideToUtf8(full);
+    size_t sp = s.find_last_of(' ');
+    if (sp != std::string::npos) s = s.substr(sp + 1);
+    return s;
+}
+
+std::string goatSidecarPath(UObject* goat)
+{
+    std::string guid = "default";
+    do
+    {
+        if (!goat || !isObjectAlive(goat)) break;
+        UClass* npcCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+        if (!npcCls) break;
+        auto* getComp = goat->GetFunctionByNameInChain(STR("GetComponentByClass"));
+        if (!getComp) break;
+        std::vector<uint8_t> gb(getComp->GetParmsSize(), 0);
+        writeGoatParm<UClass*>(getComp, gb.data(), STR("ComponentClass"), npcCls);
+        if (!safeProcessEvent(goat, getComp, gb.data())) break;
+        UObject* npcComp = readGoatParm<UObject*>(getComp, gb.data(), STR("ReturnValue"), nullptr);
+        if (!npcComp || !isObjectAlive(npcComp)) break;
+        uint8_t* g = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+        if (!g) break;
+        const uint32_t* u = reinterpret_cast<const uint32_t*>(g);
+        char buf[40];
+        snprintf(buf, sizeof(buf), "%08X%08X%08X%08X", u[0], u[1], u[2], u[3]);
+        guid = buf;
+    } while (false);
+    return modPath("Mods/MoriaCppMod/goat-saddlebag-" + guid + ".txt");
+}
+
+// All goat MorInventoryComponents that currently have containers.
+void goatInvCompsWithContainers(UObject* goat, std::vector<UObject*>& out)
+{
+    out.clear();
+    if (!goat || !isObjectAlive(goat)) return;
+    UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/FGK.MorInventoryComponent"));
+    if (!invCls) invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MorInventoryComponent"));
+    if (!invCls) return;
+    auto* gf = goat->GetFunctionByNameInChain(STR("K2_GetComponentsByClass"));
+    if (!gf) gf = goat->GetFunctionByNameInChain(STR("GetComponentsByClass"));
+    if (!gf) return;
+    std::vector<uint8_t> b(gf->GetParmsSize(), 0);
+    if (auto* pCls = findParam(gf, STR("ComponentClass"))) *reinterpret_cast<UClass**>(b.data() + pCls->GetOffset_Internal()) = invCls;
+    try
+    {
+        safeProcessEvent(goat, gf, b.data());
+    }
+    catch (...)
+    {
+        return;
+    }
+    auto* pRet = findParam(gf, STR("ReturnValue"));
+    if (!pRet) return;
+    uint8_t* arr = b.data() + pRet->GetOffset_Internal();
+    UObject** data = *reinterpret_cast<UObject***>(arr);
+    int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+    for (int32_t i = 0; data && i < num && i < 16; i++)
+    {
+        UObject* c = data[i];
+        if (!c || !isObjectAlive(c)) continue;
+        auto* hc = c->GetFunctionByNameInChain(STR("HasContainers"));
+        if (!hc) continue;
+        std::vector<uint8_t> hb(hc->GetParmsSize(), 0);
+        try
+        {
+            safeProcessEvent(c, hc, hb.data());
+        }
+        catch (...)
+        {
+            continue;
+        }
+        if (auto* pr = findParam(hc, STR("ReturnValue")))
+            if (*reinterpret_cast<bool*>(hb.data() + pr->GetOffset_Internal())) out.push_back(c);
+    }
+}
+
+// Append one component's loose stacks (skips container items) to `lines`.
+int collectCompStacks(UObject* goatInv, std::vector<std::string>& lines)
+{
+    FProperty* itemsProp = goatInv->GetPropertyByNameInChain(STR("Items"));
+    if (!itemsProp) return 0;
+    uint8_t* listBase = reinterpret_cast<uint8_t*>(goatInv) + itemsProp->GetOffset_Internal() + iiaListOff();
+    if (!isReadableMemory(listBase, 16)) return 0;
+    uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+    int32_t arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
+    if (!arrData || arrNum < 0 || arrNum > 10000) return 0;
+    const int stride = iiSize(), itemOff = iiItemOff();
+    const int countOff = 0x18, csOff = 0x2C;
+    int written = 0;
+    for (int32_t i = 0; i < arrNum; i++)
+    {
+        uint8_t* entry = arrData + i * stride;
+        if (!isReadableMemory(entry, stride)) continue;
+        if (*reinterpret_cast<int32_t*>(entry + csOff) > 0) continue; // container item itself
+        UClass* ic = *reinterpret_cast<UClass**>(entry + itemOff);
+        if (!ic || !isObjectAlive(ic)) continue;
+        int32_t cnt = *reinterpret_cast<int32_t*>(entry + countOff);
+        if (cnt <= 0) continue;
+        std::string cpath = sidecarClassPath(ic);
+        if (cpath.empty()) continue;
+        lines.push_back(cpath + "|" + std::to_string(cnt));
+        written++;
+    }
+    return written;
+}
+
+void snapshotGoatSaddlebag()
+{
+    UObject* goat = nullptr;
+    for (auto& g : m_followGoats)
+    {
+        UObject* p = g.pawn.Get();
+        if (p && isObjectAlive(p))
+        {
+            goat = p;
+            break;
+        }
+    }
+    if (!goat) return;
+    std::vector<UObject*> comps;
+    goatInvCompsWithContainers(goat, comps);
+    if (comps.empty()) return;
+    std::vector<std::string> lines;
+    for (auto* c : comps) collectCompStacks(c, lines);
+    // [rc.122 clobber guard] never overwrite a good sidecar with an empty
+    // bag right after a failed restore.
+    if (lines.empty() && m_sidecarRestoreFailed)
+    {
+        VLOG(STR("[MoriaCppMod] [Sidecar] snapshot SKIPPED (bag empty + last restore failed)\n"));
+        return;
+    }
+    m_sidecarRestoreFailed = false;
+    std::string path = goatSidecarPath(goat);
+    std::ofstream f = openOutputFile(path, std::ios::trunc);
+    if (!f.is_open())
+    {
+        VLOG(STR("[MoriaCppMod] [Sidecar] snapshot FAILED to open file\n"));
+        return;
+    }
+    for (auto& l : lines) f << l << "\n";
+    f.close();
+    VLOG(STR("[MoriaCppMod] [Sidecar] snapshot: {} stack(s) -> {}\n"), (int)lines.size(), utf8ToWide(path).c_str());
+}
+
+void restoreGoatSaddlebagFromSidecar(UObject* goat)
+{
+    if (!goat || !isObjectAlive(goat)) return;
+    std::vector<UObject*> comps;
+    goatInvCompsWithContainers(goat, comps);
+    if (comps.empty())
+    {
+        VLOG(STR("[MoriaCppMod] [Sidecar] restore: no containers on goat — skipped\n"));
+        return;
+    }
+    UObject* goatInv = comps[0];
+    std::string path = goatSidecarPath(goat);
+    std::ifstream f(utf8PathToWide(path));
+    if (!f.is_open())
+    {
+        VLOG(STR("[MoriaCppMod] [Sidecar] no sidecar file — nothing to restore\n"));
+        return;
+    }
+    auto* af = goatInv->GetFunctionByNameInChain(STR("AddItem"));
+    if (!af) return;
+    auto* pItem = findParam(af, STR("Item"));
+    if (!pItem) pItem = findParam(af, STR("Class"));
+    auto* pCount = findParam(af, STR("Count"));
+    int restored = 0, failed = 0;
+    std::string line;
+    while (std::getline(f, line))
+    {
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
+        size_t bar = line.find('|');
+        if (bar == std::string::npos) continue;
+        std::string cpath = line.substr(0, bar);
+        int cnt = atoi(line.c_str() + bar + 1);
+        size_t sp = cpath.find_last_of(' ');
+        if (sp != std::string::npos) cpath = cpath.substr(sp + 1);
+        if (cpath.empty() || cnt <= 0) continue;
+        std::wstring wpath = utf8ToWide(cpath);
+        UClass* cc = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, wpath.c_str());
+        if (!cc) cc = goat_loadClassAssetBlocking(wpath.c_str());
+        if (!cc || !isObjectAlive(cc))
+        {
+            failed++;
+            continue;
+        }
+        std::vector<uint8_t> ab(af->GetParmsSize(), 0);
+        if (pItem) *reinterpret_cast<UClass**>(ab.data() + pItem->GetOffset_Internal()) = cc;
+        if (pCount) *reinterpret_cast<int32_t*>(ab.data() + pCount->GetOffset_Internal()) = cnt;
+        try
+        {
+            safeProcessEvent(goatInv, af, ab.data());
+            restored++;
+        }
+        catch (...)
+        {
+            failed++;
+        }
+    }
+    VLOG(STR("[MoriaCppMod] [Sidecar] restore: {} stack(s) re-added, {} failed\n"), restored, failed);
+    m_sidecarRestoreFailed = (failed > 0);
+    if (restored > 0) showOnScreen(L"Saddlebag contents restored", 2.0f, 0.4f, 0.9f, 0.4f);
+}
+
+// Periodic insurance snapshot (covers logout without save/dismiss).
+void tickSidecarSnapshot()
+{
+    if (!m_characterLoaded) return;
+    ULONGLONG now = GetTickCount64();
+    if (now - m_lastSidecarTickMs < 60000) return;
+    m_lastSidecarTickMs = now;
+    snapshotGoatSaddlebag();
+}
+
+// [DwarfBag probe 2026-07-17] one-shot dump of every settlement dwarf's
+// inventory stacks (GUID-tagged) — run once per session; compare across
+// relogin to learn whether the GAME persists NPC dwarf bag contents.
+void probeDwarfBagContents()
+{
+    std::vector<UObject*> dwarves;
+    findAllOfSafe(STR("BP_NpcDwarf_C"), dwarves);
+    int logged = 0;
+    for (auto* d : dwarves)
+    {
+        if (!d || !isObjectAlive(d) || logged >= 25) continue;
+        std::wstring nm;
+        try
+        {
+            nm = d->GetName();
+        }
+        catch (...)
+        {
+            continue;
+        }
+        if (nm.rfind(STR("Default__"), 0) == 0) continue;
+        std::vector<UObject*> comps;
+        goatInvCompsWithContainers(d, comps);
+        std::vector<std::string> lines;
+        for (auto* c : comps) collectCompStacks(c, lines);
+        std::string guid = "?";
+        {
+            UClass* npcCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+            auto* getComp = npcCls ? d->GetFunctionByNameInChain(STR("GetComponentByClass")) : nullptr;
+            if (getComp)
+            {
+                std::vector<uint8_t> gb(getComp->GetParmsSize(), 0);
+                writeGoatParm<UClass*>(getComp, gb.data(), STR("ComponentClass"), npcCls);
+                if (safeProcessEvent(d, getComp, gb.data()))
+                    if (UObject* nc = readGoatParm<UObject*>(getComp, gb.data(), STR("ReturnValue"), nullptr))
+                        if (uint8_t* g = nc->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid")))
+                        {
+                            char buf[40];
+                            const uint32_t* u = reinterpret_cast<const uint32_t*>(g);
+                            snprintf(buf, sizeof(buf), "%08X", u[0]);
+                            guid = buf;
+                        }
+            }
+        }
+        VLOG(STR("[MoriaCppMod] [DwarfBag] '{}' GUID={} comps={} stacks={}\n"),
+             nm.c_str(), utf8ToWide(guid).c_str(), (int)comps.size(), (int)lines.size());
+        for (auto& l : lines) VLOG(STR("[MoriaCppMod] [DwarfBag]    {}\n"), utf8ToWide(l).c_str());
+        logged++;
+    }
+    VLOG(STR("[MoriaCppMod] [DwarfBag] === {} dwarf(s) dumped ===\n"), logged);
 }
 
 // Spawn-tail identity pass: ADOPT existing marker GUID or REGISTER,
@@ -9363,6 +9662,8 @@ void spawnBellGoat()
         adoptOrRegisterGoatIdentity(goat);
         // Live-instance inventory pass: valid dwarf defs + instantiation retry.
         patchGoatInstanceInventory(goat);
+        // [Sidecar v2] refill the fresh containers from this GUID's snapshot.
+        restoreGoatSaddlebagFromSidecar(goat);
         FollowGoatRecord rec{};
         rec.pawn = RC::Unreal::FWeakObjectPtr(goat);
         rec.controller = RC::Unreal::FWeakObjectPtr();
