@@ -7978,8 +7978,12 @@ void toggleGoatFromBell()
                 {
                     if (auto* pr = findParam(getLoc, STR("ReturnValue")))
                     {
+                        // [fix 2026-07-18] teleport to the PLAYER'S OWN spot
+                        // (small Z lift). The old +150/+150 offset could land
+                        // inside geometry — log-proven: goat vanished 33s
+                        // after a CALL, taking its inventory record with it.
                         float* v = reinterpret_cast<float*>(lb.data() + pr->GetOffset_Internal());
-                        npcTeleportPawn(live, v[0] + 150.0f, v[1] + 150.0f, v[2] + 50.0f);
+                        npcTeleportPawn(live, v[0], v[1], v[2] + 60.0f);
                     }
                 }
             }
