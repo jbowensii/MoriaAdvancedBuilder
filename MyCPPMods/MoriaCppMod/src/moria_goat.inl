@@ -9386,7 +9386,43 @@ void goatNativeLifecycleTest(bool dismiss)
     bool ok = safeProcessEvent(m_localPC, fn, b.data());
     VLOG(STR("[MoriaCppMod] [NativeRescue] ServerRescueNpc(settlement={}) pe={} — watch for respawn + [NativeGoat] adopt\n"),
          settlementId, ok ? STR("OK") : STR("FAIL"));
-    showOnScreen(L"Native RESCUE sent", 2.0f, 0.7f, 0.9f, 0.7f);
+
+    // [SETTLED-FOLLOW 2026-07-18] a settled NPC's schedule FSM stomps our
+    // injected Porter state — set the roster role NATIVELY instead, so the
+    // schedule's own Work state dispatches the Porter tree by CurrentRole
+    // (zero refresh, fully native). FMorNPCRoleRowHandle = {DataTable* @0,
+    // RowName @8}; DT_NPCRoles ships a 'Porter' row (Tobi + vanilla).
+    if (auto* roleFn = m_localPC->GetFunctionByNameInChain(STR("ServerNpcSetRole")))
+    {
+        UObject* rolesDT = nullptr;
+        try
+        {
+            std::vector<UObject*> dts;
+            if (findAllOfSafe(STR("DataTable"), dts))
+                for (UObject* t : dts)
+                {
+                    if (!t || !isObjectAlive(t)) continue;
+                    if (safeObjectName(t) == STR("DT_NPCRoles")) { rolesDT = t; break; }
+                }
+        }
+        catch (...)
+        {
+        }
+        std::vector<uint8_t> rb(roleFn->GetParmsSize(), 0);
+        if (auto* pId = findParam(roleFn, STR("NpcId")))
+            std::memcpy(rb.data() + pId->GetOffset_Internal(), guid, 16);
+        if (auto* pRole = findParam(roleFn, STR("NewRole")))
+        {
+            uint8_t* h = rb.data() + pRole->GetOffset_Internal();
+            *reinterpret_cast<UObject**>(h) = rolesDT;
+            RC::Unreal::FName porter(STR("Porter"), RC::Unreal::FNAME_Add);
+            std::memcpy(h + 8, &porter, 8);
+        }
+        bool rok = safeProcessEvent(m_localPC, roleFn, rb.data());
+        VLOG(STR("[MoriaCppMod] [NativeRescue] ServerNpcSetRole(Porter, dt={:p}) pe={}\n"), (void*)rolesDT, rok ? STR("OK") : STR("FAIL"));
+    }
+    else VLOG(STR("[MoriaCppMod] [NativeRescue] ServerNpcSetRole NOT FOUND on PC\n"));
+    showOnScreen(L"Native RESCUE + Porter role sent", 2.0f, 0.7f, 0.9f, 0.7f);
 }
 
 std::string goatSidecarPath(UObject* goat)
