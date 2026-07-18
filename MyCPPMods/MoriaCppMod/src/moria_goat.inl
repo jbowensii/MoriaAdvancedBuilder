@@ -9153,9 +9153,11 @@ void patchGoatInstanceInventory(UObject* goat)
         {
             continue;
         }
-        // [BAD-OBJECT SWEEP] purge record-serialized Goat container items
-        // (loc-less epic pack) before any container accounting.
-        sweepGoatEpicPackItems(c);
+        // [BAD-OBJECT SWEEP] DISABLED 2026-07-18 per user: no mod-side
+        // deletion of inventory items — the epic-pack source is fixed at
+        // the pak level (DefaultContainers nulled; Tobi to remove it
+        // upstream in his editor). Function kept compiled for reference.
+        // sweepGoatEpicPackItems(c);
         // current state
         auto hasContainers = [&]() -> int {
             if (auto* fn = c->GetFunctionByNameInChain(STR("HasContainers")))
