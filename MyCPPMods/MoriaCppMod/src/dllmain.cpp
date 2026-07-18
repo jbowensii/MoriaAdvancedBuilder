@@ -2760,6 +2760,11 @@ namespace MoriaMods
             // [WorldStore] 60s native store of the goat actor record.
             s_instance->tickSidecarSnapshot();
             s_instance->tickDwarfBagProbe();
+            // [RecordProbe] +20s one-shot: ask the save system for the goat
+            // actor back via the persisted record handle.
+            if (s_instance->m_characterLoaded && !s_instance->m_recordProbeDone &&
+                GetTickCount64() - s_instance->m_charLoadTime >= 20000)
+                s_instance->probeGoatRecordHandle();
             // [NATIVE-PERSIST] late AutoRestore fallback (+90s, once): only
             // if the native record restore did not bring a goat back.
             if (s_instance->m_autoRestoreAtMs != 0 && GetTickCount64() >= s_instance->m_autoRestoreAtMs)
@@ -3565,8 +3570,9 @@ namespace MoriaMods
                     // [WorldStore] per-world record handle.
                     std::memset(m_goatStoreHandle, 0, sizeof(m_goatStoreHandle));
                     m_goatStoredOnce = false;
-                    // [NATIVE-PERSIST] per-world fallback timer.
+                    // [NATIVE-PERSIST] per-world fallback timer + probe.
                     m_autoRestoreAtMs = 0;
+                    m_recordProbeDone = false;
 
                     // Settings-screen widget UClasses were captured off LIVE
                     // widget instances — stale after world transitions; a

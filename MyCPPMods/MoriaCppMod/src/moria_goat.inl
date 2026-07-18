@@ -9308,7 +9308,84 @@ void storeGoatToWorldState(UObject* goat, const wchar_t* tag)
     int off = 0;
     for (int i = 0; i < 0x20 && off < 76; i++) off += swprintf(hex + off, 80 - off, L"%02X", m_goatStoreHandle[i]);
     VLOG(STR("[MoriaCppMod] [WorldStore] StoreRuntimeActor({}) pe={} ret={} handle={}\n"), tag, ok, ret, hex);
-    if (ret) m_goatStoredOnce = true;
+    if (ret)
+    {
+        m_goatStoredOnce = true;
+        // [RecordProbe 2026-07-18] persist the record handle across
+        // sessions — next load calls GetRuntimeActorFromHandle with it
+        // ("store the guid and call it back", literally).
+        std::ofstream f = openOutputFile(modPath("Mods/MoriaCppMod/goat-record-handle.txt"), std::ios::trunc);
+        if (f.is_open())
+        {
+            char ahex[70];
+            int ao = 0;
+            for (int i = 0; i < 0x20; i++) ao += snprintf(ahex + ao, sizeof(ahex) - ao, "%02X", m_goatStoreHandle[i]);
+            f << ahex << "\n";
+            f.close();
+        }
+    }
+}
+
+// [RecordProbe 2026-07-18] one-shot at +20s after load: read the persisted
+// record handle and ask the save system for the actor back. Answers the
+// central unknown: does the level record hold the goat across sessions,
+// and does GetRuntimeActorFromHandle resurrect/return it?
+bool m_recordProbeDone{false};
+void probeGoatRecordHandle()
+{
+    if (m_recordProbeDone) return;
+    m_recordProbeDone = true;
+    std::ifstream f(utf8PathToWide(modPath("Mods/MoriaCppMod/goat-record-handle.txt")));
+    if (!f.is_open())
+    {
+        VLOG(STR("[MoriaCppMod] [RecordProbe] no persisted handle — skip\n"));
+        return;
+    }
+    std::string line;
+    std::getline(f, line);
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+    if (line.size() < 0x40)
+    {
+        VLOG(STR("[MoriaCppMod] [RecordProbe] handle file malformed\n"));
+        return;
+    }
+    uint8_t handle[0x20];
+    for (int i = 0; i < 0x20; i++)
+    {
+        unsigned v = 0;
+        sscanf(line.c_str() + i * 2, "%2X", &v);
+        handle[i] = (uint8_t)v;
+    }
+    UObject* ws = nullptr;
+    auto* libFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Moria.MorSaveSystemBlueprintLibrary:GetSaveSystemWorldState"));
+    auto* libCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Moria.Default__MorSaveSystemBlueprintLibrary"));
+    if (libFn && libCDO)
+    {
+        std::vector<uint8_t> b(libFn->GetParmsSize(), 0);
+        if (safeProcessEvent(libCDO, libFn, b.data()))
+            ws = readGoatParm<UObject*>(libFn, b.data(), STR("ReturnValue"), nullptr);
+    }
+    if (!ws || !isObjectAlive(ws))
+    {
+        VLOG(STR("[MoriaCppMod] [RecordProbe] WorldState unavailable\n"));
+        return;
+    }
+    auto* fn = ws->GetFunctionByNameInChain(STR("GetRuntimeActorFromHandle"));
+    if (!fn)
+    {
+        VLOG(STR("[MoriaCppMod] [RecordProbe] GetRuntimeActorFromHandle missing\n"));
+        return;
+    }
+    std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+    if (auto* p = findParam(fn, STR("ActorHandle"))) std::memcpy(b.data() + p->GetOffset_Internal(), handle, 0x20);
+    bool ok = safeProcessEvent(ws, fn, b.data());
+    UObject* actor = nullptr;
+    bool valid = false;
+    if (auto* pr = findParam(fn, STR("ReturnValue"))) actor = *reinterpret_cast<UObject**>(b.data() + pr->GetOffset_Internal());
+    if (auto* pv = findParam(fn, STR("bActorIsValid"))) valid = *(b.data() + pv->GetOffset_Internal()) != 0;
+    std::wstring cls = actor ? safeClassName(actor) : STR("(null)");
+    VLOG(STR("[MoriaCppMod] [RecordProbe] GetRuntimeActorFromHandle: pe={} valid={} actor={:p} cls={}\n"),
+         ok, valid, (void*)actor, cls.c_str());
 }
 
 // Periodic native store (was the sidecar tick; sidecar rejected).
@@ -9520,6 +9597,35 @@ void adoptOrRegisterGoatIdentity(UObject* goat)
             bool rOk = writeUniqueNpcRowNameToEntry(myGuidPtr, STR("NPCGoat"));
             VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.112] identity writes: Name='{}' ok={} UniqueNpc.RowName='NPCGoat' ok={}\n"),
                  m_goatName.c_str(), nOk, rOk);
+            // [NATIVE-AI 2026-07-18] BT decode: the root FSM's
+            // MorBehaviorState_Role dispatches the Porter work tree from
+            // the ROSTER CurrentRole (PersistentData @+0x38, RowName @+8)
+            // — component-level role writes never reached it. Write
+            // 'Porter' into the entry so WorkTime→Role→Porter can run.
+            {
+                UObject* mgrR = findMgr();
+                if (mgrR)
+                {
+                    uint8_t* hdr2 = reinterpret_cast<uint8_t*>(mgrR) + 0x03a0 + 0x0108;
+                    if (isReadableMemory(hdr2, 16))
+                    {
+                        uint8_t* data2 = *reinterpret_cast<uint8_t**>(hdr2);
+                        int32_t num2 = *reinterpret_cast<int32_t*>(hdr2 + 8);
+                        constexpr int kStride2 = 0x260, kGuidOff2 = 0x001c;
+                        for (int i2 = 0; data2 && i2 < num2 && num2 < 500; i2++)
+                        {
+                            uint8_t* entry2 = data2 + i2 * kStride2;
+                            if (!isReadableMemory(entry2, kStride2)) continue;
+                            if (std::memcmp(entry2 + kGuidOff2, myGuidPtr, 16) != 0) continue;
+                            RC::Unreal::FName porterRow(STR("Porter"), RC::Unreal::FNAME_Add);
+                            // entry + 0x10 (PersistentData) + 0x38 (CurrentRole) + 8 (RowName)
+                            std::memcpy(entry2 + 0x10 + 0x38 + 8, &porterRow, 8);
+                            VLOG(STR("[MoriaCppMod] [NativeAI] roster CurrentRole='Porter' written to NpcInfo[{}]\n"), i2);
+                            break;
+                        }
+                    }
+                }
+            }
         }
         else VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.112] NpcGuid property NOT FOUND — identity writes skipped\n"));
 
@@ -13140,6 +13246,7 @@ void tickFollowGoats()
         static constexpr bool kNativeAI = true;
         if (kNativeAI)
         {
+            ++g.ticksSinceSpawn;
             if (!g.brainStopped) // reused as the native-init one-shot flag
             {
                 g.brainStopped = true;
@@ -13147,7 +13254,11 @@ void tickFollowGoats()
                 if (!g.stayMode) setGoatLeashActor(ctrl, pawn);
                 VLOG(STR("[MoriaCppMod] [NativeAI] one-shot init: role=Porter, LeashActor {} (goat={:p} ctrl={:p})\n"),
                      g.stayMode ? STR("left clear (stay)") : STR("SET to player"), (void*)goat, (void*)ctrl);
+                logGoatFSMState(ctrl, STR("native-init"));
             }
+            // diagnostic ONLY (no control writes): FSM state every ~30s so
+            // we can see whether the root ever enters WorkTime/Porter.
+            if ((g.ticksSinceSpawn % 1800) == 0) logGoatFSMState(ctrl, STR("native-30s"));
             continue; // native AI owns the goat from here
         }
 
