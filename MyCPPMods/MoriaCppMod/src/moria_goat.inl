@@ -9386,6 +9386,10 @@ void probeGoatRecordHandle()
     std::wstring cls = actor ? safeClassName(actor) : STR("(null)");
     VLOG(STR("[MoriaCppMod] [RecordProbe] GetRuntimeActorFromHandle: pe={} valid={} actor={:p} cls={}\n"),
          ok, valid, (void*)actor, cls.c_str());
+    // Seed the live store handle from the persisted one so this session's
+    // StoreRuntimeActor calls UPDATE the same record instead of minting a
+    // new one per session (prevents stale-record buildup in the save).
+    if (valid) std::memcpy(m_goatStoreHandle, handle, 0x20);
 }
 
 // Periodic native store (was the sidecar tick; sidecar rejected).
