@@ -7968,29 +7968,33 @@ void toggleGoatFromBell()
     if (live)
     {
         setGoatHidden(live, false); // normalize legacy parked/hidden state
-        UObject* pawn = m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr;
-        if (pawn)
-        {
-            if (auto* getLoc = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
-            {
-                std::vector<uint8_t> lb(getLoc->GetParmsSize(), 0);
-                if (safeProcessEvent(pawn, getLoc, lb.data()))
-                {
-                    if (auto* pr = findParam(getLoc, STR("ReturnValue")))
-                    {
-                        // [fix 2026-07-18] teleport to the PLAYER'S OWN spot
-                        // (small Z lift). The old +150/+150 offset could land
-                        // inside geometry — log-proven: goat vanished 33s
-                        // after a CALL, taking its inventory record with it.
-                        float* v = reinterpret_cast<float*>(lb.data() + pr->GetOffset_Internal());
-                        npcTeleportPawn(live, v[0], v[1], v[2] + 60.0f);
-                    }
-                }
-            }
-        }
+        teleportGoatToPlayer(live);
         VLOG(STR("[MoriaCppMod] [BellToggle] CALL — goat {:p} teleported to player\n"), (void*)live);
         showOnScreen(L"Rûdh comes to you", 2.0f, 0.4f, 0.9f, 0.4f);
         return;
+    }
+
+    // [NATIVE-RECALL 2026-07-18] No live goat but the roster remembers one:
+    // ServerRescueNpc respawns the RECORD goat — WITH its inventory (log-
+    // proven 15:23: the rescued goat carried the previous session's full
+    // load) — at the active settlement; the adopt tick then auto-CALLs it
+    // to the player. Spawning a brand-new goat here would orphan that
+    // record (the 15:22 duplicate-goat incident). Only spawn fresh when
+    // there is no marker or nowhere to rescue to.
+    {
+        uint8_t rg[16] = {0};
+        if (findRudhMarkerGuidRaw(rg))
+        {
+            uint32_t sid = readFirstActiveSettlementId();
+            if (sid != 0 && callGoatRescueAndRole(rg, sid))
+            {
+                m_recallCallUntilMs = GetTickCount64() + 30000;
+                VLOG(STR("[MoriaCppMod] [BellToggle] native RECALL — record goat rescued to settlement {}, auto-CALL armed\n"), sid);
+                showOnScreen(L"Recalling Rûdh...", 2.5f, 0.7f, 0.9f, 0.7f);
+                return;
+            }
+            VLOG(STR("[MoriaCppMod] [BellToggle] marker exists but no active settlement — falling back to spawn\n"));
+        }
     }
 
     VLOG(STR("[MoriaCppMod] [BellToggle] no goat in world — spawning\n"));
@@ -8663,7 +8667,15 @@ void adoptNativeGoat(UObject* goat)
     // [NPC-REG v4] a manager-restored goat spawned natively BEFORE our
     // template patch could land — apply dwarf defs to its live comps too.
     patchGoatInstanceInventory(goat);
-    // [WorldStore] sidecar rejected — restore is native (level record).
+    // [NATIVE-RECALL] the bell rescued this goat back from its record —
+    // finish the CALL by bringing it from the settlement to the player.
+    if (m_recallCallUntilMs != 0 && GetTickCount64() < m_recallCallUntilMs)
+    {
+        m_recallCallUntilMs = 0;
+        teleportGoatToPlayer(goat);
+        VLOG(STR("[MoriaCppMod] [NativeGoat] recalled goat auto-CALLed to player\n"));
+        showOnScreen(L"Rûdh comes to you", 2.0f, 0.4f, 0.9f, 0.4f);
+    }
     showOnScreen(L"Porter Goat linked", 1.5f, 0.7f, 0.9f, 0.7f);
 }
 
@@ -9290,15 +9302,120 @@ bool findRudhMarkerGuidRaw(uint8_t out[16])
     return false;
 }
 
+// [NATIVE-RECALL 2026-07-18] First active settlement id (0 = none).
+// ActiveSettlements is a plain TArray<uint32> UPROPERTY on the manager.
+uint32_t readFirstActiveSettlementId()
+{
+    UObject* smgr = nullptr;
+    std::vector<UObject*> smgrs;
+    if (findAllOfSafe(STR("MorSettlementManager"), smgrs))
+        for (UObject* o : smgrs)
+        {
+            if (!o || !isObjectAlive(o)) continue;
+            std::wstring cn = safeClassName(o);
+            if (cn.size() >= 9 && cn.substr(0, 9) == STR("Default__")) continue;
+            smgr = o;
+            break;
+        }
+    if (!smgr) return 0;
+    auto* arr = smgr->GetValuePtrByPropertyNameInChain<uint8_t>(STR("ActiveSettlements"));
+    if (!arr) return 0;
+    uint32_t* ids = *reinterpret_cast<uint32_t**>(arr);
+    int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+    if (!ids || num <= 0 || num >= 64 || !isReadableMemory(ids, num * 4)) return 0;
+    return ids[0];
+}
+
+// [NATIVE-RECALL 2026-07-18] The proven persistence core, shared by the
+// bell recall, the auto-anchor at registration, and the NUM8 harness:
+//   ServerRescueNpc(guid, settlement) — on a LIVE goat: assigns it to the
+//     settlement (persistence anchor; log-proven 10:49). On a MISSING
+//     goat: respawns it from its actor record WITH INVENTORY at the
+//     settlement (log-proven 15:23 — rescue brought back a goat carrying
+//     the previous session's full load).
+//   ServerNpcSetRole(guid, DT_NPCRoles 'Porter') — native roster role so
+//     the settlement schedule's Work state dispatches the Porter follow
+//     tree itself (nothing for the schedule FSM to stomp).
+bool callGoatRescueAndRole(const uint8_t guid[16], uint32_t settlementId)
+{
+    if (!m_localPC || !isObjectAlive(m_localPC) || settlementId == 0) return false;
+    auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerRescueNpc"));
+    if (!fn)
+    {
+        VLOG(STR("[MoriaCppMod] [NativeRescue] ServerRescueNpc NOT FOUND on PC\n"));
+        return false;
+    }
+    std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+    if (auto* pGuid = findParam(fn, STR("NpcGuid")))
+        std::memcpy(b.data() + pGuid->GetOffset_Internal(), guid, 16);
+    writeGoatParm<uint32_t>(fn, b.data(), STR("SettlementId"), settlementId);
+    bool ok = safeProcessEvent(m_localPC, fn, b.data());
+    VLOG(STR("[MoriaCppMod] [NativeRescue] ServerRescueNpc(settlement={}) pe={}\n"), settlementId, ok ? STR("OK") : STR("FAIL"));
+
+    if (auto* roleFn = m_localPC->GetFunctionByNameInChain(STR("ServerNpcSetRole")))
+    {
+        UObject* rolesDT = nullptr;
+        try
+        {
+            std::vector<UObject*> dts;
+            if (findAllOfSafe(STR("DataTable"), dts))
+                for (UObject* t : dts)
+                {
+                    if (!t || !isObjectAlive(t)) continue;
+                    if (safeObjectName(t) == STR("DT_NPCRoles"))
+                    {
+                        rolesDT = t;
+                        break;
+                    }
+                }
+        }
+        catch (...)
+        {
+        }
+        std::vector<uint8_t> rb(roleFn->GetParmsSize(), 0);
+        if (auto* pId = findParam(roleFn, STR("NpcId")))
+            std::memcpy(rb.data() + pId->GetOffset_Internal(), guid, 16);
+        if (auto* pRole = findParam(roleFn, STR("NewRole")))
+        {
+            uint8_t* h = rb.data() + pRole->GetOffset_Internal();
+            *reinterpret_cast<UObject**>(h) = rolesDT;
+            RC::Unreal::FName porter(STR("Porter"), RC::Unreal::FNAME_Add);
+            std::memcpy(h + 8, &porter, 8);
+        }
+        bool rok = safeProcessEvent(m_localPC, roleFn, rb.data());
+        VLOG(STR("[MoriaCppMod] [NativeRescue] ServerNpcSetRole(Porter, dt={:p}) pe={}\n"), (void*)rolesDT, rok ? STR("OK") : STR("FAIL"));
+    }
+    return ok;
+}
+
+// Armed by the bell's native recall: when the rescued record goat streams
+// in and tickAdoptNativeGoat links it, CALL it straight to the player.
+ULONGLONG m_recallCallUntilMs{0};
+
+// Teleport a goat to the player's own position (small Z lift — the old
+// +150/+150 offset landed in geometry and killed the courier).
+void teleportGoatToPlayer(UObject* g)
+{
+    if (!g || !isObjectAlive(g)) return;
+    UObject* pawn = m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr;
+    if (!pawn) return;
+    if (auto* getLoc = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
+    {
+        std::vector<uint8_t> lb(getLoc->GetParmsSize(), 0);
+        if (safeProcessEvent(pawn, getLoc, lb.data()))
+            if (auto* pr = findParam(getLoc, STR("ReturnValue")))
+            {
+                float* v = reinterpret_cast<float*>(lb.data() + pr->GetOffset_Internal());
+                npcTeleportPawn(g, v[0], v[1], v[2] + 60.0f);
+            }
+    }
+}
+
 // [NATIVE-RESCUE TEST 2026-07-18] Harness for the live-captured native
 // dwarf dismiss/recall machinery (see npc-dismiss-recall-native-api
 // memory): AMorPlayerController Server RPCs, GUID-keyed via the roster.
 //   NUM8       -> ServerRescueNpc(goatGuid, firstActiveSettlementId)
-//   Shift+NUM8 -> ServerDismissNpc(goatGuid)
-// The dwarf capture proved a settlement move despawns the actor and
-// respawns a FRESH one with inventory intact (native actor-record
-// restore). If rescue does the same for our roster-registered goat,
-// native persistence is solved without record-handle files.
+//   Ctrl+NUM8  -> ServerDismissNpc(goatGuid)
 void goatNativeLifecycleTest(bool dismiss)
 {
     uint8_t guid[16] = {0};
@@ -9335,93 +9452,15 @@ void goatNativeLifecycleTest(bool dismiss)
         return;
     }
 
-    // Rescue: needs a settlement id. ActiveSettlements is a plain
-    // TArray<uint32> UPROPERTY on the settlement manager.
-    UObject* smgr = nullptr;
-    std::vector<UObject*> smgrs;
-    if (findAllOfSafe(STR("MorSettlementManager"), smgrs))
-        for (UObject* o : smgrs)
-        {
-            if (!o || !isObjectAlive(o)) continue;
-            std::wstring cn = safeClassName(o);
-            if (cn.size() >= 9 && cn.substr(0, 9) == STR("Default__")) continue;
-            smgr = o;
-            break;
-        }
-    if (!smgr)
-    {
-        VLOG(STR("[MoriaCppMod] [NativeRescue] no MorSettlementManager instance in world\n"));
-        showOnScreen(L"No settlement manager", 2.0f, 0.9f, 0.6f, 0.6f);
-        return;
-    }
-    uint32_t settlementId = 0;
-    int32_t settlementCount = 0;
-    if (auto* arr = smgr->GetValuePtrByPropertyNameInChain<uint8_t>(STR("ActiveSettlements")))
-    {
-        uint32_t* ids = *reinterpret_cast<uint32_t**>(arr);
-        settlementCount = *reinterpret_cast<int32_t*>(arr + 8);
-        if (ids && settlementCount > 0 && settlementCount < 64 && isReadableMemory(ids, settlementCount * 4))
-        {
-            for (int i = 0; i < settlementCount; ++i)
-                VLOG(STR("[MoriaCppMod] [NativeRescue] active settlement [{}] id={}\n"), i, ids[i]);
-            settlementId = ids[0];
-        }
-    }
+    // Rescue + Porter role via the shared core.
+    uint32_t settlementId = readFirstActiveSettlementId();
     if (settlementId == 0)
     {
-        VLOG(STR("[MoriaCppMod] [NativeRescue] no ACTIVE settlement (count={}) — place/activate a settlement stone first\n"), settlementCount);
+        VLOG(STR("[MoriaCppMod] [NativeRescue] no ACTIVE settlement — place/activate a settlement stone first\n"));
         showOnScreen(L"No active settlement — place a settlement stone", 2.5f, 0.9f, 0.6f, 0.6f);
         return;
     }
-    auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerRescueNpc"));
-    if (!fn)
-    {
-        VLOG(STR("[MoriaCppMod] [NativeRescue] ServerRescueNpc NOT FOUND on PC\n"));
-        return;
-    }
-    std::vector<uint8_t> b(fn->GetParmsSize(), 0);
-    if (auto* pGuid = findParam(fn, STR("NpcGuid")))
-        std::memcpy(b.data() + pGuid->GetOffset_Internal(), guid, 16);
-    writeGoatParm<uint32_t>(fn, b.data(), STR("SettlementId"), settlementId);
-    bool ok = safeProcessEvent(m_localPC, fn, b.data());
-    VLOG(STR("[MoriaCppMod] [NativeRescue] ServerRescueNpc(settlement={}) pe={} — watch for respawn + [NativeGoat] adopt\n"),
-         settlementId, ok ? STR("OK") : STR("FAIL"));
-
-    // [SETTLED-FOLLOW 2026-07-18] a settled NPC's schedule FSM stomps our
-    // injected Porter state — set the roster role NATIVELY instead, so the
-    // schedule's own Work state dispatches the Porter tree by CurrentRole
-    // (zero refresh, fully native). FMorNPCRoleRowHandle = {DataTable* @0,
-    // RowName @8}; DT_NPCRoles ships a 'Porter' row (Tobi + vanilla).
-    if (auto* roleFn = m_localPC->GetFunctionByNameInChain(STR("ServerNpcSetRole")))
-    {
-        UObject* rolesDT = nullptr;
-        try
-        {
-            std::vector<UObject*> dts;
-            if (findAllOfSafe(STR("DataTable"), dts))
-                for (UObject* t : dts)
-                {
-                    if (!t || !isObjectAlive(t)) continue;
-                    if (safeObjectName(t) == STR("DT_NPCRoles")) { rolesDT = t; break; }
-                }
-        }
-        catch (...)
-        {
-        }
-        std::vector<uint8_t> rb(roleFn->GetParmsSize(), 0);
-        if (auto* pId = findParam(roleFn, STR("NpcId")))
-            std::memcpy(rb.data() + pId->GetOffset_Internal(), guid, 16);
-        if (auto* pRole = findParam(roleFn, STR("NewRole")))
-        {
-            uint8_t* h = rb.data() + pRole->GetOffset_Internal();
-            *reinterpret_cast<UObject**>(h) = rolesDT;
-            RC::Unreal::FName porter(STR("Porter"), RC::Unreal::FNAME_Add);
-            std::memcpy(h + 8, &porter, 8);
-        }
-        bool rok = safeProcessEvent(m_localPC, roleFn, rb.data());
-        VLOG(STR("[MoriaCppMod] [NativeRescue] ServerNpcSetRole(Porter, dt={:p}) pe={}\n"), (void*)rolesDT, rok ? STR("OK") : STR("FAIL"));
-    }
-    else VLOG(STR("[MoriaCppMod] [NativeRescue] ServerNpcSetRole NOT FOUND on PC\n"));
+    callGoatRescueAndRole(guid, settlementId);
     showOnScreen(L"Native RESCUE + Porter role sent", 2.0f, 0.7f, 0.9f, 0.7f);
 }
 
@@ -10000,6 +10039,25 @@ void adoptOrRegisterGoatIdentity(UObject* goat)
                             break;
                         }
                     }
+                }
+            }
+            // [NATIVE-RECALL 2026-07-18] AUTO-ANCHOR: settle the goat +
+            // native Porter role right at registration. Settlement
+            // membership is the ONLY channel that keeps the actor record
+            // restorable (unsettled goats never come back — proven across
+            // four reload tests); on a LIVE goat the rescue is a pure
+            // assignment (no respawn, log-proven 10:49).
+            {
+                uint32_t sid = readFirstActiveSettlementId();
+                if (sid != 0)
+                {
+                    bool aok = callGoatRescueAndRole(myGuidPtr, sid);
+                    VLOG(STR("[MoriaCppMod] [BellSpawn] auto-anchor to settlement {} -> {}\n"), sid, aok);
+                }
+                else
+                {
+                    VLOG(STR("[MoriaCppMod] [BellSpawn] auto-anchor SKIPPED — no active settlement (goat will NOT persist until one exists)\n"));
+                    showOnScreen(L"No rally stone — Rûdh won't survive a reload yet", 3.0f, 0.9f, 0.8f, 0.4f);
                 }
             }
         }

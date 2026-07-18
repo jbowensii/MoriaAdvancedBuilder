@@ -2572,6 +2572,8 @@ namespace MoriaMods
             // [DOOR-1 REVALIDATION] NPCGoat unique-row is per-world too.
             m_npcUniqueRowEnsured = false;
             m_dtNpcUnique = DataTableUtil{};
+            // [NATIVE-RECALL] pending auto-CALL dies with the world.
+            m_recallCallUntilMs = 0;
             // [WorldStore] per-world record handle.
             std::memset(m_goatStoreHandle, 0, sizeof(m_goatStoreHandle));
             m_goatStoredOnce = false;
