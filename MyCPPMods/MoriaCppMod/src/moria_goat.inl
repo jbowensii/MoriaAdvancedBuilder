@@ -9039,6 +9039,79 @@ void ensureNpcUniqueGoatRow()
 // rc.100-era trigger (ResetToStarting etc.) was tested against BROKEN
 // defs. With valid dwarf rows in place, retry ResetToStarting and log
 // HasContainers before/after (the ground-truth signal).
+// [BAD-OBJECT SWEEP 2026-07-18] Tobi's loc-less 'Goat.Slot.EpicPack'
+// container item is serialized inside older goats' actor records — it
+// restores with the goat every load and the UI delete doesn't stick
+// (container count stayed 8 across the user's delete + reload). Remove
+// every BP_ContainerItem_Goat* item by CLASS from each inventory comp:
+// RemoveItem(TSubclassOf, Count, EInventoryQuery::Personal=0) on the
+// FGK inventory. Idempotent; runs from patchGoatInstanceInventory so
+// both adopt (restored goat) and fresh spawn are covered.
+void sweepGoatEpicPackItems(UObject* c)
+{
+    if (!c || !isObjectAlive(c)) return;
+    FProperty* itemsProp = c->GetPropertyByNameInChain(STR("Items"));
+    if (!itemsProp) return;
+    uint8_t* listBase = reinterpret_cast<uint8_t*>(c) + itemsProp->GetOffset_Internal() + iiaListOff();
+    if (!isReadableMemory(listBase, 16)) return;
+    auto* rmFn = c->GetFunctionByNameInChain(STR("RemoveItem"));
+    if (!rmFn) return;
+    auto* pItem = findParam(rmFn, STR("Item"));
+    auto* pCount = findParam(rmFn, STR("Count"));
+    for (int pass = 0; pass < 4; pass++) // re-read after each removal
+    {
+        uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+        int32_t arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
+        if (!arrData || arrNum <= 0 || arrNum > 10000) return;
+        UClass* target = nullptr;
+        const int stride = iiSize(), itemOff = iiItemOff();
+        for (int i = 0; i < arrNum && i < 256; ++i)
+        {
+            uint8_t* e = arrData + i * stride;
+            if (!isReadableMemory(e, stride)) continue;
+            UClass* ic = *reinterpret_cast<UClass**>(e + itemOff);
+            if (!ic || !isObjectAlive(ic)) continue;
+            std::wstring n;
+            try
+            {
+                n = ic->GetName();
+            }
+            catch (...)
+            {
+                continue;
+            }
+            if (n.rfind(STR("BP_ContainerItem_Goat"), 0) == 0)
+            {
+                target = ic;
+                break;
+            }
+        }
+        if (!target) return;
+        std::vector<uint8_t> rb(rmFn->GetParmsSize(), 0);
+        if (pItem) *reinterpret_cast<UClass**>(rb.data() + pItem->GetOffset_Internal()) = target;
+        if (pCount) *reinterpret_cast<int32_t*>(rb.data() + pCount->GetOffset_Internal()) = 99;
+        bool ok = false;
+        try
+        {
+            ok = safeProcessEvent(c, rmFn, rb.data());
+        }
+        catch (...)
+        {
+        }
+        std::wstring tn;
+        try
+        {
+            tn = target->GetName();
+        }
+        catch (...)
+        {
+        }
+        VLOG(STR("[MoriaCppMod] [BadObjSweep] RemoveItem('{}') on comp '{}' pe={}\n"),
+             tn.c_str(), safeObjectName(c).c_str(), ok ? STR("OK") : STR("FAIL"));
+        if (!ok) return;
+    }
+}
+
 void patchGoatInstanceInventory(UObject* goat)
 {
     if (!goat || !isObjectAlive(goat)) return;
@@ -9080,6 +9153,9 @@ void patchGoatInstanceInventory(UObject* goat)
         {
             continue;
         }
+        // [BAD-OBJECT SWEEP] purge record-serialized Goat container items
+        // (loc-less epic pack) before any container accounting.
+        sweepGoatEpicPackItems(c);
         // current state
         auto hasContainers = [&]() -> int {
             if (auto* fn = c->GetFunctionByNameInChain(STR("HasContainers")))
