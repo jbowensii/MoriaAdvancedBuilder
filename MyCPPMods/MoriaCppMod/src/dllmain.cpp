@@ -2389,17 +2389,12 @@ namespace MoriaMods
                 // m_rotDisplayWidget (slot reused with class ptr
                 // 0xFF...FF) during the world-tear-down window before
                 // our pawn-lost detection fires.
-                m_rotDisplayWidget = nullptr;
-                m_characterLoaded = false;
-                m_localPC = nullptr;
-                m_localPawn = nullptr;
-                // [rc.46] Reset probe-fired flags on every LoadMap.
-                // The polling-based "Character lost" path at line 3979
-                // misses save→main-menu→load-save cycles because our
-                // tick doesn't run during main menu. LoadMap fires
-                // reliably on every world transition so it's the right
-                // place to invalidate stale probe state.
-                m_autoRestoreFired = false; // [rc.59]
+                // [reload-fix 2026-07-18] Was a 4-field partial reset; the
+                // polling "Character lost" path misses save->main-menu->load-save
+                // cycles (tick doesn't run in the menu), so THIS callback must do
+                // the full per-world reset or everything one-shot stays stale for
+                // the next world (menu-reload hang + goat row loss).
+                resetPerWorldState();
 
                 if (!m_definitionsApplied)
                 {
@@ -2420,6 +2415,216 @@ namespace MoriaMods
         // Game thread tick - called once per frame ON the game thread via EngineTick hook.
         // ALL mod logic runs here: UE4 API calls, key handling, state machine, widget ops.
         // GetAsyncKeyState is safe here too (Win32 API, reads global state).
+        // [reload-fix 2026-07-18] Comprehensive per-world reset, called from
+        // BOTH world-exit paths:
+        //   1) polling "Character lost" (getPawn()==null while loaded) -- in-world
+        //      tear-down (death/disconnect).
+        //   2) LoadMapPre callback -- save->main-menu->load-save cycles; the tick
+        //      never runs in the main menu so path 1 misses them. That path used
+        //      to reset only 4 fields, leaving DT binds, m_fnCache (dangling
+        //      UFunction* after GC), and the goat one-shots (m_bellSeedDone /
+        //      m_goatRowsEnsured / m_recordProbeDone) STALE for the whole next
+        //      world -- the 2026-07-18 menu-reload hang + goat-row-loss root cause.
+        // Idempotent: safe if both paths fire on one transition.
+        void resetPerWorldState()
+        {
+            m_characterLoaded = false;
+            m_characterHidden = false;
+            m_flyMode = false;
+            m_snapEnabled = true;
+            m_savedMaxSnapDistance = -1.0f;
+            m_buildMenuPrimed = false;
+            m_autoRestoreFired = false; // [rc.59] re-fire AutoRestore on next character-load
+            m_localPC = nullptr;
+            m_localPawn = nullptr;
+
+            m_cachedBuildComp = RC::Unreal::FWeakObjectPtr{};
+            m_cachedBuildHUD = RC::Unreal::FWeakObjectPtr{};
+            m_cachedBuildTab = RC::Unreal::FWeakObjectPtr{};
+            m_bpShowMouseCursor = nullptr;
+            m_lastPickedUpItemClass = nullptr;
+            m_lastPickedUpItemName.clear();
+            m_lastPickedUpDisplayName.clear();
+            m_lastPickedUpCount = 0;
+            std::memset(m_lastItemHandle, 0, 20);
+            m_lastItemInvComp = RC::Unreal::FWeakObjectPtr{};
+            m_qbPhase = PlacePhase::Idle;
+            m_showSettleTime = 0;
+            m_offTraceResults = -1;
+            m_offLastTraceResults = -1;
+            m_offTargetRotation = -1;
+            m_offCopiedComponents = -1;
+            m_offRelativeRotation = -1;
+            m_offRelativeLocation = -1;
+            m_isTargetBuild = false;
+            m_lastTargetBuildable = false;
+            m_targetBuildName.clear();
+            m_targetBuildRowName.clear();
+            m_buildMenuWasOpen = false;
+            m_handleResolvePhase = HandleResolvePhase::None;
+            m_pendingQuickBuildSlot = -1;
+            m_hasLastCapture = false;
+            m_hasLastHandle = false;
+            m_lastCapturedName.clear();
+            for (auto& slot : m_recipeSlots)
+            {
+                slot.hasBLockData = false;
+                slot.hasHandle = false;
+            }
+            s_overlay.visible = false;
+            m_initialReplayDone = false;
+            m_inventoryAuditDone = false;
+            m_definitionsApplied = false;
+            m_processedComps.clear();
+            m_undoStack.clear();
+
+            // Audit Iteration E: unbind cached UDataTable* pointers
+            // so a world-transition rebind catches a fresh DT
+            // instance instead of a stale-but-not-yet-GC'd one.
+            // Each DataTableUtil lazy-rebinds on first miss, so
+            // first DT use after the next character load takes a
+            // one-shot FindAllOf hit (acceptable cost).
+            m_dtConstructions.unbind();
+            m_dtConstructionRecipes.unbind();
+            m_dtItems.unbind();
+            m_dtWeapons.unbind();
+            m_dtTools.unbind();
+            m_dtArmor.unbind();
+            m_dtConsumables.unbind();
+            m_dtContainerItems.unbind();
+            m_dtOres.unbind();
+            m_stuckLogCount = 0;
+            m_lastRescanTime = 0;
+            m_lastStreamCheck = 0;
+            m_lastBubbleCheck = 0;
+            m_worldLayout = nullptr;
+            m_currentBubbleId.clear();
+            m_currentBubbleName.clear();
+            m_currentBubble = nullptr;
+            m_replay = {};
+
+            m_appliedRemovals.assign(m_appliedRemovals.size(), false);
+            m_deferHideAndRefresh = false;
+            m_gameHudVisible = true;
+            m_inFreeCam = false;
+
+            m_activeBuilderSlot = -1;
+            m_ftGameModEntries.clear();
+            m_ftRenameWidget = nullptr;
+            m_ftRenameInput = nullptr;
+            m_ftRenameConfirmLabel = nullptr;
+            m_ftRenameInputUW = FWeakObjectPtr{};
+            m_ftRenameVisible = false;
+            m_trashDlgWidget = nullptr;
+            m_trashDlgVisible = false;
+            m_trashDlgOpenTick = 0;
+
+            m_toolbarsVisible = false;
+
+            m_hoveredToolbar = -1;
+            m_hoveredSlot = -1;
+            m_lastClickLMB = false;
+
+            m_targetInfoWidget = nullptr;
+            m_tiTitleLabel = nullptr;
+            m_tiClassLabel = nullptr;
+            m_tiNameLabel = nullptr;
+            m_tiDisplayLabel = nullptr;
+            m_tiPathLabel = nullptr;
+            m_tiBuildLabel = nullptr;
+            m_tiRecipeLabel = nullptr;
+            m_tiShowTick = 0;
+
+            m_crosshairWidget = nullptr;
+            m_crosshairShowTick = 0;
+
+            m_errorBoxWidget = nullptr;
+            m_ebMessageLabel = nullptr;
+            m_ebShowTick = 0;
+
+            // Widgets die with the world — clear + re-arm the once-
+            // per-load spawners, or the rotation display and NBB stay
+            // stale for the rest of the session after any reload
+            // (2026-07-13: F10/circles "did nothing" root cause).
+            m_rotDisplayWidget = nullptr;
+            m_rotDisplaySpawnAttempted = false;
+            m_rotDispDragActive = false;
+            m_newBuildingBar = nullptr;
+            m_newBuildingBarSpawnAttempted = false;
+            m_repositionHudMode = false;
+            m_bellInHand = false;
+            // [ChestFlow] screen + hidden chest die with the world.
+            m_sbChestFlowScreen = FWeakObjectPtr{};
+            m_hiddenGoatChest = nullptr;
+            m_chestFlowDriveAtMs = 0;
+            m_chestFlowDriveCount = 0;
+            m_chestFlowLastDriveMs = 0;
+            m_sbChestFlowCont = FWeakObjectPtr{};
+            m_sbChestFlowMgr = FWeakObjectPtr{};
+            m_chestFlowAnimsPlayed = false;
+            m_bellSeedDone = false;
+            m_cachedBellID = 0;
+            // [NPC-REG v3] goat row synthesis is per-world (tables die
+            // with the world) — re-bind and re-add next world.
+            m_goatRowsEnsured = false;
+            m_dtStorageGoat = DataTableUtil{};
+            m_dtContItemsGoat = DataTableUtil{};
+            // [WorldStore] per-world record handle.
+            std::memset(m_goatStoreHandle, 0, sizeof(m_goatStoreHandle));
+            m_goatStoredOnce = false;
+            // [NATIVE-PERSIST] per-world fallback timer + probe.
+            m_autoRestoreAtMs = 0;
+            m_recordProbeDone = false;
+
+            // Settings-screen widget UClasses were captured off LIVE
+            // widget instances — stale after world transitions; a
+            // one-shot re-cache runs when the screen next opens.
+            m_settingsKeySelectorCls = nullptr;
+            m_settingsSectionHeadingCls = nullptr;
+            m_fnCache.clear();
+
+            // Captured-asset pointer caches (JoinWorld clone + NBB
+            // textures). All are re-harvested from live widgets on
+            // the next screen show / bar build; the pointers — and
+            // the captured font/style byte blocks, which embed asset
+            // pointers — can go stale across world transitions.
+            m_jwCls_FrontEndButton = nullptr;
+            m_jwCls_CraftBigButton = nullptr;
+            m_jwCls_GameDataPanel = nullptr;
+            m_jwCls_SessionHistoryList = nullptr;
+            m_jwCls_AdvancedJoinPanel = nullptr;
+            m_jwCls_LowerThird = nullptr;
+            m_jwCls_NetworkAlert = nullptr;
+            m_jwCls_ControlPrompt = nullptr;
+            m_jwCls_TextHeader = nullptr;
+            m_jwCls_SessionHistoryItem = nullptr;
+            m_jwCls_GenericPopup = nullptr;
+            m_jwIconTexSearch = nullptr;
+            m_jwBgGradientTex = nullptr;
+            m_jwTexBtnP1Up = nullptr;
+            m_jwTexBtnP2Up = nullptr;
+            m_jwTexBtnCTADisabled = nullptr;
+            m_jwFontTitleCaptured = false;
+            m_jwFontBreadcrumbCaptured = false;
+            m_jwFontSubtitleCaptured = false;
+            m_jwFontHistoryHeaderCaptured = false;
+            m_jwInputStyleCaptured = false;
+            m_nbbAssetsCached = false;
+            m_nbbCachedSlotEmpty = nullptr;
+            m_nbbCachedSlotFocus = nullptr;
+            m_nbbCachedSlotCorners = nullptr;
+            m_nbbCachedBarFrame = nullptr;
+            m_nbbCachedKeyBg = nullptr;
+            m_nbbCachedTexChromeTop = nullptr;
+            m_nbbCachedTexChromeMiddle = nullptr;
+            m_nbbCachedTexChromeBottom = nullptr;
+
+            clearStabilityHighlights();
+            // Stale herd entries from the dead world must not occupy the single
+            // MAX_FOLLOW_GOATS slot while the next world's restored goat streams in.
+            m_followGoats.clear();
+        }
+
         void gameThreadTick(float deltaSeconds)
         {
             // Detect dedicated server once (no GameViewport = headless)
@@ -3333,6 +3538,24 @@ namespace MoriaMods
             tickTargetInfoDrag();          // inspect window drag + close + auto-hide
             tickRotationDisplay();         // rotation display 4-cell pyramid
             tickRenameFocus();             // re-assert focus on rename input
+            // [rc.140 CAPTURE 2026-07-18] NUM9 re-arms the StorageCap full-call
+            // capture window (the arm trigger was lost in an earlier cleanup;
+            // the logging machinery in the PE pre-callback survived intact).
+            // 60s: long enough for the dwarf release->restore reference demo.
+            {
+                static bool s_capArmEdge = false;
+                bool capHeld = (GetAsyncKeyState(VK_NUMPAD9) & 0x8000) != 0;
+                if (capHeld && !s_capArmEdge && m_characterLoaded)
+                {
+                    m_storageCapUntilMs = GetTickCount64() + 60000;
+                    m_storageCapSeen.clear();
+                    m_storageCapLines = 0;
+                    VLOG(STR("[MoriaCppMod] [StorageCap] === window ARMED for 60s (NUM9) -- perform the reference actions now ===\n"));
+                    showOnScreen(L"Call capture ARMED (60s)", 2.0f, 0.9f, 0.9f, 0.5f);
+                }
+                s_capArmEdge = capHeld;
+            }
+
             tickNpcRecoveryProbe();        // PHASE 1 DIAG: NPC stuck-pathing probe (s_verbose only, one-shot)
             // [rc.139] AUTOMATIC NPC scan RETIRED per user directive (mod
             // users reported stutter from the background scanning). The
@@ -3425,199 +3648,8 @@ namespace MoriaMods
                 UObject* localPawn = getPawn();
                 if (!localPawn)
                 {
-                    VLOG(STR("[MoriaCppMod] Character lost - world unloading, resetting replay state\n"));
-                    m_characterLoaded = false;
-                    m_characterHidden = false;
-                    m_flyMode = false;
-                    m_snapEnabled = true;
-                    m_savedMaxSnapDistance = -1.0f;
-                    m_buildMenuPrimed = false;
-                    m_autoRestoreFired = false; // [rc.59] re-fire AutoRestore on next character-load
-                    m_localPC = nullptr;
-                    m_localPawn = nullptr;
-
-                    m_cachedBuildComp = RC::Unreal::FWeakObjectPtr{};
-                    m_cachedBuildHUD = RC::Unreal::FWeakObjectPtr{};
-                    m_cachedBuildTab = RC::Unreal::FWeakObjectPtr{};
-                    m_bpShowMouseCursor = nullptr;
-                    m_lastPickedUpItemClass = nullptr;
-                    m_lastPickedUpItemName.clear();
-                    m_lastPickedUpDisplayName.clear();
-                    m_lastPickedUpCount = 0;
-                    std::memset(m_lastItemHandle, 0, 20);
-                    m_lastItemInvComp = RC::Unreal::FWeakObjectPtr{};
-                    m_qbPhase = PlacePhase::Idle;
-                    m_showSettleTime = 0;
-                    m_offTraceResults = -1;
-                    m_offLastTraceResults = -1;
-                    m_offTargetRotation = -1;
-                    m_offCopiedComponents = -1;
-                    m_offRelativeRotation = -1;
-                    m_offRelativeLocation = -1;
-                    m_isTargetBuild = false;
-                    m_lastTargetBuildable = false;
-                    m_targetBuildName.clear();
-                    m_targetBuildRowName.clear();
-                    m_buildMenuWasOpen = false;
-                    m_handleResolvePhase = HandleResolvePhase::None;
-                    m_pendingQuickBuildSlot = -1;
-                    m_hasLastCapture = false;
-                    m_hasLastHandle = false;
-                    m_lastCapturedName.clear();
-                    for (auto& slot : m_recipeSlots)
-                    {
-                        slot.hasBLockData = false;
-                        slot.hasHandle = false;
-                    }
-                    s_overlay.visible = false;
-                    m_initialReplayDone = false;
-                    m_inventoryAuditDone = false;
-                    m_definitionsApplied = false;
-                    m_processedComps.clear();
-                    m_undoStack.clear();
-
-                    // Audit Iteration E: unbind cached UDataTable* pointers
-                    // so a world-transition rebind catches a fresh DT
-                    // instance instead of a stale-but-not-yet-GC'd one.
-                    // Each DataTableUtil lazy-rebinds on first miss, so
-                    // first DT use after the next character load takes a
-                    // one-shot FindAllOf hit (acceptable cost).
-                    m_dtConstructions.unbind();
-                    m_dtConstructionRecipes.unbind();
-                    m_dtItems.unbind();
-                    m_dtWeapons.unbind();
-                    m_dtTools.unbind();
-                    m_dtArmor.unbind();
-                    m_dtConsumables.unbind();
-                    m_dtContainerItems.unbind();
-                    m_dtOres.unbind();
-                    m_stuckLogCount = 0;
-                    m_lastRescanTime = 0;
-                    m_lastStreamCheck = 0;
-                    m_lastBubbleCheck = 0;
-                    m_worldLayout = nullptr;
-                    m_currentBubbleId.clear();
-                    m_currentBubbleName.clear();
-                    m_currentBubble = nullptr;
-                    m_replay = {};
-
-                    m_appliedRemovals.assign(m_appliedRemovals.size(), false);
-                    m_deferHideAndRefresh = false;
-                    m_gameHudVisible = true;
-                    m_inFreeCam = false;
-
-                    m_activeBuilderSlot = -1;
-                    m_ftGameModEntries.clear();
-                    m_ftRenameWidget = nullptr;
-                    m_ftRenameInput = nullptr;
-                    m_ftRenameConfirmLabel = nullptr;
-                    m_ftRenameInputUW = FWeakObjectPtr{};
-                    m_ftRenameVisible = false;
-                    m_trashDlgWidget = nullptr;
-                    m_trashDlgVisible = false;
-                    m_trashDlgOpenTick = 0;
-
-                    m_toolbarsVisible = false;
-
-                    m_hoveredToolbar = -1;
-                    m_hoveredSlot = -1;
-                    m_lastClickLMB = false;
-
-                    m_targetInfoWidget = nullptr;
-                    m_tiTitleLabel = nullptr;
-                    m_tiClassLabel = nullptr;
-                    m_tiNameLabel = nullptr;
-                    m_tiDisplayLabel = nullptr;
-                    m_tiPathLabel = nullptr;
-                    m_tiBuildLabel = nullptr;
-                    m_tiRecipeLabel = nullptr;
-                    m_tiShowTick = 0;
-
-                    m_crosshairWidget = nullptr;
-                    m_crosshairShowTick = 0;
-
-                    m_errorBoxWidget = nullptr;
-                    m_ebMessageLabel = nullptr;
-                    m_ebShowTick = 0;
-
-                    // Widgets die with the world — clear + re-arm the once-
-                    // per-load spawners, or the rotation display and NBB stay
-                    // stale for the rest of the session after any reload
-                    // (2026-07-13: F10/circles "did nothing" root cause).
-                    m_rotDisplayWidget = nullptr;
-                    m_rotDisplaySpawnAttempted = false;
-                    m_rotDispDragActive = false;
-                    m_newBuildingBar = nullptr;
-                    m_newBuildingBarSpawnAttempted = false;
-                    m_repositionHudMode = false;
-                    m_bellInHand = false;
-                    // [ChestFlow] screen + hidden chest die with the world.
-                    m_sbChestFlowScreen = FWeakObjectPtr{};
-                    m_hiddenGoatChest = nullptr;
-                    m_chestFlowDriveAtMs = 0;
-                    m_chestFlowDriveCount = 0;
-                    m_chestFlowLastDriveMs = 0;
-                    m_sbChestFlowCont = FWeakObjectPtr{};
-                    m_sbChestFlowMgr = FWeakObjectPtr{};
-                    m_chestFlowAnimsPlayed = false;
-                    m_bellSeedDone = false;
-                    m_cachedBellID = 0;
-                    // [NPC-REG v3] goat row synthesis is per-world (tables die
-                    // with the world) — re-bind and re-add next world.
-                    m_goatRowsEnsured = false;
-                    m_dtStorageGoat = DataTableUtil{};
-                    m_dtContItemsGoat = DataTableUtil{};
-                    // [WorldStore] per-world record handle.
-                    std::memset(m_goatStoreHandle, 0, sizeof(m_goatStoreHandle));
-                    m_goatStoredOnce = false;
-                    // [NATIVE-PERSIST] per-world fallback timer + probe.
-                    m_autoRestoreAtMs = 0;
-                    m_recordProbeDone = false;
-
-                    // Settings-screen widget UClasses were captured off LIVE
-                    // widget instances — stale after world transitions; a
-                    // one-shot re-cache runs when the screen next opens.
-                    m_settingsKeySelectorCls = nullptr;
-                    m_settingsSectionHeadingCls = nullptr;
-                    m_fnCache.clear();
-
-                    // Captured-asset pointer caches (JoinWorld clone + NBB
-                    // textures). All are re-harvested from live widgets on
-                    // the next screen show / bar build; the pointers — and
-                    // the captured font/style byte blocks, which embed asset
-                    // pointers — can go stale across world transitions.
-                    m_jwCls_FrontEndButton = nullptr;
-                    m_jwCls_CraftBigButton = nullptr;
-                    m_jwCls_GameDataPanel = nullptr;
-                    m_jwCls_SessionHistoryList = nullptr;
-                    m_jwCls_AdvancedJoinPanel = nullptr;
-                    m_jwCls_LowerThird = nullptr;
-                    m_jwCls_NetworkAlert = nullptr;
-                    m_jwCls_ControlPrompt = nullptr;
-                    m_jwCls_TextHeader = nullptr;
-                    m_jwCls_SessionHistoryItem = nullptr;
-                    m_jwCls_GenericPopup = nullptr;
-                    m_jwIconTexSearch = nullptr;
-                    m_jwBgGradientTex = nullptr;
-                    m_jwTexBtnP1Up = nullptr;
-                    m_jwTexBtnP2Up = nullptr;
-                    m_jwTexBtnCTADisabled = nullptr;
-                    m_jwFontTitleCaptured = false;
-                    m_jwFontBreadcrumbCaptured = false;
-                    m_jwFontSubtitleCaptured = false;
-                    m_jwFontHistoryHeaderCaptured = false;
-                    m_jwInputStyleCaptured = false;
-                    m_nbbAssetsCached = false;
-                    m_nbbCachedSlotEmpty = nullptr;
-                    m_nbbCachedSlotFocus = nullptr;
-                    m_nbbCachedSlotCorners = nullptr;
-                    m_nbbCachedBarFrame = nullptr;
-                    m_nbbCachedKeyBg = nullptr;
-                    m_nbbCachedTexChromeTop = nullptr;
-                    m_nbbCachedTexChromeMiddle = nullptr;
-                    m_nbbCachedTexChromeBottom = nullptr;
-
-                    clearStabilityHighlights();
+                    VLOG(STR("[MoriaCppMod] Character lost - world unloading, resetting per-world state\n"));
+                    resetPerWorldState();
                 }
             }
 
