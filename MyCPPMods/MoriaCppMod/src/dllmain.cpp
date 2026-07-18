@@ -3558,17 +3558,21 @@ namespace MoriaMods
 
             // [NATIVE-RESCUE TEST 2026-07-18] NUM8 drives the native GUID-keyed
             // NPC lifecycle RPCs on the goat (captured from the dwarf demo):
-            //   NUM8       = ServerRescueNpc(goatGuid, firstActiveSettlement)
-            //   Shift+NUM8 = ServerDismissNpc(goatGuid)
-            // In-session round-trip: put items on goat -> Shift+NUM8 (actor
+            //   NUM8      = ServerRescueNpc(goatGuid, firstActiveSettlement)
+            //   Ctrl+NUM8 = ServerDismissNpc(goatGuid)
+            //   (Shift+NUM8 was the first pick but collides with the game's
+            //    emote wheel chord — user-reported 2026-07-18.)
+            // In-session round-trip: put items on goat -> Ctrl+NUM8 (actor
             // should despawn) -> NUM8 (fresh actor should respawn WITH items).
             {
                 static bool s_rescueEdge = false;
                 bool rescueHeld = (GetAsyncKeyState(VK_NUMPAD8) & 0x8000) != 0;
                 if (rescueHeld && !s_rescueEdge && m_characterLoaded)
                 {
+                    bool ctrlHeld = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
                     bool shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-                    goatNativeLifecycleTest(shiftHeld /*dismiss*/);
+                    if (!shiftHeld) // leave the game's Shift+NUM8 emote chord alone
+                        goatNativeLifecycleTest(ctrlHeld /*dismiss*/);
                 }
                 s_rescueEdge = rescueHeld;
             }
