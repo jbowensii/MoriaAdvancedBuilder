@@ -2979,54 +2979,48 @@ bool stopGoatBrainLogic(UObject* goat, const wchar_t* reason, bool onlyIfActive 
 
 void onGoatFollow()
 {
-    // [rc.64 ROLE TOGGLE 2026-06-28] Per approved plan: FOLLOW
-    // = SetRoleFuzzy("Porter") + stayMode=false so tick re-asserts
-    // LeashActor. The role toggle is defense-in-depth per user
-    // directive; LeashActor refresh in tick is what actually drives
-    // the vanilla Bst_NPCGoatWorkPorter follow.
-    for (auto& rec : m_followGoats)
-        rec.stayMode = false;
+    // [NATIVE-AI 2026-07-18] FOLLOW = ONE-SHOT: write LeashActor on the
+    // goat's own AI controller and let the native behavior tree drive.
+    // No brain-stop, no gait/movement forcing, no tick refresh.
     for (auto& rec : m_followGoats)
     {
+        rec.stayMode = false;
         UObject* goat = rec.pawn.Get();
-        if (goat && isObjectAlive(goat)) setRoleFuzzyOnGoat(goat, STR("Porter"));
-        if (goat && isObjectAlive(goat)) stopGoatBrainLogic(goat, STR("MoriaCppMod Follow"));
-        if (goat && isObjectAlive(goat)) setGoatGaitRunning(goat);
-        // Movement mode can be stuck on MOVE_None from a prior bell
-        // dismiss — force Walking (idempotent).
-        if (goat && isObjectAlive(goat))
+        if (!goat || !isObjectAlive(goat)) continue;
+        setRoleFuzzyOnGoat(goat, STR("Porter"));
+        UObject* ctrl = rec.controller.Get();
+        if (!ctrl || !isObjectAlive(ctrl))
         {
-            UClass* mvCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Engine.CharacterMovementComponent"));
-            if (mvCls)
-            {
-                if (auto* gc = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
-                {
-                    std::vector<uint8_t> b(gc->GetParmsSize(), 0);
-                    writeGoatParm<UClass*>(gc, b.data(), STR("ComponentClass"), mvCls);
-                    if (safeProcessEvent(goat, gc, b.data()))
-                    {
-                        UObject* mv = readGoatParm<UObject*>(gc, b.data(), STR("ReturnValue"), nullptr);
-                        if (mv && isObjectAlive(mv))
-                            if (auto* sm = mv->GetFunctionByNameInChain(STR("SetMovementMode")))
-                            {
-                                std::vector<uint8_t> mb(sm->GetParmsSize(), 0);
-                                mb[0] = 1; // MOVE_Walking
-                                try
-                                {
-                                    safeProcessEvent(mv, sm, mb.data());
-                                }
-                                catch (...)
-                                {
-                                }
-                                VLOG(STR("[MoriaCppMod] [rc.137] Follow: movement mode forced to Walking\n"));
-                            }
-                    }
-                }
-            }
+            UObject** cp = goat->GetValuePtrByPropertyNameInChain<UObject*>(STR("Controller"));
+            ctrl = cp ? *cp : nullptr;
         }
+        if (ctrl && isObjectAlive(ctrl) && m_localPawn && isObjectAlive(m_localPawn))
+            setGoatLeashActor(ctrl, m_localPawn);
     }
-    VLOG(STR("[MoriaCppMod] [GoatMenu] FOLLOW — role=Porter, stayMode=false (tick re-asserts LeashActor)\n"));
+    VLOG(STR("[MoriaCppMod] [NativeAI] FOLLOW — one-shot LeashActor set (native BT drives)\n"));
     showOnScreen(L"Porter Goat: following", 1.5f, 0.7f, 0.9f, 0.7f);
+    clearGoatInjectedRows();
+}
+
+void onGoatStay()
+{
+    // [NATIVE-AI 2026-07-18] STAY = ONE-SHOT: clear LeashActor; the native
+    // behavior tree loses its follow target and idles. No refresh.
+    for (auto& rec : m_followGoats)
+    {
+        rec.stayMode = true;
+        UObject* goat = rec.pawn.Get();
+        if (!goat || !isObjectAlive(goat)) continue;
+        UObject* ctrl = rec.controller.Get();
+        if (!ctrl || !isObjectAlive(ctrl))
+        {
+            UObject** cp = goat->GetValuePtrByPropertyNameInChain<UObject*>(STR("Controller"));
+            ctrl = cp ? *cp : nullptr;
+        }
+        if (ctrl && isObjectAlive(ctrl)) clearGoatLeashActor(ctrl);
+    }
+    VLOG(STR("[MoriaCppMod] [NativeAI] STAY — one-shot LeashActor cleared (native BT idles)\n"));
+    showOnScreen(L"Porter Goat: staying here", 1.5f, 0.7f, 0.9f, 0.7f);
     clearGoatInjectedRows();
 }
 
@@ -5283,7 +5277,9 @@ void openGoatSaddlebagInventory()
             // writes, no chest, no drives. The interact selection IS the
             // goat, so the native flow classifies NPC and binds the goat's
             // storage root itself (dwarf pane, 4x4 via the NPC44 paks).
-            equipPorterSaddlebag(goat); // cosmetic saddle only
+            // [NO-SADDLEBAG-ITEM 2026-07-18, user spec] the saddlebag ITEM
+            // is no longer used by the mod — the goat's storage is its own
+            // NPC body inventory (dwarf-pattern containers).
             auto* getMgrFn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Moria.MorUIManager:BPGetManager"));
             auto* mgrCDO = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Moria.Default__MorUIManager"));
             UObject* ctx = (m_localPC && isObjectAlive(m_localPC)) ? m_localPC : goat;
@@ -5488,7 +5484,7 @@ void openGoatSaddlebagInventory()
                         *reinterpret_cast<int32_t*>(ph) = cid;
                         RC::Unreal::FWeakObjectPtr wpP(pInvF);
                         std::memcpy(ph + 8, &wpP, sizeof(wpP));
-                        equipPorterSaddlebag(goat); // visual saddle on the goat (rc.87, cosmetic)
+                        // [NO-SADDLEBAG-ITEM] equip removed (legacy path, unreachable in native mode)
                         VLOG(STR("[MoriaCppMod] [rc.136] opening PLAYER-side pack container id={} via goat menu\n"), cid);
                         // [ChestFlow] native chest-style open via the UI
                         // manager (default); legacy takeover kept behind
@@ -7855,8 +7851,6 @@ bool destroyGoat(UObject* goat)
 
 // Main toggle entry — bell right-click target (and NUM9 test keybind).
 // 2-second cooldown enforced via m_lastBellToggleMs.
-// [NATIVE-PERSIST] parked-goat state (hidden in place; record persists).
-bool m_goatParked{false};
 void setGoatHidden(UObject* goat, bool hidden)
 {
     if (!goat || !isObjectAlive(goat)) return;
@@ -7912,14 +7906,12 @@ void toggleGoatFromBell()
                                        }),
                         m_followGoats.end());
 
-    // [NATIVE-PERSIST 2026-07-17] Save-forensics verdict: NPC inventories
-    // persist inside the actor's world-save record (Nithi's 10 star
-    // ingots found + format cracked: 1-based 3-byte class idx, count,
-    // durability). DESTROYING the goat severed that chain — so the bell
-    // is now PARK / RECALL / SUMMON:
-    //   goat visible → PARK (hide + no collision; actor + record live on)
-    //   goat parked  → RECALL (unhide + teleport to player)
-    //   no goat      → SPAWN (registered; native record restores it later)
+    // [CALL-ONLY 2026-07-18, user spec] "the bell should never hide or
+    // destroy etc the goat, it should only call the goat to your
+    // location. period."
+    //   marker goat exists → teleport it to the player (unhide safety
+    //   for goats parked by older builds; never hides/destroys)
+    //   no goat → spawn one (registered; GUID stored via rc.112 tail)
     UObject* live = nullptr;
     for (auto& g : m_followGoats)
     {
@@ -7937,18 +7929,9 @@ void toggleGoatFromBell()
         if (stray && goatHasRudhMarker(stray)) live = stray;
     }
 
-    if (live && !m_goatParked)
+    if (live)
     {
-        VLOG(STR("[MoriaCppMod] [BellToggle] PARK — hiding goat {:p} (actor + save record preserved)\n"), (void*)live);
-        storeGoatToWorldState(live, STR("pre-park"));
-        setGoatHidden(live, true);
-        m_goatParked = true;
-        showOnScreen(L"Rûdh waits out of sight (cargo safe)", 2.0f, 0.7f, 0.9f, 0.7f);
-        return;
-    }
-    if (live && m_goatParked)
-    {
-        setGoatHidden(live, false);
+        setGoatHidden(live, false); // normalize legacy parked/hidden state
         UObject* pawn = m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr;
         if (pawn)
         {
@@ -7965,14 +7948,12 @@ void toggleGoatFromBell()
                 }
             }
         }
-        m_goatParked = false;
-        VLOG(STR("[MoriaCppMod] [BellToggle] RECALL — goat {:p} unhidden + teleported to player\n"), (void*)live);
-        showOnScreen(L"Rûdh returns", 2.0f, 0.4f, 0.9f, 0.4f);
+        VLOG(STR("[MoriaCppMod] [BellToggle] CALL — goat {:p} teleported to player\n"), (void*)live);
+        showOnScreen(L"Rûdh comes to you", 2.0f, 0.4f, 0.9f, 0.4f);
         return;
     }
 
-    VLOG(STR("[MoriaCppMod] [BellToggle] SUMMON — spawning fresh goat\n"));
-    m_goatParked = false;
+    VLOG(STR("[MoriaCppMod] [BellToggle] no goat in world — spawning\n"));
     spawnBellGoat();
 }
 
@@ -8626,13 +8607,15 @@ void adoptNativeGoat(UObject* goat)
     rec.controllerReplaced = true;   // never swap Tobi's AIController
     rec.interactiveRefired = true;   // leave Tobi's interaction prompts untouched
     rec.postRegDumpDone    = true;
-    // [NATIVE-PERSIST] a record-restored goat saved while PARKED comes
-    // back hidden — sync the park state so the first bell ring RECALLS
-    // instead of invisibly re-parking.
+    // [CALL-ONLY] the bell never hides — but a goat saved by an OLDER
+    // build (or restored mid-park) can arrive hidden. Normalize.
     if (auto* hiddenPtr = goat->GetValuePtrByPropertyNameInChain<uint8_t>(STR("bHidden")))
     {
-        m_goatParked = ((*hiddenPtr & 0x01) != 0);
-        if (m_goatParked) VLOG(STR("[MoriaCppMod] [NativeGoat] adopted goat is HIDDEN — park state synced (first ring recalls)\n"));
+        if ((*hiddenPtr & 0x01) != 0)
+        {
+            VLOG(STR("[MoriaCppMod] [NativeGoat] adopted goat was HIDDEN — unhiding (call-only spec)\n"));
+            setGoatHidden(goat, false);
+        }
     }
     m_followGoats.push_back(rec);
     VLOG(STR("[MoriaCppMod] [NativeGoat] adopted Tobi-summoned {} {:p} (herd={})\n"),
@@ -8655,23 +8638,19 @@ int countGoatStacks(UObject* goat)
     return (int)lines.size();
 }
 
-// [NATIVE-PERSIST v2 2026-07-17] Marker-goat ARBITRATION. The native
-// record restore streams in LATE (bubble timing) — a bell ring before
-// that spawns a fresh empty goat that steals the single herd slot,
-// leaving the restored, loaded goat orphaned + invisible (the user's
-// "mystery invisible goat"). Every 2s: collect ALL live marker goats,
-// prefer the one CARRYING ITEMS, swap the tracked slot to it, and
-// destroy only EMPTY duplicates (never a loaded goat).
+// [CALL-ONLY 2026-07-18, user spec] NO multi-goat cleanup — never
+// destroy/hide anything. Simple adopt: when the herd slot is empty and
+// a marker goat (record-restored or otherwise ours) exists, track it.
 void tickAdoptNativeGoat()
 {
     if (!m_characterLoaded) return;
+    if (m_followGoats.size() >= MAX_FOLLOW_GOATS) return;
     ULONGLONG now = GetTickCount64();
     if (now - m_lastNativeGoatScanMs < 2000) return;
     m_lastNativeGoatScanMs = now;
 
     std::vector<UObject*> hits;
     if (!seh_findAnyGoatActor(&hits)) return;
-    std::vector<UObject*> markers;
     for (UObject* g : hits)
     {
         if (!g || !isObjectAlive(g)) continue;
@@ -8695,54 +8674,8 @@ void tickAdoptNativeGoat()
         }
         if (nm.rfind(STR("Default__"), 0) == 0) continue;
         if (!goatHasRudhMarker(g)) continue; // wild goats never participate
-        markers.push_back(g);
-    }
-    if (markers.empty()) return;
-
-    UObject* tracked = findOurGoatAlive();
-    if (markers.size() == 1 && markers[0] == tracked) return; // steady state
-
-    // pick the best: most stacks; tie-break = currently tracked
-    UObject* best = nullptr;
-    int bestStacks = -1;
-    for (auto* g : markers)
-    {
-        int s = countGoatStacks(g);
-        bool win = (s > bestStacks) || (s == bestStacks && g == tracked);
-        VLOG(STR("[MoriaCppMod] [NativeGoat] marker goat {:p} stacks={}{}\n"), (void*)g, s, g == tracked ? STR(" (tracked)") : STR(""));
-        if (win)
-        {
-            best = g;
-            bestStacks = s;
-        }
-    }
-    if (!best) return;
-
-    if (best != tracked)
-    {
-        // swap the slot to the loaded goat
-        if (tracked && countGoatStacks(tracked) == 0)
-        {
-            VLOG(STR("[MoriaCppMod] [NativeGoat] SWAP: destroying empty fresh goat {:p} in favor of loaded goat {:p} ({} stacks)\n"),
-                 (void*)tracked, (void*)best, bestStacks);
-            destroyGoat(tracked);
-        }
-        m_followGoats.clear();
-        adoptNativeGoat(best);
-    }
-    // dedupe: destroy OTHER marker goats only when empty
-    for (auto* g : markers)
-    {
-        if (g == best || !isObjectAlive(g)) continue;
-        if (countGoatStacks(g) == 0)
-        {
-            VLOG(STR("[MoriaCppMod] [NativeGoat] dedupe: destroying empty duplicate goat {:p}\n"), (void*)g);
-            destroyGoat(g);
-        }
-        else
-        {
-            VLOG(STR("[MoriaCppMod] [NativeGoat] duplicate goat {:p} has items — left alone (manual cleanup)\n"), (void*)g);
-        }
+        adoptNativeGoat(g);
+        break; // MAX_FOLLOW_GOATS == 1
     }
 }
 
@@ -12856,27 +12789,18 @@ void onInteractionPressPre(UObject* widgetCtx)
     std::wstring rowLabel = readRowInteractionText(widgetCtx);
     VLOG(STR("[MoriaCppMod] [GoatMenu] row label='{}' — dispatching\n"), rowLabel.empty() ? STR("?") : rowLabel.c_str());
 
-    if (rowLabel.find(STR("Follow")) != std::wstring::npos || rowLabel.find(STR("follow")) != std::wstring::npos)
+    if (rowLabel.find(STR("Follow")) != std::wstring::npos || rowLabel.find(STR("follow")) != std::wstring::npos ||
+        rowLabel.find(STR("Stay")) != std::wstring::npos || rowLabel.find(STR("stay")) != std::wstring::npos)
     {
-        // Stay is retired (native escort catch-up makes it
-        // unenforceable; bell = dismiss/recall). Tobi's v1.12 row
-        // ignores bTalkInteractionEnabled, so neutralize here:
-        // force Follow and collapse the row widget.
-        onGoatFollow();
-        if (auto* visFn = widgetCtx->GetFunctionByNameInChain(STR("SetVisibility")))
-        {
-            std::vector<uint8_t> vb(visFn->GetParmsSize(), 0);
-            vb[0] = 1; // Collapsed
-            try
-            {
-                safeProcessEvent(widgetCtx, visFn, vb.data());
-            }
-            catch (...)
-            {
-            }
-        }
-        VLOG(STR("[MoriaCppMod] [GoatMenu] Follow/Stay row clicked — forced FOLLOW + row collapsed\n"));
-        showOnScreen(L"Rûdh always follows — ring the bell to dismiss", 2.5f, 0.7f, 0.9f, 0.7f);
+        // [NATIVE-AI 2026-07-18] Stay/Follow are BACK, driven by the
+        // goat's own AI via one-shot LeashActor writes (no tick refresh).
+        bool anyStay = false;
+        for (auto& rec : m_followGoats)
+            if (rec.stayMode) anyStay = true;
+        if (anyStay)
+            onGoatFollow();
+        else
+            onGoatStay();
     }
     else if (rowLabel.find(STR("Saddlebag")) != std::wstring::npos || rowLabel.find(STR("saddlebag")) != std::wstring::npos ||
              rowLabel.find(STR("Equip")) != std::wstring::npos || rowLabel.find(STR("equip")) != std::wstring::npos)
@@ -13206,6 +13130,26 @@ void tickFollowGoats()
             }
         }
         if (!ctrl || !isObjectAlive(ctrl)) continue;
+
+        // [NATIVE-AI 2026-07-18 EXPERIMENT, user spec] Hand movement to the
+        // goat's OWN AI with ONE-SHOT writes only — no per-tick refresh,
+        // no FSM disable, no gait/movement forcing, no manual MoveToActor.
+        // (Past "leash key never consumed" findings predate registration —
+        // re-testing with zero assumptions.) Follow = LeashActor set once;
+        // Stay = LeashActor cleared once (onGoatStay/onGoatFollow).
+        static constexpr bool kNativeAI = true;
+        if (kNativeAI)
+        {
+            if (!g.brainStopped) // reused as the native-init one-shot flag
+            {
+                g.brainStopped = true;
+                setRoleFuzzyOnGoat(goat, STR("Porter"));
+                if (!g.stayMode) setGoatLeashActor(ctrl, pawn);
+                VLOG(STR("[MoriaCppMod] [NativeAI] one-shot init: role=Porter, LeashActor {} (goat={:p} ctrl={:p})\n"),
+                     g.stayMode ? STR("left clear (stay)") : STR("SET to player"), (void*)goat, (void*)ctrl);
+            }
+            continue; // native AI owns the goat from here
+        }
 
         // ORDER MATTERS: deactivate FGK components FIRST, before any
         // role assignment / equip dispatch. Otherwise the equip's

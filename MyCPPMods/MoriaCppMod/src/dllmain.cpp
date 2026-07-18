@@ -3565,8 +3565,7 @@ namespace MoriaMods
                     // [WorldStore] per-world record handle.
                     std::memset(m_goatStoreHandle, 0, sizeof(m_goatStoreHandle));
                     m_goatStoredOnce = false;
-                    // [NATIVE-PERSIST] per-world park + fallback timer.
-                    m_goatParked = false;
+                    // [NATIVE-PERSIST] per-world fallback timer.
                     m_autoRestoreAtMs = 0;
 
                     // Settings-screen widget UClasses were captured off LIVE
