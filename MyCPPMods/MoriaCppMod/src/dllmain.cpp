@@ -2569,6 +2569,9 @@ namespace MoriaMods
             m_goatRowsEnsured = false;
             m_dtStorageGoat = DataTableUtil{};
             m_dtContItemsGoat = DataTableUtil{};
+            // [DOOR-1 REVALIDATION] NPCGoat unique-row is per-world too.
+            m_npcUniqueRowEnsured = false;
+            m_dtNpcUnique = DataTableUtil{};
             // [WorldStore] per-world record handle.
             std::memset(m_goatStoreHandle, 0, sizeof(m_goatStoreHandle));
             m_goatStoredOnce = false;
@@ -3828,6 +3831,10 @@ namespace MoriaMods
                 // manager-restored goat (and lazy container instantiation)
                 // sees valid defs.
                 ensureGoatStorageRows();
+                // [DOOR-1 REVALIDATION 2026-07-18] runtime 'NPCGoat' row into
+                // DT_NPCUniqueCharacters (post-BeginPlay timing dodges the
+                // rc.58 ValidNpcRestores trap conditions; see moria_goat.inl).
+                ensureNpcUniqueGoatRow();
                 // [DwarfBag probe] retried by tickDwarfBagProbe (dwarves
                 // stream late; one-shot at +5s always found 0).
                 m_dwarfProbeTries = 0;

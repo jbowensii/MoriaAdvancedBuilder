@@ -8931,6 +8931,95 @@ void ensureGoatStorageRows()
     }
 }
 
+// [DOOR-1 REVALIDATION 2026-07-18, user-directed] Runtime injection of
+// the DT_NPCUniqueCharacters 'NPCGoat' row — re-testing the 2026-06-26
+// "ValidNpcRestores trap" with today's architecture. Differences from
+// the rc.58 pak test that produced the trap finding:
+//   1. Row added at RUNTIME (+5s), AFTER AMorNPCManager::BeginPlay —
+//      the manager's ValidNpcRestores cache (built at BeginPlay) stays
+//      empty this session, so Register should keep creating entries.
+//      The per-entry restore lookup on NEXT load may still resolve the
+//      row live (we re-add every session at +5s, restore is bubble-late).
+//   2. Row name 'NPCGoat' (matches the roster UniqueNpc write), not 'Goat'.
+//   3. No saddlebags-item flow anymore — the old "saddlebag UI gone"
+//      symptom can't confound the result.
+// Trap signals to watch: bell-ring '[rc.112] adopted=... NpcInfo count
+// X->Y' (count must grow in a fresh world) and the ValidNpcRestores
+// counts logged here + at the +20s RecordProbe.
+DataTableUtil m_dtNpcUnique;
+bool m_npcUniqueRowEnsured{false};
+
+int readValidNpcRestoresCount()
+{
+    std::vector<UObject*> mgrs;
+    if (!findAllOfSafe(STR("MorNPCManager"), mgrs)) return -1;
+    for (UObject* o : mgrs)
+    {
+        if (!o || !isObjectAlive(o)) continue;
+        std::wstring cn = safeClassName(o);
+        if (cn.size() >= 9 && cn.substr(0, 9) == STR("Default__")) continue;
+        if (auto* arr = o->GetValuePtrByPropertyNameInChain<uint8_t>(STR("ValidNpcRestores")))
+            return *reinterpret_cast<int32_t*>(arr + 8);
+        return -1;
+    }
+    return -1;
+}
+
+void ensureNpcUniqueGoatRow()
+{
+    if (m_npcUniqueRowEnsured) return;
+    if (!m_dtNpcUnique.isBound()) m_dtNpcUnique.bind(STR("DT_NPCUniqueCharacters"));
+    if (!m_dtNpcUnique.isBound())
+    {
+        VLOG(STR("[MoriaCppMod] [NpcUniqueRow] DT_NPCUniqueCharacters bind failed\n"));
+        return;
+    }
+    if (m_dtNpcUnique.findRowData(STR("NPCGoat")))
+    {
+        m_npcUniqueRowEnsured = true;
+        return;
+    }
+    uint8_t* src = m_dtNpcUnique.findRowData(STR("Wanderer"));
+    if (!src || m_dtNpcUnique.rowSize <= 0)
+    {
+        VLOG(STR("[MoriaCppMod] [NpcUniqueRow] source row 'Wanderer' not found (rowSize={})\n"), m_dtNpcUnique.rowSize);
+        return;
+    }
+    int ccOff = -1, apOff = -1;
+    try
+    {
+        for (auto* p : m_dtNpcUnique.rowStruct->ForEachProperty())
+        {
+            if (!p) continue;
+            if (p->GetName() == STR("CharacterClass")) ccOff = p->GetOffset_Internal();
+            else if (p->GetName() == STR("AppearancePreset")) apOff = p->GetOffset_Internal();
+        }
+    }
+    catch (...)
+    {
+    }
+    if (ccOff < 0 || apOff < 0)
+    {
+        VLOG(STR("[MoriaCppMod] [NpcUniqueRow] field resolve failed (ccOff={} apOff={})\n"), ccOff, apOff);
+        return;
+    }
+    uint8_t* copy = reinterpret_cast<uint8_t*>(FMemory::Malloc(m_dtNpcUnique.rowSize));
+    std::memcpy(copy, src, m_dtNpcUnique.rowSize);
+    // CharacterClass TSoftClassPtr: zero the cached WeakObjectPtr+Tag (16B)
+    // so nothing resolves to Wanderer's dwarf class, then set AssetPathName
+    // (FName @ +16 per dt-npcunique-structure surprise #3).
+    std::memset(copy + ccOff, 0, 16);
+    RC::Unreal::FName goatCls(STR("/Game/Character/NpcGoat/BP_NpcGoat.BP_NpcGoat_C"), RC::Unreal::FNAME_Add);
+    std::memcpy(copy + ccOff + 16, &goatCls, 8);
+    // AppearancePreset FDataTableRowHandle.RowName @ +8 -> 'None' (no preset for the goat).
+    RC::Unreal::FName noneRow(STR("None"), RC::Unreal::FNAME_Add);
+    std::memcpy(copy + apOff + 8, &noneRow, 8);
+    bool ok = m_dtNpcUnique.callAddRowInternal(STR("NPCGoat"), copy);
+    if (ok) m_npcUniqueRowEnsured = true;
+    VLOG(STR("[MoriaCppMod] [NpcUniqueRow] DT_NPCUniqueCharacters['NPCGoat'] add -> {} (rowSize={} ccOff={} apOff={}) ValidNpcRestores={}\n"),
+         ok, m_dtNpcUnique.rowSize, ccOff, apOff, readValidNpcRestoresCount());
+}
+
 // [NPC-REG 2026-07-17] Instance-side pass: patch the LIVE goat's
 // MorInventoryComponents to the dwarf defs and retry instantiation.
 // Rationale: construction-time DefaultContainers instantiation failed
@@ -9571,6 +9660,9 @@ void probeGoatRecordHandle()
 {
     if (m_recordProbeDone) return;
     m_recordProbeDone = true;
+    // [DOOR-1 REVALIDATION] trap telemetry: did ValidNpcRestores populate
+    // late (it caches at manager BeginPlay; our runtime row lands at +5s)?
+    VLOG(STR("[MoriaCppMod] [RecordProbe] ValidNpcRestores count at +20s = {}\n"), readValidNpcRestoresCount());
     // In-game registry key: the roster GUID names the handle file, so
     // multiple worlds/characters can never collide.
     std::string ghex = findRudhMarkerGuidHex();
