@@ -9166,6 +9166,140 @@ std::string findRudhMarkerGuidHex()
     return "";
 }
 
+// [NATIVE-RESCUE TEST 2026-07-18] Raw-bytes variant of the Rûdh marker
+// scan — same roster walk as findRudhMarkerGuidHex, but hands back the
+// 16 GUID bytes for the native GUID-keyed NPC lifecycle RPCs.
+bool findRudhMarkerGuidRaw(uint8_t out[16])
+{
+    UObject* mgr = nullptr;
+    std::vector<UObject*> mgrs;
+    if (findAllOfSafe(STR("MorNPCManager"), mgrs))
+        for (UObject* o : mgrs)
+        {
+            if (!o || !isObjectAlive(o)) continue;
+            std::wstring cn = safeClassName(o);
+            if (cn.size() >= 9 && cn.substr(0, 9) == STR("Default__")) continue;
+            mgr = o;
+            break;
+        }
+    if (!mgr) return false;
+    uint8_t* hdr = reinterpret_cast<uint8_t*>(mgr) + 0x03a0 + 0x0108;
+    if (!isReadableMemory(hdr, 16)) return false;
+    uint8_t* data = *reinterpret_cast<uint8_t**>(hdr);
+    int32_t num = *reinterpret_cast<int32_t*>(hdr + 8);
+    constexpr int kStride = 0x260, kGuidOff = 0x001c, kNameOff = 0x0030;
+    if (!data || num <= 0 || num > 500 || !isReadableMemory(data, num * kStride)) return false;
+    for (int i = 0; i < num; ++i)
+    {
+        uint8_t* entry = data + i * kStride;
+        wchar_t nameBuf[256] = L"";
+        seh_ftextToStringToBuf(entry + kNameOff, nameBuf, 256);
+        if (!isGoatNameMatch(std::wstring(nameBuf))) continue;
+        std::memcpy(out, entry + kGuidOff, 16);
+        return true;
+    }
+    return false;
+}
+
+// [NATIVE-RESCUE TEST 2026-07-18] Harness for the live-captured native
+// dwarf dismiss/recall machinery (see npc-dismiss-recall-native-api
+// memory): AMorPlayerController Server RPCs, GUID-keyed via the roster.
+//   NUM8       -> ServerRescueNpc(goatGuid, firstActiveSettlementId)
+//   Shift+NUM8 -> ServerDismissNpc(goatGuid)
+// The dwarf capture proved a settlement move despawns the actor and
+// respawns a FRESH one with inventory intact (native actor-record
+// restore). If rescue does the same for our roster-registered goat,
+// native persistence is solved without record-handle files.
+void goatNativeLifecycleTest(bool dismiss)
+{
+    uint8_t guid[16] = {0};
+    if (!findRudhMarkerGuidRaw(guid))
+    {
+        VLOG(STR("[MoriaCppMod] [NativeRescue] no Rûdh marker in roster — register the goat first (ring bell)\n"));
+        showOnScreen(L"No goat in roster", 2.0f, 0.9f, 0.6f, 0.6f);
+        return;
+    }
+    const uint32_t* gu = reinterpret_cast<const uint32_t*>(guid);
+    VLOG(STR("[MoriaCppMod] [NativeRescue] roster goat GUID {:08X}{:08X}{:08X}{:08X}\n"), gu[0], gu[1], gu[2], gu[3]);
+    if (!m_localPC || !isObjectAlive(m_localPC))
+    {
+        VLOG(STR("[MoriaCppMod] [NativeRescue] no local PlayerController\n"));
+        return;
+    }
+    UObject* liveBefore = findOurGoatAlive();
+    VLOG(STR("[MoriaCppMod] [NativeRescue] live goat BEFORE: {:p}\n"), (void*)liveBefore);
+
+    if (dismiss)
+    {
+        auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerDismissNpc"));
+        if (!fn)
+        {
+            VLOG(STR("[MoriaCppMod] [NativeRescue] ServerDismissNpc NOT FOUND on PC\n"));
+            return;
+        }
+        std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+        if (auto* pGuid = findParam(fn, STR("NpcGuid")))
+            std::memcpy(b.data() + pGuid->GetOffset_Internal(), guid, 16);
+        bool ok = safeProcessEvent(m_localPC, fn, b.data());
+        VLOG(STR("[MoriaCppMod] [NativeRescue] ServerDismissNpc pe={}\n"), ok ? STR("OK") : STR("FAIL"));
+        showOnScreen(L"Native DISMISS sent", 2.0f, 0.9f, 0.8f, 0.5f);
+        return;
+    }
+
+    // Rescue: needs a settlement id. ActiveSettlements is a plain
+    // TArray<uint32> UPROPERTY on the settlement manager.
+    UObject* smgr = nullptr;
+    std::vector<UObject*> smgrs;
+    if (findAllOfSafe(STR("MorSettlementManager"), smgrs))
+        for (UObject* o : smgrs)
+        {
+            if (!o || !isObjectAlive(o)) continue;
+            std::wstring cn = safeClassName(o);
+            if (cn.size() >= 9 && cn.substr(0, 9) == STR("Default__")) continue;
+            smgr = o;
+            break;
+        }
+    if (!smgr)
+    {
+        VLOG(STR("[MoriaCppMod] [NativeRescue] no MorSettlementManager instance in world\n"));
+        showOnScreen(L"No settlement manager", 2.0f, 0.9f, 0.6f, 0.6f);
+        return;
+    }
+    uint32_t settlementId = 0;
+    int32_t settlementCount = 0;
+    if (auto* arr = smgr->GetValuePtrByPropertyNameInChain<uint8_t>(STR("ActiveSettlements")))
+    {
+        uint32_t* ids = *reinterpret_cast<uint32_t**>(arr);
+        settlementCount = *reinterpret_cast<int32_t*>(arr + 8);
+        if (ids && settlementCount > 0 && settlementCount < 64 && isReadableMemory(ids, settlementCount * 4))
+        {
+            for (int i = 0; i < settlementCount; ++i)
+                VLOG(STR("[MoriaCppMod] [NativeRescue] active settlement [{}] id={}\n"), i, ids[i]);
+            settlementId = ids[0];
+        }
+    }
+    if (settlementId == 0)
+    {
+        VLOG(STR("[MoriaCppMod] [NativeRescue] no ACTIVE settlement (count={}) — place/activate a settlement stone first\n"), settlementCount);
+        showOnScreen(L"No active settlement — place a settlement stone", 2.5f, 0.9f, 0.6f, 0.6f);
+        return;
+    }
+    auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerRescueNpc"));
+    if (!fn)
+    {
+        VLOG(STR("[MoriaCppMod] [NativeRescue] ServerRescueNpc NOT FOUND on PC\n"));
+        return;
+    }
+    std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+    if (auto* pGuid = findParam(fn, STR("NpcGuid")))
+        std::memcpy(b.data() + pGuid->GetOffset_Internal(), guid, 16);
+    writeGoatParm<uint32_t>(fn, b.data(), STR("SettlementId"), settlementId);
+    bool ok = safeProcessEvent(m_localPC, fn, b.data());
+    VLOG(STR("[MoriaCppMod] [NativeRescue] ServerRescueNpc(settlement={}) pe={} — watch for respawn + [NativeGoat] adopt\n"),
+         settlementId, ok ? STR("OK") : STR("FAIL"));
+    showOnScreen(L"Native RESCUE sent", 2.0f, 0.7f, 0.9f, 0.7f);
+}
+
 std::string goatSidecarPath(UObject* goat)
 {
     std::string guid = "default";

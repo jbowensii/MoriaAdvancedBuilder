@@ -3556,6 +3556,23 @@ namespace MoriaMods
                 s_capArmEdge = capHeld;
             }
 
+            // [NATIVE-RESCUE TEST 2026-07-18] NUM8 drives the native GUID-keyed
+            // NPC lifecycle RPCs on the goat (captured from the dwarf demo):
+            //   NUM8       = ServerRescueNpc(goatGuid, firstActiveSettlement)
+            //   Shift+NUM8 = ServerDismissNpc(goatGuid)
+            // In-session round-trip: put items on goat -> Shift+NUM8 (actor
+            // should despawn) -> NUM8 (fresh actor should respawn WITH items).
+            {
+                static bool s_rescueEdge = false;
+                bool rescueHeld = (GetAsyncKeyState(VK_NUMPAD8) & 0x8000) != 0;
+                if (rescueHeld && !s_rescueEdge && m_characterLoaded)
+                {
+                    bool shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+                    goatNativeLifecycleTest(shiftHeld /*dismiss*/);
+                }
+                s_rescueEdge = rescueHeld;
+            }
+
             tickNpcRecoveryProbe();        // PHASE 1 DIAG: NPC stuck-pathing probe (s_verbose only, one-shot)
             // [rc.139] AUTOMATIC NPC scan RETIRED per user directive (mod
             // users reported stutter from the background scanning). The
