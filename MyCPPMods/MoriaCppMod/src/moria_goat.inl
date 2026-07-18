@@ -2977,6 +2977,35 @@ bool stopGoatBrainLogic(UObject* goat, const wchar_t* reason, bool onlyIfActive 
     return total > 0;
 }
 
+// [NATIVE-AI v2 2026-07-18] THE follow lever, from the FGK controller API:
+// AFGKAIController::ReplaceBehaviorState(TSubclassOf<UFGKBehaviorState>)
+// — one PE call installs a behavior state CLASS directly, bypassing the
+// root FSM's WorkTime/schedule gate that kept the Porter tree from ever
+// running. Porter tree is self-driving after that (EQS fills LeashActor,
+// tracking MoveTo follows, catch-up teleports).
+bool goatReplaceBehaviorState(UObject* ctrl, const wchar_t* clsPath, const wchar_t* tag)
+{
+    if (!ctrl || !isObjectAlive(ctrl)) return false;
+    UClass* cls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, clsPath);
+    if (!cls) cls = goat_loadClassAssetBlocking(clsPath);
+    if (!cls)
+    {
+        VLOG(STR("[MoriaCppMod] [NativeAI] behavior state class not loadable: {}\n"), clsPath);
+        return false;
+    }
+    auto* fn = ctrl->GetFunctionByNameInChain(STR("ReplaceBehaviorState"));
+    if (!fn)
+    {
+        VLOG(STR("[MoriaCppMod] [NativeAI] ReplaceBehaviorState missing on ctrl\n"));
+        return false;
+    }
+    std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+    if (auto* p = findParam(fn, STR("NewState"))) *reinterpret_cast<UClass**>(b.data() + p->GetOffset_Internal()) = cls;
+    bool ok = safeProcessEvent(ctrl, fn, b.data());
+    VLOG(STR("[MoriaCppMod] [NativeAI] ReplaceBehaviorState({}) -> {}\n"), tag, ok ? STR("OK") : STR("FAILED"));
+    return ok;
+}
+
 void onGoatFollow()
 {
     // [NATIVE-AI 2026-07-18] FOLLOW = ONE-SHOT: write LeashActor on the
@@ -2995,7 +3024,10 @@ void onGoatFollow()
             ctrl = cp ? *cp : nullptr;
         }
         if (ctrl && isObjectAlive(ctrl) && m_localPawn && isObjectAlive(m_localPawn))
+        {
             setGoatLeashActor(ctrl, m_localPawn);
+            goatReplaceBehaviorState(ctrl, STR("/Game/Character/NpcGoat/Bst_NPCGoatWorkPorter.Bst_NPCGoatWorkPorter_C"), STR("Porter/follow"));
+        }
     }
     VLOG(STR("[MoriaCppMod] [NativeAI] FOLLOW — one-shot LeashActor set (native BT drives)\n"));
     showOnScreen(L"Porter Goat: following", 1.5f, 0.7f, 0.9f, 0.7f);
@@ -3017,7 +3049,11 @@ void onGoatStay()
             UObject** cp = goat->GetValuePtrByPropertyNameInChain<UObject*>(STR("Controller"));
             ctrl = cp ? *cp : nullptr;
         }
-        if (ctrl && isObjectAlive(ctrl)) clearGoatLeashActor(ctrl);
+        if (ctrl && isObjectAlive(ctrl))
+        {
+            clearGoatLeashActor(ctrl);
+            goatReplaceBehaviorState(ctrl, STR("/Game/Character/AI/Behaviors/BehaviorStates/BSt_Idle.BSt_Idle_C"), STR("Idle/stay"));
+        }
     }
     VLOG(STR("[MoriaCppMod] [NativeAI] STAY — one-shot LeashActor cleared (native BT idles)\n"));
     showOnScreen(L"Porter Goat: staying here", 1.5f, 0.7f, 0.9f, 0.7f);
@@ -9065,6 +9101,67 @@ std::string sidecarClassPath(UClass* ic)
     return s;
 }
 
+// GUID of a goat's MorNPCComponent as 32-hex (empty on failure).
+std::string goatGuidHex(UObject* goat)
+{
+    do
+    {
+        if (!goat || !isObjectAlive(goat)) break;
+        UClass* npcCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+        if (!npcCls) break;
+        auto* getComp = goat->GetFunctionByNameInChain(STR("GetComponentByClass"));
+        if (!getComp) break;
+        std::vector<uint8_t> gb(getComp->GetParmsSize(), 0);
+        writeGoatParm<UClass*>(getComp, gb.data(), STR("ComponentClass"), npcCls);
+        if (!safeProcessEvent(goat, getComp, gb.data())) break;
+        UObject* npcComp = readGoatParm<UObject*>(getComp, gb.data(), STR("ReturnValue"), nullptr);
+        if (!npcComp || !isObjectAlive(npcComp)) break;
+        uint8_t* g = npcComp->GetValuePtrByPropertyNameInChain<uint8_t>(STR("NpcGuid"));
+        if (!g) break;
+        const uint32_t* u = reinterpret_cast<const uint32_t*>(g);
+        char buf[40];
+        snprintf(buf, sizeof(buf), "%08X%08X%08X%08X", u[0], u[1], u[2], u[3]);
+        return buf;
+    } while (false);
+    return "";
+}
+
+// 32-hex GUID of the 'Rûdh' marker entry in NpcInfo (empty if none) —
+// the IN-GAME registry key, used to organize per-world/per-goat files.
+std::string findRudhMarkerGuidHex()
+{
+    UObject* mgr = nullptr;
+    std::vector<UObject*> mgrs;
+    if (findAllOfSafe(STR("MorNPCManager"), mgrs))
+        for (UObject* o : mgrs)
+        {
+            if (!o || !isObjectAlive(o)) continue;
+            std::wstring cn = safeClassName(o);
+            if (cn.size() >= 9 && cn.substr(0, 9) == STR("Default__")) continue;
+            mgr = o;
+            break;
+        }
+    if (!mgr) return "";
+    uint8_t* hdr = reinterpret_cast<uint8_t*>(mgr) + 0x03a0 + 0x0108;
+    if (!isReadableMemory(hdr, 16)) return "";
+    uint8_t* data = *reinterpret_cast<uint8_t**>(hdr);
+    int32_t num = *reinterpret_cast<int32_t*>(hdr + 8);
+    constexpr int kStride = 0x260, kGuidOff = 0x001c, kNameOff = 0x0030;
+    if (!data || num <= 0 || num > 500 || !isReadableMemory(data, num * kStride)) return "";
+    for (int i = 0; i < num; ++i)
+    {
+        uint8_t* entry = data + i * kStride;
+        wchar_t nameBuf[256] = L"";
+        seh_ftextToStringToBuf(entry + kNameOff, nameBuf, 256);
+        if (!isGoatNameMatch(std::wstring(nameBuf))) continue;
+        const uint32_t* u = reinterpret_cast<const uint32_t*>(entry + kGuidOff);
+        char buf[40];
+        snprintf(buf, sizeof(buf), "%08X%08X%08X%08X", u[0], u[1], u[2], u[3]);
+        return buf;
+    }
+    return "";
+}
+
 std::string goatSidecarPath(UObject* goat)
 {
     std::string guid = "default";
@@ -9314,7 +9411,8 @@ void storeGoatToWorldState(UObject* goat, const wchar_t* tag)
         // [RecordProbe 2026-07-18] persist the record handle across
         // sessions — next load calls GetRuntimeActorFromHandle with it
         // ("store the guid and call it back", literally).
-        std::ofstream f = openOutputFile(modPath("Mods/MoriaCppMod/goat-record-handle.txt"), std::ios::trunc);
+        std::string ghex = goatGuidHex(goat);
+        std::ofstream f = openOutputFile(modPath("Mods/MoriaCppMod/goat-record-" + (ghex.empty() ? std::string("default") : ghex) + ".txt"), std::ios::trunc);
         if (f.is_open())
         {
             char ahex[70];
@@ -9335,10 +9433,18 @@ void probeGoatRecordHandle()
 {
     if (m_recordProbeDone) return;
     m_recordProbeDone = true;
-    std::ifstream f(utf8PathToWide(modPath("Mods/MoriaCppMod/goat-record-handle.txt")));
+    // In-game registry key: the roster GUID names the handle file, so
+    // multiple worlds/characters can never collide.
+    std::string ghex = findRudhMarkerGuidHex();
+    if (ghex.empty())
+    {
+        VLOG(STR("[MoriaCppMod] [RecordProbe] no Rûdh marker in NpcInfo — skip\n"));
+        return;
+    }
+    std::ifstream f(utf8PathToWide(modPath("Mods/MoriaCppMod/goat-record-" + ghex + ".txt")));
     if (!f.is_open())
     {
-        VLOG(STR("[MoriaCppMod] [RecordProbe] no persisted handle — skip\n"));
+        VLOG(STR("[MoriaCppMod] [RecordProbe] no persisted handle for this GUID — skip\n"));
         return;
     }
     std::string line;
@@ -13256,6 +13362,8 @@ void tickFollowGoats()
                 g.brainStopped = true;
                 setRoleFuzzyOnGoat(goat, STR("Porter"));
                 if (!g.stayMode) setGoatLeashActor(ctrl, pawn);
+                if (!g.stayMode)
+                    goatReplaceBehaviorState(ctrl, STR("/Game/Character/NpcGoat/Bst_NPCGoatWorkPorter.Bst_NPCGoatWorkPorter_C"), STR("Porter/init"));
                 VLOG(STR("[MoriaCppMod] [NativeAI] one-shot init: role=Porter, LeashActor {} (goat={:p} ctrl={:p})\n"),
                      g.stayMode ? STR("left clear (stay)") : STR("SET to player"), (void*)goat, (void*)ctrl);
                 logGoatFSMState(ctrl, STR("native-init"));
