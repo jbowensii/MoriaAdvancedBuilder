@@ -3832,7 +3832,14 @@ namespace MoriaMods
                 // [NPC-REG v3] make the goat slot rows live EARLY so any
                 // manager-restored goat (and lazy container instantiation)
                 // sees valid defs.
-                ensureGoatStorageRows();
+                // [2026-07-18] ensureGoatStorageRows() RETIRED (commented per
+                // comment-out-before-delete): making 'Goat.Slot.EpicPack'
+                // resolvable let Tobi's native DefaultContainers init build
+                // the loc-less epic-pack container on EVERY load — the
+                // regenerating "bad object" in the saddlebags. The goat's
+                // real containers use the pak-shipped Dwarf rows (defs
+                // rewritten at adopt/spawn); nothing needs these rows now.
+                // ensureGoatStorageRows();
                 // [DOOR-1 REVALIDATION 2026-07-18] runtime 'NPCGoat' row into
                 // DT_NPCUniqueCharacters (post-BeginPlay timing dodges the
                 // rc.58 ValidNpcRestores trap conditions; see moria_goat.inl).
