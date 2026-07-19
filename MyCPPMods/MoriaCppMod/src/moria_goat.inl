@@ -7982,18 +7982,29 @@ void toggleGoatFromBell()
     // record (the 15:22 duplicate-goat incident). Only spawn fresh when
     // there is no marker or nowhere to rescue to.
     {
+        // [RALLY-GATE 2026-07-18, user spec] Every path that CREATES a goat
+        // (rescue or fresh spawn) requires an active settlement — the only
+        // channel that keeps the goat's record restorable. Without one,
+        // show an error and do nothing (no unpersistable goats, no orphaned
+        // records). CALL of a live goat above needs no settlement.
+        uint32_t sid = readFirstActiveSettlementId();
+        if (sid == 0)
+        {
+            VLOG(STR("[MoriaCppMod] [BellToggle] no active settlement — bell refused (rally stone required)\n"));
+            showOnScreen(L"Rûdh needs a rally stone — place one first", 3.0f, 0.9f, 0.6f, 0.4f);
+            return;
+        }
         uint8_t rg[16] = {0};
         if (findRudhMarkerGuidRaw(rg))
         {
-            uint32_t sid = readFirstActiveSettlementId();
-            if (sid != 0 && callGoatRescueAndRole(rg, sid))
+            if (callGoatRescueAndRole(rg, sid))
             {
                 m_recallCallUntilMs = GetTickCount64() + 30000;
                 VLOG(STR("[MoriaCppMod] [BellToggle] native RECALL — record goat rescued to settlement {}, auto-CALL armed\n"), sid);
                 showOnScreen(L"Recalling Rûdh...", 2.5f, 0.7f, 0.9f, 0.7f);
                 return;
             }
-            VLOG(STR("[MoriaCppMod] [BellToggle] marker exists but no active settlement — falling back to spawn\n"));
+            VLOG(STR("[MoriaCppMod] [BellToggle] rescue call failed — falling back to spawn\n"));
         }
     }
 
