@@ -9047,9 +9047,9 @@ void ensureNpcUniqueGoatRow()
 // RemoveItem(TSubclassOf, Count, EInventoryQuery::Personal=0) on the
 // FGK inventory. Idempotent; runs from patchGoatInstanceInventory so
 // both adopt (restored goat) and fresh spawn are covered.
-void sweepGoatEpicPackItems(UObject* c)
+void sweepGoatContainerItemsByPrefix(UObject* c, const wchar_t* prefix)
 {
-    if (!c || !isObjectAlive(c)) return;
+    if (!c || !isObjectAlive(c) || !prefix) return;
     FProperty* itemsProp = c->GetPropertyByNameInChain(STR("Items"));
     if (!itemsProp) return;
     uint8_t* listBase = reinterpret_cast<uint8_t*>(c) + itemsProp->GetOffset_Internal() + iiaListOff();
@@ -9058,7 +9058,7 @@ void sweepGoatEpicPackItems(UObject* c)
     if (!rmFn) return;
     auto* pItem = findParam(rmFn, STR("Item"));
     auto* pCount = findParam(rmFn, STR("Count"));
-    for (int pass = 0; pass < 4; pass++) // re-read after each removal
+    for (int pass = 0; pass < 8; pass++) // re-read after each removal
     {
         uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
         int32_t arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
@@ -9080,7 +9080,7 @@ void sweepGoatEpicPackItems(UObject* c)
             {
                 continue;
             }
-            if (n.rfind(STR("BP_ContainerItem_Goat"), 0) == 0)
+            if (n.rfind(prefix, 0) == 0)
             {
                 target = ic;
                 break;
@@ -9110,6 +9110,12 @@ void sweepGoatEpicPackItems(UObject* c)
              tn.c_str(), safeObjectName(c).c_str(), ok ? STR("OK") : STR("FAIL"));
         if (!ok) return;
     }
+}
+
+// Legacy wrapper (call disabled per feedback_no_modside_item_deletion).
+void sweepGoatEpicPackItems(UObject* c)
+{
+    sweepGoatContainerItemsByPrefix(c, STR("BP_ContainerItem_Goat"));
 }
 
 void patchGoatInstanceInventory(UObject* goat)
@@ -9192,6 +9198,10 @@ void patchGoatInstanceInventory(UObject* goat)
         UClass* classes[7] = {nullptr};
         int loaded = loadDwarfContainerClasses(classes);
         if (loaded > 0) writeDwarfDefsToComp(c, classes);
+        // [SLOT-STRIP EXPERIMENT] restored comps take the skip-branch below —
+        // strip their serialized equip-slot containers BEFORE the accounting
+        // (body container survives; count stays >0 so AddItem is still skipped).
+        sweepGoatContainerItemsByPrefix(c, STR("BP_ContainerItem_Dwarf_Slot_"));
         auto containerCount = [&]() -> int32_t {
             auto* gc = c->GetFunctionByNameInChain(STR("GetContainers"));
             if (!gc) return -1;
@@ -9250,6 +9260,13 @@ void patchGoatInstanceInventory(UObject* goat)
         int after = hasContainers();
         VLOG(STR("[MoriaCppMod] [BodyInv] instance comp '{}' (SH was '{}' -> Dwarf.Inventory): HasContainers {} -> {}, containers {} -> {} (AddItem x{} dwarf classes)\n"),
              nm.c_str(), sh.c_str(), before, after, cntBefore, containerCount(), loaded);
+        // [SLOT-STRIP EXPERIMENT 2026-07-18, explicit user request — distinct
+        // from the no-mod-side-deletion rule] Remove the 6 equip-slot
+        // containers (Helmet/Torso/Gloves/Boots/MainHandNPC/OffHandNPC)
+        // after load so the NPC screen can be observed with only the body
+        // grid. The body container's class name does not share this prefix,
+        // so it is never touched.
+        sweepGoatContainerItemsByPrefix(c, STR("BP_ContainerItem_Dwarf_Slot_"));
     }
 }
 
