@@ -7991,7 +7991,9 @@ void toggleGoatFromBell()
         if (sid == 0)
         {
             VLOG(STR("[MoriaCppMod] [BellToggle] no active settlement — bell refused (rally stone required)\n"));
-            showOnScreen(L"Rûdh needs a rally stone — place one first", 3.0f, 0.9f, 0.6f, 0.4f);
+            // Same message channel as the F12 save confirmation (gold-on-dark
+            // panel) — showOnScreen was not visible here per user report.
+            showGameNotification(L"Rûdh needs a rally stone", L"Place one first, then ring the bell", 3.0f);
             return;
         }
         uint8_t rg[16] = {0};
@@ -9209,10 +9211,9 @@ void patchGoatInstanceInventory(UObject* goat)
         UClass* classes[7] = {nullptr};
         int loaded = loadDwarfContainerClasses(classes);
         if (loaded > 0) writeDwarfDefsToComp(c, classes);
-        // [SLOT-STRIP EXPERIMENT] restored comps take the skip-branch below —
-        // strip their serialized equip-slot containers BEFORE the accounting
-        // (body container survives; count stays >0 so AddItem is still skipped).
-        sweepGoatContainerItemsByPrefix(c, STR("BP_ContainerItem_Dwarf_Slot_"));
+        // [SLOT-STRIP EXPERIMENT ENDED 2026-07-18] user verdict: removing the
+        // equip-slot containers locks up the NPC UI — leave all 7 in place.
+        // sweepGoatContainerItemsByPrefix(c, STR("BP_ContainerItem_Dwarf_Slot_"));
         auto containerCount = [&]() -> int32_t {
             auto* gc = c->GetFunctionByNameInChain(STR("GetContainers"));
             if (!gc) return -1;
@@ -9271,13 +9272,9 @@ void patchGoatInstanceInventory(UObject* goat)
         int after = hasContainers();
         VLOG(STR("[MoriaCppMod] [BodyInv] instance comp '{}' (SH was '{}' -> Dwarf.Inventory): HasContainers {} -> {}, containers {} -> {} (AddItem x{} dwarf classes)\n"),
              nm.c_str(), sh.c_str(), before, after, cntBefore, containerCount(), loaded);
-        // [SLOT-STRIP EXPERIMENT 2026-07-18, explicit user request — distinct
-        // from the no-mod-side-deletion rule] Remove the 6 equip-slot
-        // containers (Helmet/Torso/Gloves/Boots/MainHandNPC/OffHandNPC)
-        // after load so the NPC screen can be observed with only the body
-        // grid. The body container's class name does not share this prefix,
-        // so it is never touched.
-        sweepGoatContainerItemsByPrefix(c, STR("BP_ContainerItem_Dwarf_Slot_"));
+        // [SLOT-STRIP EXPERIMENT ENDED 2026-07-18] see note above — all 7
+        // containers stay (removal locked up the NPC UI).
+        // sweepGoatContainerItemsByPrefix(c, STR("BP_ContainerItem_Dwarf_Slot_"));
     }
 }
 
