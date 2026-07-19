@@ -607,7 +607,7 @@ namespace MoriaMods
       public:
         MoriaCppMod()
         {
-            ModVersion = STR("8.6.1");
+            ModVersion = STR("8.7.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");

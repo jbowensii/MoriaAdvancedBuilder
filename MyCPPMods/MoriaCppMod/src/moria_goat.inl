@@ -7993,7 +7993,7 @@ void toggleGoatFromBell()
             VLOG(STR("[MoriaCppMod] [BellToggle] no active settlement — bell refused (rally stone required)\n"));
             // Same message channel as the F12 save confirmation (gold-on-dark
             // panel) — showOnScreen was not visible here per user report.
-            showGameNotification(L"Rûdh needs a rally stone", L"Place one first, then ring the bell", 3.0f);
+            showGameNotification(L"Rûdh needs a Delving", L"Place a rally stone first, then ring the bell", 3.0f);
             return;
         }
         uint8_t rg[16] = {0};
