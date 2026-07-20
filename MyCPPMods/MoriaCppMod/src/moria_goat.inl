@@ -9159,6 +9159,41 @@ void patchGoatInstanceInventory(UObject* goat)
     uint8_t* data = *reinterpret_cast<uint8_t**>(arr);
     int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
     VLOG(STR("[MoriaCppMod] [BodyInv] instance pass: {} MorInventoryComponent(s) on goat\n"), num);
+
+    // [TOBI v1.15 2026-07-20] Native container init WORKS now (BP_NpcGoat
+    // 'Inventory Comp' ships SH=Dwarf.Inventory + all 7 dwarf DefaultContainers;
+    // rows are pak-live). If ANY comp already has containers — native-built
+    // fresh goat OR record-restored goat — the whole legacy patch must stand
+    // down: writing defs / AddItem onto the OTHER (blanked) comp would create
+    // a parallel container set. Legacy path remains only for goats with zero
+    // containers everywhere (pre-1.15 edge cases).
+    {
+        int32_t totalContainers = 0;
+        for (int32_t i = 0; data && i < num && i < 8; i++)
+        {
+            UObject* c = *reinterpret_cast<UObject**>(data + i * 8);
+            if (!c || !isObjectAlive(c)) continue;
+            if (auto* gc = c->GetFunctionByNameInChain(STR("GetContainers")))
+            {
+                std::vector<uint8_t> gb(gc->GetParmsSize(), 0);
+                try
+                {
+                    if (safeProcessEvent(c, gc, gb.data()))
+                        if (auto* gr = findParam(gc, STR("ReturnValue")))
+                            totalContainers += *reinterpret_cast<int32_t*>(gb.data() + gr->GetOffset_Internal() + 8);
+                }
+                catch (...)
+                {
+                }
+            }
+        }
+        if (totalContainers > 0)
+        {
+            VLOG(STR("[MoriaCppMod] [BodyInv] {} native/restored container(s) present — legacy patch skipped (Tobi v1.15 native init)\n"),
+                 totalContainers);
+            return;
+        }
+    }
     for (int32_t i = 0; data && i < num && i < 8; i++)
     {
         UObject* c = *reinterpret_cast<UObject**>(data + i * 8);
