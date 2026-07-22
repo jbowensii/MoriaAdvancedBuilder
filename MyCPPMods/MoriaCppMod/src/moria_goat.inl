@@ -9474,22 +9474,15 @@ uint32_t readFirstActiveSettlementId()
 //   ServerNpcSetRole(guid, DT_NPCRoles 'Porter') — native roster role so
 //     the settlement schedule's Work state dispatches the Porter follow
 //     tree itself (nothing for the schedule FSM to stomp).
-bool callGoatRescueAndRole(const uint8_t guid[16], uint32_t settlementId)
+// [ROLE-FIX 2026-07-22] Native authoritative Porter-role assert, split out
+// of callGoatRescueAndRole so the per-session adopt one-shot can use it too.
+// The raw roster CurrentRole memcpy is invisible to replication — any entry
+// refresh (settlement revalidation, HandleRoleUpdate, MP resync) flips the
+// display back to Default ("Citizen") and kills the role-dispatched follow.
+// ServerNpcSetRole makes Porter the server's own truth.
+bool callGoatSetPorterRole(const uint8_t guid[16])
 {
-    if (!m_localPC || !isObjectAlive(m_localPC) || settlementId == 0) return false;
-    auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerRescueNpc"));
-    if (!fn)
-    {
-        VLOG(STR("[MoriaCppMod] [NativeRescue] ServerRescueNpc NOT FOUND on PC\n"));
-        return false;
-    }
-    std::vector<uint8_t> b(fn->GetParmsSize(), 0);
-    if (auto* pGuid = findParam(fn, STR("NpcGuid")))
-        std::memcpy(b.data() + pGuid->GetOffset_Internal(), guid, 16);
-    writeGoatParm<uint32_t>(fn, b.data(), STR("SettlementId"), settlementId);
-    bool ok = safeProcessEvent(m_localPC, fn, b.data());
-    VLOG(STR("[MoriaCppMod] [NativeRescue] ServerRescueNpc(settlement={}) pe={}\n"), settlementId, ok ? STR("OK") : STR("FAIL"));
-
+    if (!m_localPC || !isObjectAlive(m_localPC)) return false;
     if (auto* roleFn = m_localPC->GetFunctionByNameInChain(STR("ServerNpcSetRole")))
     {
         UObject* rolesDT = nullptr;
@@ -9522,7 +9515,31 @@ bool callGoatRescueAndRole(const uint8_t guid[16], uint32_t settlementId)
         }
         bool rok = safeProcessEvent(m_localPC, roleFn, rb.data());
         VLOG(STR("[MoriaCppMod] [NativeRescue] ServerNpcSetRole(Porter, dt={:p}) pe={}\n"), (void*)rolesDT, rok ? STR("OK") : STR("FAIL"));
+        return rok;
     }
+    VLOG(STR("[MoriaCppMod] [NativeRescue] ServerNpcSetRole NOT FOUND on PC\n"));
+    return false;
+}
+
+// [NATIVE-RECALL 2026-07-18] rescue-to-settlement + native Porter role.
+// On a LIVE goat the rescue is a pure settlement assignment; on a MISSING
+// goat it respawns the record goat WITH inventory (log-proven 15:23).
+bool callGoatRescueAndRole(const uint8_t guid[16], uint32_t settlementId)
+{
+    if (!m_localPC || !isObjectAlive(m_localPC) || settlementId == 0) return false;
+    auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerRescueNpc"));
+    if (!fn)
+    {
+        VLOG(STR("[MoriaCppMod] [NativeRescue] ServerRescueNpc NOT FOUND on PC\n"));
+        return false;
+    }
+    std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+    if (auto* pGuid = findParam(fn, STR("NpcGuid")))
+        std::memcpy(b.data() + pGuid->GetOffset_Internal(), guid, 16);
+    writeGoatParm<uint32_t>(fn, b.data(), STR("SettlementId"), settlementId);
+    bool ok = safeProcessEvent(m_localPC, fn, b.data());
+    VLOG(STR("[MoriaCppMod] [NativeRescue] ServerRescueNpc(settlement={}) pe={}\n"), settlementId, ok ? STR("OK") : STR("FAIL"));
+    callGoatSetPorterRole(guid);
     return ok;
 }
 
@@ -13823,6 +13840,15 @@ void tickFollowGoats()
             {
                 g.brainStopped = true;
                 setRoleFuzzyOnGoat(goat, STR("Porter"));
+                // [ROLE-FIX 2026-07-22] assert Porter via the NATIVE RPC every
+                // session. The raw roster write is invisible to replication;
+                // any entry refresh (settlement revalidation, HandleRoleUpdate,
+                // MP resync) flipped the display to Default = "Citizen" and
+                // killed the role-dispatched follow.
+                {
+                    uint8_t rg[16] = {0};
+                    if (findRudhMarkerGuidRaw(rg)) callGoatSetPorterRole(rg);
+                }
                 if (!g.stayMode) setGoatLeashActor(ctrl, pawn);
                 if (!g.stayMode)
                     goatReplaceBehaviorState(ctrl, STR("/Game/Character/NpcGoat/Bst_NPCGoatWorkPorter.Bst_NPCGoatWorkPorter_C"), STR("Porter/init"));
