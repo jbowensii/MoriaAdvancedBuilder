@@ -7982,6 +7982,16 @@ void toggleGoatFromBell()
     // record (the 15:22 duplicate-goat incident). Only spawn fresh when
     // there is no marker or nowhere to rescue to.
     {
+        // [ZONE-GATE 2026-07-22] No-craft surface zones (The Dimrill Dale,
+        // Hollin) can't summon a goat — detect via the native per-bubble
+        // build flag and refuse BEFORE any rescue/spawn attempt. A live
+        // goat's CALL above is unaffected (it's already in the world).
+        if (!isGoatSummonZoneAllowed())
+        {
+            VLOG(STR("[MoriaCppMod] [BellToggle] restricted zone — summon refused\n"));
+            showGameNotification(L"Goat cannot hear you", L"", 3.0f);
+            return;
+        }
         // [RALLY-GATE 2026-07-18, user spec] Every path that CREATES a goat
         // (rescue or fresh spawn) requires an active settlement — the only
         // channel that keeps the goat's record restorable. Without one,
@@ -8692,6 +8702,32 @@ void adoptNativeGoat(UObject* goat)
     showOnScreen(L"Porter Goat linked", 1.5f, 0.7f, 0.9f, 0.7f);
 }
 
+
+// [GAMEPAD-XFER DIAG 2026-07-22] Deferred goat-bag census: armed by the
+// BagWatch transfer decode (PE hook sets m_xferGoatDumpAtMs; no PE work
+// happens in the hook itself), fired here on the game-thread tick. Dumps
+// every tracked-goat inventory comp with its per-container stacks so the
+// log shows exactly which container a gamepad transfer landed in.
+ULONGLONG m_xferGoatDumpAtMs{0};
+void tickXferGoatDump()
+{
+    if (m_xferGoatDumpAtMs == 0) return;
+    ULONGLONG now = GetTickCount64();
+    if (now < m_xferGoatDumpAtMs) return;
+    m_xferGoatDumpAtMs = 0;
+    UObject* goat = findOurGoatAlive();
+    if (!goat) return;
+    std::vector<UObject*> comps;
+    goatInvCompsWithContainers(goat, comps);
+    VLOG(STR("[MoriaCppMod] [XferDump] goat {:p}: {} comp(s) with containers\n"), (void*)goat, (int)comps.size());
+    for (auto* c : comps)
+    {
+        std::vector<std::string> lines;
+        collectCompStacks(c, lines);
+        VLOG(STR("[MoriaCppMod] [XferDump]  comp '{}': {} stack(s)\n"), safeObjectName(c).c_str(), (int)lines.size());
+        for (auto& l : lines) VLOG(STR("[MoriaCppMod] [XferDump]    {}\n"), utf8ToWide(l).c_str());
+    }
+}
 
 // Total loose stacks across a goat's containers (0 = empty/fresh).
 int countGoatStacks(UObject* goat)
@@ -9438,6 +9474,61 @@ bool findRudhMarkerGuidRaw(uint8_t out[16])
         return true;
     }
     return false;
+}
+
+// [ZONE-GATE 2026-07-22] Can a goat be summoned in the player's current
+// zone? The game forbids crafting/building in certain surface bubbles
+// (The Dimrill Dale, Hollin) via UMorBubbleDefinition::bCanBuildInBubble —
+// query the same flag instead of a name blacklist so every restricted
+// zone is covered automatically. FAIL-OPEN: any resolution failure
+// returns true so the bell never breaks in normal zones.
+bool isGoatSummonZoneAllowed()
+{
+    UObject* bubble = nullptr;
+    // Primary: UMoriaUtils::GetBubbleForPlayer(WorldContext, Character)
+    try
+    {
+        auto* fn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Moria.MoriaUtils:GetBubbleForPlayer"));
+        auto* cdo = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Moria.Default__MoriaUtils"));
+        if (fn && cdo && m_localPC && isObjectAlive(m_localPC) && m_localPawn && isObjectAlive(m_localPawn))
+        {
+            std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+            writeGoatParm<UObject*>(fn, b.data(), STR("WorldContextObject"), m_localPC);
+            writeGoatParm<UObject*>(fn, b.data(), STR("Character"), m_localPawn);
+            if (safeProcessEvent(cdo, fn, b.data()))
+                bubble = readGoatParm<UObject*>(fn, b.data(), STR("ReturnValue"), nullptr);
+        }
+    }
+    catch (...)
+    {
+    }
+    // Fallback: the bubble the HISM tracker already resolves.
+    if ((!bubble || !isObjectAlive(bubble)) && m_currentBubble && isObjectAlive(m_currentBubble)) bubble = m_currentBubble;
+    if (!bubble || !isObjectAlive(bubble)) return true; // fail-open
+
+    auto** defPtr = bubble->GetValuePtrByPropertyNameInChain<UObject*>(STR("BubbleDefinition"));
+    UObject* def = defPtr ? *defPtr : nullptr;
+    if (!def || !isObjectAlive(def)) return true; // fail-open
+
+    bool canBuild = true;
+    if (auto* bp = resolveBoolProperty(def, L"bCanBuildInBubble"))
+        canBuild = bp->GetPropertyValueInContainer(def);
+    else if (isReadableMemory(reinterpret_cast<uint8_t*>(def) + 0x0135, 1))
+        canBuild = (*(reinterpret_cast<uint8_t*>(def) + 0x0135) != 0); // UHT-verified fallback offset
+
+    std::wstring bn;
+    if (auto* nprop = bubble->GetPropertyByNameInChain(STR("DisplayName")))
+    {
+        try
+        {
+            bn = reinterpret_cast<RC::Unreal::FText*>(reinterpret_cast<uint8_t*>(bubble) + nprop->GetOffset_Internal())->ToString();
+        }
+        catch (...)
+        {
+        }
+    }
+    VLOG(STR("[MoriaCppMod] [ZoneGate] bubble '{}' bCanBuildInBubble={}\n"), bn.c_str(), canBuild);
+    return canBuild;
 }
 
 // [NATIVE-RECALL 2026-07-18] First active settlement id (0 = none).

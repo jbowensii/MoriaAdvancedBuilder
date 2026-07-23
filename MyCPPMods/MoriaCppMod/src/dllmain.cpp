@@ -987,6 +987,13 @@ namespace MoriaMods
                     bool tier1 = wcsstr(fnStr, STR("StoreRuntimeActor")) || wcsstr(fnStr, STR("RuntimeActor")) || wcsstr(fnStr, STR("OpenChest")) ||
                                  wcsstr(fnStr, STR("CloseChest")) || wcsstr(fnStr, STR("Storage Container")) || wcsstr(fnStr, STR("CreateStorageWidget")) ||
                                  wcsstr(fnStr, STR("SaveGameObject")) || wcsstr(fnStr, STR("StorageChanged")) || wcsstr(fnStr, STR("IsStorageChest"));
+                    // [GAMEPAD-XFER DIAG 2026-07-22] item-transfer family:
+                    // gamepad quick-move (MoveSwapItem/ServerMoveSwapItem via
+                    // GetSwapTarget) vs mouse (ServerHandleCursorMove) pick
+                    // different destination handles — decode both below.
+                    bool xfer = wcsstr(fnStr, STR("MoveSwapItem")) || wcsstr(fnStr, STR("HandleCursorMove")) || wcscmp(fnStr, STR("MoveItem")) == 0 ||
+                                wcsstr(fnStr, STR("ServerMoveItem")) || wcsstr(fnStr, STR("MoveAll")) || wcsstr(fnStr, STR("SplitStack"));
+                    tier1 = tier1 || xfer;
                     bool tier2 = !tier1 && (wcscmp(fnStr, STR("ReceiveBeginPlay")) == 0 || wcsstr(fnStr, STR("ReceiveEndPlay")) != nullptr ||
                                             wcsstr(fnStr, STR("ReceiveDestroyed")) != nullptr || wcsstr(fnStr, STR("ServerInteract")) != nullptr ||
                                             wcsstr(fnStr, STR("OnInteract")) != nullptr);
@@ -1012,6 +1019,52 @@ namespace MoriaMods
                                     bool st = *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(parms) + pStab->GetOffset_Internal());
                                     extra += st ? STR(" bStoreStability=1") : STR(" bStoreStability=0");
                                 }
+                            }
+                            // [GAMEPAD-XFER DIAG 2026-07-22] decode FItemHandle
+                            // params ({int32 ID @0, FWeakObjectPtr comp @8}) for
+                            // the transfer family — shows WHICH destination
+                            // handle each input path targets.
+                            if (parms && func &&
+                                (wcsstr(fnStr, STR("MoveSwapItem")) || wcsstr(fnStr, STR("HandleCursorMove")) || wcsstr(fnStr, STR("MoveItem")) ||
+                                 wcsstr(fnStr, STR("MoveAll")) || wcsstr(fnStr, STR("SplitStack"))))
+                            {
+                                auto decodeHandle = [&](const wchar_t* pname) {
+                                    auto* pp = s_instance->findParam(func, pname);
+                                    if (!pp) return;
+                                    uint8_t* h = reinterpret_cast<uint8_t*>(parms) + pp->GetOffset_Internal();
+                                    int32_t id = *reinterpret_cast<int32_t*>(h);
+                                    UObject* comp = nullptr;
+                                    try
+                                    {
+                                        comp = reinterpret_cast<RC::Unreal::FWeakObjectPtr*>(h + 8)->Get();
+                                    }
+                                    catch (...)
+                                    {
+                                    }
+                                    std::wstring cn = comp ? safeObjectName(comp) : STR("null");
+                                    std::wstring on;
+                                    if (comp)
+                                    {
+                                        // no PE inside hooks — outer chain gives the owning actor
+                                        try
+                                        {
+                                            if (UObject* outer = comp->GetOuterPrivate()) on = STR("@") + safeClassName(outer);
+                                        }
+                                        catch (...)
+                                        {
+                                        }
+                                    }
+                                    extra += STR(" ") + std::wstring(pname) + STR("={id=") + std::to_wstring(id) + STR(" comp=") + cn + on + STR("}");
+                                };
+                                decodeHandle(STR("Item"));
+                                decodeHandle(STR("Source"));
+                                decodeHandle(STR("Destination"));
+                                decodeHandle(STR("From"));
+                                if (auto* pAdd = s_instance->findParam(func, STR("AddType")))
+                                    extra += STR(" AddType=") + std::to_wstring((int)*(reinterpret_cast<uint8_t*>(parms) + pAdd->GetOffset_Internal()));
+                                // deferred goat-bag census ~0.6s after any move
+                                // (tick-side; no PE work in this hook)
+                                s_instance->m_xferGoatDumpAtMs = GetTickCount64() + 600;
                             }
                             std::wstring objn = context ? safeObjectName(context) : STR("?");
                             VLOG(STR("[MoriaCppMod] [BagWatch rc.117] fn='{}' ctx={}('{}'){}\n"), fnStr, cctx.c_str(), objn.c_str(), extra.c_str());
@@ -2967,6 +3020,7 @@ namespace MoriaMods
             // [NPC-REG 2026-07-17] adopt a manager-restored (or Tobi-summoned)
             // goat into m_followGoats so menu/bell/saddlebags work on it.
             s_instance->tickAdoptNativeGoat();
+            s_instance->tickXferGoatDump();
             // [WorldStore] 60s native store of the goat actor record.
             s_instance->tickSidecarSnapshot();
             s_instance->tickDwarfBagProbe();
