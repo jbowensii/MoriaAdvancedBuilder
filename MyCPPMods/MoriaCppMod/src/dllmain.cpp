@@ -1,4 +1,4 @@
-// MoriaCppMod - Return to Moria UE4SS C++ mod. v8.7.1 "Steadfast Porter"
+// MoriaCppMod - Return to Moria UE4SS C++ mod. v8.8.0 "Porter's Bell" (BETA)
 // Top-level mod class lives here; subsystem implementations are #included via .inl files.
 
 #include "moria_common.h"
@@ -607,14 +607,14 @@ namespace MoriaMods
       public:
         MoriaCppMod()
         {
-            ModVersion = STR("8.7.1");
+            ModVersion = STR("8.8.0");
             ModName = STR("MoriaCppMod");
             ModAuthors = STR("johnb");
             ModDescription = STR("Advanced builder, HISM removal, quick-build hotbar, UMG config menu");
 
             InitializeCriticalSection(&s_config.removalCS);
             s_config.removalCSInit = true;
-            VLOG(STR("[MoriaCppMod] Loaded v8.7.1 \"Steadfast Porter\" (settled-goat native persistence; native recall bell gated on a Delving; native stay/follow; "
+            VLOG(STR("[MoriaCppMod] Loaded v8.8.0 \"Porter's Bell\" BETA (multiplayer goat sharing: one-ring hand-off, assign/unassign bell; expedition/zone gates; "
                      "F12=Save Game, config in native Settings)\n"));
         }
 
@@ -653,7 +653,7 @@ namespace MoriaMods
             }
 
             loadConfig();
-            VLOG(STR("[MoriaCppMod] Loaded v8.7.1 (workDir={})\n"), utf8PathToWide(s_ue4ssWorkDir));
+            VLOG(STR("[MoriaCppMod] Loaded v8.8.0 (workDir={})\n"), utf8PathToWide(s_ue4ssWorkDir));
 
             // Startup diag: log resolved paths + GetFileAttributes result.
             // Mangled chars in the logged path indicate a wide-path conversion regression.
