@@ -7942,12 +7942,16 @@ void toggleGoatFromBell()
                                        }),
                         m_followGoats.end());
 
-    // [CALL-ONLY 2026-07-18, user spec] "the bell should never hide or
-    // destroy etc the goat, it should only call the goat to your
-    // location. period."
-    //   marker goat exists → teleport it to the player (unhide safety
-    //   for goats parked by older builds; never hides/destroys)
-    //   no goat → spawn one (registered; GUID stored via rc.112 tail)
+    // [BELL-TOGGLE 2026-07-22, user spec] The bell is now a TRUE TOGGLE,
+    // mirroring the dwarf assign/unassign flow (and MP-correct — both
+    // directions are native Server RPCs that work from any player):
+    //   goat in world → UNASSIGN from the Delving (server despawns it;
+    //                   identity + inventory persist in roster/record)
+    //   no goat       → ASSIGN (rescue) — the record goat respawns WITH
+    //                   inventory and is brought to the ringing player
+    //                   (host-side MP bridge on ServerRescueNpc).
+    // Supersedes the CALL-only design: ring-ring moves the goat between
+    // players.
     UObject* live = nullptr;
     for (auto& g : m_followGoats)
     {
@@ -7967,10 +7971,21 @@ void toggleGoatFromBell()
 
     if (live)
     {
-        setGoatHidden(live, false); // normalize legacy parked/hidden state
-        teleportGoatToPlayer(live);
-        VLOG(STR("[MoriaCppMod] [BellToggle] CALL — goat {:p} teleported to player\n"), (void*)live);
-        showOnScreen(L"Rûdh comes to you", 2.0f, 0.4f, 0.9f, 0.4f);
+        uint8_t rg[16] = {0};
+        if (findRudhMarkerGuidRaw(rg) && callGoatUnassign(rg))
+        {
+            VLOG(STR("[MoriaCppMod] [BellToggle] UNASSIGN — goat {:p} dismissed to the roster\n"), (void*)live);
+            showGameNotification(L"Rûdh returns to the Delving", L"", 3.0f);
+        }
+        else
+        {
+            // no marker / RPC missing — fall back to the old CALL so the
+            // bell is never a dead button on a live goat
+            setGoatHidden(live, false);
+            teleportGoatToPlayer(live);
+            VLOG(STR("[MoriaCppMod] [BellToggle] CALL fallback — goat {:p} teleported\n"), (void*)live);
+            showOnScreen(L"Rûdh comes to you", 2.0f, 0.4f, 0.9f, 0.4f);
+        }
         return;
     }
 
@@ -7982,10 +7997,17 @@ void toggleGoatFromBell()
     // record (the 15:22 duplicate-goat incident). Only spawn fresh when
     // there is no marker or nowhere to rescue to.
     {
+        // [EXPEDITION-GATE 2026-07-22, user spec] no goat summons on
+        // expeditions.
+        if (isExpeditionActive())
+        {
+            VLOG(STR("[MoriaCppMod] [BellToggle] expedition active — summon refused\n"));
+            showGameNotification(L"Goat cannot hear you", L"", 3.0f);
+            return;
+        }
         // [ZONE-GATE 2026-07-22] No-craft surface zones (The Dimrill Dale,
         // Hollin) can't summon a goat — detect via the native per-bubble
-        // build flag and refuse BEFORE any rescue/spawn attempt. A live
-        // goat's CALL above is unaffected (it's already in the world).
+        // build flag and refuse BEFORE any rescue/spawn attempt.
         if (!isGoatSummonZoneAllowed())
         {
             VLOG(STR("[MoriaCppMod] [BellToggle] restricted zone — summon refused\n"));
@@ -8018,6 +8040,17 @@ void toggleGoatFromBell()
             }
             VLOG(STR("[MoriaCppMod] [BellToggle] rescue call failed — falling back to spawn\n"));
         }
+    }
+
+    // [MP 2026-07-22] First-time goat CREATION is a local actor spawn —
+    // authority-only. On a remote client a local spawn would exist only on
+    // that machine (the "only the summoner can see the goat" bug); once the
+    // host has created it, clients summon via the ServerRescueNpc path above.
+    if (!isAuthorityHost())
+    {
+        VLOG(STR("[MoriaCppMod] [BellToggle] remote client + no roster goat — spawn refused (host must create it)\n"));
+        showGameNotification(L"The host must summon Rûdh first", L"", 3.0f);
+        return;
     }
 
     VLOG(STR("[MoriaCppMod] [BellToggle] no goat in world — spawning\n"));
@@ -9531,6 +9564,90 @@ bool isGoatSummonZoneAllowed()
     return canBuild;
 }
 
+// [EXPEDITION-GATE 2026-07-22] Expeditions don't allow goat summons.
+// Native query: AExpeditionManager::IsInExpedition (static BlueprintPure).
+// Fail-open: resolution failure = "not an expedition".
+bool isExpeditionActive()
+{
+    try
+    {
+        auto* fn = UObjectGlobals::StaticFindObject<UFunction*>(nullptr, nullptr, STR("/Script/Moria.ExpeditionManager:IsInExpedition"));
+        auto* cdo = UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Script/Moria.Default__ExpeditionManager"));
+        if (fn && cdo && m_localPC && isObjectAlive(m_localPC))
+        {
+            std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+            writeGoatParm<UObject*>(fn, b.data(), STR("WorldContextObject"), m_localPC);
+            if (safeProcessEvent(cdo, fn, b.data()))
+                if (auto* pr = findParam(fn, STR("ReturnValue"))) return *(b.data() + pr->GetOffset_Internal()) != 0;
+        }
+    }
+    catch (...)
+    {
+    }
+    return false;
+}
+
+// [MP 2026-07-22] Are we the authority (single-player, listen-server host,
+// or dedicated server)? Local pawn Role == ROLE_Authority(3) — on a remote
+// client the owned pawn is AutonomousProxy(2).
+bool isAuthorityHost()
+{
+    if (m_isDedicatedServer) return true;
+    UObject* p = m_localPawn;
+    if (!p || !isObjectAlive(p)) return false;
+    auto* roleProp = p->GetPropertyByNameInChain(STR("Role"));
+    if (!roleProp) return false;
+    return *(reinterpret_cast<uint8_t*>(p) + roleProp->GetOffset_Internal()) == 3;
+}
+
+// [BELL-TOGGLE 2026-07-22] UNASSIGN the goat from its Delving — the same
+// native path the settlement UI's UnassignDwarf uses (ServerMoveNpc with
+// no destination): the server despawns the actor; identity + inventory
+// stay in the roster/record for the next assign. Server RPC = MP-correct
+// from any player's machine.
+bool callGoatUnassign(const uint8_t guid[16])
+{
+    if (!m_localPC || !isObjectAlive(m_localPC)) return false;
+    if (auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerMoveNpc")))
+    {
+        std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+        if (auto* pGuid = findParam(fn, STR("NpcGuid")))
+            std::memcpy(b.data() + pGuid->GetOffset_Internal(), guid, 16);
+        writeGoatParm<uint32_t>(fn, b.data(), STR("SettlementId"), 0u);
+        bool ok = safeProcessEvent(m_localPC, fn, b.data());
+        VLOG(STR("[MoriaCppMod] [BellToggle] UNASSIGN via ServerMoveNpc(guid, 0) pe={}\n"), ok ? STR("OK") : STR("FAIL"));
+        return ok;
+    }
+    VLOG(STR("[MoriaCppMod] [BellToggle] ServerMoveNpc NOT FOUND on PC\n"));
+    return false;
+}
+
+// [MP-BRIDGE 2026-07-22] Any player's bell-summon arrives on the HOST as
+// ServerRescueNpc executing on that player's PlayerController. The PE
+// pre-hook routes here (property reads only — no PE inside hooks): we
+// remember the REQUESTER's pawn so the adopt auto-CALL teleport and the
+// follow leash target the player who rang, not the host.
+RC::Unreal::FWeakObjectPtr m_summonRequesterPawn{};
+void onServerRescueNpcPre(UObject* pc)
+{
+    if (!pc || !isObjectAlive(pc)) return;
+    auto** pawnPtr = pc->GetValuePtrByPropertyNameInChain<UObject*>(STR("Pawn"));
+    UObject* pawn = pawnPtr ? *pawnPtr : nullptr;
+    if (!pawn || !isObjectAlive(pawn)) return;
+    m_summonRequesterPawn = RC::Unreal::FWeakObjectPtr(pawn);
+    m_recallCallUntilMs = GetTickCount64() + 30000;
+    VLOG(STR("[MoriaCppMod] [MP-Bridge] ServerRescueNpc from '{}' — summon target pawn {:p}\n"), safeObjectName(pc).c_str(), (void*)pawn);
+}
+
+// Resolve who the goat should go to: the most recent summoner if their
+// pawn is still alive, else the local player.
+UObject* summonTargetPawn()
+{
+    UObject* rq = m_summonRequesterPawn.Get();
+    if (rq && isObjectAlive(rq)) return rq;
+    return (m_localPawn && isObjectAlive(m_localPawn)) ? m_localPawn : nullptr;
+}
+
 // [NATIVE-RECALL 2026-07-18] First active settlement id (0 = none).
 // ActiveSettlements is a plain TArray<uint32> UPROPERTY on the manager.
 uint32_t readFirstActiveSettlementId()
@@ -9638,12 +9755,14 @@ bool callGoatRescueAndRole(const uint8_t guid[16], uint32_t settlementId)
 // in and tickAdoptNativeGoat links it, CALL it straight to the player.
 ULONGLONG m_recallCallUntilMs{0};
 
-// Teleport a goat to the player's own position (small Z lift — the old
-// +150/+150 offset landed in geometry and killed the courier).
+// Teleport a goat to the summoning player's position (small Z lift — the
+// old +150/+150 offset landed in geometry and killed the courier). In MP
+// the target is the REQUESTER's pawn (set by the ServerRescueNpc bridge),
+// falling back to the local player.
 void teleportGoatToPlayer(UObject* g)
 {
     if (!g || !isObjectAlive(g)) return;
-    UObject* pawn = m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr;
+    UObject* pawn = summonTargetPawn();
     if (!pawn) return;
     if (auto* getLoc = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
     {
@@ -13940,7 +14059,11 @@ void tickFollowGoats()
                     uint8_t rg[16] = {0};
                     if (findRudhMarkerGuidRaw(rg)) callGoatSetPorterRole(rg);
                 }
-                if (!g.stayMode) setGoatLeashActor(ctrl, pawn);
+                // [MP-BRIDGE] leash to the SUMMONING player's pawn (host
+                // authority); falls back to the local player in SP.
+                UObject* leashTo = summonTargetPawn();
+                if (!leashTo) leashTo = pawn;
+                if (!g.stayMode) setGoatLeashActor(ctrl, leashTo);
                 if (!g.stayMode)
                     goatReplaceBehaviorState(ctrl, STR("/Game/Character/NpcGoat/Bst_NPCGoatWorkPorter.Bst_NPCGoatWorkPorter_C"), STR("Porter/init"));
                 VLOG(STR("[MoriaCppMod] [NativeAI] one-shot init: role=Porter, LeashActor {} (goat={:p} ctrl={:p})\n"),

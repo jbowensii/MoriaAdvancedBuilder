@@ -1403,6 +1403,14 @@ namespace MoriaMods
                         VLOG(STR("[MoriaCppMod] [GoatPEDiag] PE-pre: '{}' on class={}\n"), fnStr, ctxCls.c_str());
                     }
                 }
+                // [MP-BRIDGE 2026-07-22] a player's bell-summon executes on the
+                // HOST as ServerRescueNpc on THAT player's PlayerController —
+                // remember the requester so adopt auto-CALL + leash target them.
+                // (Property reads only inside the handler; no PE.)
+                if (wcscmp(fnStr, STR("ServerRescueNpc")) == 0 && context)
+                {
+                    s_instance->onServerRescueNpcPre(context);
+                }
                 // BP_RequestSpawn full-args diagnostic (every call, not
                 // one-shot). Logs spawner+context+class so we can compare
                 // natural-spawn callers to our own attempts.
@@ -2627,6 +2635,8 @@ namespace MoriaMods
             m_dtNpcUnique = DataTableUtil{};
             // [NATIVE-RECALL] pending auto-CALL dies with the world.
             m_recallCallUntilMs = 0;
+            // [MP-BRIDGE] summoner pawn dies with the world too.
+            m_summonRequesterPawn = RC::Unreal::FWeakObjectPtr{};
             // [WorldStore] per-world record handle.
             std::memset(m_goatStoreHandle, 0, sizeof(m_goatStoreHandle));
             m_goatStoredOnce = false;
