@@ -7983,12 +7983,7 @@ void toggleGoatFromBell()
     if (live)
     {
         uint8_t rg[16] = {0};
-        if (findRudhMarkerGuidRaw(rg) && callGoatUnassign(rg))
-        {
-            VLOG(STR("[MoriaCppMod] [BellToggle] UNASSIGN — goat {:p} dismissed to the roster\n"), (void*)live);
-            showGameNotification(L"Rûdh returns to the Delving", L"", 3.0f);
-        }
-        else
+        if (!findRudhMarkerGuidRaw(rg))
         {
             // no marker / RPC missing — fall back to the old CALL so the
             // bell is never a dead button on a live goat
@@ -7996,6 +7991,39 @@ void toggleGoatFromBell()
             teleportGoatToPlayer(live);
             VLOG(STR("[MoriaCppMod] [BellToggle] CALL fallback — goat {:p} teleported\n"), (void*)live);
             showOnScreen(L"Rûdh comes to you", 2.0f, 0.4f, 0.9f, 0.4f);
+            return;
+        }
+        // [HANDOFF 2026-07-22, user spec] proximity decides intent:
+        //   goat NEAR me  -> "put it away"   = dismiss
+        //   goat AWAY     -> "bring it here" = dismiss + delayed rescue to me
+        // (one ring each; ownership test is pure distance, no bookkeeping)
+        constexpr float kNearUnits = 1500.0f; // ~15m
+        float dist = (m_localPawn && isObjectAlive(m_localPawn)) ? actorDistance(m_localPawn, live) : -1.0f;
+        bool nearMe = (dist >= 0.0f && dist <= kNearUnits);
+        VLOG(STR("[MoriaCppMod] [BellToggle] live goat dist={:.0f} -> {}\n"), dist, nearMe ? STR("DISMISS") : STR("HANDOFF"));
+        if (nearMe)
+        {
+            if (callGoatUnassign(rg)) showGameNotification(L"Rûdh returns to the Delving", L"", 3.0f);
+            return;
+        }
+        // HANDOFF: summoning-to-me — same gates as any summon.
+        if (isExpeditionActive() || !isGoatSummonZoneAllowed())
+        {
+            VLOG(STR("[MoriaCppMod] [BellToggle] handoff refused — restricted zone/expedition\n"));
+            showGameNotification(L"Goat cannot hear you", L"", 3.0f);
+            return;
+        }
+        if (readFirstActiveSettlementId() == 0)
+        {
+            showGameNotification(L"Rûdh needs a Delving", L"", 3.0f);
+            return;
+        }
+        if (callGoatUnassign(rg))
+        {
+            std::memcpy(m_handoffGuid, rg, 16);
+            m_handoffRescueAtMs = GetTickCount64() + 2500; // let the despawn land first
+            VLOG(STR("[MoriaCppMod] [BellToggle] HANDOFF armed — rescue fires in 2.5s\n"));
+            showGameNotification(L"Rûdh is coming to you", L"", 3.0f);
         }
         return;
     }
@@ -9648,6 +9676,54 @@ void onServerRescueNpcPre(UObject* pc)
     m_summonRequesterPawn = RC::Unreal::FWeakObjectPtr(pawn);
     m_recallCallUntilMs = GetTickCount64() + 30000;
     VLOG(STR("[MoriaCppMod] [MP-Bridge] ServerRescueNpc from '{}' — summon target pawn {:p}\n"), safeObjectName(pc).c_str(), (void*)pawn);
+}
+
+// [HANDOFF 2026-07-22] Read an actor's world location. Returns false on
+// any failure.
+bool readActorLocation(UObject* a, float out[3])
+{
+    if (!a || !isObjectAlive(a)) return false;
+    auto* fn = a->GetFunctionByNameInChain(STR("K2_GetActorLocation"));
+    if (!fn) return false;
+    std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+    if (!safeProcessEvent(a, fn, b.data())) return false;
+    auto* pr = findParam(fn, STR("ReturnValue"));
+    if (!pr) return false;
+    std::memcpy(out, b.data() + pr->GetOffset_Internal(), 12);
+    return true;
+}
+
+// Distance between two actors in units; negative if unresolvable.
+float actorDistance(UObject* a, UObject* b)
+{
+    float pa[3], pb[3];
+    if (!readActorLocation(a, pa) || !readActorLocation(b, pb)) return -1.0f;
+    float dx = pa[0] - pb[0], dy = pa[1] - pb[1], dz = pa[2] - pb[2];
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// [HANDOFF 2026-07-22] One-ring hand-off state: after dismissing a goat
+// that was AWAY from the ringer, re-summon it to them once the server has
+// despawned the old actor.
+ULONGLONG m_handoffRescueAtMs{0};
+uint8_t m_handoffGuid[16]{};
+void tickGoatHandoff()
+{
+    if (m_handoffRescueAtMs == 0) return;
+    ULONGLONG now = GetTickCount64();
+    if (now < m_handoffRescueAtMs) return;
+    m_handoffRescueAtMs = 0;
+    uint32_t sid = readFirstActiveSettlementId();
+    if (sid == 0)
+    {
+        VLOG(STR("[MoriaCppMod] [Handoff] no active settlement at fire time — abandoned\n"));
+        return;
+    }
+    if (callGoatRescueAndRole(m_handoffGuid, sid))
+    {
+        m_recallCallUntilMs = GetTickCount64() + 30000;
+        VLOG(STR("[MoriaCppMod] [Handoff] delayed rescue fired (settlement {})\n"), sid);
+    }
 }
 
 // Resolve who the goat should go to: the most recent summoner if their

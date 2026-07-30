@@ -2637,6 +2637,8 @@ namespace MoriaMods
             m_recallCallUntilMs = 0;
             // [MP-BRIDGE] summoner pawn dies with the world too.
             m_summonRequesterPawn = RC::Unreal::FWeakObjectPtr{};
+            // [HANDOFF] pending re-summon dies with the world.
+            m_handoffRescueAtMs = 0;
             // [WorldStore] per-world record handle.
             std::memset(m_goatStoreHandle, 0, sizeof(m_goatStoreHandle));
             m_goatStoredOnce = false;
@@ -3031,6 +3033,7 @@ namespace MoriaMods
             // goat into m_followGoats so menu/bell/saddlebags work on it.
             s_instance->tickAdoptNativeGoat();
             s_instance->tickXferGoatDump();
+            s_instance->tickGoatHandoff();
             // [WorldStore] 60s native store of the goat actor record.
             s_instance->tickSidecarSnapshot();
             s_instance->tickDwarfBagProbe();
