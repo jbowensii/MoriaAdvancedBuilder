@@ -210,7 +210,7 @@ void applyPendingCharacterName()
 
     if (!target)
     {
-        showErrorBox(L"CustomizationManager not found");
+        showErrorBox(Loc::get("rename.no_manager"));
         VLOG(STR("[MoriaCppMod] applyPendingCharacterName: no CustomizationManager\n"));
         return;
     }
@@ -218,7 +218,7 @@ void applyPendingCharacterName()
     auto* fn = target->GetFunctionByNameInChain(STR("SetCharacterName"));
     if (!fn)
     {
-        showErrorBox(L"SetCharacterName not found");
+        showErrorBox(Loc::get("rename.no_setname"));
         VLOG(STR("[MoriaCppMod] applyPendingCharacterName: SetCharacterName not found\n"));
         return;
     }
@@ -237,7 +237,7 @@ void applyPendingCharacterName()
     }
     if (nameOffset < 0)
     {
-        showErrorBox(L"SetCharacterName param not found");
+        showErrorBox(Loc::get("rename.no_param"));
         return;
     }
 
@@ -266,7 +266,7 @@ void dispatchMcSlot(int slot)
         UObject* gata = resolveGATA();
         if (!gata)
         {
-            showOnScreen(L"Place a build piece first", 2.0f, 1.0f, 0.5f, 0.2f);
+            showOnScreen(Loc::get("builder.place_piece_first"), 2.0f, 1.0f, 0.5f, 0.2f);
             break;
         }
         bool modDown = isModifierDown();

@@ -2992,7 +2992,7 @@ namespace MoriaMods
                                 }
                             }
                             updateBuildersBar();
-                            showInfoMessage(L"Advanced Builder: ON");
+                            showInfoMessage(Loc::get("builder.ab_on"));
                         }
                         else
                         {
@@ -3005,7 +3005,7 @@ namespace MoriaMods
                                     safeProcessEvent(m_newBuildingBar, visFn, p);
                                 }
                             }
-                            showInfoMessage(L"Advanced Builder: OFF");
+                            showInfoMessage(Loc::get("builder.ab_off"));
                         }
                     }
                     s_lastAbToggleKey = nowDown;
@@ -3094,7 +3094,7 @@ namespace MoriaMods
                                 }
                             }
                             updateBuildersBar();
-                            showInfoMessage(L"Reposition mode: drag the inspect window and rotation circles. F10/Esc exits.");
+                            showInfoMessage(Loc::get("builder.reposition_help"));
                             // Stale-widget self-heal: the pre-spawned widgets
                             // die on world reload; null so we recreate.
                             if (m_targetInfoWidget && !isObjectAlive(m_targetInfoWidget)) m_targetInfoWidget = nullptr;

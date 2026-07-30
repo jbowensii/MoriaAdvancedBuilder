@@ -214,7 +214,7 @@ void toggleSnap()
     if (!gata)
     {
         VLOG(STR("[MoriaCppMod] [Snap] resolveGATA returned nullptr — no piece being placed\n"));
-        showErrorBox(L"Snap: place a piece first");
+        showErrorBox(Loc::get("builder.snap_place_first"));
         return;
     }
 
@@ -237,7 +237,7 @@ void toggleSnap()
 
     VLOG(STR("[MoriaCppMod] [Snap] -> {} MaxSnapDistance={}\n"), m_snapEnabled ? STR("ON") : STR("OFF"), newVal);
 
-    showOnScreen(m_snapEnabled ? L"Snap: ON" : L"Snap: OFF", 2.0f, 0.4f, 0.6f, 1.0f);
+    showOnScreen(m_snapEnabled ? Loc::get("builder.snap_on") : L"Snap: OFF", 2.0f, 0.4f, 0.6f, 1.0f);
 }
 
 void restoreSnap()
@@ -411,7 +411,7 @@ void injectPitchRoll(float pitch, float roll)
     if (!gata)
     {
         VLOG(STR("[MoriaCppMod] [PitchRoll] No GATA — place a piece first\n"));
-        showErrorBox(L"Pitch/Roll: place a piece first");
+        showErrorBox(Loc::get("builder.pitchroll_place_first"));
         return;
     }
 
@@ -1251,7 +1251,7 @@ SelectResult selectRecipeByTargetName(UObject* buildTab)
     if (!matchedWidget)
     {
         if (visibleCount == 0) return SelectResult::Loading;
-        showErrorBox(L"Recipe '" + m_targetBuildName + L"' not found in build menu");
+        showErrorBox(Loc::get("builder.recipe_prefix") + m_targetBuildName + Loc::get("builder.recipe_suffix"));
         return SelectResult::NotFound;
     }
 
@@ -1405,7 +1405,7 @@ void startOrSwitchBuild(int slot)
         else
         {
             QBLOG(STR("[MoriaCppMod] [QuickBuild] activateBuildMode failed\n"));
-            showErrorBox(L"Build: failed to open menu");
+            showErrorBox(Loc::get("builder.menu_open_failed"));
             m_qbPhase = PlacePhase::Idle;
         }
     }
@@ -1454,7 +1454,7 @@ void startBuildFromTarget()
         else
         {
             QBLOG(STR("[MoriaCppMod] [TargetBuild] activateBuildMode failed\n"));
-            showErrorBox(L"Build: failed to open menu");
+            showErrorBox(Loc::get("builder.menu_open_failed"));
             m_qbPhase = PlacePhase::Idle;
         }
     }

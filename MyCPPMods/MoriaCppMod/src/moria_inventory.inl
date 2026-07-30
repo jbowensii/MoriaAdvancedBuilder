@@ -516,7 +516,7 @@ void replenishLastItem()
     UObject* cdo = m_lastPickedUpItemClass->GetClassDefaultObject();
     if (!cdo)
     {
-        showOnScreen(L"Replenish failed: no CDO", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("replenish.no_cdo"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
 
@@ -524,7 +524,7 @@ void replenishLastItem()
     if (!rhProp)
     {
         VLOG(STR("[MoriaCppMod] [Replenish] RowHandle property not found on CDO {}\n"), cdo->GetClassPrivate()->GetName());
-        showOnScreen(L"Replenish failed: no RowHandle on item", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("replenish.no_rowhandle"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
 
@@ -533,7 +533,7 @@ void replenishLastItem()
     uint8_t* cdoBase = reinterpret_cast<uint8_t*>(cdo);
     if (!isReadableMemory(cdoBase + rhOff + rnOff, 8))
     {
-        showOnScreen(L"Replenish failed: RowHandle unreadable", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("replenish.rowhandle_unreadable"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
     FName rowNameFN;
@@ -548,7 +548,7 @@ void replenishLastItem()
     }
     if (rowName.empty())
     {
-        showOnScreen(L"Replenish failed: empty row name", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("replenish.empty_rowname"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
     VLOG(STR("[MoriaCppMod] [Replenish] Item CDO={} RowName='{}'\n"), cdo->GetClassPrivate()->GetName(), rowName);
@@ -646,7 +646,7 @@ void replenishLastItem()
     int32_t targetID = *reinterpret_cast<int32_t*>(m_lastItemHandle);
     if (targetID == 0)
     {
-        showOnScreen(L"Replenish failed: no item targeted (move/hover an item first)", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("replenish.no_target"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
 
@@ -654,7 +654,7 @@ void replenishLastItem()
     FProperty* itemsProp = invComp->GetPropertyByNameInChain(STR("Items"));
     if (!itemsProp)
     {
-        showOnScreen(L"Replenish failed: Items property not resolved", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("replenish.items_unresolved"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
 
@@ -662,7 +662,7 @@ void replenishLastItem()
     uint8_t* listBase = reinterpret_cast<uint8_t*>(invComp) + itemsOff + iiaListOff();
     if (!isReadableMemory(listBase, 16))
     {
-        showOnScreen(L"Replenish failed: Items list unreadable", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("replenish.items_unreadable"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
 
@@ -670,7 +670,7 @@ void replenishLastItem()
     int32_t arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
     if (!arrData || arrNum <= 0 || arrNum > 10000)
     {
-        showOnScreen(L"Replenish failed: Items array invalid", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("replenish.items_invalid"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
 
@@ -694,7 +694,7 @@ void replenishLastItem()
     if (!targetEntry)
     {
         VLOG(STR("[MoriaCppMod] [Replenish] target ID={} not found in Items (arrNum={})\n"), targetID, arrNum);
-        showOnScreen(L"Replenish failed: targeted stack not found in inventory", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("replenish.stack_not_found"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
 
@@ -799,7 +799,7 @@ void showTrashDialog()
     if (!s_genericPopupCls)
     {
         VLOG(STR("[MoriaCppMod] [Trash] WBP_UI_GenericPopup_C class not found\n"));
-        showOnScreen(L"Trash: popup template not loaded — open inventory once first", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("trash.popup_not_loaded"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
 
@@ -962,7 +962,7 @@ void confirmTrashItem()
     if (!m_trashDlgVisible) return;
     if (!m_lastPickedUpItemClass)
     {
-        showOnScreen(L"Trash failed: no item selected", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("trash.no_item"), 3.0f, 1.0f, 0.4f, 0.4f);
         hideTrashDialog();
         return;
     }
@@ -983,7 +983,7 @@ void confirmTrashItem()
 
     if (itemCount <= 0)
     {
-        showOnScreen(L"Trash failed: item count is 0", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("trash.zero_count"), 3.0f, 1.0f, 0.4f, 0.4f);
         hideTrashDialog();
         return;
     }
@@ -994,7 +994,7 @@ void confirmTrashItem()
     if (!dropFn)
     {
         VLOG(STR("[MoriaCppMod] [Trash] DropItem not found on invComp\n"));
-        showOnScreen(L"Trash failed: DropItem not found", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("trash.no_dropitem"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
 
@@ -1020,7 +1020,7 @@ void confirmTrashItem()
             if (!safeProcessEvent(invComp, dropFn, p.data()))
             {
                 VLOG(STR("[MoriaCppMod] [Trash] DropItem CRASHED (SEH caught) on iter {}\n"), iter);
-                showOnScreen(L"Trash failed: DropItem crashed", 3.0f, 1.0f, 0.4f, 0.4f);
+                showOnScreen(Loc::get("trash.crashed"), 3.0f, 1.0f, 0.4f, 0.4f);
                 return;
             }
         }
@@ -1093,7 +1093,7 @@ void confirmTrashItem()
             VLOG(STR("[MoriaCppMod] [Trash] Removed MorRuneEffect for item ID={}\n"), targetID);
     }
 
-    std::wstring msg = L"Trashed " + m_lastPickedUpDisplayName + L" x" + std::to_wstring(itemCount);
+    std::wstring msg = Loc::get("trash.done_prefix") + m_lastPickedUpDisplayName + Loc::get("trash.done_infix") + std::to_wstring(itemCount);
     showOnScreen(msg, 3.0f, 0.3f, 1.0f, 0.3f);
     VLOG(STR("[MoriaCppMod] [Trash] {}\n"), msg);
 

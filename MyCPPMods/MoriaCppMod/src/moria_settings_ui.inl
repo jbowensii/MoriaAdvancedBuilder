@@ -3979,7 +3979,7 @@ skip_panel_setup:;
                         },
                         [this](bool newState) {
                             m_noCollisionWhileFlying = newState;
-                            showOnScreen(newState ? L"No Collision Flying: ON" : L"No Collision Flying: OFF", 2.0f, 0.3f, 0.8f, 1.0f);
+                            showOnScreen(newState ? Loc::get("builder.nocollision_on") : Loc::get("builder.nocollision_off"), 2.0f, 0.3f, 0.8f, 1.0f);
                             saveConfig();
                         });
             }
@@ -4387,7 +4387,7 @@ void onModGameOptionClicked(UObject* clickedButton)
             break;
         case GameOptKind::ToggleNoCollision:
             m_noCollisionWhileFlying = !m_noCollisionWhileFlying;
-            showOnScreen(m_noCollisionWhileFlying ? L"No Collision Flying: ON" : L"No Collision Flying: OFF", 2.0f, 0.3f, 0.8f, 1.0f);
+            showOnScreen(m_noCollisionWhileFlying ? Loc::get("builder.nocollision_on") : Loc::get("builder.nocollision_off"), 2.0f, 0.3f, 0.8f, 1.0f);
             saveConfig();
             break;
         case GameOptKind::TogglePeace:
@@ -4682,7 +4682,7 @@ bool maybeFireCheatFromSelector(UObject* selector)
             break;
         case CheatKind::ToggleNoCollision:
             m_noCollisionWhileFlying = !m_noCollisionWhileFlying;
-            showOnScreen(m_noCollisionWhileFlying ? L"No Collision Flying: ON" : L"No Collision Flying: OFF", 2.0f, 0.3f, 0.8f, 1.0f);
+            showOnScreen(m_noCollisionWhileFlying ? Loc::get("builder.nocollision_on") : Loc::get("builder.nocollision_off"), 2.0f, 0.3f, 0.8f, 1.0f);
             saveConfig();
             break;
         case CheatKind::RenameChar:
@@ -4727,7 +4727,7 @@ bool maybeFireCheatFromSelector(UObject* selector)
             break;
         case GameOptKind::ToggleNoCollision:
             m_noCollisionWhileFlying = !m_noCollisionWhileFlying;
-            showOnScreen(m_noCollisionWhileFlying ? L"No Collision Flying: ON" : L"No Collision Flying: OFF", 2.0f, 0.3f, 0.8f, 1.0f);
+            showOnScreen(m_noCollisionWhileFlying ? Loc::get("builder.nocollision_on") : Loc::get("builder.nocollision_off"), 2.0f, 0.3f, 0.8f, 1.0f);
             saveConfig();
             break;
         case GameOptKind::TogglePeace:
@@ -4796,7 +4796,7 @@ void onCheatsTabButtonClicked(UObject* clickedButton)
             break;
         case CheatKind::ToggleNoCollision:
             m_noCollisionWhileFlying = !m_noCollisionWhileFlying;
-            showOnScreen(m_noCollisionWhileFlying ? L"No Collision Flying: ON" : L"No Collision Flying: OFF", 2.0f, 0.3f, 0.8f, 1.0f);
+            showOnScreen(m_noCollisionWhileFlying ? Loc::get("builder.nocollision_on") : Loc::get("builder.nocollision_off"), 2.0f, 0.3f, 0.8f, 1.0f);
             saveConfig();
             break;
         case CheatKind::RenameChar:

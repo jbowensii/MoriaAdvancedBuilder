@@ -904,7 +904,7 @@ void clearAllBuffs()
         m_buffStates[i] = false;
     }
     VLOG(STR("[Cheats] Clear All Buffs — all toggles reset\n"));
-    showOnScreen(L"All buffs cleared", 3.0f, 0.3f, 1.0f, 0.3f);
+    showOnScreen(Loc::get("unlock.buffs_cleared"), 3.0f, 0.3f, 1.0f, 0.3f);
     saveConfig();
 }
 
@@ -1182,7 +1182,7 @@ void unlockAllAvailableRecipes()
     if (!m_unlockQueue.empty())
     {
         VLOG(STR("[Unlock] Already running ({} remaining)\n"), (int)m_unlockQueue.size());
-        showOnScreen(L"Unlock already in progress", 2.0f, 1.0f, 0.8f, 0.2f);
+        showOnScreen(Loc::get("unlock.in_progress"), 2.0f, 1.0f, 0.8f, 0.2f);
         return;
     }
 
@@ -1192,7 +1192,7 @@ void unlockAllAvailableRecipes()
     if (mgrs.empty())
     {
         VLOG(STR("[Unlock] MorDiscoveryManager not found — load a world first\n"));
-        showOnScreen(L"Load a world first", 3.0f, 1.0f, 0.3f, 0.3f);
+        showOnScreen(Loc::get("msg.load_world_first"), 3.0f, 1.0f, 0.3f, 0.3f);
         return;
     }
     UObject* discoveryMgr = mgrs[0];
@@ -1202,7 +1202,7 @@ void unlockAllAvailableRecipes()
     if (!fn)
     {
         VLOG(STR("[Unlock] DiscoverRecipe UFunction not found\n"));
-        showOnScreen(L"DiscoverRecipe not found", 3.0f, 1.0f, 0.3f, 0.3f);
+        showOnScreen(Loc::get("unlock.no_discover_fn"), 3.0f, 1.0f, 0.3f, 0.3f);
         return;
     }
 
@@ -1219,7 +1219,7 @@ void unlockAllAvailableRecipes()
     if (queue.empty())
     {
         VLOG(STR("[Unlock] No eligible recipes found (tables empty or all filtered)\n"));
-        showOnScreen(L"No recipes to unlock", 3.0f, 1.0f, 0.8f, 0.2f);
+        showOnScreen(Loc::get("unlock.no_recipes"), 3.0f, 1.0f, 0.8f, 0.2f);
         return;
     }
 
@@ -1231,7 +1231,7 @@ void unlockAllAvailableRecipes()
     m_unlockDiscoverRecipeFn = fn;
 
     VLOG(STR("[Unlock] Queued {} recipes (paced {} per frame)\n"), m_unlockTotal, UNLOCK_BATCH_SIZE);
-    showOnScreen(L"Unlocking recipes...", 3.0f, 0.3f, 1.0f, 0.3f);
+    showOnScreen(Loc::get("unlock.unlocking"), 3.0f, 0.3f, 1.0f, 0.3f);
 }
 
 // Called from the main tick each frame — processes UNLOCK_BATCH_SIZE entries then returns.
@@ -1261,7 +1261,7 @@ void drainUnlockQueue()
     if (m_unlockQueue.empty())
     {
         VLOG(STR("[Unlock] Complete — {} recipes discovered\n"), m_unlockProcessed);
-        showOnScreen(L"All available recipes unlocked", 3.0f, 0.3f, 1.0f, 0.3f);
+        showOnScreen(Loc::get("unlock.all_unlocked"), 3.0f, 0.3f, 1.0f, 0.3f);
         m_unlockDiscoveryMgr = nullptr;
         m_unlockDiscoverRecipeFn = nullptr;
     }
@@ -1360,7 +1360,7 @@ void togglePeaceMode()
     if (mgrs.empty())
     {
         VLOG(STR("[PeaceMode] MorAISpawnManager not found — load a world first\n"));
-        showOnScreen(L"Load a world first", 3.0f, 1.0f, 0.3f, 0.3f);
+        showOnScreen(Loc::get("msg.load_world_first"), 3.0f, 1.0f, 0.3f, 0.3f);
         return;
     }
     UObject* mgr = mgrs[0];
@@ -1370,7 +1370,7 @@ void togglePeaceMode()
     if (!prop)
     {
         VLOG(STR("[PeaceMode] MaxSpawnLimit property not found\n"));
-        showOnScreen(L"MaxSpawnLimit not found", 3.0f, 1.0f, 0.3f, 0.3f);
+        showOnScreen(Loc::get("unlock.no_spawn_limit"), 3.0f, 1.0f, 0.3f, 0.3f);
         return;
     }
     // Type-check the property: a float* write to a non-FFloatProperty
@@ -1381,7 +1381,7 @@ void togglePeaceMode()
     if (!CastField<FFloatProperty>(prop))
     {
         VLOG(STR("[PeaceMode] MaxSpawnLimit is not FFloatProperty (type={}); aborting write\n"), prop->GetClass().GetName());
-        showOnScreen(L"MaxSpawnLimit type changed; refusing to write", 3.0f, 1.0f, 0.3f, 0.3f);
+        showOnScreen(Loc::get("unlock.spawn_limit_type"), 3.0f, 1.0f, 0.3f, 0.3f);
         return;
     }
     uint8_t* base = reinterpret_cast<uint8_t*>(mgr) + prop->GetOffset_Internal();
@@ -1395,14 +1395,14 @@ void togglePeaceMode()
         if (m_savedMaxSpawnLimit < 0.0f) m_savedMaxSpawnLimit = *cur;
         *cur = 0.0f;
         VLOG(STR("[PeaceMode] ENABLED — MaxSpawnLimit {} -> 0\n"), m_savedMaxSpawnLimit);
-        showOnScreen(L"Peace Mode ON", 3.0f, 0.3f, 1.0f, 0.3f);
+        showOnScreen(Loc::get("unlock.peace_on"), 3.0f, 0.3f, 1.0f, 0.3f);
     }
     else
     {
         float restoreTo = (m_savedMaxSpawnLimit >= 0.0f) ? m_savedMaxSpawnLimit : 50.0f;
         *cur = restoreTo;
         VLOG(STR("[PeaceMode] DISABLED — MaxSpawnLimit -> {}\n"), restoreTo);
-        showOnScreen(L"Peace Mode OFF", 3.0f, 1.0f, 0.5f, 0.2f);
+        showOnScreen(Loc::get("unlock.peace_off"), 3.0f, 1.0f, 0.5f, 0.2f);
     }
 
     saveConfig();
@@ -1585,12 +1585,12 @@ void markAllLoreRead()
     if (!anyScreenFound)
     {
         VLOG(STR("[MarkRead] No screens instantiated — open Lore, Goals, Build menu, and a ") STR("crafting station once each, then retry\n"));
-        showOnScreen(L"Open each menu once first, then retry", 4.0f, 1.0f, 0.8f, 0.2f);
+        showOnScreen(Loc::get("unlock.open_menus_first"), 4.0f, 1.0f, 0.8f, 0.2f);
         return;
     }
 
     VLOG(STR("[MarkRead] Complete — total entries marked across all phases: {}\n"), totalMarked);
-    showOnScreen(L"All categories marked as read", 3.0f, 0.3f, 1.0f, 0.3f);
+    showOnScreen(Loc::get("unlock.categories_read"), 3.0f, 0.3f, 1.0f, 0.3f);
 
     // chain a save so read state actually persists. Without an
     // explicit save the BP-set flags don't survive a reload.
@@ -1662,7 +1662,7 @@ void tickPendingCraftingMark()
         m_pendingCraftingMarkUntilMs = 0;
         m_lastSaveTime = 0;
         m_saveAfterMarkAtMs = GetTickCount64() + 6000ull;
-        showOnScreen(L"Crafting items marked as read", 3.0f, 0.3f, 1.0f, 0.3f);
+        showOnScreen(Loc::get("unlock.crafting_read"), 3.0f, 0.3f, 1.0f, 0.3f);
         VLOG(STR("[MarkRead] Pending fire: MarkAllAsRead on {} screen(s)\n"), marked);
     }
 }
@@ -1691,7 +1691,7 @@ void revealEntireMap()
     if (!morDb)
     {
         VLOG(STR("[RevealMap] UMorDatabase not found — bail\n"));
-        showOnScreen(L"Reveal Map: database not found", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("unlock.map_db_not_found"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
 

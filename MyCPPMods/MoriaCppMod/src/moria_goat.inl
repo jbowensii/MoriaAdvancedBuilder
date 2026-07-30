@@ -1509,7 +1509,7 @@ void openGoatChestStorage()
     }
     if (!m_hiddenGoatChest || !isObjectAlive(m_hiddenGoatChest))
     {
-        showOnScreen(L"No goat chest (summon a goat first)", 2.5f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("goat.no_chest"), 2.5f, 0.9f, 0.4f, 0.4f);
         return;
     }
     UClass* invCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MorInventoryComponent"));
@@ -1526,7 +1526,7 @@ void openGoatChestStorage()
     if (!chestInv || !isObjectAlive(chestInv))
     {
         VLOG(STR("[MoriaCppMod] [GoatChest] chest has no MorInventoryComponent\n"));
-        showOnScreen(L"Goat chest has no inventory", 2.5f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("goat.chest_no_inventory"), 2.5f, 0.9f, 0.4f, 0.4f);
         return;
     }
     // Chest containers ARE real — GetContainers[0] gives a valid handle.
@@ -1564,7 +1564,7 @@ void openGoatChestStorage()
     if (bagId == 0)
     {
         VLOG(STR("[MoriaCppMod] [GoatChest] chest container id=0 — cannot open\n"));
-        showOnScreen(L"Goat chest container not ready", 2.5f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("goat.chest_not_ready"), 2.5f, 0.9f, 0.4f, 0.4f);
         return;
     }
     VLOG(STR("[MoriaCppMod] [GoatChest] opening chest storage id={}\n"), bagId);
@@ -2683,11 +2683,11 @@ void grantSaddlebagsToPlayer()
 {
     if (grantPorterItemToPlayer(STR("/Game/Mods/PorterGoat/Items/BP_PorterGoatSaddlebags.BP_PorterGoatSaddlebags_C"), STR("Saddlebags")))
     {
-        showOnScreen(L"Saddlebags granted!", 3.0f, 0.4f, 0.9f, 0.4f);
+        showOnScreen(Loc::get("goat.saddlebags_granted"), 3.0f, 0.4f, 0.9f, 0.4f);
     }
     else
     {
-        showOnScreen(L"Saddlebags grant failed — see log", 2.5f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("goat.saddlebags_grant_failed"), 2.5f, 0.9f, 0.4f, 0.4f);
     }
 }
 
@@ -3030,7 +3030,7 @@ void onGoatFollow()
         }
     }
     VLOG(STR("[MoriaCppMod] [NativeAI] FOLLOW — one-shot LeashActor set (native BT drives)\n"));
-    showOnScreen(L"Porter Goat: following", 1.5f, 0.7f, 0.9f, 0.7f);
+    showOnScreen(Loc::get("goat.following"), 1.5f, 0.7f, 0.9f, 0.7f);
     clearGoatInjectedRows();
 }
 
@@ -3056,7 +3056,7 @@ void onGoatStay()
         }
     }
     VLOG(STR("[MoriaCppMod] [NativeAI] STAY — one-shot LeashActor cleared (native BT idles)\n"));
-    showOnScreen(L"Porter Goat: staying here", 1.5f, 0.7f, 0.9f, 0.7f);
+    showOnScreen(Loc::get("goat.staying"), 1.5f, 0.7f, 0.9f, 0.7f);
     clearGoatInjectedRows();
 }
 
@@ -3280,7 +3280,7 @@ void openPlayerEpicPackContainer()
     UObject* pawn = m_localPawn && isObjectAlive(m_localPawn) ? m_localPawn : nullptr;
     if (!pawn)
     {
-        showOnScreen(L"No player pawn", 2.0f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("goat.no_player_pawn"), 2.0f, 0.9f, 0.4f, 0.4f);
         return;
     }
 
@@ -3306,7 +3306,7 @@ void openPlayerEpicPackContainer()
     if (!playerInv || !isObjectAlive(playerInv))
     {
         VLOG(STR("[MoriaCppMod] [B3] player has no MorInventoryComponent\n"));
-        showOnScreen(L"Player inventory missing", 2.0f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("goat.player_inventory_missing"), 2.0f, 0.9f, 0.4f, 0.4f);
         return;
     }
 
@@ -3318,7 +3318,7 @@ void openPlayerEpicPackContainer()
     if (bagID == 0)
     {
         VLOG(STR("[MoriaCppMod] [B3] no saddlebag item found in player inventory\n"));
-        showOnScreen(L"No saddlebag equipped - pick one up near the bell", 3.0f, 1.0f, 0.5f, 0.5f);
+        showOnScreen(Loc::get("goat.no_saddlebag_equipped"), 3.0f, 1.0f, 0.5f, 0.5f);
         return;
     }
     VLOG(STR("[MoriaCppMod] [B3] using player saddlebag handle id={} owner=playerInv={:p}\n"), bagID, (void*)playerInv);
@@ -3329,7 +3329,7 @@ void openPlayerEpicPackContainer()
     if (!widgetCls) widgetCls = goat_loadClassAssetBlocking(widgetPath);
     if (!widgetCls)
     {
-        showOnScreen(L"StorageMode widget class missing", 2.5f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("goat.widget_class_missing"), 2.5f, 0.9f, 0.4f, 0.4f);
         return;
     }
 
@@ -3375,7 +3375,7 @@ void openPlayerEpicPackContainer()
     UObject* w = jw_createGameWidget(widgetCls);
     if (!w || !isObjectAlive(w))
     {
-        showOnScreen(L"StorageMode widget create failed", 2.5f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("goat.widget_create_failed"), 2.5f, 0.9f, 0.4f, 0.4f);
         return;
     }
 
@@ -4789,14 +4789,14 @@ void openStorageWidgetForHandle(UObject* goat, UObject* goatInv, const uint8_t b
     if (!widgetCls) widgetCls = goat_loadClassAssetBlocking(widgetPath);
     if (!widgetCls)
     {
-        showOnScreen(L"StorageMode widget class missing", 2.5f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("goat.widget_class_missing"), 2.5f, 0.9f, 0.4f, 0.4f);
         return;
     }
 
     UObject* w = jw_createGameWidget(widgetCls);
     if (!w || !isObjectAlive(w))
     {
-        showOnScreen(L"Widget create failed", 2.5f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("msg.widget_create_failed"), 2.5f, 0.9f, 0.4f, 0.4f);
         return;
     }
 
@@ -5293,7 +5293,7 @@ void openGoatSaddlebagInventory()
         }
         if (!goat)
         {
-            showOnScreen(L"No goat present", 2.0f, 0.9f, 0.4f, 0.4f);
+            showOnScreen(Loc::get("goat.not_present"), 2.0f, 0.9f, 0.4f, 0.4f);
             return;
         }
 
@@ -5438,7 +5438,7 @@ void openGoatSaddlebagInventory()
             //      → left pane renders the 8x8 Goat_Saddlebags grid.
             if (!goatInv)
             {
-                showOnScreen(L"Goat has no inventory component", 2.5f, 0.9f, 0.4f, 0.4f);
+                showOnScreen(Loc::get("goat.no_inventory_component"), 2.5f, 0.9f, 0.4f, 0.4f);
                 return;
             }
             // NOTE: never sweep/destroy stray BP_SaddleBags_Goat_C
@@ -5604,7 +5604,7 @@ void openGoatSaddlebagInventory()
                 VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.103] saddleCls={:p} playerInv={:p} playerHas={}\n"), (void*)saddleCls, (void*)playerInv, playerHas);
                 if (playerHas <= 0)
                 {
-                    showOnScreen(L"Craft Goat Saddlebags first, then use Saddlebags again", 3.5f, 1.0f, 0.7f, 0.3f);
+                    showOnScreen(Loc::get("goat.craft_saddlebags_first"), 3.5f, 1.0f, 0.7f, 0.3f);
                     // [rc.128] still suppress the vanilla NPC screen the
                     // E-release opens — otherwise the dwarf 4×3 appears
                     // and reads as "the saddlebags broke".
@@ -5626,7 +5626,7 @@ void openGoatSaddlebagInventory()
                             tameSaddlebagActor(carrier, goat);
                             if (openViaBagActor(goat, carrier))
                             {
-                                showOnScreen(L"Saddlebags fitted to the goat", 2.0f, 0.4f, 0.9f, 0.4f);
+                                showOnScreen(Loc::get("goat.saddlebags_fitted"), 2.0f, 0.4f, 0.9f, 0.4f);
                                 return;
                             }
                             VLOG(STR("[MoriaCppMod] [B5v2 rc.131] carrier unopenable — legacy fallback\n"));
@@ -5654,7 +5654,7 @@ void openGoatSaddlebagInventory()
                 }
                 if (cnt > 0)
                 {
-                    showOnScreen(L"Saddlebags fitted to the goat", 2.0f, 0.4f, 0.9f, 0.4f);
+                    showOnScreen(Loc::get("goat.saddlebags_fitted"), 2.0f, 0.4f, 0.9f, 0.4f);
                 }
                 else
                 {
@@ -5683,7 +5683,7 @@ void openGoatSaddlebagInventory()
                     VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.103] after AddItem(saddlebag): containers={}\n"), cnt);
                     if (cnt <= 0)
                     {
-                        showOnScreen(L"Failed to fit saddlebags to goat (see log)", 2.5f, 0.9f, 0.4f, 0.4f);
+                        showOnScreen(Loc::get("goat.saddlebags_fit_failed"), 2.5f, 0.9f, 0.4f, 0.4f);
                         return;
                     }
 
@@ -5720,7 +5720,7 @@ void openGoatSaddlebagInventory()
                     // stays in the PLAYER inventory permanently; that IS
                     // the persistence (final architecture).
                     VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.105] crafted saddlebag NOT consumed (persistence pending)\n"));
-                    showOnScreen(L"Saddlebags fitted to the goat", 2.0f, 0.4f, 0.9f, 0.4f);
+                    showOnScreen(Loc::get("goat.saddlebags_fitted"), 2.0f, 0.4f, 0.9f, 0.4f);
                 } // [rc.133] end AddItem fallback (B7 move failed)
             }
             // Bind the first container's 20-byte handle and open CHEST mode.
@@ -5758,7 +5758,7 @@ void openGoatSaddlebagInventory()
             VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.103] opening CHEST-mode StorageMode, container id={}\n"), bagId2);
             if (bagId2 == 0)
             {
-                showOnScreen(L"Goat container not found (see log)", 2.5f, 0.9f, 0.4f, 0.4f);
+                showOnScreen(Loc::get("goat.container_not_found"), 2.5f, 0.9f, 0.4f, 0.4f);
                 return;
             }
             openStorageWidgetForHandle(goat, goatInv, bagH);
@@ -5889,7 +5889,7 @@ void openGoatSaddlebagInventory()
                 {
                 }
                 VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.86] native manage handler dispatched — watch for the storage screen\n"));
-                showOnScreen(L"Opening goat storage (native)", 1.5f, 0.4f, 0.9f, 0.5f);
+                showOnScreen(Loc::get("goat.opening_storage"), 1.5f, 0.4f, 0.9f, 0.5f);
                 return; // native path owns the UI; do not run the container hunt
             }
             VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.90] native manage SKIPPED (shows base 4x3); running container hunt for Goat.Slot.EpicPack\n"));
@@ -6013,7 +6013,7 @@ void openGoatSaddlebagInventory()
         if (!goatInv || !isObjectAlive(goatInv))
         {
             VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.67] goat has no MorInventoryComponent\n"));
-            showOnScreen(L"Goat has no inventory component", 2.5f, 0.9f, 0.4f, 0.4f);
+            showOnScreen(Loc::get("goat.no_inventory_component"), 2.5f, 0.9f, 0.4f, 0.4f);
             return;
         }
         VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.76] chosen goatInv={:p} StorageHandle='{}'\n"), (void*)goatInv, readStorageRow(goatInv).c_str());
@@ -6189,7 +6189,7 @@ void openGoatSaddlebagInventory()
                 catch (...)
                 {
                 }
-                showOnScreen(L"Opening goat saddlebags", 1.5f, 0.4f, 0.9f, 0.5f);
+                showOnScreen(Loc::get("goat.opening_saddlebags"), 1.5f, 0.4f, 0.9f, 0.5f);
                 return;
             }
             VLOG(STR("[MoriaCppMod] [GoatSaddle] [rc.93] native manage fn NOT found; using custom widget path\n"));
@@ -6427,7 +6427,7 @@ void openGoatSaddlebagInventory()
                     }
                 }
             }
-            showOnScreen(L"Goat storage not found - see log DISCOVERY dump", 3.5f, 1.0f, 0.7f, 0.3f);
+            showOnScreen(Loc::get("goat.storage_not_found"), 3.5f, 1.0f, 0.7f, 0.3f);
             return;
         }
 
@@ -6794,9 +6794,9 @@ void onInteractMenuShownPost(UObject* menu)
     // Override BOTH text elements directly: SetNameText for the name
     // half, and a widget-tree walk to find any TextBlock containing
     // "Citizen" / role text and override it too.
-    const wchar_t* name = m_goatName.empty() ? STR("Porter Goat") : m_goatName.c_str();
+    const wchar_t* name = m_goatName.empty() ? Loc::get("goat.role_label").c_str() : m_goatName.c_str();
     overrideMenuNameText(menu, name);
-    overrideRoleTextInMenuTree(menu, STR("Porter Goat"));
+    overrideRoleTextInMenuTree(menu, Loc::get("goat.role_label").c_str());
     VLOG(STR("[MoriaCppMod] [GoatHeader] menu={:p} renamed name='{}' + role override fired\n"), (void*)menu, name);
 }
 
@@ -6898,7 +6898,7 @@ void overrideRoleTextInMenuTree(UObject* menu, const wchar_t* replacement)
             // dispatcher already routes both labels to the storage UI).
             else if (cur == STR("Saddlebags"))
             {
-                umgSetText(w, std::wstring(STR("Equip")));
+                umgSetText(w, Loc::get("goat.menu_equip"));
                 VLOG(STR("[MoriaCppMod] [GoatHeader] row label normalized on {:p}: 'Saddlebags' -> 'Equip'\n"), (void*)w);
                 hits++;
             }
@@ -7932,14 +7932,14 @@ void toggleGoatFromBell()
     ULONGLONG now = GetTickCount64();
     if (now - m_lastBellToggleMs < 2000)
     {
-        showOnScreen(L"Bell on cooldown", 1.0f, 0.7f, 0.7f, 0.4f);
+        showOnScreen(Loc::get("goat.bell_cooldown"), 1.0f, 0.7f, 0.7f, 0.4f);
         return;
     }
     m_lastBellToggleMs = now;
 
     if (!m_characterLoaded)
     {
-        showOnScreen(L"Load a world first", 1.5f, 0.7f, 0.7f, 0.7f);
+        showOnScreen(Loc::get("msg.load_world_first"), 1.5f, 0.7f, 0.7f, 0.7f);
         return;
     }
 
@@ -7990,7 +7990,7 @@ void toggleGoatFromBell()
             setGoatHidden(live, false);
             teleportGoatToPlayer(live);
             VLOG(STR("[MoriaCppMod] [BellToggle] CALL fallback — goat {:p} teleported\n"), (void*)live);
-            showOnScreen(L"Rûdh comes to you", 2.0f, 0.4f, 0.9f, 0.4f);
+            showOnScreen(Loc::get("goat.comes_to_you"), 2.0f, 0.4f, 0.9f, 0.4f);
             return;
         }
         // [HANDOFF 2026-07-22, user spec] proximity decides intent:
@@ -8003,19 +8003,19 @@ void toggleGoatFromBell()
         VLOG(STR("[MoriaCppMod] [BellToggle] live goat dist={:.0f} -> {}\n"), dist, nearMe ? STR("DISMISS") : STR("HANDOFF"));
         if (nearMe)
         {
-            if (callGoatUnassign(rg)) showGameNotification(L"Rûdh returns to the Delving", L"", 3.0f);
+            if (callGoatUnassign(rg)) showGameNotification(Loc::get("goat.returns_delving"), L"", 3.0f);
             return;
         }
         // HANDOFF: summoning-to-me — same gates as any summon.
         if (isExpeditionActive() || !isGoatSummonZoneAllowed())
         {
             VLOG(STR("[MoriaCppMod] [BellToggle] handoff refused — restricted zone/expedition\n"));
-            showGameNotification(L"Goat cannot hear you", L"", 3.0f);
+            showGameNotification(Loc::get("goat.cannot_hear"), L"", 3.0f);
             return;
         }
         if (readFirstActiveSettlementId() == 0)
         {
-            showGameNotification(L"Rûdh needs a Delving", L"", 3.0f);
+            showGameNotification(Loc::get("goat.needs_delving"), L"", 3.0f);
             return;
         }
         if (callGoatUnassign(rg))
@@ -8023,7 +8023,7 @@ void toggleGoatFromBell()
             std::memcpy(m_handoffGuid, rg, 16);
             m_handoffRescueAtMs = GetTickCount64() + 2500; // let the despawn land first
             VLOG(STR("[MoriaCppMod] [BellToggle] HANDOFF armed — rescue fires in 2.5s\n"));
-            showGameNotification(L"Rûdh is coming to you", L"", 3.0f);
+            showGameNotification(Loc::get("goat.coming_to_you"), L"", 3.0f);
         }
         return;
     }
@@ -8041,7 +8041,7 @@ void toggleGoatFromBell()
         if (isExpeditionActive())
         {
             VLOG(STR("[MoriaCppMod] [BellToggle] expedition active — summon refused\n"));
-            showGameNotification(L"Goat cannot hear you", L"", 3.0f);
+            showGameNotification(Loc::get("goat.cannot_hear"), L"", 3.0f);
             return;
         }
         // [ZONE-GATE 2026-07-22] No-craft surface zones (The Dimrill Dale,
@@ -8050,7 +8050,7 @@ void toggleGoatFromBell()
         if (!isGoatSummonZoneAllowed())
         {
             VLOG(STR("[MoriaCppMod] [BellToggle] restricted zone — summon refused\n"));
-            showGameNotification(L"Goat cannot hear you", L"", 3.0f);
+            showGameNotification(Loc::get("goat.cannot_hear"), L"", 3.0f);
             return;
         }
         // [RALLY-GATE 2026-07-18, user spec] Every path that CREATES a goat
@@ -8064,7 +8064,7 @@ void toggleGoatFromBell()
             VLOG(STR("[MoriaCppMod] [BellToggle] no active settlement — bell refused (rally stone required)\n"));
             // Same message channel as the F12 save confirmation (gold-on-dark
             // panel) — showOnScreen was not visible here per user report.
-            showGameNotification(L"Rûdh needs a Delving", L"", 3.0f);
+            showGameNotification(Loc::get("goat.needs_delving"), L"", 3.0f);
             return;
         }
         uint8_t rg[16] = {0};
@@ -8074,7 +8074,7 @@ void toggleGoatFromBell()
             {
                 m_recallCallUntilMs = GetTickCount64() + 30000;
                 VLOG(STR("[MoriaCppMod] [BellToggle] native RECALL — record goat rescued to settlement {}, auto-CALL armed\n"), sid);
-                showOnScreen(L"Recalling Rûdh...", 2.5f, 0.7f, 0.9f, 0.7f);
+                showOnScreen(Loc::get("goat.recalling"), 2.5f, 0.7f, 0.9f, 0.7f);
                 return;
             }
             VLOG(STR("[MoriaCppMod] [BellToggle] rescue call failed — falling back to spawn\n"));
@@ -8088,7 +8088,7 @@ void toggleGoatFromBell()
     if (!isAuthorityHost())
     {
         VLOG(STR("[MoriaCppMod] [BellToggle] remote client + no roster goat — spawn refused (host must create it)\n"));
-        showGameNotification(L"The host must summon Rûdh first", L"", 3.0f);
+        showGameNotification(Loc::get("goat.host_must_summon"), L"", 3.0f);
         return;
     }
 
@@ -8769,9 +8769,9 @@ void adoptNativeGoat(UObject* goat)
         m_recallCallUntilMs = 0;
         teleportGoatToPlayer(goat);
         VLOG(STR("[MoriaCppMod] [NativeGoat] recalled goat auto-CALLed to player\n"));
-        showOnScreen(L"Rûdh comes to you", 2.0f, 0.4f, 0.9f, 0.4f);
+        showOnScreen(Loc::get("goat.comes_to_you"), 2.0f, 0.4f, 0.9f, 0.4f);
     }
-    showOnScreen(L"Porter Goat linked", 1.5f, 0.7f, 0.9f, 0.7f);
+    showOnScreen(Loc::get("goat.linked"), 1.5f, 0.7f, 0.9f, 0.7f);
 }
 
 
@@ -9874,7 +9874,7 @@ void goatNativeLifecycleTest(bool dismiss)
     if (!findRudhMarkerGuidRaw(guid))
     {
         VLOG(STR("[MoriaCppMod] [NativeRescue] no Rûdh marker in roster — register the goat first (ring bell)\n"));
-        showOnScreen(L"No goat in roster", 2.0f, 0.9f, 0.6f, 0.6f);
+        showOnScreen(Loc::get("goat.no_roster"), 2.0f, 0.9f, 0.6f, 0.6f);
         return;
     }
     const uint32_t* gu = reinterpret_cast<const uint32_t*>(guid);
@@ -9909,7 +9909,7 @@ void goatNativeLifecycleTest(bool dismiss)
     if (settlementId == 0)
     {
         VLOG(STR("[MoriaCppMod] [NativeRescue] no ACTIVE settlement — place/activate a settlement stone first\n"));
-        showOnScreen(L"No active settlement — place a settlement stone", 2.5f, 0.9f, 0.6f, 0.6f);
+        showOnScreen(Loc::get("goat.no_active_settlement"), 2.5f, 0.9f, 0.6f, 0.6f);
         return;
     }
     callGoatRescueAndRole(guid, settlementId);
@@ -10113,7 +10113,7 @@ void restoreGoatSaddlebagFromSidecar(UObject* goat)
     }
     VLOG(STR("[MoriaCppMod] [Sidecar] restore: {} stack(s) re-added, {} failed\n"), restored, failed);
     m_sidecarRestoreFailed = (failed > 0);
-    if (restored > 0) showOnScreen(L"Saddlebag contents restored", 2.0f, 0.4f, 0.9f, 0.4f);
+    if (restored > 0) showOnScreen(Loc::get("goat.contents_restored"), 2.0f, 0.4f, 0.9f, 0.4f);
 }
 
 // [WORLDSTORE 2026-07-17] Sidecar REJECTED by user — native save only.
@@ -10509,7 +10509,7 @@ void adoptOrRegisterGoatIdentity(UObject* goat)
                 else
                 {
                     VLOG(STR("[MoriaCppMod] [BellSpawn] auto-anchor SKIPPED — no active settlement (goat will NOT persist until one exists)\n"));
-                    showOnScreen(L"No rally stone — Rûdh won't survive a reload yet", 3.0f, 0.9f, 0.8f, 0.4f);
+                    showOnScreen(Loc::get("goat.no_rally_stone"), 3.0f, 0.9f, 0.8f, 0.4f);
                 }
             }
         }
@@ -10526,7 +10526,7 @@ void spawnBellGoat()
     if (!ensureGoatSpawnBindings())
     {
         VLOG(STR("[MoriaCppMod] [BellSpawn] bindings not ready\n"));
-        showOnScreen(L"Goat asset not loaded", 2.0f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("goat.asset_not_loaded"), 2.0f, 0.9f, 0.4f, 0.4f);
         return;
     }
     VLOG(STR("[MoriaCppMod] [BellSpawn] bindings OK: cls={:p} begin={:p} finish={:p} cdo={:p}\n"),
@@ -10547,7 +10547,7 @@ void spawnBellGoat()
     if (!pawn || !isObjectAlive(pawn))
     {
         VLOG(STR("[MoriaCppMod] [BellSpawn] no pawn\n"));
-        showOnScreen(L"No player pawn", 2.0f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("goat.no_player_pawn"), 2.0f, 0.9f, 0.4f, 0.4f);
         return;
     }
 
@@ -10655,14 +10655,14 @@ void spawnBellGoat()
         if (!clsAlive)
         {
             VLOG(STR("[MoriaCppMod] [BellSpawn] re-resolve FAILED — class not findable; bail\n"));
-            showOnScreen(L"Goat class unloaded — restart game", 3.0f, 0.9f, 0.4f, 0.4f);
+            showOnScreen(Loc::get("goat.class_unloaded"), 3.0f, 0.9f, 0.4f, 0.4f);
             return;
         }
         // Need to also re-bind the spawn UFunctions which may have stale class refs.
         if (!ensureGoatSpawnBindings())
         {
             VLOG(STR("[MoriaCppMod] [BellSpawn] re-bind after class refresh FAILED — bail\n"));
-            showOnScreen(L"Goat spawn re-bind failed", 2.5f, 0.9f, 0.4f, 0.4f);
+            showOnScreen(Loc::get("goat.spawn_rebind_failed"), 2.5f, 0.9f, 0.4f, 0.4f);
             return;
         }
     }
@@ -10675,7 +10675,7 @@ void spawnBellGoat()
 
     if (!safeProcessEvent(m_kismetGameplayStaticsCDO, m_goatBeginSpawnFn, buf.data()))
     {
-        showOnScreen(L"Goat spawn failed (Begin)", 2.0f, 0.9f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("goat.spawn_failed"), 2.0f, 0.9f, 0.4f, 0.4f);
         VLOG(STR("[MoriaCppMod] [BellSpawn] safeProcessEvent BeginDeferred FAILED — bail\n"));
         return;
     }
@@ -10716,10 +10716,10 @@ void spawnBellGoat()
         }
         if (!goat)
         {
-            showOnScreen(L"Goat spawn null (all classes failed)", 2.5f, 0.9f, 0.4f, 0.4f);
+            showOnScreen(Loc::get("goat.spawn_null"), 2.5f, 0.9f, 0.4f, 0.4f);
             return;
         }
-        showOnScreen(L"Goat spawned via fallback class", 2.0f, 0.4f, 0.9f, 0.4f);
+        showOnScreen(Loc::get("goat.spawn_fallback"), 2.0f, 0.4f, 0.9f, 0.4f);
     }
 
     // [rc.82] The instance's SCS "Inventory Comp" is created DURING
@@ -10760,7 +10760,7 @@ void spawnBellGoat()
         std::wstring spawnedCls = gcls ? safeObjectName(gcls) : STR("(null)");
         bool isTobiGoat = (spawnedCls == STR("BP_NpcGoat_C"));
         VLOG(STR("[MoriaCppMod] [BellSpawn] [rc.98 VERIFY] spawned actor class='{}' isTobiGoat={}\n"), spawnedCls.c_str(), isTobiGoat);
-        if (!isTobiGoat) showOnScreen(L"WARNING: wrong goat class spawned!", 3.5f, 0.9f, 0.4f, 0.4f);
+        if (!isTobiGoat) showOnScreen(Loc::get("goat.wrong_class"), 3.5f, 0.9f, 0.4f, 0.4f);
     }
 
     // [rc.100 REGISTER EXPERIMENT 2026-07-10] Dwarven NPCs get their
@@ -10823,7 +10823,7 @@ void spawnBellGoat()
              spawnLoc.Y,
              spawnLoc.Z,
              m_followGoats.size());
-        showOnScreen(L"Goat summoned", 2.0f, 0.4f, 0.9f, 0.4f);
+        showOnScreen(Loc::get("goat.summoned"), 2.0f, 0.4f, 0.9f, 0.4f);
         return;
     }
 }
@@ -13840,7 +13840,7 @@ void despawnAllFollowGoats()
     }
     m_followGoats.clear();
     VLOG(STR("[MoriaCppMod] [Goat] despawned {} goat(s); herd cleared\n"), destroyed);
-    if (destroyed > 0) showOnScreen(L"Goat dismissed", 2.0f, 0.4f, 0.9f, 0.4f);
+    if (destroyed > 0) showOnScreen(Loc::get("goat.dismissed"), 2.0f, 0.4f, 0.9f, 0.4f);
 }
 
 // ───── per-tick follow ─────────────────────────────────────────

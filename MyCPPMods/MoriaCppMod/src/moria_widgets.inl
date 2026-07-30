@@ -676,7 +676,7 @@ void createTargetInfoWidget()
                 UObject* tb = UObjectGlobals::StaticConstructObject(tP);
                 if (tb)
                 {
-                    umgSetText(tb, L"Inspect");
+                    umgSetText(tb, Loc::get("builder.inspect_title"));
                     umgSetTextColor(tb, 1.0f, 0.82f, 0.45f, 1.0f);
                     m_tiTitleLabel = tb;
                     auto* addFn = hbox->GetFunctionByNameInChain(STR("AddChildToHorizontalBox"));
@@ -908,7 +908,7 @@ void showTargetInfoUMG(const std::wstring& name,
     if (!m_targetInfoWidget) return;
 
     // title bar shows "Inspect: <display name>"
-    std::wstring titleText = L"Inspect";
+    std::wstring titleText = Loc::get("builder.inspect_title");
     if (!display.empty())
         titleText = L"Inspect: " + display;
     else if (!name.empty())
@@ -3272,7 +3272,7 @@ void triggerSaveGame()
     ULONGLONG now = GetTickCount64();
     if (now - m_lastSaveTime < 10000)
     {
-        showGameNotification(L"Save: please wait...", L"", 2.0f);
+        showGameNotification(Loc::get("save.wait"), L"", 2.0f);
         return;
     }
 
@@ -3280,7 +3280,7 @@ void triggerSaveGame()
     UObject* pawn = getPawn();
     if (!pawn)
     {
-        showErrorBox(L"Save: no player character");
+        showErrorBox(Loc::get("save.no_player"));
         return;
     }
 
@@ -3296,7 +3296,7 @@ void triggerSaveGame()
         safeProcessEvent(libCDO, validFn, &vp);
         if (!vp.ReturnValue)
         {
-            showErrorBox(L"Save: system not ready");
+            showErrorBox(Loc::get("save.not_ready"));
             VLOG(STR("[MoriaCppMod] [Save] IsSaveSystemWorldStateValid returned false\n"));
             return;
         }
@@ -3317,25 +3317,25 @@ void triggerSaveGame()
             {
                 safeProcessEvent((*cm), cmFn, nullptr);
                 m_lastSaveTime = now;
-                showGameNotification(L"Game Saved", L"", 3.0f);
+                showGameNotification(Loc::get("save.done"), L"", 3.0f);
                 VLOG(STR("[MoriaCppMod] [Save] Triggered via CheatManager::SaveSystemAutoSave\n"));
                 return;
             }
         }
-        showErrorBox(L"Save: no save component found");
+        showErrorBox(Loc::get("save.no_component"));
         return;
     }
 
     auto* saveFn = cheatsComp->GetFunctionByNameInChain(STR("ServerAutoSave"));
     if (!saveFn)
     {
-        showErrorBox(L"Save: ServerAutoSave not found");
+        showErrorBox(Loc::get("save.no_autosave"));
         return;
     }
 
     safeProcessEvent(cheatsComp, saveFn, nullptr);
     m_lastSaveTime = now;
-    showGameNotification(L"Game Saved", L"", 3.0f);
+    showGameNotification(Loc::get("save.done"), L"", 3.0f);
     VLOG(STR("[MoriaCppMod] [Save] Triggered via MorCheatsComponent::ServerAutoSave\n"));
 }
 
@@ -3395,7 +3395,7 @@ void showRenameDialog_v2()
     if (!popupCls)
     {
         VLOG(STR("[MoriaCppMod] [Rename v2] WBP_UI_GenericPopup_C not loaded\n"));
-        showErrorBox(L"Rename: GenericPopup template not loaded yet. Open inventory once and try again.");
+        showErrorBox(Loc::get("rename.popup_not_loaded"));
         return;
     }
 
@@ -3404,7 +3404,7 @@ void showRenameDialog_v2()
     if (!popup)
     {
         VLOG(STR("[MoriaCppMod] [Rename v2] popup spawn failed\n"));
-        showErrorBox(L"Rename: failed to spawn popup widget.");
+        showErrorBox(Loc::get("rename.popup_spawn_failed"));
         return;
     }
 
@@ -3429,10 +3429,10 @@ void showRenameDialog_v2()
             FText t(val);
             std::memcpy(bb.data() + p->GetOffset_Internal(), &t, sizeof(FText));
         };
-        setText(STR("Title"), L"Rename Character");
-        setText(STR("Message"), L"Enter new name:\n\n\n");
-        setText(STR("ConfirmButtonText"), L"Save");
-        setText(STR("CancelButtonText"), L"Cancel");
+        setText(STR("Title"), Loc::get("ui.rename_character").c_str());
+        setText(STR("Message"), Loc::get("rename.enter_new_name").c_str());
+        setText(STR("ConfirmButtonText"), Loc::get("rename.button_save").c_str());
+        setText(STR("CancelButtonText"), Loc::get("rename.button_cancel").c_str());
         safeProcessEvent(popup, showFn, bb.data());
     }
 

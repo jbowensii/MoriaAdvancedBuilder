@@ -1386,7 +1386,7 @@ void runUnstuckNpcsNow()
 {
     if (!m_characterLoaded && !m_isDedicatedServer)
     {
-        showInfoMessage(L"Unstuck NPCs: load a world first");
+        showInfoMessage(Loc::get("npc.unstuck_load_world"));
         return;
     }
 
@@ -1398,7 +1398,7 @@ void runUnstuckNpcsNow()
     if (!nm)
     {
         VLOG(STR("[NpcRecovery] [Unstuck] NPC manager not available\n"));
-        showInfoMessage(L"Unstuck NPCs: no NPC manager yet");
+        showInfoMessage(Loc::get("npc.unstuck_no_manager"));
         return;
     }
 

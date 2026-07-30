@@ -359,7 +359,7 @@ void captureBubbleInfo()
     if (!bubble || !isObjectAlive(bubble))
     {
         VLOG(STR("[MoriaCppMod] [BubbleInfo] no current bubble (bubble={} alive={})\n"), (void*)bubble, bubble ? (isObjectAlive(bubble) ? 1 : 0) : -1);
-        showOnScreen(L"Bubble info: not in a bubble", 3.0f, 1.0f, 0.4f, 0.4f);
+        showOnScreen(Loc::get("bubble.not_in_bubble"), 3.0f, 1.0f, 0.4f, 0.4f);
         return;
     }
 
@@ -588,7 +588,7 @@ void captureBubbleInfo()
                       recipeField,
                       /*rowName=*/L"");
 
-    if (!copied) showOnScreen(L"Bubble clipboard copy FAILED", 3.0f, 1.0f, 0.4f, 0.4f);
+    if (!copied) showOnScreen(Loc::get("bubble.copy_failed"), 3.0f, 1.0f, 0.4f, 0.4f);
 }
 
 void migrateRemovalsToBubbles()
