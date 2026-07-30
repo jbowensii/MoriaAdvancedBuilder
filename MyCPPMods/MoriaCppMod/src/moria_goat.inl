@@ -6891,6 +6891,17 @@ void overrideRoleTextInMenuTree(UObject* menu, const wchar_t* replacement)
                 VLOG(STR("[MoriaCppMod] [GoatHeader] role-text override on {:p} name='{}': '{}' -> '{}'\n"), (void*)w, wname, cur, replacement);
                 hits++;
             }
+            // [MENU-CONSISTENCY 2026-07-22, user spec] the row label flips
+            // between Tobi's 'Saddlebags' (rescue-slot row) and the native
+            // 'Equip' (settled goat) — confusing. Normalize to 'Equip'
+            // always (exact match, this goat's menu instance only; the
+            // dispatcher already routes both labels to the storage UI).
+            else if (cur == STR("Saddlebags"))
+            {
+                umgSetText(w, std::wstring(STR("Equip")));
+                VLOG(STR("[MoriaCppMod] [GoatHeader] row label normalized on {:p}: 'Saddlebags' -> 'Equip'\n"), (void*)w);
+                hits++;
+            }
         }
         auto* slots = w->GetValuePtrByPropertyNameInChain<TArray<UObject*>>(STR("Slots"));
         if (slots)
