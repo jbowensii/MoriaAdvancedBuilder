@@ -9652,22 +9652,44 @@ bool isAuthorityHost()
 bool callGoatUnassign(const uint8_t guid[16])
 {
     if (!m_localPC || !isObjectAlive(m_localPC)) return false;
-    // [2026-08-05] ServerMoveNpc(guid, 0) was log-proven a silent no-op
-    // (pe=OK, goat never despawned across 6 rings). ServerDismissNpc is
-    // the semantic dismiss; our summon path is ServerRescueNpc — the
-    // native dismiss/rescue pair. Verified post-call by
-    // tickDismissVerify (armed by the caller).
-    if (auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerDismissNpc")))
+    // [2026-08-05 CAPTURE-PROVEN] Withdraw = ServerMoveNpc(guid, 0) —
+    // transcribed from the live dwarf demo (Nithi: withdraw -> NpcMoved
+    // from=6 to=0, actor despawns; relocate -> ServerMoveNpc(guid, 6),
+    // actor respawns). The earlier goat no-op happened because the goat
+    // was NOT a settlement member at ring time — assignment (see
+    // callGoatAssignPorter) is the fix, not a different dismiss RPC.
+    if (auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerMoveNpc")))
     {
         std::vector<uint8_t> b(fn->GetParmsSize(), 0);
         if (auto* pGuid = findParam(fn, STR("NpcGuid")))
             std::memcpy(b.data() + pGuid->GetOffset_Internal(), guid, 16);
+        writeGoatParm<uint32_t>(fn, b.data(), STR("SettlementId"), 0u);
         bool ok = safeProcessEvent(m_localPC, fn, b.data());
-        VLOG(STR("[MoriaCppMod] [BellToggle] UNASSIGN via ServerDismissNpc pe={}\n"), ok ? STR("OK") : STR("FAIL"));
+        VLOG(STR("[MoriaCppMod] [BellToggle] WITHDRAW via ServerMoveNpc(guid, 0) pe={}\n"), ok ? STR("OK") : STR("FAIL"));
         return ok;
     }
-    VLOG(STR("[MoriaCppMod] [BellToggle] ServerDismissNpc NOT FOUND on PC\n"));
+    VLOG(STR("[MoriaCppMod] [BellToggle] ServerMoveNpc NOT FOUND on PC\n"));
     return false;
+}
+
+// [2026-08-05 CAPTURE-PROVEN] Assign/relocate = ServerMoveNpc(guid, sid),
+// exactly what the settlement UI's Relocate fires. For an unassigned NPC
+// this is the native respawn-with-inventory path.
+bool callGoatAssignPorter(const uint8_t guid[16], uint32_t settlementId)
+{
+    if (!m_localPC || !isObjectAlive(m_localPC) || settlementId == 0) return false;
+    bool moved = false;
+    if (auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerMoveNpc")))
+    {
+        std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+        if (auto* pGuid = findParam(fn, STR("NpcGuid")))
+            std::memcpy(b.data() + pGuid->GetOffset_Internal(), guid, 16);
+        writeGoatParm<uint32_t>(fn, b.data(), STR("SettlementId"), settlementId);
+        moved = safeProcessEvent(m_localPC, fn, b.data());
+        VLOG(STR("[MoriaCppMod] [BellToggle] ASSIGN via ServerMoveNpc(guid, {}) pe={}\n"), settlementId, moved ? STR("OK") : STR("FAIL"));
+    }
+    callGoatSetPorterRole(guid);
+    return moved;
 }
 
 // [2026-08-05] Deferred dismiss verification: if the goat is still alive
@@ -9864,7 +9886,10 @@ bool callGoatRescueAndRole(const uint8_t guid[16], uint32_t settlementId)
     writeGoatParm<uint32_t>(fn, b.data(), STR("SettlementId"), settlementId);
     bool ok = safeProcessEvent(m_localPC, fn, b.data());
     VLOG(STR("[MoriaCppMod] [NativeRescue] ServerRescueNpc(settlement={}) pe={}\n"), settlementId, ok ? STR("OK") : STR("FAIL"));
-    callGoatSetPorterRole(guid);
+    // [2026-08-05] rescue alone did NOT establish settlement membership in
+    // the failed dismiss test — follow with the capture-proven assign
+    // (ServerMoveNpc) so withdraw/relocate work afterwards. Role set inside.
+    callGoatAssignPorter(guid, settlementId);
     return ok;
 }
 
