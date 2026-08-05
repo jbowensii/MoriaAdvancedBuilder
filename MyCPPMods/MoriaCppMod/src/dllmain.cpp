@@ -1411,6 +1411,23 @@ namespace MoriaMods
                 {
                     s_instance->onServerRescueNpcPre(context);
                 }
+                // [2026-08-05] settlement-move telemetry: decode every
+                // Multicast_NpcMoved so the log reveals the REAL destination
+                // id the native unassign/dismiss uses (guid + from + to).
+                if (wcscmp(fnStr, STR("Multicast_NpcMoved")) == 0 && parms && func)
+                {
+                    auto rd32 = [&](const wchar_t* n) -> int64_t {
+                        auto* pp = s_instance->findParam(func, n);
+                        if (!pp) return -1;
+                        return *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(parms) + pp->GetOffset_Internal());
+                    };
+                    uint32_t g0 = 0;
+                    if (auto* pg = s_instance->findParam(func, STR("NpcGuid")))
+                        g0 = *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(parms) + pg->GetOffset_Internal());
+                    VLOG(STR("[MoriaCppMod] [NpcMoved] guid={:08X}... from={} to={} fromCount={} toCount={}\n"),
+                         g0, rd32(STR("FromSettlementId")), rd32(STR("ToSettlementId")),
+                         rd32(STR("FromSettlementNpcCount")), rd32(STR("ToSettlementNpcCount")));
+                }
                 // BP_RequestSpawn full-args diagnostic (every call, not
                 // one-shot). Logs spawner+context+class so we can compare
                 // natural-spawn callers to our own attempts.
@@ -2639,6 +2656,7 @@ namespace MoriaMods
             m_summonRequesterPawn = RC::Unreal::FWeakObjectPtr{};
             // [HANDOFF] pending re-summon dies with the world.
             m_handoffRescueAtMs = 0;
+            m_dismissVerifyAtMs = 0;
             // [WorldStore] per-world record handle.
             std::memset(m_goatStoreHandle, 0, sizeof(m_goatStoreHandle));
             m_goatStoredOnce = false;
@@ -3034,6 +3052,7 @@ namespace MoriaMods
             s_instance->tickAdoptNativeGoat();
             s_instance->tickXferGoatDump();
             s_instance->tickGoatHandoff();
+            s_instance->tickDismissVerify();
             // [WorldStore] 60s native store of the goat actor record.
             s_instance->tickSidecarSnapshot();
             s_instance->tickDwarfBagProbe();

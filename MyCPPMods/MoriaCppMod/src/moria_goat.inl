@@ -8003,7 +8003,11 @@ void toggleGoatFromBell()
         VLOG(STR("[MoriaCppMod] [BellToggle] live goat dist={:.0f} -> {}\n"), dist, nearMe ? STR("DISMISS") : STR("HANDOFF"));
         if (nearMe)
         {
-            if (callGoatUnassign(rg)) showGameNotification(Loc::get("goat.returns_delving"), L"", 3.0f);
+            if (callGoatUnassign(rg))
+            {
+                m_dismissVerifyAtMs = GetTickCount64() + 2000;
+                showGameNotification(Loc::get("goat.returns_delving"), L"", 3.0f);
+            }
             return;
         }
         // HANDOFF: summoning-to-me — same gates as any summon.
@@ -8020,6 +8024,7 @@ void toggleGoatFromBell()
         }
         if (callGoatUnassign(rg))
         {
+            m_dismissVerifyAtMs = GetTickCount64() + 2000;
             std::memcpy(m_handoffGuid, rg, 16);
             m_handoffRescueAtMs = GetTickCount64() + 2500; // let the despawn land first
             VLOG(STR("[MoriaCppMod] [BellToggle] HANDOFF armed — rescue fires in 2.5s\n"));
@@ -9647,18 +9652,43 @@ bool isAuthorityHost()
 bool callGoatUnassign(const uint8_t guid[16])
 {
     if (!m_localPC || !isObjectAlive(m_localPC)) return false;
-    if (auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerMoveNpc")))
+    // [2026-08-05] ServerMoveNpc(guid, 0) was log-proven a silent no-op
+    // (pe=OK, goat never despawned across 6 rings). ServerDismissNpc is
+    // the semantic dismiss; our summon path is ServerRescueNpc — the
+    // native dismiss/rescue pair. Verified post-call by
+    // tickDismissVerify (armed by the caller).
+    if (auto* fn = m_localPC->GetFunctionByNameInChain(STR("ServerDismissNpc")))
     {
         std::vector<uint8_t> b(fn->GetParmsSize(), 0);
         if (auto* pGuid = findParam(fn, STR("NpcGuid")))
             std::memcpy(b.data() + pGuid->GetOffset_Internal(), guid, 16);
-        writeGoatParm<uint32_t>(fn, b.data(), STR("SettlementId"), 0u);
         bool ok = safeProcessEvent(m_localPC, fn, b.data());
-        VLOG(STR("[MoriaCppMod] [BellToggle] UNASSIGN via ServerMoveNpc(guid, 0) pe={}\n"), ok ? STR("OK") : STR("FAIL"));
+        VLOG(STR("[MoriaCppMod] [BellToggle] UNASSIGN via ServerDismissNpc pe={}\n"), ok ? STR("OK") : STR("FAIL"));
         return ok;
     }
-    VLOG(STR("[MoriaCppMod] [BellToggle] ServerMoveNpc NOT FOUND on PC\n"));
+    VLOG(STR("[MoriaCppMod] [BellToggle] ServerDismissNpc NOT FOUND on PC\n"));
     return false;
+}
+
+// [2026-08-05] Deferred dismiss verification: if the goat is still alive
+// ~2s after an unassign, say so loudly instead of leaving a dead button.
+ULONGLONG m_dismissVerifyAtMs{0};
+void tickDismissVerify()
+{
+    if (m_dismissVerifyAtMs == 0) return;
+    ULONGLONG now = GetTickCount64();
+    if (now < m_dismissVerifyAtMs) return;
+    m_dismissVerifyAtMs = 0;
+    UObject* g = findOurGoatAlive();
+    if (g && isObjectAlive(g))
+    {
+        VLOG(STR("[MoriaCppMod] [BellToggle] DISMISS VERIFY FAILED — goat {:p} still alive 2s after unassign\n"), (void*)g);
+        showGameNotification(Loc::get("goat.dismiss_failed"), L"", 3.0f);
+    }
+    else
+    {
+        VLOG(STR("[MoriaCppMod] [BellToggle] dismiss verified — goat despawned\n"));
+    }
 }
 
 // [MP-BRIDGE 2026-07-22] Any player's bell-summon arrives on the HOST as

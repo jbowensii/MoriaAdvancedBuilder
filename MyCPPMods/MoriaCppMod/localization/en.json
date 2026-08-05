@@ -209,6 +209,7 @@
   "goat.contents_restored": "Saddlebag contents restored",
   "goat.craft_saddlebags_first": "Craft Goat Saddlebags first, then use Saddlebags again",
   "goat.dismissed": "Goat dismissed",
+  "goat.dismiss_failed": "Rûdh would not leave — see log",
   "goat.following": "Porter Goat: following",
   "goat.host_must_summon": "The host must summon Rûdh first",
   "goat.linked": "Porter Goat linked",
