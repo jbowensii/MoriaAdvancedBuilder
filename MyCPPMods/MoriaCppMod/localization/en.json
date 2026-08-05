@@ -227,7 +227,7 @@
   "goat.opening_storage": "Opening goat storage (native)",
   "goat.player_inventory_missing": "Player inventory missing",
   "goat.recalling": "Recalling Rûdh...",
-  "goat.returns_delving": "Rûdh returns to the Delving",
+  "goat.returns_delving": "Rûdh has been withdrawn",
   "goat.role_label": "Porter Goat",
   "goat.saddlebags_fit_failed": "Failed to fit saddlebags to goat (see log)",
   "goat.saddlebags_fitted": "Saddlebags fitted to the goat",

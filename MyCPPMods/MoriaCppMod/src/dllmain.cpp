@@ -1456,7 +1456,14 @@ namespace MoriaMods
                     };
                     uint32_t g0 = 0;
                     if (auto* pg = s_instance->findParam(func, STR("NpcGuid")))
-                        g0 = *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(parms) + pg->GetOffset_Internal());
+                    {
+                        uint8_t* gp = reinterpret_cast<uint8_t*>(parms) + pg->GetOffset_Internal();
+                        g0 = *reinterpret_cast<uint32_t*>(gp);
+                        // record for tickDismissVerify (withdraw confirmation)
+                        std::memcpy(s_instance->m_lastNpcMovedGuid, gp, 16);
+                        s_instance->m_lastNpcMovedTo = static_cast<uint32_t>(rd32(STR("ToSettlementId")));
+                        s_instance->m_lastNpcMovedAtMs = GetTickCount64();
+                    }
                     VLOG(STR("[MoriaCppMod] [NpcMoved] guid={:08X}... from={} to={} fromCount={} toCount={}\n"),
                          g0, rd32(STR("FromSettlementId")), rd32(STR("ToSettlementId")),
                          rd32(STR("FromSettlementNpcCount")), rd32(STR("ToSettlementNpcCount")));

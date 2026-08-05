@@ -9692,9 +9692,17 @@ bool callGoatAssignPorter(const uint8_t guid[16], uint32_t settlementId)
     return moved;
 }
 
-// [2026-08-05] Deferred dismiss verification: if the goat is still alive
-// ~2s after an unassign, say so loudly instead of leaving a dead button.
+// [2026-08-05] Deferred dismiss verification + COMPLETION. Log-proven:
+// the roster withdraw succeeds (NpcMoved to=0) but the settlement system
+// often leaves the goat's ACTOR standing (unlike its own dwarf actors,
+// which it despawns promptly). When the roster confirms to=0 and the
+// actor lingers, we complete the withdraw ourselves: store the actor
+// record (inventory freshness), then remove the leftover actor. The
+// next assign respawns him from roster+record exactly like a dwarf.
 ULONGLONG m_dismissVerifyAtMs{0};
+uint8_t m_lastNpcMovedGuid[16]{};
+uint32_t m_lastNpcMovedTo{0xFFFFFFFFu};
+ULONGLONG m_lastNpcMovedAtMs{0};
 void tickDismissVerify()
 {
     if (m_dismissVerifyAtMs == 0) return;
@@ -9702,14 +9710,45 @@ void tickDismissVerify()
     if (now < m_dismissVerifyAtMs) return;
     m_dismissVerifyAtMs = 0;
     UObject* g = findOurGoatAlive();
-    if (g && isObjectAlive(g))
+    if (!g || !isObjectAlive(g))
     {
-        VLOG(STR("[MoriaCppMod] [BellToggle] DISMISS VERIFY FAILED — goat {:p} still alive 2s after unassign\n"), (void*)g);
+        VLOG(STR("[MoriaCppMod] [BellToggle] dismiss verified — goat despawned natively\n"));
+        return;
+    }
+    // Actor lingering. Only finish the job if the roster CONFIRMED the
+    // withdraw (NpcMoved for OUR guid with to=0, within the last 15s).
+    uint8_t marker[16] = {0};
+    bool confirmed = findRudhMarkerGuidRaw(marker) &&
+                     std::memcmp(marker, m_lastNpcMovedGuid, 16) == 0 &&
+                     m_lastNpcMovedTo == 0 && (now - m_lastNpcMovedAtMs) < 15000;
+    if (!confirmed)
+    {
+        VLOG(STR("[MoriaCppMod] [BellToggle] DISMISS VERIFY FAILED — goat {:p} alive and roster withdraw NOT confirmed\n"), (void*)g);
+        showGameNotification(Loc::get("goat.dismiss_failed"), L"", 3.0f);
+        return;
+    }
+    VLOG(STR("[MoriaCppMod] [BellToggle] roster withdraw confirmed (to=0) but actor {:p} lingered — completing withdraw locally\n"), (void*)g);
+    storeGoatToWorldState(g, STR("withdraw"));
+    if (auto* dFn = g->GetFunctionByNameInChain(STR("K2_DestroyActor")))
+    {
+        std::vector<uint8_t> db(dFn->GetParmsSize(), 0);
+        try
+        {
+            safeProcessEvent(g, dFn, db.data());
+        }
+        catch (...)
+        {
+        }
+    }
+    UObject* still = findOurGoatAlive();
+    if (still && isObjectAlive(still))
+    {
+        VLOG(STR("[MoriaCppMod] [BellToggle] local withdraw completion FAILED — actor survived destroy\n"));
         showGameNotification(Loc::get("goat.dismiss_failed"), L"", 3.0f);
     }
     else
     {
-        VLOG(STR("[MoriaCppMod] [BellToggle] dismiss verified — goat despawned\n"));
+        VLOG(STR("[MoriaCppMod] [BellToggle] withdraw completed locally — actor removed after roster confirmation\n"));
     }
 }
 
