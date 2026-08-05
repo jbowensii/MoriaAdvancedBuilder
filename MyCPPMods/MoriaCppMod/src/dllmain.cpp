@@ -1411,6 +1411,39 @@ namespace MoriaMods
                 {
                     s_instance->onServerRescueNpcPre(context);
                 }
+                // [2026-08-05] NPC lifecycle RPC decode — ALWAYS ON (rare
+                // calls). Logs the exact parameter values of every native
+                // dismiss/assign/move so a real dwarf dismiss+resummon in-game
+                // shows precisely which RPC + ids the game uses. No guessing.
+                if (parms && func &&
+                    (wcscmp(fnStr, STR("ServerMoveNpc")) == 0 || wcscmp(fnStr, STR("ServerDismissNpc")) == 0 ||
+                     wcscmp(fnStr, STR("ServerRescueNpc")) == 0 || wcscmp(fnStr, STR("ServerSendNpcToSettlement")) == 0 ||
+                     wcscmp(fnStr, STR("ServerSendNpcBackToSettlement")) == 0 || wcscmp(fnStr, STR("ServerNpcSetRole")) == 0 ||
+                     wcscmp(fnStr, STR("ServerFreeNpcInExpedition")) == 0))
+                {
+                    std::wstring extra;
+                    for (auto* pp : {STR("NpcGuid"), STR("NpcId"), STR("Guid")})
+                    {
+                        if (auto* pg = s_instance->findParam(func, pp))
+                        {
+                            const uint32_t* g = reinterpret_cast<const uint32_t*>(reinterpret_cast<uint8_t*>(parms) + pg->GetOffset_Internal());
+                            wchar_t buf[48];
+                            swprintf_s(buf, L" guid=%08X-%08X-%08X-%08X", g[0], g[1], g[2], g[3]);
+                            extra += buf;
+                            break;
+                        }
+                    }
+                    for (auto* pn : {STR("SettlementId"), STR("SettlementWaypointID")})
+                    {
+                        if (auto* pi = s_instance->findParam(func, pn))
+                        {
+                            uint32_t v = *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(parms) + pi->GetOffset_Internal());
+                            extra += STR(" ") + std::wstring(pn) + STR("=") + std::to_wstring(v);
+                        }
+                    }
+                    std::wstring cctx = context ? safeObjectName(context) : STR("?");
+                    VLOG(STR("[MoriaCppMod] [NpcLifecycle] {} on '{}'{}\n"), fnStr, cctx.c_str(), extra.c_str());
+                }
                 // [2026-08-05] settlement-move telemetry: decode every
                 // Multicast_NpcMoved so the log reveals the REAL destination
                 // id the native unassign/dismiss uses (guid + from + to).
