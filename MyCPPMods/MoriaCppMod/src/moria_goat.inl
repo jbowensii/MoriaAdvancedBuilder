@@ -9936,25 +9936,52 @@ bool callGoatRescueAndRole(const uint8_t guid[16], uint32_t settlementId)
 // in and tickAdoptNativeGoat links it, CALL it straight to the player.
 ULONGLONG m_recallCallUntilMs{0};
 
-// Teleport a goat to the summoning player's position (small Z lift — the
-// old +150/+150 offset landed in geometry and killed the courier). In MP
-// the target is the REQUESTER's pawn (set by the ServerRescueNpc bridge),
-// falling back to the local player.
+// Teleport a goat to the summoning player — NEVER directly on top of
+// them (user spec 2026-08-05): preferred spots are BEHIND, then the
+// right/left flanks, at a comfortable distance; the player's own
+// position (+small lift) is only the last-resort fallback. Offsets are
+// modest (~2.2m) and K2_TeleportTo performs its own penetration
+// adjustment, so tight corridors resolve to a safe nearby spot instead
+// of the old geometry-death offsets. In MP the target is the
+// REQUESTER's pawn (ServerRescueNpc bridge), else the local player.
 void teleportGoatToPlayer(UObject* g)
 {
     if (!g || !isObjectAlive(g)) return;
     UObject* pawn = summonTargetPawn();
     if (!pawn) return;
-    if (auto* getLoc = pawn->GetFunctionByNameInChain(STR("K2_GetActorLocation")))
+    float loc[3];
+    if (!readActorLocation(pawn, loc)) return;
+
+    // Facing yaw (degrees) — FRotator {Pitch, Yaw, Roll}.
+    float yawDeg = 0.0f;
+    if (auto* getRot = pawn->GetFunctionByNameInChain(STR("K2_GetActorRotation")))
     {
-        std::vector<uint8_t> lb(getLoc->GetParmsSize(), 0);
-        if (safeProcessEvent(pawn, getLoc, lb.data()))
-            if (auto* pr = findParam(getLoc, STR("ReturnValue")))
-            {
-                float* v = reinterpret_cast<float*>(lb.data() + pr->GetOffset_Internal());
-                npcTeleportPawn(g, v[0], v[1], v[2] + 60.0f);
-            }
+        std::vector<uint8_t> rb(getRot->GetParmsSize(), 0);
+        if (safeProcessEvent(pawn, getRot, rb.data()))
+            if (auto* pr = findParam(getRot, STR("ReturnValue")))
+                yawDeg = reinterpret_cast<float*>(rb.data() + pr->GetOffset_Internal())[1];
     }
+    const float yaw = yawDeg * 3.14159265f / 180.0f;
+    const float fx = std::cos(yaw), fy = std::sin(yaw);   // forward
+    const float rx = -fy, ry = fx;                        // right
+
+    constexpr float kDist = 220.0f;
+    const float spots[4][2] = {
+            {-fx * kDist, -fy * kDist}, // behind (preferred)
+            {rx * kDist, ry * kDist},   // right flank
+            {-rx * kDist, -ry * kDist}, // left flank
+            {0.0f, 0.0f},               // last resort: player's own spot
+    };
+    for (int i = 0; i < 4; i++)
+    {
+        if (npcTeleportPawn(g, loc[0] + spots[i][0], loc[1] + spots[i][1], loc[2] + 60.0f))
+        {
+            VLOG(STR("[MoriaCppMod] [BellToggle] goat arrival spot {} ({})\n"), i,
+                 i == 0 ? STR("behind") : (i == 1 ? STR("right") : (i == 2 ? STR("left") : STR("on player - fallback"))));
+            return;
+        }
+    }
+    VLOG(STR("[MoriaCppMod] [BellToggle] goat arrival teleport failed at all 4 spots\n"));
 }
 
 // [NATIVE-RESCUE TEST 2026-07-18] Harness for the live-captured native
