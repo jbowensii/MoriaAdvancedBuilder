@@ -8830,15 +8830,54 @@ ULONGLONG m_xferGoatDumpAtMs{0};
 // live pane after any transfer.
 void refreshNpcInventoryGrid()
 {
+    // [2026-08-06 v2] Redraw fired OK but repopulates nothing — the item
+    // grid is rebuilt only by 'Initialize Inventory'(Root), the function
+    // the screen fires at open. Fetch the goat's storage root natively
+    // (GetAccessibleStorageRoot on its MorNPCComponent) and re-run the
+    // init on the VISIBLE pane instance.
+    UObject* goat = findOurGoatAlive();
+    if (!goat) return;
+    UObject* npcComp = nullptr;
+    if (UClass* npcCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MorNPCComponent")))
+    {
+        if (auto* getComp = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
+        {
+            std::vector<uint8_t> cb(getComp->GetParmsSize(), 0);
+            writeGoatParm<UClass*>(getComp, cb.data(), STR("ComponentClass"), npcCls);
+            if (safeProcessEvent(goat, getComp, cb.data()))
+                npcComp = readGoatParm<UObject*>(getComp, cb.data(), STR("ReturnValue"), nullptr);
+        }
+    }
+    if (!npcComp || !isObjectAlive(npcComp)) return;
+    auto* rootFn = npcComp->GetFunctionByNameInChain(STR("GetAccessibleStorageRoot"));
+    if (!rootFn) return;
+    std::vector<uint8_t> rb(rootFn->GetParmsSize(), 0);
+    if (!safeProcessEvent(npcComp, rootFn, rb.data())) return;
+    auto* pRoot = findParam(rootFn, STR("ReturnValue"));
+    if (!pRoot) return;
+    const uint8_t* rootBytes = rb.data() + pRoot->GetOffset_Internal();
+
     std::vector<UObject*> widgets;
     if (!findAllOfSafe(STR("WBP_UI_Inventory_NPC_C"), widgets)) return;
     for (UObject* w : widgets)
     {
         if (!w || !isObjectAlive(w)) continue;
         if (safeObjectName(w).rfind(STR("Default__"), 0) == 0) continue;
-        if (auto* fn = w->GetFunctionByNameInChain(STR("Redraw")))
+        // only the pane the player is looking at — re-initializing a
+        // hidden/other instance with the goat root would rebind it.
+        bool visible = false;
+        if (auto* visFn = w->GetFunctionByNameInChain(STR("IsVisible")))
+        {
+            std::vector<uint8_t> vb(visFn->GetParmsSize(), 0);
+            if (safeProcessEvent(w, visFn, vb.data()))
+                if (auto* pv = findParam(visFn, STR("ReturnValue"))) visible = *(vb.data() + pv->GetOffset_Internal()) != 0;
+        }
+        if (!visible) continue;
+        if (auto* fn = w->GetFunctionByNameInChain(STR("Initialize Inventory")))
         {
             std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+            if (auto* pR = findParam(fn, STR("Root")))
+                std::memcpy(b.data() + pR->GetOffset_Internal(), rootBytes, pR->GetSize());
             bool ok = false;
             try
             {
@@ -8847,7 +8886,7 @@ void refreshNpcInventoryGrid()
             catch (...)
             {
             }
-            VLOG(STR("[MoriaCppMod] [XferDump] pane Redraw on {:p} -> {}\n"), (void*)w, ok ? STR("OK") : STR("FAIL"));
+            VLOG(STR("[MoriaCppMod] [XferDump] pane 'Initialize Inventory'(goat root) on {:p} -> {}\n"), (void*)w, ok ? STR("OK") : STR("FAIL"));
         }
     }
 }
