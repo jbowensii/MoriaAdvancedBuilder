@@ -5343,6 +5343,43 @@ void openGoatSaddlebagInventory()
             bool shown = (screen && isObjectAlive(screen)) ? chestFlowActivateHud(screen) : false;
             VLOG(STR("[MoriaCppMod] [GoatSaddle] NATIVE mode — ActivateHud(no override) -> {} (screen={:p})\n"),
                  shown ? STR("OK") : STR("FAILED"), (void*)screen);
+            // [GAMEPAD FIX 2026-08-06] Log-proven: mouse drops target the
+            // hovered grid slot (goat comp — correct), but gamepad
+            // quick-move (RB+A) and Take All use the SCREEN'S storage root,
+            // which our programmatic ActivateHud never bound — the game
+            // fell back to a BP_DropItem ground-bag container (items
+            // "vanished"; Take All pulled them back from the drop bag).
+            // Bind the root explicitly: MorInventoryScreen.StorageObject =
+            // the goat's MorNPCComponent (implements
+            // IMorAccessibleStorageInterface::GetAccessibleStorageRoot).
+            if (shown && screen && isObjectAlive(screen))
+            {
+                UObject* npcComp = nullptr;
+                UClass* npcCls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Moria.MorNPCComponent"));
+                if (npcCls)
+                {
+                    if (auto* getComp = goat->GetFunctionByNameInChain(STR("GetComponentByClass")))
+                    {
+                        std::vector<uint8_t> cb(getComp->GetParmsSize(), 0);
+                        writeGoatParm<UClass*>(getComp, cb.data(), STR("ComponentClass"), npcCls);
+                        if (safeProcessEvent(goat, getComp, cb.data()))
+                            npcComp = readGoatParm<UObject*>(getComp, cb.data(), STR("ReturnValue"), nullptr);
+                    }
+                }
+                if (npcComp && isObjectAlive(npcComp))
+                {
+                    if (auto** soPtr = screen->GetValuePtrByPropertyNameInChain<UObject*>(STR("StorageObject")))
+                    {
+                        UObject* old = *soPtr;
+                        *soPtr = npcComp;
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] StorageObject bound: {:p} -> {:p} (goat MorNPCComponent)\n"), (void*)old, (void*)npcComp);
+                    }
+                    else
+                        VLOG(STR("[MoriaCppMod] [GoatSaddle] StorageObject property NOT FOUND on screen\n"));
+                }
+                else
+                    VLOG(STR("[MoriaCppMod] [GoatSaddle] goat MorNPCComponent not resolved — storage root unbound\n"));
+            }
             return;
         }
 
