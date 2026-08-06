@@ -8823,12 +8823,42 @@ void adoptNativeGoat(UObject* goat)
 // every tracked-goat inventory comp with its per-container stacks so the
 // log shows exactly which container a gamepad transfer landed in.
 ULONGLONG m_xferGoatDumpAtMs{0};
+// [GAMEPAD FIX part 2, 2026-08-06] Quick-move inserts reach the goat's
+// containers (log-proven census) but the NPC pane does not redraw for
+// them (mouse cursor-drops refresh locally; ServerMoveItem does not).
+// The widget ships a parameterless 'Redraw' function — fire it on the
+// live pane after any transfer.
+void refreshNpcInventoryGrid()
+{
+    std::vector<UObject*> widgets;
+    if (!findAllOfSafe(STR("WBP_UI_Inventory_NPC_C"), widgets)) return;
+    for (UObject* w : widgets)
+    {
+        if (!w || !isObjectAlive(w)) continue;
+        if (safeObjectName(w).rfind(STR("Default__"), 0) == 0) continue;
+        if (auto* fn = w->GetFunctionByNameInChain(STR("Redraw")))
+        {
+            std::vector<uint8_t> b(fn->GetParmsSize(), 0);
+            bool ok = false;
+            try
+            {
+                ok = safeProcessEvent(w, fn, b.data());
+            }
+            catch (...)
+            {
+            }
+            VLOG(STR("[MoriaCppMod] [XferDump] pane Redraw on {:p} -> {}\n"), (void*)w, ok ? STR("OK") : STR("FAIL"));
+        }
+    }
+}
+
 void tickXferGoatDump()
 {
     if (m_xferGoatDumpAtMs == 0) return;
     ULONGLONG now = GetTickCount64();
     if (now < m_xferGoatDumpAtMs) return;
     m_xferGoatDumpAtMs = 0;
+    refreshNpcInventoryGrid();
     UObject* goat = findOurGoatAlive();
     if (!goat) return;
     std::vector<UObject*> comps;
