@@ -8891,15 +8891,114 @@ void refreshNpcInventoryGrid()
     }
 }
 
+// [GAMEPAD FIX v4 2026-08-06] The decisive shape of the bug: gamepad
+// quick-move deposits into the storage ROOT container; the grid renders
+// only the BODY container inside it (mouse drops target the hovered
+// cell = body, hence they display). Normalize: any loose (non-container)
+// item whose Slot lies outside the body container's slot region gets
+// ServerMoveItem'd into the body — the game's own mover finds a free
+// cell, and the live cell bindings display it like a mouse drop.
+void goatNormalizeLooseToBody(UObject* goat)
+{
+    std::vector<UObject*> comps;
+    goatInvCompsWithContainers(goat, comps);
+    for (UObject* c : comps)
+    {
+        if (!c || !isObjectAlive(c)) continue;
+        FProperty* itemsProp = c->GetPropertyByNameInChain(STR("Items"));
+        if (!itemsProp) continue;
+        uint8_t* listBase = reinterpret_cast<uint8_t*>(c) + itemsProp->GetOffset_Internal() + iiaListOff();
+        if (!isReadableMemory(listBase, 16)) continue;
+        uint8_t* arrData = *reinterpret_cast<uint8_t**>(listBase);
+        int32_t arrNum = *reinterpret_cast<int32_t*>(listBase + 8);
+        if (!arrData || arrNum <= 0 || arrNum > 10000) continue;
+        const int stride = iiSize(), itemOff = iiItemOff(), idOff = iiIDOff();
+        const int slotOff = iiSlotOff(), csOff = iiContainerStartOff();
+
+        // body container: class BP_ContainerItem_Dwarf_BodyInventoryNPC_C
+        int32_t bodyId = 0, bodyStart = -1;
+        for (int i = 0; i < arrNum && i < 256; ++i)
+        {
+            uint8_t* e = arrData + i * stride;
+            if (!isReadableMemory(e, stride)) continue;
+            UClass* ic = *reinterpret_cast<UClass**>(e + itemOff);
+            if (!ic || !isObjectAlive(ic)) continue;
+            std::wstring n;
+            try
+            {
+                n = ic->GetName();
+            }
+            catch (...)
+            {
+                continue;
+            }
+            if (n == STR("BP_ContainerItem_Dwarf_BodyInventoryNPC_C"))
+            {
+                bodyId = *reinterpret_cast<int32_t*>(e + idOff);
+                bodyStart = *reinterpret_cast<int32_t*>(e + csOff);
+                break;
+            }
+        }
+        if (bodyId == 0 || bodyStart < 0) continue;
+        const int32_t bodyEnd = bodyStart + 36;
+
+        auto* mvFn = c->GetFunctionByNameInChain(STR("ServerMoveItem"));
+        if (!mvFn) continue;
+        auto* pItem = findParam(mvFn, STR("Item"));
+        auto* pDest = findParam(mvFn, STR("Destination"));
+        if (!pItem || !pDest) continue;
+
+        int moved = 0;
+        for (int i = 0; i < arrNum && i < 256 && moved < 40; ++i)
+        {
+            uint8_t* e = arrData + i * stride;
+            if (!isReadableMemory(e, stride)) continue;
+            UClass* ic = *reinterpret_cast<UClass**>(e + itemOff);
+            if (!ic || !isObjectAlive(ic)) continue;
+            std::wstring n;
+            try
+            {
+                n = ic->GetName();
+            }
+            catch (...)
+            {
+                continue;
+            }
+            if (n.rfind(STR("BP_ContainerItem"), 0) == 0) continue; // containers stay put
+            int32_t slot = *reinterpret_cast<int32_t*>(e + slotOff);
+            if (slot >= bodyStart && slot < bodyEnd) continue; // already displayed
+            int32_t itemId = *reinterpret_cast<int32_t*>(e + idOff);
+            std::vector<uint8_t> b(mvFn->GetParmsSize(), 0);
+            *reinterpret_cast<int32_t*>(b.data() + pItem->GetOffset_Internal()) = itemId;
+            RC::Unreal::FWeakObjectPtr wc(c);
+            std::memcpy(b.data() + pItem->GetOffset_Internal() + 8, &wc, sizeof(wc));
+            *reinterpret_cast<int32_t*>(b.data() + pDest->GetOffset_Internal()) = bodyId;
+            std::memcpy(b.data() + pDest->GetOffset_Internal() + 8, &wc, sizeof(wc));
+            bool ok = false;
+            try
+            {
+                ok = safeProcessEvent(c, mvFn, b.data());
+            }
+            catch (...)
+            {
+            }
+            VLOG(STR("[MoriaCppMod] [XferNorm] '{}' id={} slot={} (outside body {}-{}) -> body id={} pe={}\n"),
+                 n.c_str(), itemId, slot, bodyStart, bodyEnd - 1, bodyId, ok ? STR("OK") : STR("FAIL"));
+            if (ok) moved++;
+        }
+        if (moved > 0) VLOG(STR("[MoriaCppMod] [XferNorm] comp '{}': {} loose item(s) normalized into the body grid\n"), safeObjectName(c).c_str(), moved);
+    }
+}
+
 void tickXferGoatDump()
 {
     if (m_xferGoatDumpAtMs == 0) return;
     ULONGLONG now = GetTickCount64();
     if (now < m_xferGoatDumpAtMs) return;
     m_xferGoatDumpAtMs = 0;
-    refreshNpcInventoryGrid();
     UObject* goat = findOurGoatAlive();
     if (!goat) return;
+    goatNormalizeLooseToBody(goat);
     std::vector<UObject*> comps;
     goatInvCompsWithContainers(goat, comps);
     VLOG(STR("[MoriaCppMod] [XferDump] goat {:p}: {} comp(s) with containers\n"), (void*)goat, (int)comps.size());
